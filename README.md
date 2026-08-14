@@ -229,3 +229,9 @@ In Supabase Dashboard, check all three of these:
 3. **Authentication → URL Configuration**: Site URL is `https://emilyzohar.github.io/catch-all/`.
 
 The signup form now shows the actual Supabase error instead of silently doing nothing. It deliberately does not pass a custom `emailRedirectTo`; confirmation emails use the Site URL configured in Supabase.
+
+## Full-window layout fix
+
+This build intentionally uses the available browser width on desktop instead of a narrow centered content column. The final CSS overrides use full-width shells with responsive gutters and a 1920px safety cap. At 760px and below, the dedicated mobile layout takes over.
+
+The stylesheet URL also contains a version query so browsers do not keep serving a stale cached CSS file after deployment.
