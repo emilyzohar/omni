@@ -322,6 +322,13 @@ function bindEvents() {
       return;
     }
 
+    const tvWatchAction = event.target.closest('[data-tv-watch-action]');
+    if (tvWatchAction) {
+      const item = findItem(tvWatchAction.dataset.itemId || state.openDetailId);
+      if (item) await applyTVWatchAction(item, tvWatchAction.dataset.tvWatchAction);
+      return;
+    }
+
     const seriesButton = event.target.closest('[data-tv-series]');
     if (seriesButton) {
       const item = findItem(seriesButton.dataset.itemId || state.openDetailId);
@@ -341,6 +348,9 @@ function renderAll() {
 // UP NEXT
 // ---------------------------
 async function renderUpNext() {
+  const changed = await reconcileTVQueueStates();
+  if (changed && els.libraryGroups) renderLibrary();
+
   const view = state.queueView === 'tbr' ? 'tbr' : 'upnext';
   const items = state.items
     .filter(item => getQueueStatus(item) === view)
@@ -494,6 +504,7 @@ async function handleUpNextClick(event) {
   }
 
   if (button.dataset.action === 'start') {
+    if (getSourceType(item) === 'tv') item.watchDisposition = 'following';
     setItemQueueStatus(item, 'upnext');
     item.updatedAt = new Date().toISOString();
     saveItems();
@@ -596,7 +607,20 @@ function isTVEpisodeLogged(item, seasonNumber, episodeNumber) {
   );
 }
 
-async function findNextUnwatchedTVEpisode(item, afterSeason, afterEpisode) {
+function isTVEpisodeConsumed(item, seasonNumber, episodeNumber) {
+  if (isTVEpisodeLogged(item, seasonNumber, episodeNumber)) return true;
+  const nextSeason = Number(item.progress?.nextSeason || 1);
+  const nextEpisode = Number(item.progress?.nextEpisode || 1);
+  return Number(seasonNumber) < nextSeason ||
+    (Number(seasonNumber) === nextSeason && Number(episodeNumber) < nextEpisode);
+}
+
+function isEpisodeAvailable(episode) {
+  if (!episode?.air_date) return true;
+  return episode.air_date <= todayString();
+}
+
+async function findNextUnwatchedTVEpisode(item, afterSeason = 0, afterEpisode = 0) {
   const show = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
   const seasons = (show.seasons || [])
     .filter(season => season.season_number > 0 && season.episode_count > 0)
@@ -605,29 +629,151 @@ async function findNextUnwatchedTVEpisode(item, afterSeason, afterEpisode) {
   for (const seasonInfo of seasons) {
     if (seasonInfo.season_number < afterSeason) continue;
     const season = await getCached(`season:${item.providerId}:${seasonInfo.season_number}`, () => TrackerAPI.getTVSeason(item.providerId, seasonInfo.season_number, state.settings));
-    const episodes = (season.episodes || []).filter(ep => ep.episode_number > 0).sort((a,b) => a.episode_number - b.episode_number);
+    const episodes = (season.episodes || [])
+      .filter(ep => ep.episode_number > 0 && isEpisodeAvailable(ep))
+      .sort((a,b) => a.episode_number - b.episode_number);
     for (const episode of episodes) {
       if (seasonInfo.season_number === afterSeason && episode.episode_number <= afterEpisode) continue;
-      if (!isTVEpisodeLogged(item, seasonInfo.season_number, episode.episode_number)) {
-        return { seasonNumber: seasonInfo.season_number, episodeNumber: episode.episode_number };
+      if (!isTVEpisodeConsumed(item, seasonInfo.season_number, episode.episode_number)) {
+        return { seasonNumber: seasonInfo.season_number, episodeNumber: episode.episode_number, episode };
       }
     }
   }
   return null;
 }
 
-async function syncTVProgressToFirstUnwatched(item) {
-  const currentSeason = Number(item.progress?.nextSeason || 1);
-  const currentEpisode = Number(item.progress?.nextEpisode || 1);
-  if (!isTVEpisodeLogged(item, currentSeason, currentEpisode)) return;
-  const next = await findNextUnwatchedTVEpisode(item, currentSeason, currentEpisode);
+function getTVWatchDisposition(item) {
+  if (['following', 'watch-later', 'stopped'].includes(item.watchDisposition)) return item.watchDisposition;
+  if (getQueueStatus(item) === 'tbr') return 'watch-later';
+  return 'following';
+}
+
+function isCancelledSeriesStatus(status) {
+  return ['canceled', 'cancelled'].includes(String(status || '').toLowerCase());
+}
+
+function isTerminalSeriesStatus(status) {
+  return ['ended', 'canceled', 'cancelled'].includes(String(status || '').toLowerCase());
+}
+
+async function reconcileSingleTVItem(item, prefetchedDetails = null) {
+  if (getSourceType(item) !== 'tv' || !item.providerId) return false;
+
+  const before = JSON.stringify({
+    queueStatus: getQueueStatus(item),
+    watchDisposition: item.watchDisposition || '',
+    progress: item.progress || {},
+    tvMeta: { seriesStatus: item.tvMeta?.seriesStatus || '', hasUnwatched: Boolean(item.tvMeta?.hasUnwatched) }
+  });
+
+  const details = prefetchedDetails || await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
+  const next = await findNextUnwatchedTVEpisode(item, 0, 0);
+  const disposition = getTVWatchDisposition(item);
+
+  item.watchDisposition = disposition;
+  item.tvMeta = {
+    ...(item.tvMeta || {}),
+    seriesStatus: details.status || '',
+    hasUnwatched: Boolean(next),
+    checkedAt: new Date().toISOString()
+  };
+
   if (next) {
     item.progress = { ...item.progress, nextSeason: next.seasonNumber, nextEpisode: next.episodeNumber };
+    item.completedAt = '';
+  }
+
+  if (disposition === 'stopped') {
+    setItemQueueStatus(item, 'library');
+  } else if (disposition === 'watch-later') {
+    setItemQueueStatus(item, 'tbr');
+  } else if (next) {
+    setItemQueueStatus(item, 'upnext');
   } else {
     setItemQueueStatus(item, 'library');
-    item.completedAt = item.completedAt || todayString();
   }
+
+  const after = JSON.stringify({
+    queueStatus: getQueueStatus(item),
+    watchDisposition: item.watchDisposition || '',
+    progress: item.progress || {},
+    tvMeta: { seriesStatus: item.tvMeta?.seriesStatus || '', hasUnwatched: Boolean(item.tvMeta?.hasUnwatched) }
+  });
+  return before !== after;
+}
+
+async function reconcileTVQueueStates() {
+  let changed = false;
+  const tvItems = state.items.filter(item => getSourceType(item) === 'tv' && item.providerId);
+  for (const item of tvItems) {
+    try {
+      if (await reconcileSingleTVItem(item)) changed = true;
+    } catch (error) {
+      console.warn(`Could not refresh TV status for ${item.title}:`, error);
+    }
+  }
+  if (changed) saveItems();
+  return changed;
+}
+
+async function syncTVProgressToFirstUnwatched(item) {
+  const changed = await reconcileSingleTVItem(item);
+  if (changed) saveItems();
+}
+
+function tvStatusLabels(item, details = null) {
+  const disposition = getTVWatchDisposition(item);
+  const status = details?.status || item.tvMeta?.seriesStatus || '';
+  const hasUnwatched = Boolean(item.tvMeta?.hasUnwatched);
+  const labels = [];
+
+  if (disposition === 'stopped') labels.push({ label: 'Stopped watching', tone: 'muted' });
+  else if (disposition === 'watch-later') labels.push({ label: 'Watch later', tone: 'later' });
+  else if (hasUnwatched) labels.push({ label: 'In progress', tone: 'progress' });
+  else if (isTerminalSeriesStatus(status)) labels.push({ label: 'Finished', tone: 'finished' });
+  else labels.push({ label: 'Up to date', tone: 'current' });
+
+  if (isCancelledSeriesStatus(status)) labels.push({ label: 'Cancelled', tone: 'cancelled' });
+  return labels;
+}
+
+function tvStatusBadgeMarkup(item, details = null) {
+  return tvStatusLabels(item, details)
+    .map(entry => `<span class="tv-status-badge tv-status-${escapeAttr(entry.tone)}">${escapeHtml(entry.label)}</span>`)
+    .join('');
+}
+
+function tvDetailControls(item) {
+  const disposition = getTVWatchDisposition(item);
+  let watchButtons = '';
+  if (disposition === 'following') {
+    watchButtons = `
+      <button class="secondary-button" type="button" data-tv-watch-action="watch-later" data-item-id="${item.id}">Watch later</button>
+      <button class="quiet-button danger-text" type="button" data-tv-watch-action="stop" data-item-id="${item.id}">Stop watching</button>`;
+  } else {
+    watchButtons = `<button class="primary-button" type="button" data-tv-watch-action="resume" data-item-id="${item.id}">Resume watching</button>`;
+  }
+  return `<div class="detail-actions tv-watch-actions">${watchButtons}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
+}
+
+async function applyTVWatchAction(item, action) {
+  if (action === 'stop') {
+    item.watchDisposition = 'stopped';
+    setItemQueueStatus(item, 'library');
+  } else if (action === 'watch-later') {
+    item.watchDisposition = 'watch-later';
+    setItemQueueStatus(item, 'tbr');
+  } else if (action === 'resume') {
+    item.watchDisposition = 'following';
+    await reconcileSingleTVItem(item);
+  } else {
+    return;
+  }
+
+  item.updatedAt = new Date().toISOString();
   saveItems();
+  renderAll();
+  await renderTVDetails(item);
 }
 
 async function logSpecificTVEpisode(item, seasonNumber, episodeNumber) {
@@ -1051,7 +1197,11 @@ async function saveItemFromForm(event) {
     active: (els.itemQueueStatus.value || 'library') === 'upnext',
     createdAt: editing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    progress: { ...(editing?.progress || {}) }
+    progress: { ...(editing?.progress || {}) },
+    ...(sourceType === 'tv' ? {
+      watchDisposition: editing?.watchDisposition || ((els.itemQueueStatus.value || 'library') === 'tbr' ? 'watch-later' : 'following'),
+      tvMeta: { ...(editing?.tvMeta || {}) }
+    } : {})
   };
 
   if (sourceType === 'tv') {
@@ -1135,6 +1285,8 @@ async function openDetails(id) {
 
 async function renderTVDetails(item) {
   const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
+  const changed = await reconcileSingleTVItem(item, details);
+  if (changed) saveItems();
   const seasonNumber = Number(item.progress?.nextSeason || 1);
   const episodeNumber = Number(item.progress?.nextEpisode || 1);
   const season = await getCached(`season:${item.providerId}:${seasonNumber}`, () => TrackerAPI.getTVSeason(item.providerId, seasonNumber, state.settings));
@@ -1167,10 +1319,12 @@ async function renderTVDetails(item) {
     </div>`;
   }).join('');
 
+  const hasUnwatched = Boolean(item.tvMeta?.hasUnwatched);
   els.detailBody.innerHTML = `
     ${detailHero({ type:'TV', title:details.name || item.title, image:TrackerAPI.tmdbImage(details.poster_path) || item.image, subtitle:[details.first_air_date?.slice(0,4), details.genres?.map(g=>g.name).join(' · ')].filter(Boolean).join(' · '), overview:details.overview || '' })}
-    <div class="detail-progress"><strong>Up next</strong>${next ? `S${seasonNumber} E${episodeNumber} · ${escapeHtml(next.name || 'Episode')}` : `S${seasonNumber} E${episodeNumber}`}</div>
-    ${detailEditButton(item)}
+    <div class="tv-status-row">${tvStatusBadgeMarkup(item, details)}</div>
+    <div class="detail-progress"><strong>${hasUnwatched ? 'Up next' : 'Progress'}</strong>${hasUnwatched && next ? `S${seasonNumber} E${episodeNumber} · ${escapeHtml(next.name || 'Episode')}` : hasUnwatched ? `S${seasonNumber} E${episodeNumber}` : isTerminalSeriesStatus(details.status) ? 'All available episodes watched.' : 'You are caught up. New aired episodes will return to Up Next automatically.'}</div>
+    ${tvDetailControls(item)}
     <section class="detail-section"><h3>Seasons</h3><div class="season-list season-list-rows">${seasons || '—'}</div></section>
     <section class="detail-section"><h3>Season ${seasonNumber}</h3><div class="episode-list">${episodes || 'No episodes found.'}</div></section>
   `;
@@ -2512,6 +2666,7 @@ async function markDiscoverSeriesWatched(key) {
       addHistoryRecord({ ...record, date: '', showOnCalendar: false });
     }
   }
+  item.watchDisposition = item.watchDisposition === 'stopped' ? 'stopped' : 'following';
   setItemQueueStatus(item, 'library');
   item.completedAt = todayString();
   if (!state.history.some(entry => entry.kind === 'series-watched' && entry.sourceItemId === item.id)) {
@@ -2740,7 +2895,11 @@ function handleLibraryClick(event) {
 
 function libraryProgressText(item) {
   const sourceType = getSourceType(item);
-  if (sourceType === 'tv') return `Next: S${item.progress?.nextSeason || 1} E${item.progress?.nextEpisode || 1}`;
+  if (sourceType === 'tv') {
+    const labels = tvStatusLabels(item).map(entry => entry.label);
+    const next = item.tvMeta?.hasUnwatched ? `Next: S${item.progress?.nextSeason || 1} E${item.progress?.nextEpisode || 1}` : '';
+    return [labels.join(' · '), next].filter(Boolean).join(' · ');
+  }
   if (sourceType === 'youtube') return `Video ${(item.progress?.currentIndex || 0) + 1}`;
   if (sourceType === 'book') {
     const current = item.progress?.currentPage || 0;
@@ -2773,6 +2932,10 @@ function setItemQueueStatus(item, status) {
   const next = ['upnext', 'tbr', 'library'].includes(status) ? status : 'library';
   item.queueStatus = next;
   item.active = next === 'upnext';
+  if (getSourceType(item) === 'tv') {
+    if (next === 'tbr') item.watchDisposition = 'watch-later';
+    else if (next === 'upnext' && item.watchDisposition !== 'stopped') item.watchDisposition = 'following';
+  }
   return item;
 }
 

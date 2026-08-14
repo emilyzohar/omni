@@ -1773,3 +1773,41 @@ h3 { margin-bottom: 0; font-size: 1.65rem; }
   .detail-section-heading .quiet-button { flex: 0 0 auto; font-size: .68rem; padding: 7px 9px; }
   .discover-card-actions { margin-top: 8px; }
 }
+
+/* TV watching state */
+.tv-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 16px;
+}
+
+.tv-status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 25px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: .7rem;
+  font-weight: 800;
+  letter-spacing: .045em;
+  text-transform: uppercase;
+  background: rgba(21,36,58,.07);
+  color: #4a5260;
+}
+
+.tv-status-progress { background: #eee2bd; color: #725817; }
+.tv-status-current { background: #dfe9d2; color: #445b2f; }
+.tv-status-finished { background: #d9e4ea; color: #36505e; }
+.tv-status-cancelled { background: #ead6d2; color: #7f3429; }
+.tv-status-later { background: #e5e0ef; color: #5e4f76; }
+.tv-status-muted { background: #e4e2de; color: #68645f; }
+.danger-text { color: #8d3027; }
+
+@media (max-width: 620px) {
+  .tv-watch-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .tv-watch-actions button { width: 100%; }
+}

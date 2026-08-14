@@ -130,22 +130,13 @@ Uploaded file blobs are stored in **IndexedDB** in the current browser. The libr
 
 Important: IndexedDB is device/browser-local. When Supabase cross-device sync is added, upload the blobs to **Supabase Storage** and keep their storage paths in the synced profile. Until then, the attachment metadata may travel with exported/synced tracker data, but the actual uploaded file is available only in the browser where it was added.
 
-## Up Next / TBR and Discover actions
+## TV queue/status behavior
 
-Items now have a queue state:
+TV shows now keep two separate states:
 
-- `upnext` — currently consuming
-- `tbr` — saved for later
-- `library` — library only
+- Personal watching state: Following, Watch later, or Stopped watching.
+- TMDB series state: the current series status returned by TMDB.
 
-The main page switches between Up Next and TBR using tabs. The normal Add/Edit form has a `Save to` selector so manual items can go directly to TBR.
+For shows you are following, the app checks for the first aired episode you have not watched. If one exists, the show is automatically moved into Up Next. When you are caught up, it leaves Up Next but remains monitored; when another episode has aired, it returns to Up Next the next time the app refreshes.
 
-On Discover:
-
-- `✓` marks a title as already watched/read and saves it to the Library without making a calendar entry.
-- `+` asks whether the title should go to Up Next or TBR.
-- Clicking a title/poster opens API-backed details.
-- TV details show streaming availability, synopsis, seasons and episodes. Episode/season checks record prior viewing in Library history only and deliberately do not create calendar stickers.
-- TV/movie cards show year, API rating and streaming providers on one metadata line when provider data is available.
-
-Calendar entries created by normal Up Next completion still work as before. Prior-consumption history from Discover is stored with `showOnCalendar: false`.
+TV library/detail labels include Up to date, Finished, Cancelled, Watch later, and Stopped watching where appropriate.
