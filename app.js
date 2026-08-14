@@ -221,8 +221,7 @@ async function bootstrapAuth() {
 }
 
 function bindAuthEvents() {
-  els.authForm?.addEventListener('submit', handleSignIn);
-  els.signUpButton?.addEventListener('click', handleSignUp);
+  els.authForm?.addEventListener('submit', handleAuthSubmit);
   els.continueLocalButton?.addEventListener('click', () => {
     localOnlyMode = true;
     unlockApp();
@@ -231,49 +230,93 @@ function bindAuthEvents() {
   els.signOutButton?.addEventListener('click', handleSignOut);
 }
 
-async function handleSignIn(event) {
+async function handleAuthSubmit(event) {
   event.preventDefault();
-  if (!hasSupabaseConfig) return;
-  const email = els.authEmail.value.trim();
-  const password = els.authPassword.value;
-  if (!email || !password) return;
-  setAuthBusy(true);
-  setAuthMessage('Signing in…', false);
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-  setAuthBusy(false);
-  if (error) {
-    setAuthMessage(error.message || 'Sign in failed.', true);
+
+  const action = event.submitter?.dataset?.authAction || 'signin';
+  if (!hasSupabaseConfig || !supabase) {
+    setAuthMessage('Supabase is not configured in this deployment. Add the Supabase URL and publishable key to the GitHub Actions secrets, then rebuild the site.', true);
     return;
   }
-  if (data.user) await startForUser(data.user);
+
+  if (!els.authForm?.reportValidity()) return;
+
+  const email = els.authEmail.value.trim();
+  const password = els.authPassword.value;
+
+  setAuthBusy(true);
+
+  try {
+    if (action === 'signup') {
+      setAuthMessage('Creating your account…', false);
+
+      // Do not force a redirect URL here. Supabase will use the Site URL
+      // configured under Authentication → URL Configuration. This avoids
+      // signup failures caused by a GitHub Pages path not matching the allow-list.
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password
+      });
+
+      if (error) {
+        const message = friendlyAuthError(error, 'signup');
+        setAuthMessage(message, true);
+        return;
+      }
+
+      if (data.session?.user) {
+        await startForUser(data.session.user);
+      } else if (data.user) {
+        setAuthMessage('Account created. Check your email for the confirmation link, then return here and sign in.', false);
+      } else {
+        setAuthMessage('Supabase accepted the signup request. If email confirmation is enabled, check your inbox before signing in.', false);
+      }
+      return;
+    }
+
+    setAuthMessage('Signing in…', false);
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      setAuthMessage(friendlyAuthError(error, 'signin'), true);
+      return;
+    }
+
+    if (data.user) await startForUser(data.user);
+  } catch (error) {
+    console.error('Authentication error:', error);
+    setAuthMessage(`Authentication failed: ${error?.message || 'Unknown error'}`, true);
+  } finally {
+    setAuthBusy(false);
+  }
 }
 
-async function handleSignUp() {
-  if (!hasSupabaseConfig) return;
-  const email = els.authEmail.value.trim();
-  const password = els.authPassword.value;
-  if (!email || !password) {
-    setAuthMessage('Enter an email and password first.', true);
-    return;
+function friendlyAuthError(error, action) {
+  const message = String(error?.message || 'Authentication failed.');
+  const lower = message.toLowerCase();
+
+  if (lower.includes('signup') && lower.includes('disabled')) {
+    return 'New account creation is disabled in Supabase. In Supabase, open Authentication → Sign In / Providers → Email and enable new-user signups.';
   }
-  setAuthBusy(true);
-  setAuthMessage('Creating your account…', false);
-  const redirectTo = new URL('index.html', window.location.href).href;
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: { emailRedirectTo: redirectTo }
-  });
-  setAuthBusy(false);
-  if (error) {
-    setAuthMessage(error.message || 'Could not create the account.', true);
-    return;
+  if (lower.includes('email') && lower.includes('disabled')) {
+    return 'Email authentication is disabled in Supabase. Enable the Email provider under Authentication → Sign In / Providers.';
   }
-  if (data.session?.user) {
-    await startForUser(data.session.user);
-  } else {
-    setAuthMessage('Account created. Check your email to confirm it, then return here and sign in.', false);
+  if (lower.includes('redirect')) {
+    return 'Supabase rejected the authentication redirect. Set the Site URL to your GitHub Pages address under Authentication → URL Configuration.';
   }
+  if (lower.includes('invalid login credentials')) {
+    return 'That email/password combination was not recognized. If you just created the account, confirm your email first.';
+  }
+  if (lower.includes('email not confirmed')) {
+    return 'Your account exists, but the email has not been confirmed yet. Open the confirmation email from Supabase first.';
+  }
+  if (lower.includes('password')) {
+    return message;
+  }
+  if (action === 'signup' && lower.includes('user already registered')) {
+    return 'An account with that email already exists. Use Sign in instead.';
+  }
+  return message;
 }
 
 async function handleSignOut() {

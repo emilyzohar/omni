@@ -219,3 +219,13 @@ TV library/detail labels include Up to date, Finished, Cancelled, Watch later, a
 ## Streaks
 
 The Library now includes a **Streaks** button. Streaks are optional per type. For each enabled type you can choose recurring weekly rest days (Monday–Sunday). A scheduled rest day neither increases nor breaks the streak. The current day is also treated as still in progress, so a streak is not broken simply because you have not logged today yet. Streak preferences are included in the Supabase profile JSON and therefore sync with the rest of the profile.
+
+## If Create account does not work
+
+In Supabase Dashboard, check all three of these:
+
+1. **Authentication → Sign In / Providers → Email**: Email provider is enabled.
+2. **Authentication settings**: new-user signups are allowed.
+3. **Authentication → URL Configuration**: Site URL is `https://emilyzohar.github.io/catch-all/`.
+
+The signup form now shows the actual Supabase error instead of silently doing nothing. It deliberately does not pass a custom `emailRedirectTo`; confirmation emails use the Site URL configured in Supabase.
