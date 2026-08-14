@@ -1,6 +1,19 @@
 import { createClient } from '@supabase/supabase-js';
 
-export const supabase = createClient(
-  import.meta.env.EXPO_PUBLIC_SUPABASE_URL,
-  import.meta.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-);
+const supabaseUrl = import.meta.env.EXPO_PUBLIC_SUPABASE_URL || '';
+const supabaseKey =
+  import.meta.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
+  '';
+
+export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
+
+export const supabase = hasSupabaseConfig
+  ? createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true
+      }
+    })
+  : null;

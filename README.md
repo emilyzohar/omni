@@ -1,3 +1,83 @@
+# Catch All tracker
+
+Responsive Vite/HTML/CSS/JavaScript tracker with Supabase login and cross-device profile sync.
+
+## What changed in this build
+
+- The desktop layout now uses the browser window instead of a narrow fixed-looking center column.
+- Large empty fixed-height sections were removed; each section sizes to its content.
+- Up Next uses two columns on wide screens and one column on smaller screens.
+- Desktop calendar uses the available width; phones/narrow tablets switch to the vertical Monday-Sunday week view at 760px.
+- Navigation stays compact and shows sync status, signed-in email, and Sign out.
+- A real Supabase email/password login is now shown before the tracker.
+- Library, history, TV/YouTube/book progress, queue state, custom types, sticker settings, and Discover preferences sync through one `user_state` row per account.
+- Existing local browser data is automatically uploaded the first time that account has no cloud profile yet.
+- Returning to a browser tab refreshes newer cloud state from another device.
+
+## 1. Supabase setup
+
+Create a Supabase project. In **SQL Editor**, run the included `supabase-setup.sql` once.
+
+Then add these to your `.env` beside `package.json`:
+
+```env
+EXPO_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+```
+
+Keep your existing TMDB / Google Books / YouTube values in the same `.env`.
+
+In Supabase **Authentication → URL Configuration**, use your deployed site as the Site URL. For the current GitHub Pages location that is:
+
+```text
+https://emilyzohar.github.io/catch-all/
+```
+
+Also add that URL to the allowed redirect URLs if email confirmation is enabled.
+
+## 2. Run on your computer
+
+```bash
+npm install
+npm run dev
+```
+
+Open the Local URL Vite prints (normally `http://localhost:5173`).
+
+To open the development copy from your phone while it is on the same Wi-Fi:
+
+```bash
+npm run dev -- --host
+```
+
+Then open Vite's **Network** URL on the phone.
+
+## 3. Build for GitHub Pages
+
+```bash
+npm run build
+```
+
+Deploy the generated `dist/` folder using the same GitHub Pages deployment method you already use. `.env` is read at build time; do not upload the `.env` file itself.
+
+Once the new build is live, open the same deployed URL on your computer and phone and sign in with the same account. The synced profile is then loaded from Supabase on both devices.
+
+## Synced vs local-only data
+
+Synced through Supabase:
+
+- Library items and ratings/notes
+- Up Next / TBR state
+- TV episode progress and watched history
+- YouTube playlist/video progress
+- Book page progress
+- Calendar history
+- Custom types
+- Sticker preferences
+- Discover/streaming-service preferences
+
+Uploaded attachment **file bytes** still live in IndexedDB in the browser where they were uploaded. Their metadata can sync, but syncing the actual image/PDF/file across devices requires moving those blobs to Supabase Storage in a later step.
+
 # Zohar Tracker
 
 Plain HTML/CSS/JavaScript tracker built with Vite only for `.env` access.
@@ -66,33 +146,23 @@ Deploy the generated `dist/` folder.
 
 ## Saving your personal data
 
-Personal state is stored in browser `localStorage`, including:
-
-- saved library items
-- ratings and notes
-- TV episode progress
-- book page progress
-- YouTube playlist/video progress
-- custom display types such as Pilates or Yoga
-- completion history used by the calendar and Discover recommendations
-
-The data persists when you close and reopen the same deployed site in the same browser. It does **not** automatically sync between browsers/devices. Supabase would be the next small backend addition if you want cross-device sync.
+The browser still keeps a local cache so the app remains fast, but the signed-in profile is now also saved to Supabase. When you open the deployed site on another device and sign into the same account, the cloud profile is loaded there.
 
 ## Mobile layout
 
-On screens 620px wide or smaller, the tracker automatically switches from the desktop month grid to a vertical Monday–Sunday week view. Use the previous/next arrows or Today button to move between weeks. Multiple entries of the same type on one day stay grouped behind one tappable row and open the existing day/type detail list.
+On screens 760px wide or smaller, the tracker automatically switches from the desktop month grid to a vertical Monday–Sunday week view. Use the previous/next arrows or Today button to move between weeks. Multiple entries of the same type on one day stay grouped behind one tappable row and open the existing day/type detail list.
 
 Discover rows become horizontally swipeable poster carousels, Up Next keeps both its detail arrow and completion control visible, Library rows collapse to the essential title/rating/edit controls, and dialogs open as mobile bottom sheets.
 
 
 ## Separate Discover page
 
-Discover now lives at `discover.html`. The main `index.html` contains Up Next, Track, and Library only. Both pages share the same `localStorage`, so saved items and recommendation history remain available when navigating between them on the same deployed origin.
+Discover now lives at `discover.html`. The main `index.html` contains Up Next, Track, and Library only. Both pages use the same signed-in Supabase profile (with local browser caching), so saved items and recommendation history stay consistent across the site and across devices.
 
 
 ## Discover preferences
 
-Discover now has a Settings button. Streaming-service selections are stored in browser localStorage under `zoharTracker.discoverPrefs.v1`. TV/movie cards available on selected subscription/free/ad-supported services in `EXPO_PUBLIC_TMDB_WATCH_REGION` are prioritized. Book recommendations prioritize authors from completed books. Items already in the library/history are excluded from Discover results.
+Discover now has a Settings button. Streaming-service selections are cached locally and included in the synced Supabase profile. TV/movie cards available on selected subscription/free/ad-supported services in `EXPO_PUBLIC_TMDB_WATCH_REGION` are prioritized. Book recommendations prioritize authors from completed books. Items already in the library/history are excluded from Discover results.
 
 Watch-provider data is supplied by TMDB/JustWatch and the Discover page includes the required attribution.
 
@@ -140,3 +210,8 @@ TV shows now keep two separate states:
 For shows you are following, the app checks for the first aired episode you have not watched. If one exists, the show is automatically moved into Up Next. When you are caught up, it leaves Up Next but remains monitored; when another episode has aired, it returns to Up Next the next time the app refreshes.
 
 TV library/detail labels include Up to date, Finished, Cancelled, Watch later, and Stopped watching where appropriate.
+
+
+## Streaks
+
+The Library now includes a **Streaks** button. Streaks are optional per type. For each enabled type you can choose recurring weekly rest days (Monday–Sunday). A scheduled rest day neither increases nor breaks the streak. The current day is also treated as still in progress, so a streak is not broken simply because you have not logged today yet. Streak preferences are included in the Supabase profile JSON and therefore sync with the rest of the profile.

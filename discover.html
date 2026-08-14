@@ -10,13 +10,50 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css" />
 </head>
-<body class="discover-page">
+<body class="discover-page auth-locked">
+  <section id="authScreen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <span class="auth-mark">CA</span>
+        <div>
+          <p class="eyebrow">CATCH ALL</p>
+          <h1>Your tracker</h1>
+        </div>
+      </div>
+      <p class="auth-copy">Sign in to keep your library, queues, progress, stickers, and calendar history synced across your computer and phone.</p>
+
+      <form id="authForm" class="auth-form">
+        <label class="field">
+          <span>Email</span>
+          <input id="authEmail" type="email" autocomplete="email" required />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input id="authPassword" type="password" autocomplete="current-password" minlength="6" required />
+        </label>
+
+        <p id="authMessage" class="auth-message" hidden></p>
+
+        <div class="auth-actions">
+          <button id="signInButton" class="primary-button auth-primary" type="submit">Sign in</button>
+          <button id="signUpButton" class="secondary-button auth-secondary" type="button">Create account</button>
+        </div>
+
+        <button id="continueLocalButton" class="auth-local-button" type="button" hidden>Continue on this device only</button>
+      </form>
+    </div>
+  </section>
+
   <header class="site-header">
     <nav class="nav shell" aria-label="Primary">
       <a href="index.html#upnext">Up Next</a>
       <a href="index.html#track">Track</a>
       <a class="active" href="discover.html" aria-current="page">Discover</a>
       <a href="index.html#library">Library</a>
+      <span class="nav-spacer"></span>
+      <span id="syncStatus" class="sync-status" aria-live="polite"></span>
+      <span id="userEmail" class="user-email"></span>
+      <button id="signOutButton" class="sign-out-button" type="button">Sign out</button>
     </nav>
   </header>
 

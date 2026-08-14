@@ -1,5 +1,6 @@
 import { TrackerAPI } from './api.js';
 import { API_CONFIG } from './config.js';
+import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
 const CACHE_KEY = 'zoharTracker.apiCache.v1';
@@ -7,10 +8,11 @@ const CUSTOM_TYPES_KEY = 'zoharTracker.customTypes.v1';
 const HISTORY_KEY = 'zoharTracker.history.v1';
 const DISCOVER_PREFS_KEY = 'zoharTracker.discoverPrefs.v1';
 const STICKER_PREFS_KEY = 'zoharTracker.stickerPrefs.v1';
+const STREAK_PREFS_KEY = 'zoharTracker.streakPrefs.v1';
 const ATTACHMENT_DB_NAME = 'zoharTracker.attachments.v1';
 const ATTACHMENT_STORE_NAME = 'files';
 const CACHE_TTL = 60 * 60 * 1000;
-const mobileCalendarQuery = window.matchMedia('(max-width: 620px)');
+const mobileCalendarQuery = window.matchMedia('(max-width: 760px)');
 
 const TYPE_LABELS = {
   tv: 'TV',
@@ -31,14 +33,26 @@ const SOURCE_ITEM_LABELS = {
 const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'other']);
 const STICKER_COLORS = ['rust', 'yellow', 'cream', 'lavender', 'navy', 'green', 'pink'];
 
+const CLOUD_STATE_VERSION = 2;
+const DEFAULT_DISCOVER_PREFS = { streamingProviderIds: [], streamingProviderNames: [], prioritizeAuthors: true };
+let currentUser = null;
+let appStarted = false;
+let localOnlyMode = false;
+let cloudSyncTimer = null;
+let cloudSyncBusy = false;
+let cloudSyncQueued = false;
+let lastCloudUpdatedAt = '';
+
+
 const state = {
   items: loadJSON(ITEMS_KEY, []),
   settings: API_CONFIG,
   cache: loadJSON(CACHE_KEY, {}),
   customTypes: loadJSON(CUSTOM_TYPES_KEY, []),
   history: loadJSON(HISTORY_KEY, []),
-  discoverPrefs: loadJSON(DISCOVER_PREFS_KEY, { streamingProviderIds: [], streamingProviderNames: [], prioritizeAuthors: true }),
+  discoverPrefs: loadJSON(DISCOVER_PREFS_KEY, DEFAULT_DISCOVER_PREFS),
   stickerPrefs: loadJSON(STICKER_PREFS_KEY, {}),
+  streakPrefs: loadJSON(STREAK_PREFS_KEY, {}),
   watchProviderCatalog: [],
   discoverProviderDraft: new Map(),
   selectedSource: null,
@@ -57,6 +71,17 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 
 const els = {
+  authScreen: $('#authScreen'),
+  authForm: $('#authForm'),
+  authEmail: $('#authEmail'),
+  authPassword: $('#authPassword'),
+  authMessage: $('#authMessage'),
+  signInButton: $('#signInButton'),
+  signUpButton: $('#signUpButton'),
+  continueLocalButton: $('#continueLocalButton'),
+  signOutButton: $('#signOutButton'),
+  userEmail: $('#userEmail'),
+  syncStatus: $('#syncStatus'),
   upNextList: $('#upNextList'),
   upNextEmpty: $('#upNextEmpty'),
   queueHeading: $('#queueHeading'),
@@ -68,6 +93,11 @@ const els = {
   stickerSettingsForm: $('#stickerSettingsForm'),
   stickerSettingsRows: $('#stickerSettingsRows'),
   resetStickerSettings: $('#resetStickerSettings'),
+  openStreakSettings: $('#openStreakSettings'),
+  streakSettingsModal: $('#streakSettingsModal'),
+  streakSettingsForm: $('#streakSettingsForm'),
+  streakSettingsRows: $('#streakSettingsRows'),
+  resetStreakSettings: $('#resetStreakSettings'),
   monthPicker: $('#monthPicker'),
   monthLabel: $('#monthLabel'),
   trackerGrid: $('#trackerGrid'),
@@ -154,7 +184,161 @@ const els = {
   progressTotalPages: $('#progressTotalPages')
 };
 
-init();
+bootstrapAuth();
+
+async function bootstrapAuth() {
+  bindAuthEvents();
+
+  if (!hasSupabaseConfig) {
+    setAuthMessage('Supabase is not configured yet. Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY to .env, then rebuild the site.', true);
+    if (els.continueLocalButton) els.continueLocalButton.hidden = false;
+    return;
+  }
+
+  setAuthMessage('Checking your session…', false);
+  const { data, error } = await supabase.auth.getSession();
+  if (error) {
+    setAuthMessage(error.message || 'Could not check your session.', true);
+    return;
+  }
+
+  if (data.session?.user) {
+    await startForUser(data.session.user);
+  } else {
+    lockApp();
+    setAuthMessage('', false);
+  }
+
+  supabase.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_OUT') {
+      currentUser = null;
+      clearLocalSyncedState();
+      window.location.reload();
+      return;
+    }
+    if (session?.user && !currentUser) startForUser(session.user);
+  });
+}
+
+function bindAuthEvents() {
+  els.authForm?.addEventListener('submit', handleSignIn);
+  els.signUpButton?.addEventListener('click', handleSignUp);
+  els.continueLocalButton?.addEventListener('click', () => {
+    localOnlyMode = true;
+    unlockApp();
+    startAppOnce();
+  });
+  els.signOutButton?.addEventListener('click', handleSignOut);
+}
+
+async function handleSignIn(event) {
+  event.preventDefault();
+  if (!hasSupabaseConfig) return;
+  const email = els.authEmail.value.trim();
+  const password = els.authPassword.value;
+  if (!email || !password) return;
+  setAuthBusy(true);
+  setAuthMessage('Signing in…', false);
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  setAuthBusy(false);
+  if (error) {
+    setAuthMessage(error.message || 'Sign in failed.', true);
+    return;
+  }
+  if (data.user) await startForUser(data.user);
+}
+
+async function handleSignUp() {
+  if (!hasSupabaseConfig) return;
+  const email = els.authEmail.value.trim();
+  const password = els.authPassword.value;
+  if (!email || !password) {
+    setAuthMessage('Enter an email and password first.', true);
+    return;
+  }
+  setAuthBusy(true);
+  setAuthMessage('Creating your account…', false);
+  const redirectTo = new URL('index.html', window.location.href).href;
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { emailRedirectTo: redirectTo }
+  });
+  setAuthBusy(false);
+  if (error) {
+    setAuthMessage(error.message || 'Could not create the account.', true);
+    return;
+  }
+  if (data.session?.user) {
+    await startForUser(data.session.user);
+  } else {
+    setAuthMessage('Account created. Check your email to confirm it, then return here and sign in.', false);
+  }
+}
+
+async function handleSignOut() {
+  if (!supabase) return;
+  setSyncStatus('Signing out…');
+  await supabase.auth.signOut();
+}
+
+async function startForUser(user) {
+  if (!user || currentUser?.id === user.id) return;
+  currentUser = user;
+  if (els.userEmail) els.userEmail.textContent = user.email || '';
+  setAuthMessage('Loading your profile…', false);
+  try {
+    await hydrateCloudProfile(user.id);
+    unlockApp();
+    startAppOnce();
+    setSyncStatus('Synced');
+    window.addEventListener('focus', refreshCloudProfile);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') refreshCloudProfile();
+    });
+  } catch (error) {
+    currentUser = null;
+    lockApp();
+    setAuthMessage(`Signed in, but your cloud profile could not load: ${error.message}`, true);
+  }
+}
+
+function startAppOnce() {
+  if (appStarted) {
+    renderAll();
+    return;
+  }
+  appStarted = true;
+  init();
+}
+
+function lockApp() {
+  document.body.classList.add('auth-locked');
+  if (els.authScreen) els.authScreen.hidden = false;
+}
+
+function unlockApp() {
+  document.body.classList.remove('auth-locked');
+  if (els.authScreen) els.authScreen.hidden = true;
+}
+
+function setAuthBusy(busy) {
+  if (els.signInButton) els.signInButton.disabled = busy;
+  if (els.signUpButton) els.signUpButton.disabled = busy;
+}
+
+function setAuthMessage(message, isError = false) {
+  if (!els.authMessage) return;
+  els.authMessage.textContent = message;
+  els.authMessage.hidden = !message;
+  els.authMessage.classList.toggle('is-error', Boolean(isError));
+}
+
+function setSyncStatus(message, isError = false) {
+  if (!els.syncStatus) return;
+  els.syncStatus.textContent = message;
+  els.syncStatus.classList.toggle('is-error', Boolean(isError));
+}
 
 function init() {
   const now = new Date();
@@ -176,6 +360,10 @@ function bindEvents() {
   els.stickerSettingsRows?.addEventListener('input', previewStickerSettings);
   els.stickerSettingsRows?.addEventListener('change', previewStickerSettings);
   els.resetStickerSettings?.addEventListener('click', resetStickerSettings);
+  els.openStreakSettings?.addEventListener('click', openStreakSettings);
+  els.streakSettingsForm?.addEventListener('submit', saveStreakSettings);
+  els.streakSettingsRows?.addEventListener('change', previewStreakSettings);
+  els.resetStreakSettings?.addEventListener('click', resetStreakSettings);
   els.itemSourceType?.addEventListener('change', () => {
     clearSourceSelectionForTypeChange();
     updateItemFormForType();
@@ -432,7 +620,7 @@ function queueCardMarkup(item, info) {
       <div>
         <p class="upnext-title">${escapeHtml(info.title || item.title)}</p>
         <p class="upnext-meta">${escapeHtml(info.meta || progressFallback(item))}</p>
-        <p class="upnext-category">${escapeHtml(getItemTypeLabel(item))}${isTBR ? ' · TBR' : ''}</p>
+        <p class="upnext-category">${escapeHtml(getItemTypeLabel(item))}${isTBR ? ' · TBR' : ''}${!isTBR ? streakInlineMarkup(item.type) : ''}</p>
         ${info.error ? `<div class="queue-error">${escapeHtml(info.error)}</div>` : ''}
       </div>
       <button class="upnext-arrow" type="button" data-action="details" data-id="${item.id}" aria-label="Open details">→</button>
@@ -2363,6 +2551,7 @@ function saveDiscoverSettings(event) {
     prioritizeAuthors: els.prioritizeAuthors.checked
   };
   localStorage.setItem(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
+  scheduleCloudSync();
   els.discoverSettingsModal.close();
   renderDiscover(true);
 }
@@ -2807,6 +2996,7 @@ function saveStickerSettings(event) {
 
   state.stickerPrefs = next;
   localStorage.setItem(STICKER_PREFS_KEY, JSON.stringify(state.stickerPrefs));
+  scheduleCloudSync();
   els.stickerSettingsModal.close();
   renderTracker();
 }
@@ -2815,6 +3005,7 @@ function resetStickerSettings() {
   if (!confirm('Reset every sticker to its default style?')) return;
   state.stickerPrefs = {};
   localStorage.removeItem(STICKER_PREFS_KEY);
+  scheduleCloudSync();
   renderStickerSettingsRows();
   renderTracker();
 }
@@ -2834,6 +3025,172 @@ function getRecognizedTypes() {
 
 function defaultStickerLabel(type) {
   return getDefaultStickerConfig(type, state.history.find(entry => entry.type === type) || {}).label || getTypeLabel(type).slice(0, 1).toUpperCase();
+}
+
+// ---------------------------
+// STREAKS
+// ---------------------------
+const WEEKDAY_OPTIONS = [
+  { value: 1, short: 'M', label: 'Monday' },
+  { value: 2, short: 'T', label: 'Tuesday' },
+  { value: 3, short: 'W', label: 'Wednesday' },
+  { value: 4, short: 'T', label: 'Thursday' },
+  { value: 5, short: 'F', label: 'Friday' },
+  { value: 6, short: 'S', label: 'Saturday' },
+  { value: 0, short: 'S', label: 'Sunday' }
+];
+
+function getStreakConfig(type) {
+  const saved = state.streakPrefs?.[type] || {};
+  return {
+    enabled: Boolean(saved.enabled),
+    restDays: Array.isArray(saved.restDays)
+      ? [...new Set(saved.restDays.map(Number).filter(day => day >= 0 && day <= 6))]
+      : []
+  };
+}
+
+function getTypeActivityDates(type) {
+  return new Set(
+    getCalendarEntries()
+      .filter(entry => entry.type === type && entry.date && entry.showOnCalendar !== false)
+      .map(entry => entry.date)
+  );
+}
+
+function calculateTypeStreak(type, overrideConfig = null) {
+  const config = overrideConfig || getStreakConfig(type);
+  if (!config.enabled) return { enabled: false, count: 0, restToday: false };
+
+  const activityDates = getTypeActivityDates(type);
+  const restDays = new Set((config.restDays || []).map(Number));
+  const now = new Date();
+  let cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+  let count = 0;
+  let firstCalendarDay = true;
+
+  // Ten years is only a safety guard against malformed dates/settings.
+  for (let guard = 0; guard < 3650; guard += 1) {
+    const weekday = cursor.getDay();
+    const date = localDateString(cursor);
+
+    if (restDays.has(weekday)) {
+      cursor = addDays(cursor, -1);
+      firstCalendarDay = false;
+      continue;
+    }
+
+    if (activityDates.has(date)) {
+      count += 1;
+      cursor = addDays(cursor, -1);
+      firstCalendarDay = false;
+      continue;
+    }
+
+    // Today is still in progress, so absence today does not break a streak yet.
+    if (firstCalendarDay) {
+      cursor = addDays(cursor, -1);
+      firstCalendarDay = false;
+      continue;
+    }
+
+    break;
+  }
+
+  return {
+    enabled: true,
+    count,
+    restToday: restDays.has(now.getDay())
+  };
+}
+
+function streakText(type, overrideConfig = null) {
+  const streak = calculateTypeStreak(type, overrideConfig);
+  if (!streak.enabled) return '';
+  const base = `${streak.count} day${streak.count === 1 ? '' : 's'} streak`;
+  return streak.restToday ? `${base} · rest today` : base;
+}
+
+function streakInlineMarkup(type) {
+  const text = streakText(type);
+  return text ? `<span class="type-streak-inline"> · ${escapeHtml(text)}</span>` : '';
+}
+
+function streakBadgeMarkup(type) {
+  const text = streakText(type);
+  return text ? `<span class="type-streak-badge">${escapeHtml(text)}</span>` : '';
+}
+
+function openStreakSettings() {
+  if (!els.streakSettingsModal || !els.streakSettingsRows) return;
+  renderStreakSettingsRows();
+  els.streakSettingsModal.showModal();
+}
+
+function renderStreakSettingsRows() {
+  if (!els.streakSettingsRows) return;
+  els.streakSettingsRows.innerHTML = '';
+
+  for (const { type, label } of getRecognizedTypes()) {
+    const config = getStreakConfig(type);
+    const row = document.createElement('div');
+    row.className = `streak-setting-row${config.enabled ? ' is-enabled' : ''}`;
+    row.dataset.streakType = type;
+    row.innerHTML = `
+      <div class="streak-setting-type"><strong>${escapeHtml(label)}</strong></div>
+      <label class="streak-toggle">
+        <input data-streak-field="enabled" type="checkbox" ${config.enabled ? 'checked' : ''} />
+        <span>On</span>
+      </label>
+      <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(label)}">
+        ${WEEKDAY_OPTIONS.map(day => `
+          <label class="rest-day-chip" title="${day.label}">
+            <input data-streak-rest-day="${day.value}" type="checkbox" ${config.restDays.includes(day.value) ? 'checked' : ''} />
+            <span>${day.short}</span>
+          </label>`).join('')}
+      </div>
+      <div class="streak-setting-current">${escapeHtml(streakText(type, config) || 'Off')}</div>`;
+    els.streakSettingsRows.appendChild(row);
+  }
+}
+
+function readStreakRowConfig(row) {
+  return {
+    enabled: Boolean(row.querySelector('[data-streak-field="enabled"]')?.checked),
+    restDays: [...row.querySelectorAll('[data-streak-rest-day]:checked')]
+      .map(input => Number(input.dataset.streakRestDay))
+  };
+}
+
+function previewStreakSettings(event) {
+  const row = event.target.closest('.streak-setting-row[data-streak-type]');
+  if (!row) return;
+  const config = readStreakRowConfig(row);
+  row.classList.toggle('is-enabled', config.enabled);
+  const current = row.querySelector('.streak-setting-current');
+  if (current) current.textContent = streakText(row.dataset.streakType, config) || 'Off';
+}
+
+function saveStreakSettings(event) {
+  event.preventDefault();
+  const next = {};
+  els.streakSettingsRows?.querySelectorAll('.streak-setting-row[data-streak-type]').forEach(row => {
+    next[row.dataset.streakType] = readStreakRowConfig(row);
+  });
+  state.streakPrefs = next;
+  localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
+  scheduleCloudSync();
+  els.streakSettingsModal?.close();
+  renderAll();
+}
+
+function resetStreakSettings() {
+  if (!confirm('Turn off all streaks and clear scheduled rest days?')) return;
+  state.streakPrefs = {};
+  localStorage.removeItem(STREAK_PREFS_KEY);
+  scheduleCloudSync();
+  renderStreakSettingsRows();
+  renderAll();
 }
 
 // ---------------------------
@@ -2867,7 +3224,7 @@ function renderLibrary() {
     if (!items?.length) continue;
     const section = document.createElement('section');
     section.className = 'library-group';
-    section.innerHTML = `<h2 class="library-group-title">${escapeHtml(getTypeLabel(type))}</h2><div class="library-items"></div>`;
+    section.innerHTML = `<div class="library-group-heading-row"><h2 class="library-group-title">${escapeHtml(getTypeLabel(type))}</h2>${streakBadgeMarkup(type)}</div><div class="library-items"></div>`;
     const list = section.querySelector('.library-items');
 
     for (const item of items) {
@@ -2989,6 +3346,7 @@ function registerCustomType(type, label) {
   else state.customTypes.push({ type, label: cleanLabel });
   state.customTypes.sort((a,b) => a.label.localeCompare(b.label));
   localStorage.setItem(CUSTOM_TYPES_KEY, JSON.stringify(state.customTypes));
+  scheduleCloudSync();
 }
 
 function refreshTypeFilter() {
@@ -3042,10 +3400,161 @@ function cachePut(key, value) {
 
 function saveItems() {
   localStorage.setItem(ITEMS_KEY, JSON.stringify(state.items));
+  scheduleCloudSync();
 }
 
 function saveHistory() {
   localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history));
+  scheduleCloudSync();
+}
+
+function buildCloudState() {
+  return {
+    version: CLOUD_STATE_VERSION,
+    items: state.items,
+    history: state.history,
+    customTypes: state.customTypes,
+    discoverPrefs: state.discoverPrefs,
+    stickerPrefs: state.stickerPrefs,
+    streakPrefs: state.streakPrefs
+  };
+}
+
+function hasMeaningfulLocalState(snapshot = buildCloudState()) {
+  return Boolean(
+    snapshot.items?.length ||
+    snapshot.history?.length ||
+    snapshot.customTypes?.length ||
+    Object.keys(snapshot.stickerPrefs || {}).length ||
+    Object.keys(snapshot.streakPrefs || {}).length ||
+    snapshot.discoverPrefs?.streamingProviderIds?.length
+  );
+}
+
+function persistCloudStateLocally(snapshot) {
+  state.items = Array.isArray(snapshot?.items) ? snapshot.items : [];
+  state.history = Array.isArray(snapshot?.history) ? snapshot.history : [];
+  state.customTypes = Array.isArray(snapshot?.customTypes) ? snapshot.customTypes : [];
+  state.discoverPrefs = snapshot?.discoverPrefs && typeof snapshot.discoverPrefs === 'object'
+    ? { ...DEFAULT_DISCOVER_PREFS, ...snapshot.discoverPrefs }
+    : { ...DEFAULT_DISCOVER_PREFS };
+  state.stickerPrefs = snapshot?.stickerPrefs && typeof snapshot.stickerPrefs === 'object'
+    ? snapshot.stickerPrefs
+    : {};
+  state.streakPrefs = snapshot?.streakPrefs && typeof snapshot.streakPrefs === 'object'
+    ? snapshot.streakPrefs
+    : {};
+
+  localStorage.setItem(ITEMS_KEY, JSON.stringify(state.items));
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history));
+  localStorage.setItem(CUSTOM_TYPES_KEY, JSON.stringify(state.customTypes));
+  localStorage.setItem(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
+  localStorage.setItem(STICKER_PREFS_KEY, JSON.stringify(state.stickerPrefs));
+  localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
+}
+
+async function hydrateCloudProfile(userId) {
+  if (!supabase || !userId) return;
+
+  const localSnapshot = buildCloudState();
+  const { data, error } = await supabase
+    .from('user_state')
+    .select('state, updated_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  if (data?.state) {
+    persistCloudStateLocally(data.state);
+    lastCloudUpdatedAt = data.updated_at || '';
+    return;
+  }
+
+  const initialState = localSnapshot;
+  const updatedAt = new Date().toISOString();
+  const { error: insertError } = await supabase
+    .from('user_state')
+    .upsert({
+      user_id: userId,
+      state: initialState,
+      updated_at: updatedAt
+    });
+
+  if (insertError) throw insertError;
+  lastCloudUpdatedAt = updatedAt;
+}
+
+function scheduleCloudSync() {
+  if (localOnlyMode || !currentUser || !supabase) return;
+  clearTimeout(cloudSyncTimer);
+  setSyncStatus('Saving…');
+  cloudSyncTimer = setTimeout(pushCloudState, 350);
+}
+
+async function pushCloudState() {
+  if (localOnlyMode || !currentUser || !supabase) return;
+  if (cloudSyncBusy) {
+    cloudSyncQueued = true;
+    return;
+  }
+
+  cloudSyncBusy = true;
+  const updatedAt = new Date().toISOString();
+
+  try {
+    const { error } = await supabase
+      .from('user_state')
+      .upsert({
+        user_id: currentUser.id,
+        state: buildCloudState(),
+        updated_at: updatedAt
+      });
+
+    if (error) throw error;
+    lastCloudUpdatedAt = updatedAt;
+    setSyncStatus('Synced');
+  } catch (error) {
+    setSyncStatus('Not synced', true);
+    console.error('Cloud sync failed:', error);
+  } finally {
+    cloudSyncBusy = false;
+    if (cloudSyncQueued) {
+      cloudSyncQueued = false;
+      scheduleCloudSync();
+    }
+  }
+}
+
+async function refreshCloudProfile() {
+  if (localOnlyMode || !currentUser || !supabase || cloudSyncBusy) return;
+
+  try {
+    const { data, error } = await supabase
+      .from('user_state')
+      .select('state, updated_at')
+      .eq('user_id', currentUser.id)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data?.state || !data.updated_at || data.updated_at === lastCloudUpdatedAt) return;
+
+    if (!lastCloudUpdatedAt || new Date(data.updated_at) > new Date(lastCloudUpdatedAt)) {
+      persistCloudStateLocally(data.state);
+      lastCloudUpdatedAt = data.updated_at;
+      if (appStarted) renderAll();
+      setSyncStatus('Synced');
+    }
+  } catch (error) {
+    console.error('Cloud refresh failed:', error);
+    setSyncStatus('Offline', true);
+  }
+}
+
+function clearLocalSyncedState() {
+  [ITEMS_KEY, HISTORY_KEY, CUSTOM_TYPES_KEY, DISCOVER_PREFS_KEY, STICKER_PREFS_KEY, STREAK_PREFS_KEY].forEach(key => {
+    localStorage.removeItem(key);
+  });
 }
 
 function addHistoryRecord(record) {

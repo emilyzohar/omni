@@ -10,13 +10,50 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+<body class="auth-locked">
+  <section id="authScreen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <span class="auth-mark">CA</span>
+        <div>
+          <p class="eyebrow">CATCH ALL</p>
+          <h1>Your tracker</h1>
+        </div>
+      </div>
+      <p class="auth-copy">Sign in to keep your library, queues, progress, stickers, and calendar history synced across your computer and phone.</p>
+
+      <form id="authForm" class="auth-form">
+        <label class="field">
+          <span>Email</span>
+          <input id="authEmail" type="email" autocomplete="email" required />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input id="authPassword" type="password" autocomplete="current-password" minlength="6" required />
+        </label>
+
+        <p id="authMessage" class="auth-message" hidden></p>
+
+        <div class="auth-actions">
+          <button id="signInButton" class="primary-button auth-primary" type="submit">Sign in</button>
+          <button id="signUpButton" class="secondary-button auth-secondary" type="button">Create account</button>
+        </div>
+
+        <button id="continueLocalButton" class="auth-local-button" type="button" hidden>Continue on this device only</button>
+      </form>
+    </div>
+  </section>
+
   <header class="site-header">
     <nav class="nav shell" aria-label="Primary">
       <a href="#upnext">Up Next</a>
       <a href="#track">Track</a>
       <a href="discover.html">Discover</a>
       <a href="#library">Library</a>
+      <span class="nav-spacer"></span>
+      <span id="syncStatus" class="sync-status" aria-live="polite"></span>
+      <span id="userEmail" class="user-email"></span>
+      <button id="signOutButton" class="sign-out-button" type="button">Sign out</button>
     </nav>
   </header>
 
@@ -79,6 +116,7 @@
           <div class="library-controls">
             <button id="openLibraryAdd" class="library-add-button" type="button">+ Add</button>
             <button id="openStickerSettings" class="library-add-button" type="button">Stickers</button>
+            <button id="openStreakSettings" class="library-add-button" type="button">Streaks</button>
             <label class="filter-control">
               <span>Filter by type</span>
               <select id="typeFilter">
@@ -119,6 +157,30 @@
         <div class="actions-right">
           <button class="quiet-button" type="button" data-close="stickerSettingsModal">Cancel</button>
           <button class="primary-button" type="submit">Save stickers</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- STREAK SETTINGS -->
+  <dialog id="streakSettingsModal" class="modal streak-settings-modal">
+    <button class="modal-x" type="button" data-close="streakSettingsModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">TRACKING</p>
+      <h2>Streaks</h2>
+      <p class="streak-settings-intro">Turn streaks on only for the types you care about. Scheduled weekly rest days are skipped: they do not increase the streak and they do not break it.</p>
+    </div>
+
+    <form id="streakSettingsForm" class="streak-settings-form">
+      <div class="streak-settings-head" aria-hidden="true">
+        <span>Type</span><span>Track streak</span><span>Weekly rest days</span><span>Current</span>
+      </div>
+      <div id="streakSettingsRows" class="streak-settings-rows"></div>
+      <div class="modal-actions">
+        <button id="resetStreakSettings" class="quiet-button" type="button">Reset streaks</button>
+        <div class="actions-right">
+          <button class="quiet-button" type="button" data-close="streakSettingsModal">Cancel</button>
+          <button class="primary-button" type="submit">Save streaks</button>
         </div>
       </div>
     </form>
