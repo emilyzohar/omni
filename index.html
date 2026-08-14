@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#720014" />
+  <title>Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav shell" aria-label="Primary">
+      <a href="#upnext">Up Next</a>
+      <a href="#track">Track</a>
+      <a href="discover.html">Discover</a>
+      <a href="#library">Library</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="upnext" class="upnext-section">
+      <div class="shell upnext-shell">
+        <div class="section-title-row compact-title-row queue-title-row">
+          <div>
+            <p class="eyebrow">YOUR QUEUE</p>
+            <h1 id="queueHeading">Up Next</h1>
+          </div>
+          <div class="queue-tabs" role="tablist" aria-label="Queue">
+            <button class="queue-tab is-active" type="button" data-queue-tab="upnext" role="tab" aria-selected="true">Up Next</button>
+            <button class="queue-tab" type="button" data-queue-tab="tbr" role="tab" aria-selected="false">TBR</button>
+          </div>
+        </div>
+
+        <div id="upNextList" class="upnext-list" aria-live="polite"></div>
+        <p id="upNextEmpty" class="empty-state">Add something to Up Next to start your queue.</p>
+
+        <div class="floating-tools">
+          <button id="openAddModal" class="plus-button" type="button" aria-label="Add item">+</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="track" class="track-section">
+      <div class="shell">
+        <div class="track-heading">
+          <div>
+            <p class="eyebrow light">DATED ITEMS</p>
+            <h1 id="monthLabel">August</h1>
+          </div>
+          <div class="calendar-controls">
+            <input id="monthPicker" class="month-picker" type="month" aria-label="Choose month" />
+            <div id="weekControls" class="week-controls" aria-label="Choose week">
+              <button id="previousWeek" class="week-nav-button" type="button" aria-label="Previous week">←</button>
+              <button id="currentWeek" class="week-today-button" type="button">Today</button>
+              <button id="nextWeek" class="week-nav-button" type="button" aria-label="Next week">→</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="tracker-scroll">
+          <div id="trackerGrid" class="tracker-grid"></div>
+        </div>
+        <p class="tracker-note"><span class="desktop-calendar-note">Click a sticker to open its full entry.</span><span class="mobile-calendar-note">Tap a row to open everything logged for that type and day.</span></p>
+      </div>
+    </section>
+
+
+    <section id="library" class="library-section">
+      <div class="shell">
+        <div class="library-heading">
+          <div>
+            <p class="eyebrow">EVERYTHING</p>
+            <h1>Library</h1>
+          </div>
+
+          <div class="library-controls">
+            <button id="openLibraryAdd" class="library-add-button" type="button">+ Add</button>
+            <button id="openStickerSettings" class="library-add-button" type="button">Stickers</button>
+            <label class="filter-control">
+              <span>Filter by type</span>
+              <select id="typeFilter">
+                <option value="all">All</option>
+                <option value="tv">TV</option>
+                <option value="movie">Movies</option>
+                <option value="book">Books</option>
+                <option value="music">Music</option>
+                <option value="workout">Workouts</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div id="libraryGroups" class="library-groups"></div>
+        <p id="libraryEmpty" class="empty-state library-empty">Nothing saved yet.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- STICKER CUSTOMIZATION -->
+  <dialog id="stickerSettingsModal" class="modal sticker-settings-modal">
+    <button class="modal-x" type="button" data-close="stickerSettingsModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">CALENDAR</p>
+      <h2>Customize stickers</h2>
+      <p class="sticker-settings-intro">Choose how each type looks on your calendar. Changes apply to every sticker of that type.</p>
+    </div>
+
+    <form id="stickerSettingsForm" class="sticker-settings-form">
+      <div class="sticker-settings-head" aria-hidden="true">
+        <span>Type</span><span>Preview</span><span>Shape</span><span>Text</span><span>Color</span>
+      </div>
+      <div id="stickerSettingsRows" class="sticker-settings-rows"></div>
+      <div class="modal-actions">
+        <button id="resetStickerSettings" class="quiet-button" type="button">Reset defaults</button>
+        <div class="actions-right">
+          <button class="quiet-button" type="button" data-close="stickerSettingsModal">Cancel</button>
+          <button class="primary-button" type="submit">Save stickers</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ADD / EDIT -->
+  <dialog id="itemModal" class="modal item-modal">
+    <button class="modal-x" type="button" data-close="itemModal" aria-label="Close">×</button>
+
+    <div class="modal-heading">
+      <p id="itemModalEyebrow" class="modal-eyebrow">ADD</p>
+      <h2 id="itemModalTitle">Add something</h2>
+    </div>
+
+    <form id="itemForm" class="item-form">
+      <input id="editingId" type="hidden" />
+      <input id="provider" type="hidden" />
+      <input id="providerId" type="hidden" />
+      <input id="providerImage" type="hidden" />
+      <input id="providerSubtitle" type="hidden" />
+
+      <label class="field">
+        <span>Type</span>
+        <select id="itemSourceType" required>
+          <option value="tv">TV</option>
+          <option value="movie">Movie</option>
+          <option value="book">Book</option>
+          <option value="music">Music</option>
+          <option value="youtube">YouTube</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+
+      <label id="displayTypeBlock" class="field" hidden>
+        <span id="displayTypeLabel">Display as</span>
+        <input id="itemDisplayType" type="text" autocomplete="off" placeholder="Workout" />
+        <small id="displayTypeHint" class="field-hint">This is how the type will appear in Up Next, the tracker, and your library.</small>
+      </label>
+
+      <div id="catalogueSearchBlock">
+        <label class="field">
+          <span>Find it</span>
+          <div class="search-row">
+            <input id="catalogueQuery" type="search" autocomplete="off" placeholder="Search title" />
+            <button id="catalogueSearchButton" class="secondary-button" type="button">Search</button>
+          </div>
+        </label>
+        <div id="searchResults" class="search-results" hidden></div>
+        <div id="selectedSource" class="selected-source" hidden></div>
+      </div>
+
+      <div id="workoutBlock" hidden>
+        <label class="field">
+          <span>YouTube playlist URL or ID</span>
+          <div class="search-row">
+            <input id="playlistInput" type="text" placeholder="https://youtube.com/playlist?list=..." />
+            <button id="playlistLoadButton" class="secondary-button" type="button">Load</button>
+          </div>
+        </label>
+        <div id="playlistPreview" class="selected-source" hidden></div>
+      </div>
+
+      <div id="manualTitleBlock">
+        <label class="field">
+          <span>Title</span>
+          <input id="manualTitle" type="text" placeholder="Title" required />
+        </label>
+      </div>
+
+      <div id="tvProgressFields" class="progress-fields" hidden>
+        <p class="field-label">Next episode</p>
+        <div class="two-column-fields">
+          <label class="field compact-field">
+            <span>Season</span>
+            <input id="nextSeason" type="number" min="1" step="1" value="1" />
+          </label>
+          <label class="field compact-field">
+            <span>Episode</span>
+            <input id="nextEpisode" type="number" min="1" step="1" value="1" />
+          </label>
+        </div>
+      </div>
+
+      <div id="bookProgressFields" class="progress-fields" hidden>
+        <div class="two-column-fields">
+          <label class="field compact-field">
+            <span>Current page</span>
+            <input id="bookCurrentPage" type="number" min="0" step="1" value="0" />
+          </label>
+          <label class="field compact-field">
+            <span>Total pages</span>
+            <input id="bookTotalPages" type="number" min="1" step="1" />
+          </label>
+        </div>
+      </div>
+
+      <fieldset class="rating-fieldset">
+        <legend>Rating <span>optional</span></legend>
+        <div id="starPicker" class="star-picker" aria-label="Rating out of five stars">
+          <button type="button" data-rating="1" aria-label="1 star">★</button>
+          <button type="button" data-rating="2" aria-label="2 stars">★</button>
+          <button type="button" data-rating="3" aria-label="3 stars">★</button>
+          <button type="button" data-rating="4" aria-label="4 stars">★</button>
+          <button type="button" data-rating="5" aria-label="5 stars">★</button>
+          <button id="clearRating" class="clear-rating" type="button">clear</button>
+        </div>
+        <input id="itemRating" type="hidden" value="0" />
+      </fieldset>
+
+      <label class="field">
+        <span>Note <em>optional</em></span>
+        <textarea id="itemNote" rows="3" placeholder="Anything you want to remember"></textarea>
+      </label>
+
+      <section class="attachment-editor">
+        <div class="attachment-editor-heading">
+          <span>Files, images & links <em>optional</em></span>
+          <small>Images and viewable files open inside the site.</small>
+        </div>
+
+        <label class="attachment-upload-button">
+          <input id="itemFiles" type="file" multiple />
+          <span>+ Add files or images</span>
+        </label>
+        <div id="attachmentEditorList" class="attachment-editor-list"></div>
+
+        <div class="link-editor">
+          <input id="itemLinkLabel" type="text" placeholder="Link label (optional)" />
+          <input id="itemLinkUrl" type="url" inputmode="url" placeholder="https://…" />
+          <button id="addItemLink" class="secondary-button" type="button">Add link</button>
+        </div>
+        <div id="linkEditorList" class="attachment-editor-list"></div>
+      </section>
+
+      <label class="field">
+        <span>Date <em>optional</em></span>
+        <input id="itemDate" type="date" />
+      </label>
+
+      <label id="queueStatusField" class="field">
+        <span>Save to</span>
+        <select id="itemQueueStatus">
+          <option value="library">Library only</option>
+          <option value="upnext">Up Next</option>
+          <option value="tbr">TBR</option>
+        </select>
+      </label>
+
+      <p id="formMessage" class="form-message" hidden></p>
+
+      <div class="modal-actions">
+        <button id="deleteItem" class="delete-button" type="button" hidden>Delete</button>
+        <div class="actions-right">
+          <button class="quiet-button" type="button" data-close="itemModal">Cancel</button>
+          <button class="primary-button" type="submit">Save</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- DETAILS -->
+  <dialog id="detailModal" class="modal detail-modal">
+    <button class="modal-x" type="button" data-close="detailModal" aria-label="Close">×</button>
+    <div id="detailBody" class="detail-body"></div>
+  </dialog>
+
+  <!-- ATTACHMENT VIEWER -->
+  <dialog id="attachmentModal" class="modal attachment-modal">
+    <button class="modal-x" type="button" data-close="attachmentModal" aria-label="Close">×</button>
+    <div class="attachment-viewer-heading">
+      <p class="modal-eyebrow">ATTACHMENT</p>
+      <h2 id="attachmentTitle">File</h2>
+    </div>
+    <div id="attachmentBody" class="attachment-viewer-body"></div>
+  </dialog>
+
+  <!-- BOOK PAGE UPDATE -->
+  <dialog id="bookProgressModal" class="modal small-modal">
+    <button class="modal-x" type="button" data-close="bookProgressModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">BOOK PROGRESS</p>
+      <h2 id="bookProgressTitle">Update pages</h2>
+    </div>
+    <form id="bookProgressForm" class="book-progress-form">
+      <input id="bookProgressId" type="hidden" />
+      <label class="field">
+        <span>Current page</span>
+        <input id="progressCurrentPage" type="number" min="0" step="1" required />
+      </label>
+      <label class="field">
+        <span>Total pages</span>
+        <input id="progressTotalPages" type="number" min="1" step="1" />
+      </label>
+      <div class="modal-actions end-only">
+        <div class="actions-right">
+          <button class="quiet-button" type="button" data-close="bookProgressModal">Cancel</button>
+          <button class="primary-button" type="submit">Update</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

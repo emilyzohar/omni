@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#720014" />
+  <title>Discover · Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="discover-page">
+  <header class="site-header">
+    <nav class="nav shell" aria-label="Primary">
+      <a href="index.html#upnext">Up Next</a>
+      <a href="index.html#track">Track</a>
+      <a class="active" href="discover.html" aria-current="page">Discover</a>
+      <a href="index.html#library">Library</a>
+    </nav>
+  </header>
+
+  <main>
+
+    <section id="discover" class="discover-section">
+      <div class="shell">
+        <div class="discover-heading">
+          <div>
+            <p class="eyebrow">FIND SOMETHING NEW</p>
+            <h1>Discover</h1>
+          </div>
+          <div class="discover-heading-actions">
+            <button id="openDiscoverSettings" class="secondary-button" type="button">Settings</button>
+            <button id="refreshDiscover" class="secondary-button" type="button">Refresh</button>
+          </div>
+        </div>
+
+        <div id="discoverStatus" class="discover-status">Loading recommendations…</div>
+
+        <div id="discoverSections" class="discover-sections">
+          <section class="discover-block" data-discover-block="trending-tv">
+            <div class="discover-block-heading"><h2>Trending TV</h2><span>This week</span></div>
+            <div id="discoverTrendingTV" class="discover-grid"></div>
+          </section>
+
+          <section class="discover-block" data-discover-block="trending-movies">
+            <div class="discover-block-heading"><h2>Trending Movies</h2><span>This week</span></div>
+            <div id="discoverTrendingMovies" class="discover-grid"></div>
+          </section>
+
+          <section class="discover-block" data-discover-block="new-books">
+            <div class="discover-block-heading"><h2>New Books</h2><span>Recently published</span></div>
+            <div id="discoverNewBooks" class="discover-grid"></div>
+          </section>
+
+          <section id="discoverRecommendationsBlock" class="discover-block" hidden>
+            <div class="discover-block-heading"><h2>For You</h2><span>Based on your library and progress</span></div>
+            <div id="discoverRecommendations" class="recommendation-groups"></div>
+          </section>
+        </div>
+
+        <p id="watchProviderAttribution" class="watch-provider-attribution">Streaming availability data by JustWatch via TMDB.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- DISCOVER SETTINGS -->
+  <dialog id="discoverSettingsModal" class="modal discover-settings-modal">
+    <button class="modal-x" type="button" data-close="discoverSettingsModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">DISCOVER</p>
+      <h2>Settings</h2>
+    </div>
+
+    <form id="discoverSettingsForm" class="discover-settings-form">
+      <section class="settings-section">
+        <div>
+          <h3>Streaming services</h3>
+          <p class="settings-note">Choose the services you have. TV and movie recommendations available on these services will be moved toward the front.</p>
+        </div>
+
+        <label class="field">
+          <span>Find a service</span>
+          <input id="streamingProviderSearch" type="search" autocomplete="off" placeholder="Netflix, Crave, Disney Plus…" />
+        </label>
+
+        <div id="streamingProviderOptions" class="streaming-provider-options">
+          <p class="provider-loading">Loading services…</p>
+        </div>
+        <p id="streamingRegionNote" class="settings-note"></p>
+      </section>
+
+      <label class="checkbox-field preference-checkbox">
+        <input id="prioritizeAuthors" type="checkbox" checked />
+        <span>Prioritize books by authors I’ve already finished</span>
+      </label>
+
+      <div class="modal-actions">
+        <button id="clearStreamingProviders" class="quiet-button" type="button">Clear services</button>
+        <div class="actions-right">
+          <button class="quiet-button" type="button" data-close="discoverSettingsModal">Cancel</button>
+          <button class="primary-button" type="submit">Save settings</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ADD / EDIT -->
+  <dialog id="itemModal" class="modal item-modal">
+    <button class="modal-x" type="button" data-close="itemModal" aria-label="Close">×</button>
+
+    <div class="modal-heading">
+      <p id="itemModalEyebrow" class="modal-eyebrow">ADD</p>
+      <h2 id="itemModalTitle">Add something</h2>
+    </div>
+
+    <form id="itemForm" class="item-form">
+      <input id="editingId" type="hidden" />
+      <input id="provider" type="hidden" />
+      <input id="providerId" type="hidden" />
+      <input id="providerImage" type="hidden" />
+      <input id="providerSubtitle" type="hidden" />
+
+      <label class="field">
+        <span>Type</span>
+        <select id="itemSourceType" required>
+          <option value="tv">TV</option>
+          <option value="movie">Movie</option>
+          <option value="book">Book</option>
+          <option value="music">Music</option>
+          <option value="youtube">YouTube</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+
+      <label id="displayTypeBlock" class="field" hidden>
+        <span id="displayTypeLabel">Display as</span>
+        <input id="itemDisplayType" type="text" autocomplete="off" placeholder="Workout" />
+        <small id="displayTypeHint" class="field-hint">This is how the type will appear in Up Next, the tracker, and your library.</small>
+      </label>
+
+      <div id="catalogueSearchBlock">
+        <label class="field">
+          <span>Find it</span>
+          <div class="search-row">
+            <input id="catalogueQuery" type="search" autocomplete="off" placeholder="Search title" />
+            <button id="catalogueSearchButton" class="secondary-button" type="button">Search</button>
+          </div>
+        </label>
+        <div id="searchResults" class="search-results" hidden></div>
+        <div id="selectedSource" class="selected-source" hidden></div>
+      </div>
+
+      <div id="workoutBlock" hidden>
+        <label class="field">
+          <span>YouTube playlist URL or ID</span>
+          <div class="search-row">
+            <input id="playlistInput" type="text" placeholder="https://youtube.com/playlist?list=..." />
+            <button id="playlistLoadButton" class="secondary-button" type="button">Load</button>
+          </div>
+        </label>
+        <div id="playlistPreview" class="selected-source" hidden></div>
+      </div>
+
+      <div id="manualTitleBlock">
+        <label class="field">
+          <span>Title</span>
+          <input id="manualTitle" type="text" placeholder="Title" required />
+        </label>
+      </div>
+
+      <div id="tvProgressFields" class="progress-fields" hidden>
+        <p class="field-label">Next episode</p>
+        <div class="two-column-fields">
+          <label class="field compact-field">
+            <span>Season</span>
+            <input id="nextSeason" type="number" min="1" step="1" value="1" />
+          </label>
+          <label class="field compact-field">
+            <span>Episode</span>
+            <input id="nextEpisode" type="number" min="1" step="1" value="1" />
+          </label>
+        </div>
+      </div>
+
+      <div id="bookProgressFields" class="progress-fields" hidden>
+        <div class="two-column-fields">
+          <label class="field compact-field">
+            <span>Current page</span>
+            <input id="bookCurrentPage" type="number" min="0" step="1" value="0" />
+          </label>
+          <label class="field compact-field">
+            <span>Total pages</span>
+            <input id="bookTotalPages" type="number" min="1" step="1" />
+          </label>
+        </div>
+      </div>
+
+      <fieldset class="rating-fieldset">
+        <legend>Rating <span>optional</span></legend>
+        <div id="starPicker" class="star-picker" aria-label="Rating out of five stars">
+          <button type="button" data-rating="1" aria-label="1 star">★</button>
+          <button type="button" data-rating="2" aria-label="2 stars">★</button>
+          <button type="button" data-rating="3" aria-label="3 stars">★</button>
+          <button type="button" data-rating="4" aria-label="4 stars">★</button>
+          <button type="button" data-rating="5" aria-label="5 stars">★</button>
+          <button id="clearRating" class="clear-rating" type="button">clear</button>
+        </div>
+        <input id="itemRating" type="hidden" value="0" />
+      </fieldset>
+
+      <label class="field">
+        <span>Note <em>optional</em></span>
+        <textarea id="itemNote" rows="3" placeholder="Anything you want to remember"></textarea>
+      </label>
+
+      <section class="attachment-editor">
+        <div class="attachment-editor-heading">
+          <span>Files, images & links <em>optional</em></span>
+          <small>Images and viewable files open inside the site.</small>
+        </div>
+
+        <label class="attachment-upload-button">
+          <input id="itemFiles" type="file" multiple />
+          <span>+ Add files or images</span>
+        </label>
+        <div id="attachmentEditorList" class="attachment-editor-list"></div>
+
+        <div class="link-editor">
+          <input id="itemLinkLabel" type="text" placeholder="Link label (optional)" />
+          <input id="itemLinkUrl" type="url" inputmode="url" placeholder="https://…" />
+          <button id="addItemLink" class="secondary-button" type="button">Add link</button>
+        </div>
+        <div id="linkEditorList" class="attachment-editor-list"></div>
+      </section>
+
+      <label class="field">
+        <span>Date <em>optional</em></span>
+        <input id="itemDate" type="date" />
+      </label>
+
+      <label id="queueStatusField" class="field">
+        <span>Save to</span>
+        <select id="itemQueueStatus">
+          <option value="library">Library only</option>
+          <option value="upnext">Up Next</option>
+          <option value="tbr">TBR</option>
+        </select>
+      </label>
+
+      <p id="formMessage" class="form-message" hidden></p>
+
+      <div class="modal-actions">
+        <button id="deleteItem" class="delete-button" type="button" hidden>Delete</button>
+        <div class="actions-right">
+          <button class="quiet-button" type="button" data-close="itemModal">Cancel</button>
+          <button class="primary-button" type="submit">Save</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- DISCOVER QUEUE CHOICE -->
+  <dialog id="discoverQueueModal" class="modal small-modal discover-queue-modal">
+    <button class="modal-x" type="button" data-close="discoverQueueModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">ADD</p>
+      <h2 id="discoverQueueTitle">Where should this go?</h2>
+    </div>
+    <p class="queue-choice-note">Up Next is for things you’re consuming now. TBR is your later list.</p>
+    <div class="queue-choice-grid">
+      <button class="queue-choice-button" type="button" data-discover-queue-choice="upnext"><strong>Up Next</strong><span>Start / continue now</span></button>
+      <button class="queue-choice-button" type="button" data-discover-queue-choice="tbr"><strong>TBR</strong><span>Save for later</span></button>
+    </div>
+  </dialog>
+
+  <!-- DETAILS -->
+  <dialog id="detailModal" class="modal detail-modal">
+    <button class="modal-x" type="button" data-close="detailModal" aria-label="Close">×</button>
+    <div id="detailBody" class="detail-body"></div>
+  </dialog>
+
+  <!-- ATTACHMENT VIEWER -->
+  <dialog id="attachmentModal" class="modal attachment-modal">
+    <button class="modal-x" type="button" data-close="attachmentModal" aria-label="Close">×</button>
+    <div class="attachment-viewer-heading">
+      <p class="modal-eyebrow">ATTACHMENT</p>
+      <h2 id="attachmentTitle">File</h2>
+    </div>
+    <div id="attachmentBody" class="attachment-viewer-body"></div>
+  </dialog>
+
+  <!-- BOOK PAGE UPDATE -->
+  <dialog id="bookProgressModal" class="modal small-modal">
+    <button class="modal-x" type="button" data-close="bookProgressModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">BOOK PROGRESS</p>
+      <h2 id="bookProgressTitle">Update pages</h2>
+    </div>
+    <form id="bookProgressForm" class="book-progress-form">
+      <input id="bookProgressId" type="hidden" />
+      <label class="field">
+        <span>Current page</span>
+        <input id="progressCurrentPage" type="number" min="0" step="1" required />
+      </label>
+      <label class="field">
+        <span>Total pages</span>
+        <input id="progressTotalPages" type="number" min="1" step="1" />
+      </label>
+      <div class="modal-actions end-only">
+        <div class="actions-right">
+          <button class="quiet-button" type="button" data-close="bookProgressModal">Cancel</button>
+          <button class="primary-button" type="submit">Update</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
