@@ -1,0 +1,71 @@
+name: Build and deploy Catch All
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Vite site
+        run: npm run build
+        env:
+          BASE_PATH: /catch-all/
+          EXPO_PUBLIC_TMDB_READ_ACCESS_TOKEN: ${{ secrets.EXPO_PUBLIC_TMDB_READ_ACCESS_TOKEN }}
+          EXPO_PUBLIC_GOOGLE_BOOKS_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_BOOKS_API_KEY }}
+          EXPO_PUBLIC_YOUTUBE_API_KEY: ${{ secrets.EXPO_PUBLIC_YOUTUBE_API_KEY }}
+          EXPO_PUBLIC_ITUNES_COUNTRY: ${{ secrets.EXPO_PUBLIC_ITUNES_COUNTRY }}
+          EXPO_PUBLIC_TMDB_WATCH_REGION: ${{ secrets.EXPO_PUBLIC_TMDB_WATCH_REGION }}
+          EXPO_PUBLIC_TICKETMASTER_API_KEY: ${{ secrets.EXPO_PUBLIC_TICKETMASTER_API_KEY }}
+          EXPO_PUBLIC_HOME_CITY: ${{ secrets.EXPO_PUBLIC_HOME_CITY }}
+          EXPO_PUBLIC_HOME_COUNTRY: ${{ secrets.EXPO_PUBLIC_HOME_COUNTRY }}
+          EXPO_PUBLIC_HOME_LAT: ${{ secrets.EXPO_PUBLIC_HOME_LAT }}
+          EXPO_PUBLIC_HOME_LON: ${{ secrets.EXPO_PUBLIC_HOME_LON }}
+          EXPO_PUBLIC_MOVIEGLU_CLIENT: ${{ secrets.EXPO_PUBLIC_MOVIEGLU_CLIENT }}
+          EXPO_PUBLIC_MOVIEGLU_API_KEY: ${{ secrets.EXPO_PUBLIC_MOVIEGLU_API_KEY }}
+          EXPO_PUBLIC_MOVIEGLU_AUTHORIZATION: ${{ secrets.EXPO_PUBLIC_MOVIEGLU_AUTHORIZATION }}
+          EXPO_PUBLIC_MOVIEGLU_TERRITORY: ${{ secrets.EXPO_PUBLIC_MOVIEGLU_TERRITORY }}
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload built site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

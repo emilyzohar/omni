@@ -1,3 +1,7 @@
+# IMPORTANT: GitHub Pages deployment
+
+This project must be built with Vite before GitHub Pages serves it. Use the included `.github/workflows/deploy-pages.yml` and set Pages → Source to **GitHub Actions**. See `GITHUB-PAGES-SETUP.md`.
+
 # Catch All tracker
 
 Responsive Vite/HTML/CSS/JavaScript tracker with Supabase login and cross-device profile sync.
