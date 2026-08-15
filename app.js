@@ -3401,15 +3401,15 @@ function renderWeekTracker() {
         button.dataset.groupKey = groupKey;
         button.dataset.date = date;
 
-        const summary = typeEntries.length === 1
-          ? [first.title, first.subtitle].filter(Boolean).join(' · ')
-          : `${typeEntries[0].title}${typeEntries.length > 1 ? ` +${typeEntries.length - 1} more` : ''}`;
+        const title = typeEntries.length === 1
+          ? first.title
+          : `${first.title}${typeEntries.length > 1 ? ` +${typeEntries.length - 1} more` : ''}`;
 
         button.innerHTML = `
           <span class="week-entry-sticker">${calendarStickerMarkup(first.type, first)}</span>
           <span class="week-entry-copy">
-            <strong>${escapeHtml(label)}</strong>
-            <small>${escapeHtml(shorten(summary, 62))}</small>
+            <strong>${escapeHtml(shorten(title, 62))}</strong>
+            <small>${escapeHtml(label)}</small>
           </span>
           ${typeEntries.length > 1 ? `<span class="week-entry-count">${typeEntries.length}</span>` : '<span class="week-entry-arrow">→</span>'}`;
         body.appendChild(button);
