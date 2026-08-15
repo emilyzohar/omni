@@ -724,6 +724,7 @@ function bindEvents() {
   document.querySelector('#discover')?.addEventListener('click', handleDiscoverClick);
   els.discoverQueueModal?.addEventListener('click', handleDiscoverQueueChoice);
   els.discoverRatingModal?.addEventListener('click', handleDiscoverRatingChoice);
+  els.detailBody?.addEventListener('click', handleDiscoverQuickMetaClick);
   els.discoverRatingModal?.addEventListener('close', () => { state.pendingDiscoverRatingKey = null; state.pendingDiscoverRatingTrackTV = false; });
   els.bookProgressForm?.addEventListener('submit', saveBookProgress);
   els.bookAddPeriod?.addEventListener('click', () => addBookPeriodEditorRow({ startDate: todayString(), endDate: '' }));
@@ -1083,7 +1084,7 @@ async function renderUpNext(options = {}) {
   // Every queue tab owns a different layout. Always clear the previous tab's
   // layout classes before rendering so TBR's poster grid cannot leak into the
   // Up Next or Calendar views.
-  els.upNextList?.classList.remove('queue-calendar-list', 'tbr-thumbnail-grid');
+  els.upNextList?.classList.remove('queue-calendar-list', 'tbr-thumbnail-grid', 'tbr-grouped-list');
 
   if (view === 'calendar') {
     await renderQueueCalendar();
@@ -1113,7 +1114,8 @@ async function renderUpNext(options = {}) {
   });
 
   const thumbnailTBR = view === 'tbr';
-  els.upNextList.classList.toggle('tbr-thumbnail-grid', thumbnailTBR);
+  els.upNextList.classList.toggle('tbr-grouped-list', thumbnailTBR);
+  els.upNextList.classList.remove('tbr-thumbnail-grid');
   els.upNextList.innerHTML = '';
   els.upNextEmpty.hidden = items.length > 0;
   els.upNextEmpty.textContent = items.length === 0 && availableItems.length > 0
@@ -1123,18 +1125,46 @@ async function renderUpNext(options = {}) {
       : 'Add something to Up Next to start your queue.';
 
   if (thumbnailTBR) {
+    const grouped = new Map();
     for (const item of items) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'tbr-thumbnail-button';
-      button.dataset.action = 'details';
-      button.dataset.id = item.id;
-      button.setAttribute('aria-label', `Open ${item.title}`);
-      button.title = item.title;
-      button.innerHTML = item.image
-        ? `<img class="tbr-thumbnail-image" src="${escapeAttr(item.image)}" alt="" loading="lazy" />`
-        : `<span class="tbr-thumbnail-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`;
-      els.upNextList.appendChild(button);
+      const key = queueTypeGroupKey(item);
+      if (!grouped.has(key)) grouped.set(key, { label: getItemTypeLabel(item), items: [] });
+      grouped.get(key).items.push(item);
+    }
+
+    const preferred = ['TV', 'Movie', 'Book'];
+    const groups = [...grouped.values()].sort((a, b) => {
+      const ai = preferred.indexOf(a.label);
+      const bi = preferred.indexOf(b.label);
+      if (ai >= 0 || bi >= 0) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
+      return a.label.localeCompare(b.label);
+    });
+
+    for (const group of groups) {
+      const section = document.createElement('section');
+      section.className = 'tbr-type-section';
+      const heading = document.createElement('h3');
+      heading.className = 'tbr-type-heading';
+      heading.textContent = group.label;
+      const grid = document.createElement('div');
+      grid.className = 'tbr-type-grid';
+
+      for (const item of group.items) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'tbr-thumbnail-button';
+        button.dataset.action = 'details';
+        button.dataset.id = item.id;
+        button.setAttribute('aria-label', `Open ${item.title}`);
+        button.title = item.title;
+        button.innerHTML = item.image
+          ? `<img class="tbr-thumbnail-image" src="${escapeAttr(item.image)}" alt="" loading="lazy" />`
+          : `<span class="tbr-thumbnail-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`;
+        grid.appendChild(button);
+      }
+
+      section.append(heading, grid);
+      els.upNextList.appendChild(section);
     }
     return;
   }
@@ -6928,12 +6958,27 @@ function openDiscoverRatingPrompt(key, { allowTV = false } = {}) {
   els.discoverRatingModal.showModal();
 }
 
-function handleDiscoverRatingChoice(event) {
+async function handleDiscoverRatingChoice(event) {
+  const heart = event.target.closest('[data-discover-recommend]');
+  if (heart && state.pendingDiscoverRatingKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    const key = state.pendingDiscoverRatingKey;
+    await toggleDiscoverRecommended(key);
+    return;
+  }
+
   const choice = event.target.closest('[data-discover-rating-choice]');
   if (choice && state.pendingDiscoverRatingKey) {
+    event.preventDefault();
+    event.stopPropagation();
     const key = state.pendingDiscoverRatingKey;
     const trackTV = Boolean(state.pendingDiscoverRatingTrackTV);
-    persistDiscoverRating(key, Number(choice.dataset.discoverRatingChoice));
+    const rating = Number(choice.dataset.discoverRatingChoice);
+    els.discoverRatingPicker?.querySelectorAll('[data-discover-rating-choice]').forEach(button => {
+      button.classList.toggle('filled', Number(button.dataset.discoverRatingChoice) <= rating);
+    });
+    persistDiscoverRating(key, rating);
     state.pendingDiscoverRatingKey = null;
     state.pendingDiscoverRatingTrackTV = false;
     els.discoverRatingModal?.close();
@@ -6941,12 +6986,44 @@ function handleDiscoverRatingChoice(event) {
     return;
   }
   if (event.target.closest('[data-discover-rating-skip]')) {
+    event.preventDefault();
+    event.stopPropagation();
     const key = state.pendingDiscoverRatingKey;
     const trackTV = Boolean(state.pendingDiscoverRatingTrackTV);
     state.pendingDiscoverRatingKey = null;
     state.pendingDiscoverRatingTrackTV = false;
     els.discoverRatingModal?.close();
     if (trackTV && key) openDiscoverTVTrackingAfterRating(key);
+  }
+}
+
+async function handleDiscoverQuickMetaClick(event) {
+  const ratingButton = event.target.closest('[data-discover-tv-rating]');
+  if (ratingButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    const key = ratingButton.dataset.discoverKey;
+    const rating = Number(ratingButton.dataset.discoverTvRating);
+    setDiscoverTVPendingRating(key, rating);
+    persistDiscoverRating(key, rating);
+    return;
+  }
+
+  const clearRatingButton = event.target.closest('[data-clear-discover-tv-rating]');
+  if (clearRatingButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    const key = clearRatingButton.dataset.discoverKey;
+    setDiscoverTVPendingRating(key, 0);
+    persistDiscoverRating(key, 0);
+    return;
+  }
+
+  const heart = event.target.closest('[data-discover-recommend]');
+  if (heart) {
+    event.preventDefault();
+    event.stopPropagation();
+    await toggleDiscoverRecommended(heart.dataset.discoverRecommend);
   }
 }
 
