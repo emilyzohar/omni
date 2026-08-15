@@ -6064,7 +6064,7 @@ async function hydrateLibraryStreamingBadges(jobs) {
         const extra = names.length - shown.length;
         job.badge.textContent = `${shown.join(' · ')}${extra > 0 ? ` +${extra}` : ''}`;
         job.badge.title = `${names.join(' · ')}`;
-        job.badge.hidden = false;
+        job.badge.hidden = true;
       } catch {}
     }
   }
