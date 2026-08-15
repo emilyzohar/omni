@@ -112,6 +112,7 @@ const state = {
   openDiscoverEpisode: null,
   pendingDiscoverRatingKey: null,
   pendingDiscoverRatingTrackTV: false,
+  pendingDiscoverRatingValue: 0,
   tvDraftProviderId: '',
   tvDraftWatched: new Set(),
   tvDraftInitialWatched: new Set(),
@@ -725,7 +726,7 @@ function bindEvents() {
   els.discoverQueueModal?.addEventListener('click', handleDiscoverQueueChoice);
   els.discoverRatingModal?.addEventListener('click', handleDiscoverRatingChoice);
   els.detailBody?.addEventListener('click', handleDiscoverQuickMetaClick);
-  els.discoverRatingModal?.addEventListener('close', () => { state.pendingDiscoverRatingKey = null; state.pendingDiscoverRatingTrackTV = false; });
+  els.discoverRatingModal?.addEventListener('close', () => { state.pendingDiscoverRatingKey = null; state.pendingDiscoverRatingTrackTV = false; state.pendingDiscoverRatingValue = 0; });
   els.bookProgressForm?.addEventListener('submit', saveBookProgress);
   els.bookAddPeriod?.addEventListener('click', () => addBookPeriodEditorRow({ startDate: todayString(), endDate: '' }));
   els.bookPauseResume?.addEventListener('click', toggleBookPauseResume);
@@ -6944,6 +6945,7 @@ function openDiscoverRatingPrompt(key, { allowTV = false } = {}) {
   if (els.discoverRatingTitle) els.discoverRatingTitle.textContent = `Rate ${result.title || (result.sourceType === 'book' ? 'this book' : 'this movie')}`;
   const existing = findDiscoverItem(result);
   const rating = Math.max(0, Math.min(5, Number(existing?.rating || 0)));
+  state.pendingDiscoverRatingValue = rating;
   els.discoverRatingPicker?.querySelectorAll('[data-discover-rating-choice]').forEach(button => {
     button.classList.toggle('filled', Number(button.dataset.discoverRatingChoice) <= rating);
   });
@@ -6972,26 +6974,23 @@ async function handleDiscoverRatingChoice(event) {
   if (choice && state.pendingDiscoverRatingKey) {
     event.preventDefault();
     event.stopPropagation();
-    const key = state.pendingDiscoverRatingKey;
-    const trackTV = Boolean(state.pendingDiscoverRatingTrackTV);
     const rating = Number(choice.dataset.discoverRatingChoice);
+    state.pendingDiscoverRatingValue = rating;
     els.discoverRatingPicker?.querySelectorAll('[data-discover-rating-choice]').forEach(button => {
       button.classList.toggle('filled', Number(button.dataset.discoverRatingChoice) <= rating);
     });
-    persistDiscoverRating(key, rating);
-    state.pendingDiscoverRatingKey = null;
-    state.pendingDiscoverRatingTrackTV = false;
-    els.discoverRatingModal?.close();
-    if (trackTV) openDiscoverTVTrackingAfterRating(key);
     return;
   }
-  if (event.target.closest('[data-discover-rating-skip]')) {
+  if (event.target.closest('[data-discover-rating-continue]')) {
     event.preventDefault();
     event.stopPropagation();
     const key = state.pendingDiscoverRatingKey;
     const trackTV = Boolean(state.pendingDiscoverRatingTrackTV);
+    const rating = Number(state.pendingDiscoverRatingValue || 0);
+    if (key && rating > 0) persistDiscoverRating(key, rating);
     state.pendingDiscoverRatingKey = null;
     state.pendingDiscoverRatingTrackTV = false;
+    state.pendingDiscoverRatingValue = 0;
     els.discoverRatingModal?.close();
     if (trackTV && key) openDiscoverTVTrackingAfterRating(key);
   }
