@@ -70,6 +70,7 @@ const state = {
   attachmentDraft: emptyAttachmentDraft(),
   attachmentObjectUrl: null,
   queueView: 'upnext',
+  queueTypeFilter: 'all',
   pendingDiscoverKey: null,
   openDiscoverKey: null,
   openDiscoverEpisode: null,
@@ -116,6 +117,7 @@ const els = {
   upNextEmpty: $('#upNextEmpty'),
   queueHeading: $('#queueHeading'),
   queueTabs: $$('.queue-tab[data-queue-tab]'),
+  queueTypeFilter: $('#queueTypeFilter'),
   openAddModal: $('#openAddModal'),
   openLibraryAdd: $('#openLibraryAdd'),
   openStickerSettings: $('#openStickerSettings'),
@@ -480,6 +482,10 @@ function init() {
 function bindEvents() {
   els.openAddModal?.addEventListener('click', () => openItemModal('', state.queueView === 'tbr' ? 'tbr' : 'upnext'));
   els.queueTabs?.forEach(tab => tab.addEventListener('click', () => setQueueView(tab.dataset.queueTab)));
+  els.queueTypeFilter?.addEventListener('change', () => {
+    state.queueTypeFilter = els.queueTypeFilter.value || 'all';
+    renderUpNext();
+  });
   els.openLibraryAdd?.addEventListener('click', () => openItemModal());
   els.openStickerSettings?.addEventListener('click', openStickerSettings);
   els.stickerSettingsForm?.addEventListener('submit', saveStickerSettings);
@@ -803,24 +809,47 @@ function renderAll() {
 // ---------------------------
 // UP NEXT
 // ---------------------------
+function queueTypeGroupKey(item) {
+  return slugifyType(getItemTypeLabel(item));
+}
+
+function refreshQueueTypeFilter(items = []) {
+  if (!els.queueTypeFilter) return;
+  const groups = new Map();
+  for (const item of items) {
+    const key = queueTypeGroupKey(item);
+    if (!groups.has(key)) groups.set(key, getItemTypeLabel(item));
+  }
+  const sorted = [...groups.entries()].sort((a,b) => a[1].localeCompare(b[1]));
+  if (state.queueTypeFilter !== 'all' && !groups.has(state.queueTypeFilter)) state.queueTypeFilter = 'all';
+  els.queueTypeFilter.innerHTML = '<option value="all">All types</option>' + sorted
+    .map(([key,label]) => `<option value="${escapeAttr(key)}">${escapeHtml(label)}</option>`)
+    .join('');
+  els.queueTypeFilter.value = state.queueTypeFilter || 'all';
+}
+
 async function renderUpNext() {
   const changed = await reconcileTVQueueStates();
   if (changed && els.libraryGroups) renderLibrary();
 
   const view = state.queueView === 'tbr' ? 'tbr' : 'upnext';
   const today = todayString();
-  const items = state.items
-    .filter(item => {
-      if (getQueueStatus(item) !== view) return false;
-      // Reminders live in Up Next, but stay hidden until their current
-      // scheduled occurrence is actually due. Once due, they remain visible
-      // indefinitely (including overdue) until the user checks them off.
-      if (view === 'upnext' && getSourceType(item) === 'reminder') {
-        const dueDate = getNextReminderDueDate(item);
-        return !dueDate || dueDate <= today;
-      }
-      return true;
-    })
+  const availableItems = state.items.filter(item => {
+    if (getQueueStatus(item) !== view) return false;
+    // Reminders live in Up Next, but stay hidden until their current
+    // scheduled occurrence is actually due. Once due, they remain visible
+    // indefinitely (including overdue) until the user checks them off.
+    if (view === 'upnext' && getSourceType(item) === 'reminder') {
+      const dueDate = getNextReminderDueDate(item);
+      return !dueDate || dueDate <= today;
+    }
+    return true;
+  });
+
+  refreshQueueTypeFilter(availableItems);
+  const selectedType = state.queueTypeFilter || 'all';
+  const items = availableItems
+    .filter(item => selectedType === 'all' || queueTypeGroupKey(item) === selectedType)
     .sort((a,b) => queueSortKey(a, view).localeCompare(queueSortKey(b, view)));
 
   if (els.queueHeading) els.queueHeading.textContent = view === 'tbr' ? 'TBR' : 'Up Next';
@@ -832,9 +861,11 @@ async function renderUpNext() {
 
   els.upNextList.innerHTML = '';
   els.upNextEmpty.hidden = items.length > 0;
-  els.upNextEmpty.textContent = view === 'tbr'
-    ? 'Save something for later from Discover or the + button.'
-    : 'Add something to Up Next to start your queue.';
+  els.upNextEmpty.textContent = items.length === 0 && availableItems.length > 0
+    ? 'No items match this type filter.'
+    : view === 'tbr'
+      ? 'Save something for later from Discover or the + button.'
+      : 'Add something to Up Next to start your queue.';
 
   for (const item of items) {
     const card = document.createElement('article');
@@ -3334,10 +3365,12 @@ function renderWeekTracker() {
     const day = addDays(start, offset);
     const date = localDateString(day);
     const matches = entries.filter(entry => entry.date === date);
-    const bookRanges = matches.filter(entry => entry.kind === 'book-reading-day');
     const groups = new Map();
 
-    for (const entry of matches.filter(entry => entry.kind !== 'book-reading-day')) {
+    // Mobile intentionally uses the normal sticker presentation for books.
+    // Reading-range days are grouped into the same visible type sticker as
+    // every other calendar entry instead of drawing a continuous rail.
+    for (const entry of matches) {
       const key = getCalendarTypeGroupKey(entry);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(entry);
@@ -3356,19 +3389,9 @@ function renderWeekTracker() {
     const body = document.createElement('div');
     body.className = 'week-day-events';
 
-    if (!groups.size && !bookRanges.length) {
+    if (!groups.size) {
       body.innerHTML = '<span class="week-empty">Nothing tracked</span>';
     } else {
-      for (const rangeEntry of bookRanges) {
-        const rangeButton = document.createElement('button');
-        rangeButton.type = 'button';
-        rangeButton.className = `week-book-range week-book-range-${rangeEntry.rangePosition} ${bookRangeColorClass(rangeEntry)}`;
-        rangeButton.dataset.bookRangeSource = rangeEntry.sourceItemId;
-        rangeButton.style.setProperty('--book-lane', String(bookRangeLane(rangeEntry.sourceItemId)));
-        rangeButton.innerHTML = `<span class="week-book-range-rail"></span><span class="week-book-range-copy"><strong>${escapeHtml(rangeEntry.title)}</strong><small>${escapeHtml(rangeEntry.rangePosition === 'start' || rangeEntry.rangePosition === 'single' ? 'Started reading' : rangeEntry.rangePosition === 'end' ? 'Finished / paused' : rangeEntry.rangePosition === 'open-end' ? 'Currently reading' : 'Reading')}</small></span><span class="week-entry-arrow">→</span>`;
-        body.appendChild(rangeButton);
-      }
-
       for (const [groupKey, typeEntries] of groups) {
         const first = typeEntries[0];
         const label = getCalendarTypeGroupLabel(first);
@@ -4881,11 +4904,13 @@ function openDiscoverQueueChoice(key) {
 async function handleDiscoverQueueChoice(event) {
   const button = event.target.closest('[data-discover-queue-choice]');
   if (!button || !state.pendingDiscoverKey) return;
+  const key = state.pendingDiscoverKey;
   const status = button.dataset.discoverQueueChoice === 'tbr' ? 'tbr' : 'upnext';
-  addDiscoverToQueue(state.pendingDiscoverKey, status);
+  addDiscoverToQueue(key, status);
   els.discoverQueueModal.close();
   state.pendingDiscoverKey = null;
   await renderDiscover();
+  if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
 }
 
 function addDiscoverToQueue(key, status) {
@@ -5015,7 +5040,7 @@ function hasDiscoverTVWatchHistory(item) {
 function discoverTVPersonalMetadataMarkup(item, key) {
   if (!item) return '';
   const rating = Math.max(0, Math.min(5, Number(item.rating || 0)));
-  return `<section class="detail-section discover-personal-meta" data-discover-tv-meta="${escapeAttr(key)}" data-pending-rating="${rating}">
+  return `<section class="detail-section discover-personal-meta" data-discover-tv-meta="${escapeAttr(key)}" data-item-id="${escapeAttr(item.id)}" data-pending-rating="${rating}">
     <div class="detail-section-heading">
       <div>
         <h3>Your rating & notes</h3>
@@ -5051,14 +5076,18 @@ function setDiscoverTVPendingRating(key, value) {
 }
 
 function saveDiscoverTVPersonalMetadata(key) {
-  const result = state.discoverResults.get(key);
-  if (!result) return;
-  const item = ensureDiscoverItem(result, 'library');
   const section = els.detailBody?.querySelector(`[data-discover-tv-meta="${CSS.escape(key)}"]`);
   if (!section) return;
+
+  const result = state.discoverResults.get(key);
+  let item = section.dataset.itemId ? findItem(section.dataset.itemId) : null;
+  if (!item && result) item = ensureDiscoverItem(result, 'library');
+  if (!item) return;
+
   item.rating = Math.max(0, Math.min(5, Number(section.dataset.pendingRating || 0)));
   item.notes = section.querySelector('.discover-tv-notes')?.value.trim() || '';
   item.updatedAt = new Date().toISOString();
+  section.dataset.itemId = item.id;
 
   for (const entry of state.history) {
     if (entry.sourceItemId !== item.id) continue;
@@ -5070,12 +5099,13 @@ function saveDiscoverTVPersonalMetadata(key) {
 
   saveItems();
   saveHistory();
+  renderLibrary();
+
   const status = section.querySelector('.discover-tv-meta-status');
   if (status) {
     status.textContent = 'Saved';
     setTimeout(() => { if (status.isConnected) status.textContent = ''; }, 1600);
   }
-  renderLibrary();
 }
 
 async function renderDiscoverTVDetail(key, requestedSeason = null) {
@@ -5316,9 +5346,22 @@ async function renderDiscoverBookDetail(key) {
   if (!result) return;
   const data = await getCached(`book:${result.providerId}`, () => TrackerAPI.getBookDetails(result.providerId, state.settings));
   const info = data.volumeInfo || {};
-  if (info.categories?.length) item.genres = [...new Set(info.categories)];
-  if (info.publishedDate) item.releaseDate = info.publishedDate;
-  saveItems();
+  const existing = findDiscoverItem(result);
+  if (existing) {
+    let changed = false;
+    if (info.categories?.length) {
+      const genres = [...new Set(info.categories)];
+      if (JSON.stringify(existing.genres || []) !== JSON.stringify(genres)) {
+        existing.genres = genres;
+        changed = true;
+      }
+    }
+    if (info.publishedDate && existing.releaseDate !== info.publishedDate) {
+      existing.releaseDate = info.publishedDate;
+      changed = true;
+    }
+    if (changed) saveItems();
+  }
   const image = info.imageLinks?.large?.replace('http://','https://') || info.imageLinks?.thumbnail?.replace('http://','https://') || result.image;
   const completed = isDiscoverCompleted(result);
   els.detailBody.innerHTML = `
@@ -5331,7 +5374,7 @@ async function renderDiscoverBookDetail(key) {
       <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
       <button class="secondary-button" type="button" data-discover-detail-complete="${escapeAttr(key)}" ${completed ? 'disabled' : ''}>${completed ? '✓ Read' : '✓ Mark read'}</button>
     </div>
-    ${discoverTVPersonalMetadataMarkup(findDiscoverItem(result), key)}
+    ${discoverTVPersonalMetadataMarkup(existing, key)}
     ${info.categories?.length ? `<section class="detail-section"><h3>Categories</h3><p>${escapeHtml(info.categories.join(' · '))}</p></section>` : ''}`;
 }
 

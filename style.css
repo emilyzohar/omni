@@ -4246,3 +4246,43 @@ body.auth-locked > main {
 @media (max-width: 520px) {
   .library-default-type-options { grid-template-columns: 1fr; }
 }
+
+/* Up Next type filtering */
+.queue-header-controls {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.queue-type-filter {
+  display: grid;
+  gap: 5px;
+  color: rgba(21,36,58,.65);
+  font: 700 .66rem/1 var(--sans);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.queue-type-filter select {
+  min-width: 132px;
+  min-height: 36px;
+  border: 1px solid rgba(21,36,58,.14);
+  border-radius: 999px;
+  background: rgba(255,255,255,.48);
+  color: var(--ink);
+  padding: 7px 30px 7px 12px;
+  font: 700 .76rem/1 var(--sans);
+  text-transform: none;
+  letter-spacing: 0;
+}
+@media (max-width: 760px) {
+  .compact-title-row.queue-title-row { align-items: flex-start !important; }
+  .queue-header-controls {
+    width: 100%;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 10px;
+  }
+  .queue-type-filter { min-width: 126px; }
+  .queue-type-filter select { width: 100%; min-width: 0; }
+}

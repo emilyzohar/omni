@@ -132,3 +132,8 @@ Reminders stay hidden from **Up Next** before the current occurrence is due. The
 
 ## Library display filters
 Library now defaults to Movie, TV, and Book sections only. The Library Types control is a checkbox multi-select for temporarily showing or hiding any visible type. Genre filtering has been removed. Library Settings lets each profile choose which type sections should be visible by default; that preference is included in the existing Supabase profile JSON and requires no schema migration.
+
+### Latest UI fixes
+- Mobile book reading periods use the normal per-day calendar sticker rather than the continuous reading rail; desktop month view keeps the continuous book range line.
+- Up Next/TBR now have a visible-type filter (same-name types are grouped together).
+- Discover rating/notes saving now targets the exact tracked item, immediately refreshes after adding from Discover, and fixes the book-detail metadata error that could prevent book details/personal metadata from working.
