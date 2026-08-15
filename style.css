@@ -3851,3 +3851,153 @@ body.auth-locked > main {
     font-size: 1.75rem !important;
   }
 }
+
+/* =========================================================
+   Calendar tools + Library personal metadata
+   ========================================================= */
+.calendar-controls {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.calendar-tool-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.calendar-tool-button {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255,255,255,.34);
+  border-radius: 999px;
+  background: rgba(255,255,255,.12);
+  color: #fff9ea;
+  font: 700 .74rem/1 var(--sans);
+  cursor: pointer;
+  transition: background .16s ease, transform .16s ease;
+}
+.calendar-tool-button:hover,
+.calendar-tool-button:focus-visible {
+  background: rgba(255,255,255,.22);
+  transform: translateY(-1px);
+  outline: none;
+}
+.track-streak-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: -4px 0 18px;
+}
+.track-streak-summary[hidden] { display: none !important; }
+.track-streak-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 5px 11px 5px 6px;
+  border: 1px solid rgba(255,255,255,.23);
+  border-radius: 999px;
+  background: rgba(255,255,255,.10);
+  color: #fff9ea;
+}
+.track-streak-sticker {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 30px;
+}
+.track-streak-sticker .sticker {
+  transform: scale(.72) !important;
+  transform-origin: center;
+}
+.track-streak-copy {
+  display: grid;
+  gap: 1px;
+}
+.track-streak-copy strong {
+  font: 700 .76rem/1.05 var(--sans);
+}
+.track-streak-copy small {
+  color: rgba(255,249,234,.72);
+  font: 600 .66rem/1.1 var(--sans);
+}
+
+.library-poster-button { position: relative; }
+.library-rating-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  min-height: 23px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(17,25,39,.86);
+  color: #fff9ea;
+  box-shadow: 0 2px 7px rgba(0,0,0,.16);
+  backdrop-filter: blur(5px);
+  font: 800 .68rem/1 var(--sans);
+  letter-spacing: .01em;
+}
+.library-personal-meta,
+.discover-personal-meta {
+  display: grid;
+  gap: 14px;
+}
+.library-rating-fieldset,
+.discover-rating-fieldset {
+  margin: 0;
+}
+.personal-meta-help {
+  margin: 4px 0 0;
+  color: rgba(21,36,58,.57);
+  font-size: .78rem;
+}
+.library-meta-status,
+.discover-tv-meta-status {
+  align-self: center;
+  color: #53604e;
+  font: 700 .76rem/1 var(--sans);
+}
+.library-personal-notes,
+.discover-tv-notes {
+  resize: vertical;
+  min-height: 92px;
+}
+
+@media (max-width: 760px) {
+  .calendar-controls {
+    width: 100%;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .calendar-tool-buttons {
+    margin-left: auto;
+  }
+  .calendar-tool-button {
+    min-height: 36px;
+    padding: 8px 10px;
+    font-size: .7rem;
+  }
+  .track-streak-summary {
+    margin: 0 0 14px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scrollbar-width: none;
+  }
+  .track-streak-summary::-webkit-scrollbar { display: none; }
+  .track-streak-card { flex: 0 0 auto; }
+  .library-rating-badge {
+    left: 4px;
+    bottom: 4px;
+    min-height: 21px;
+    padding: 4px 6px;
+    font-size: .63rem;
+  }
+}

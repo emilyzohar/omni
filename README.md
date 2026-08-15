@@ -77,3 +77,29 @@ TMDB catalogue requests use genre IDs when available; Google Books feed requests
 ## Google Books resilience
 
 Discover book catalogue requests automatically retry transient 429/5xx responses. Subject filters such as Romance first retry with a smaller result page and then fall back to a broader query that is filtered back to the selected genre.
+
+## Google Books genre reliability fix
+
+Book Discover requests are now serialized and limited to 20 books per page. Genre-filtered results returned by a Google Books `subject:` query are trusted even when Google omits the optional `volumeInfo.categories` field. Romance has an additional `romance fiction` fallback for transient Google Books failures. Search + genre also sends the genre to Google Books instead of filtering only after retrieval.
+
+## Genre filter fix
+
+Discover genre filtering now uses a media-specific strategy:
+
+- TMDB movie/TV official genre IDs when that genre exists for that media type.
+- TMDB keyword filtering when a cross-media label is not an official TMDB genre for that type (for example Horror, Romance, or Thriller on TV).
+- Google Books subject queries for books.
+- Search results use the same rules; TMDB keyword metadata is checked when an official genre ID is unavailable.
+
+This avoids treating the movie and TV genre taxonomies as identical.
+
+## Library rating / notes and calendar controls update
+
+- Library poster covers display your personal rating as a small badge.
+- Opening any Library item shows an editable `Your rating & notes` panel near the top of its detail view.
+- Discover personal rating/notes are available as soon as a Discover result has been saved/created in your tracker (including after marking an episode watched), and also work for completed movies/books.
+- Stickers and Streaks controls now live in the Track/calendar section rather than Library.
+- Enabled streak summaries are displayed above the calendar and no longer clutter Library shelves or Up Next cards.
+
+## Same-name Library grouping
+Library shelves and the Library type filter now group by the visible type label rather than the underlying API/source type. For example, a YouTube-backed `Workout` item and a manually entered `Workout` item appear in the same `Workout` shelf while retaining their own source/provider behavior when opened.

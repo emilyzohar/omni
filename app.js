@@ -88,6 +88,7 @@ const state = {
   discoverMode: 'discover',
   discoverSearchQuery: '',
   discoverGenreCatalog: { tv: [], movie: [] },
+  discoverKeywordCatalog: {},
   libraryView: 'all',
   libraryExpandedGroups: new Set()
 };
@@ -126,6 +127,7 @@ const els = {
   monthPicker: $('#monthPicker'),
   monthLabel: $('#monthLabel'),
   trackerGrid: $('#trackerGrid'),
+  trackStreakSummary: $('#trackStreakSummary'),
   weekControls: $('#weekControls'),
   previousWeek: $('#previousWeek'),
   currentWeek: $('#currentWeek'),
@@ -566,6 +568,24 @@ function bindEvents() {
       return;
     }
 
+    const libraryRating = event.target.closest('[data-library-rating]');
+    if (libraryRating) {
+      setLibraryPendingRating(libraryRating.dataset.itemId, Number(libraryRating.dataset.libraryRating));
+      return;
+    }
+
+    const clearLibraryRating = event.target.closest('[data-clear-library-rating]');
+    if (clearLibraryRating) {
+      setLibraryPendingRating(clearLibraryRating.dataset.itemId, 0);
+      return;
+    }
+
+    const saveLibraryMeta = event.target.closest('[data-save-library-meta]');
+    if (saveLibraryMeta) {
+      saveLibraryPersonalMetadata(saveLibraryMeta.dataset.saveLibraryMeta);
+      return;
+    }
+
     const edit = event.target.closest('[data-edit-id]');
     if (edit) {
       els.detailModal.close();
@@ -721,6 +741,7 @@ function bindEvents() {
 function renderAll() {
   if (els.upNextList) renderUpNext();
   if (els.trackerGrid) renderTracker();
+  if (els.trackStreakSummary) renderTrackStreakSummary();
   if (els.libraryGroups) renderLibrary();
   if (els.discoverStatus) renderDiscover();
 }
@@ -813,7 +834,7 @@ function queueCardMarkup(item, info) {
       <div>
         <p class="upnext-title">${escapeHtml(info.title || item.title)}</p>
         <p class="upnext-meta">${escapeHtml(info.meta || progressFallback(item))}</p>
-        <p class="upnext-category">${escapeHtml(getItemTypeLabel(item))}${isTBR ? ' · TBR' : ''}${!isTBR ? streakInlineMarkup(item.type) : ''}</p>
+        <p class="upnext-category">${escapeHtml(getItemTypeLabel(item))}${isTBR ? ' · TBR' : ''}</p>
         ${info.error ? `<div class="queue-error">${escapeHtml(info.error)}</div>` : ''}
       </div>
       <button class="upnext-arrow" type="button" data-action="details" data-id="${item.id}" aria-label="Open details">→</button>
@@ -2024,9 +2045,11 @@ async function openDetails(id) {
     else if (sourceType === 'movie') await renderMovieDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
     else renderManualDetails(item);
+    appendLibraryPersonalMetadata(item);
     appendItemResources(item);
   } catch (error) {
     els.detailBody.innerHTML = `${basicDetailHero(item)}<div class="api-error">${escapeHtml(error.message)}</div>${detailEditButton(item)}`;
+    appendLibraryPersonalMetadata(item);
     appendItemResources(item);
   }
 }
@@ -2228,9 +2251,12 @@ async function renderYouTubeVideoDetail(item, videoId) {
 async function renderBookDetails(item) {
   const data = await getCached(`book:${item.providerId}`, () => TrackerAPI.getBookDetails(item.providerId, state.settings));
   const info = data.volumeInfo || {};
-  if (info.categories?.length) item.genres = [...new Set(info.categories)];
-  if (info.publishedDate) item.releaseDate = info.publishedDate;
-  saveItems();
+  const existing = findDiscoverItem(result);
+  if (existing) {
+    if (info.categories?.length) existing.genres = [...new Set(info.categories)];
+    if (info.publishedDate) existing.releaseDate = info.publishedDate;
+    saveItems();
+  }
   const image = info.imageLinks?.large?.replace('http://','https://') || info.imageLinks?.thumbnail?.replace('http://','https://') || item.image;
   const current = Number(item.progress?.currentPage || 0);
   const total = Number(item.progress?.totalPages || info.pageCount || 0);
@@ -2285,6 +2311,84 @@ function basicDetailHero(item) {
 
 function detailEditButton(item) {
   return `<div class="detail-actions">${queueMoveControls(item)}<button class="secondary-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${item.id}">${item.recommended ? '★ Recommended' : '☆ Recommend'}</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
+}
+
+function formatPersonalRating(value) {
+  const rating = Number(value || 0);
+  return Number.isInteger(rating) ? String(rating) : rating.toFixed(1).replace(/\.0$/, '');
+}
+
+function libraryPersonalMetadataMarkup(item) {
+  const rating = Math.max(0, Math.min(5, Number(item.rating || 0)));
+  return `<section class="detail-section library-personal-meta" data-library-personal-meta="${escapeAttr(item.id)}" data-pending-rating="${rating}">
+    <div class="detail-section-heading">
+      <div>
+        <h3>Your rating & notes</h3>
+        <p class="personal-meta-help">Saved to this item in your Library.</p>
+      </div>
+    </div>
+    <fieldset class="rating-fieldset library-rating-fieldset">
+      <legend>Rating <span>optional</span></legend>
+      <div class="star-picker library-detail-rating-picker" aria-label="Your rating out of five stars">
+        ${[1,2,3,4,5].map(value => `<button type="button" data-library-rating="${value}" data-item-id="${escapeAttr(item.id)}" class="${value <= rating ? 'filled' : ''}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
+        <button class="clear-rating" type="button" data-clear-library-rating data-item-id="${escapeAttr(item.id)}">clear</button>
+      </div>
+    </fieldset>
+    <label class="field">
+      <span>Notes <em>optional</em></span>
+      <textarea class="library-personal-notes" rows="3" placeholder="Anything you want to remember">${escapeHtml(item.notes || '')}</textarea>
+    </label>
+    <div class="detail-actions compact-actions">
+      <button class="primary-button" type="button" data-save-library-meta="${escapeAttr(item.id)}">Save rating & notes</button>
+      <span class="library-meta-status" aria-live="polite"></span>
+    </div>
+  </section>`;
+}
+
+function appendLibraryPersonalMetadata(item) {
+  if (!els.detailBody || !item || els.detailBody.querySelector(`[data-library-personal-meta="${CSS.escape(item.id)}"]`)) return;
+  const markup = libraryPersonalMetadataMarkup(item);
+  const anchor = els.detailBody.querySelector('.detail-actions') || els.detailBody.querySelector('.detail-progress') || els.detailBody.querySelector('.detail-hero');
+  if (anchor) anchor.insertAdjacentHTML('afterend', markup);
+  else els.detailBody.insertAdjacentHTML('beforeend', markup);
+}
+
+function setLibraryPendingRating(itemId, value) {
+  const section = els.detailBody?.querySelector(`[data-library-personal-meta="${CSS.escape(itemId)}"]`);
+  if (!section) return;
+  const rating = Math.max(0, Math.min(5, Number(value || 0)));
+  section.dataset.pendingRating = String(rating);
+  section.querySelectorAll('[data-library-rating]').forEach(button => {
+    button.classList.toggle('filled', Number(button.dataset.libraryRating) <= rating);
+  });
+}
+
+function saveLibraryPersonalMetadata(itemId) {
+  const item = findItem(itemId);
+  const section = els.detailBody?.querySelector(`[data-library-personal-meta="${CSS.escape(itemId)}"]`);
+  if (!item || !section) return;
+
+  item.rating = Math.max(0, Math.min(5, Number(section.dataset.pendingRating || 0)));
+  item.notes = section.querySelector('.library-personal-notes')?.value.trim() || '';
+  item.updatedAt = new Date().toISOString();
+
+  // Keep completion-level history ratings aligned with the Library item, but
+  // never copy a show note into individual episode history.
+  for (const entry of state.history) {
+    if (entry.sourceItemId !== item.id) continue;
+    if (['series-watched', 'movie-watched', 'book-finished', 'item-completed'].includes(entry.kind)) {
+      entry.rating = item.rating;
+    }
+  }
+
+  saveItems();
+  saveHistory();
+  renderLibrary();
+  const status = section.querySelector('.library-meta-status');
+  if (status) {
+    status.textContent = 'Saved';
+    setTimeout(() => { if (status.isConnected) status.textContent = ''; }, 1500);
+  }
 }
 
 // ---------------------------
@@ -2978,26 +3082,27 @@ function deleteHistoryEdit() {
 // DISCOVER
 // ---------------------------
 const DISCOVER_MODES = new Set(['new', 'popular', 'for-you', 'discover']);
+const DISCOVER_BOOK_BATCH_SIZE = 20;
 const DISCOVER_GENRES = [
-  { value: 'action-adventure', label: 'Action & Adventure', tmdb: ['Action', 'Adventure', 'Action & Adventure'], book: ['action', 'adventure'] },
-  { value: 'animation', label: 'Animation', tmdb: ['Animation'], book: ['animation', 'graphic novels'] },
-  { value: 'biography', label: 'Biography & Memoir', tmdb: [], book: ['biography', 'memoir'] },
-  { value: 'comedy', label: 'Comedy', tmdb: ['Comedy'], book: ['humor', 'comedy'] },
-  { value: 'crime', label: 'Crime', tmdb: ['Crime'], book: ['crime'] },
-  { value: 'documentary', label: 'Documentary', tmdb: ['Documentary'], book: ['documentary', 'nonfiction'] },
-  { value: 'drama', label: 'Drama', tmdb: ['Drama'], book: ['drama'] },
-  { value: 'family', label: 'Family', tmdb: ['Family'], book: ['family'] },
-  { value: 'fantasy', label: 'Fantasy', tmdb: ['Fantasy', 'Sci-Fi & Fantasy'], book: ['fantasy'] },
-  { value: 'history', label: 'History', tmdb: ['History', 'War & Politics'], book: ['history'] },
-  { value: 'horror', label: 'Horror', tmdb: ['Horror'], book: ['horror'] },
-  { value: 'mystery', label: 'Mystery', tmdb: ['Mystery'], book: ['mystery'] },
-  { value: 'philosophy', label: 'Philosophy', tmdb: [], book: ['philosophy'] },
-  { value: 'psychology', label: 'Psychology', tmdb: [], book: ['psychology'] },
-  { value: 'romance', label: 'Romance', tmdb: ['Romance'], book: ['romance'] },
-  { value: 'science', label: 'Science', tmdb: [], book: ['science'] },
-  { value: 'science-fiction', label: 'Science Fiction', tmdb: ['Science Fiction', 'Sci-Fi & Fantasy'], book: ['science fiction'] },
-  { value: 'thriller', label: 'Thriller', tmdb: ['Thriller'], book: ['thriller', 'suspense'] }
-];
+  { value: 'action-adventure', label: 'Action & Adventure', tmdb: ['Action', 'Adventure', 'Action & Adventure'], keywords: ['action', 'adventure'], book: ['action', 'adventure'] },
+  { value: 'animation', label: 'Animation', tmdb: ['Animation'], keywords: ['animation'], book: ['animation', 'graphic novels'] },
+  { value: 'biography', label: 'Biography & Memoir', tmdb: [], keywords: ['biography', 'biographical'], book: ['biography', 'memoir'] },
+  { value: 'comedy', label: 'Comedy', tmdb: ['Comedy'], keywords: ['comedy'], book: ['humor', 'comedy'] },
+  { value: 'crime', label: 'Crime', tmdb: ['Crime'], keywords: ['crime'], book: ['crime'] },
+  { value: 'documentary', label: 'Documentary', tmdb: ['Documentary'], keywords: ['documentary'], book: ['documentary', 'nonfiction'] },
+  { value: 'drama', label: 'Drama', tmdb: ['Drama'], keywords: ['drama'], book: ['drama'] },
+  { value: 'family', label: 'Family', tmdb: ['Family'], keywords: ['family'], book: ['family'] },
+  { value: 'fantasy', label: 'Fantasy', tmdb: ['Fantasy', 'Sci-Fi & Fantasy'], keywords: ['fantasy'], book: ['fantasy'] },
+  { value: 'history', label: 'History', tmdb: ['History', 'War & Politics'], keywords: ['history', 'historical'], book: ['history'] },
+  { value: 'horror', label: 'Horror', tmdb: ['Horror'], keywords: ['horror'], book: ['horror'] },
+  { value: 'mystery', label: 'Mystery', tmdb: ['Mystery'], keywords: ['mystery'], book: ['mystery'] },
+  { value: 'philosophy', label: 'Philosophy', tmdb: [], keywords: ['philosophy'], book: ['philosophy'] },
+  { value: 'psychology', label: 'Psychology', tmdb: [], keywords: ['psychology'], book: ['psychology'] },
+  { value: 'romance', label: 'Romance', tmdb: ['Romance'], keywords: ['romance'], book: ['romance'] },
+  { value: 'science', label: 'Science', tmdb: [], keywords: ['science'], book: ['science'] },
+  { value: 'science-fiction', label: 'Science Fiction', tmdb: ['Science Fiction', 'Sci-Fi & Fantasy'], keywords: ['science fiction'], book: ['science fiction'] },
+  { value: 'thriller', label: 'Thriller', tmdb: ['Thriller'], keywords: ['thriller', 'suspense'], book: ['thriller', 'suspense'] }
+]
 
 function selectedDiscoverGenre() {
   return DISCOVER_GENRES.find(genre => genre.value === (state.discoverPrefs.genre || 'all')) || null;
@@ -3013,6 +3118,16 @@ async function ensureDiscoverGenreCatalog() {
     if (tv.status === 'fulfilled') state.discoverGenreCatalog.tv = tv.value;
     if (movie.status === 'fulfilled') state.discoverGenreCatalog.movie = movie.value;
   }
+
+  const selected = selectedDiscoverGenre();
+  if (selected && !state.discoverKeywordCatalog[selected.value]) {
+    try {
+      state.discoverKeywordCatalog[selected.value] = await TrackerAPI.getTMDBKeywordIds(selected.keywords || [], state.settings);
+    } catch {
+      state.discoverKeywordCatalog[selected.value] = [];
+    }
+  }
+
   const current = state.discoverPrefs.genre || 'all';
   els.discoverGenreFilter.innerHTML = '<option value="all">All genres</option>' + DISCOVER_GENRES.map(genre => `<option value="${escapeAttr(genre.value)}">${escapeHtml(genre.label)}</option>`).join('');
   els.discoverGenreFilter.value = DISCOVER_GENRES.some(genre => genre.value === current) ? current : 'all';
@@ -3025,9 +3140,21 @@ function discoverTMDBGenreIds(type) {
   return (state.discoverGenreCatalog[type] || []).filter(entry => allowed.has(String(entry.name || '').toLowerCase())).map(entry => String(entry.id));
 }
 
+function discoverTMDBKeywordIds(type) {
+  const genre = selectedDiscoverGenre();
+  if (!genre || discoverTMDBGenreIds(type).length) return [];
+  return (state.discoverKeywordCatalog[genre.value] || []).map(String).filter(Boolean);
+}
+
 function discoverTMDBOptions(type, options = {}) {
+  const genre = selectedDiscoverGenre();
+  const languageOptions = type === 'tv' && state.discoverPrefs.englishTVOnly === true ? { originalLanguage: 'en' } : {};
+  if (!genre) return { ...options, ...languageOptions };
   const genreIds = discoverTMDBGenreIds(type);
-  return genreIds.length ? { ...options, genreIds } : options;
+  if (genreIds.length) return { ...options, ...languageOptions, genreIds, genreTag: genre.value };
+  const keywordIds = discoverTMDBKeywordIds(type);
+  if (keywordIds.length) return { ...options, ...languageOptions, keywordIds, genreTag: genre.value };
+  return { ...options, ...languageOptions };
 }
 
 function discoverBookOptions(options = {}) {
@@ -3043,16 +3170,45 @@ function discoverResultMatchesGenre(result) {
   const genre = selectedDiscoverGenre();
   if (!genre) return true;
   if (result.sourceType === 'tv' || result.sourceType === 'movie') {
+    if (result._discoverGenreTag === genre.value) return true;
     const ids = new Set((result.raw?.genre_ids || []).map(String));
     const allowedIds = discoverTMDBGenreIds(result.sourceType);
-    return allowedIds.length ? allowedIds.some(id => ids.has(String(id))) : false;
+    if (allowedIds.length) return allowedIds.some(id => ids.has(String(id)));
+    const keywordIds = new Set(discoverTMDBKeywordIds(result.sourceType));
+    const resultKeywordIds = new Set((result._tmdbKeywordIds || []).map(String));
+    return keywordIds.size ? [...keywordIds].some(id => resultKeywordIds.has(id)) : false;
   }
   if (result.sourceType === 'book') {
+    // If this result came back from a Google Books subject query for the selected
+    // genre, trust Google's match. volumeInfo.categories is optional and is often
+    // missing even on valid Romance results.
+    const trustedSubject = String(result._bookGenreSubject || '').toLowerCase();
+    if (trustedSubject && genre.book.some(term => trustedSubject.includes(term.toLowerCase()) || term.toLowerCase().includes(trustedSubject))) {
+      return true;
+    }
     const categories = result.categories || result.raw?.volumeInfo?.categories || [];
     const haystack = categories.join(' ').toLowerCase();
     return genre.book.some(term => haystack.includes(term.toLowerCase()));
   }
   return true;
+}
+
+async function discoverSearchResultMatchesGenre(result) {
+  const genre = selectedDiscoverGenre();
+  if (!genre || result.sourceType === 'book') return discoverResultMatchesGenre(result);
+  if (result.sourceType !== 'tv' && result.sourceType !== 'movie') return true;
+  const officialIds = discoverTMDBGenreIds(result.sourceType);
+  if (officialIds.length) return discoverResultMatchesGenre(result);
+  const keywordIds = discoverTMDBKeywordIds(result.sourceType);
+  if (!keywordIds.length || !result.providerId) return false;
+  try {
+    const keywords = await TrackerAPI.getTMDBItemKeywords(result.sourceType, result.providerId, state.settings);
+    const itemIds = keywords.map(keyword => String(keyword.id));
+    result._tmdbKeywordIds = itemIds;
+    return keywordIds.some(id => itemIds.includes(String(id)));
+  } catch {
+    return false;
+  }
 }
 
 async function refreshDiscoverForFilters() {
@@ -3091,18 +3247,25 @@ async function runDiscoverSearch(forcedQuery = '') {
   try {
     const selectedType = state.discoverPrefs.contentType || 'all';
     const types = selectedType === 'all' ? ['tv', 'movie', 'book'] : [selectedType];
-    const settled = await Promise.allSettled(types.map(type => TrackerAPI.searchCatalogue(query, type, state.settings)));
+    const settled = await Promise.allSettled(types.map(type => {
+      if (type !== 'book') return TrackerAPI.searchCatalogue(query, type, state.settings);
+      const genre = selectedDiscoverGenre();
+      if (!genre?.book?.length) return TrackerAPI.searchCatalogue(query, type, state.settings);
+      const subject = genre.book[0].includes(' ') ? `subject:"${genre.book[0]}"` : `subject:${genre.book[0]}`;
+      return TrackerAPI.searchCatalogue(`${query} ${subject}`, type, state.settings);
+    }));
     const results = [];
-    settled.forEach((entry, index) => {
-      if (entry.status !== 'fulfilled') return;
+    for (let index = 0; index < settled.length; index += 1) {
+      const entry = settled[index];
+      if (entry.status !== 'fulfilled') continue;
       const sourceType = types[index];
       for (const result of entry.value || []) {
         const normalized = { ...result, sourceType, categories: result.raw?.volumeInfo?.categories || result.categories || [] };
         if (state.discoverPrefs.englishTVOnly === true && sourceType === 'tv' && String(normalized.raw?.original_language || '').toLowerCase() !== 'en') continue;
-        if (!discoverResultMatchesGenre(normalized)) continue;
+        if (!(await discoverSearchResultMatchesGenre(normalized))) continue;
         results.push(normalized);
       }
-    });
+    }
     const ranked = await rankDiscoverFeedCandidates(results, 36);
     state.discoverFeedItems = ranked;
     for (const result of ranked) state.discoverFeedSeen.add(discoverResultIdentity(result));
@@ -3319,7 +3482,7 @@ async function collectShuffledDiscoverCandidates(batchNumber) {
   const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
   const tvPage = Math.min(500, state.discoverFeedOffsets.tv + batchNumber - 1);
   const moviePage = Math.min(500, state.discoverFeedOffsets.movie + batchNumber - 1);
-  const bookStart = (state.discoverFeedOffsets.book + batchNumber - 1) * 40;
+  const bookStart = (state.discoverFeedOffsets.book + batchNumber - 1) * DISCOVER_BOOK_BATCH_SIZE;
   const readAuthors = getReadAuthors();
   const bookPlan = chooseDiscoverBookPlan(readAuthors, batchNumber);
 
@@ -3407,11 +3570,11 @@ async function collectNewDiscoverCandidates(batchNumber) {
   const today = todayString();
   const tvPage = Math.min(500, batchNumber);
   const moviePage = Math.min(500, batchNumber);
-  const bookStart = (batchNumber - 1) * 40;
+  const bookStart = (batchNumber - 1) * DISCOVER_BOOK_BATCH_SIZE;
   const tasks = [
     TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings, discoverTMDBOptions('tv', { sortBy: 'first_air_date.desc', minVotes: 5, beforeDate: today })),
     TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, discoverTMDBOptions('movie', { sortBy: 'primary_release_date.desc', minVotes: 10, beforeDate: today })),
-    TrackerAPI.getBookFeed(bookStart, state.settings, discoverBookOptions({ query: 'subject:fiction', orderBy: 'newest', maxResults: 40 }))
+    TrackerAPI.getBookFeed(bookStart, state.settings, discoverBookOptions({ query: 'subject:fiction', orderBy: 'newest', maxResults: DISCOVER_BOOK_BATCH_SIZE }))
   ];
   if (selectedProviders.length) {
     tasks.push(TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings, discoverTMDBOptions('tv', { sortBy: 'first_air_date.desc', minVotes: 3, beforeDate: today, providerIds: selectedProviders })));
@@ -3434,11 +3597,11 @@ async function collectPopularDiscoverCandidates(batchNumber) {
   const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
   const topics = ['subject:fiction','subject:mystery','subject:romance','subject:fantasy','subject:biography','subject:history','subject:science','subject:psychology'];
   const bookQuery = topics[(batchNumber - 1) % topics.length];
-  const bookStart = Math.floor((batchNumber - 1) / topics.length) * 40;
+  const bookStart = Math.floor((batchNumber - 1) / topics.length) * DISCOVER_BOOK_BATCH_SIZE;
   const tasks = [
     TrackerAPI.getTMDBDiscover('tv', batchNumber, state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 100 })),
     TrackerAPI.getTMDBDiscover('movie', batchNumber, state.settings, discoverTMDBOptions('movie', { sortBy: 'popularity.desc', minVotes: 150 })),
-    TrackerAPI.getBookFeed(bookStart, state.settings, discoverBookOptions({ query: bookQuery, orderBy: 'relevance', maxResults: 40 }))
+    TrackerAPI.getBookFeed(bookStart, state.settings, discoverBookOptions({ query: bookQuery, orderBy: 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE }))
   ];
   if (selectedProviders.length) {
     tasks.push(TrackerAPI.getTMDBDiscover('tv', Math.min(batchNumber, 30), state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 30, providerIds: selectedProviders })));
@@ -3521,7 +3684,7 @@ async function collectForYouDiscoverCandidates(batchNumber) {
     const fallback = await Promise.allSettled([
       TrackerAPI.getTMDBDiscover('tv', batchNumber, state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 50 })),
       TrackerAPI.getTMDBDiscover('movie', batchNumber, state.settings, discoverTMDBOptions('movie', { sortBy: 'popularity.desc', minVotes: 75 })),
-      TrackerAPI.getBookFeed((batchNumber - 1) * 40, state.settings, discoverBookOptions({ query: chooseDiscoverBookPlan(readAuthors, batchNumber).query, orderBy: 'relevance', maxResults: 40 }))
+      TrackerAPI.getBookFeed((batchNumber - 1) * DISCOVER_BOOK_BATCH_SIZE, state.settings, discoverBookOptions({ query: chooseDiscoverBookPlan(readAuthors, batchNumber).query, orderBy: 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE }))
     ]);
     if (fallback[0].status === 'fulfilled') add(filterAlreadyKnown(fallback[0].value.results, 'tv'), 'tv', 'fallback', 0);
     if (fallback[1].status === 'fulfilled') add(filterAlreadyKnown(fallback[1].value.results, 'movie'), 'movie', 'fallback', 0);
@@ -3563,7 +3726,7 @@ function chooseDiscoverBookPlan(readAuthors, batchNumber) {
   const useKnownAuthor = readAuthors.length && state.discoverPrefs.prioritizeAuthors !== false && Math.random() < 0.42;
   if (useKnownAuthor) {
     const author = readAuthors[Math.floor(Math.random() * Math.min(readAuthors.length, 8))];
-    return { query: `inauthor:${author}`, orderBy: 'relevance', maxResults: 40, personalized: true };
+    return { query: `inauthor:${author}`, orderBy: 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE, personalized: true };
   }
 
   const topics = [
@@ -3572,7 +3735,7 @@ function chooseDiscoverBookPlan(readAuthors, batchNumber) {
     'subject:fantasy', 'subject:romance', 'subject:memoir', 'subject:essays'
   ];
   const index = (batchNumber + Math.floor(state.discoverFeedSession * topics.length) + Math.floor(Math.random() * 4)) % topics.length;
-  return { query: topics[index], orderBy: Math.random() < 0.28 ? 'newest' : 'relevance', maxResults: 40, personalized: false };
+  return { query: topics[index], orderBy: Math.random() < 0.28 ? 'newest' : 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE, personalized: false };
 }
 
 function pickDiscoverSeed(type) {
@@ -4224,13 +4387,13 @@ function hasDiscoverTVWatchHistory(item) {
 }
 
 function discoverTVPersonalMetadataMarkup(item, key) {
-  if (!hasDiscoverTVWatchHistory(item)) return '';
+  if (!item) return '';
   const rating = Math.max(0, Math.min(5, Number(item.rating || 0)));
   return `<section class="detail-section discover-personal-meta" data-discover-tv-meta="${escapeAttr(key)}" data-pending-rating="${rating}">
     <div class="detail-section-heading">
       <div>
         <h3>Your rating & notes</h3>
-        <p class="discover-history-note">Saved to this show in your Library.</p>
+        <p class="discover-history-note">Saved to this item in your Library.</p>
       </div>
     </div>
     <fieldset class="rating-fieldset discover-rating-fieldset">
@@ -4242,7 +4405,7 @@ function discoverTVPersonalMetadataMarkup(item, key) {
     </fieldset>
     <label class="field">
       <span>Notes <em>optional</em></span>
-      <textarea class="discover-tv-notes" rows="3" placeholder="Anything you want to remember about this show">${escapeHtml(item.notes || '')}</textarea>
+      <textarea class="discover-tv-notes" rows="3" placeholder="Anything you want to remember">${escapeHtml(item.notes || '')}</textarea>
     </label>
     <div class="detail-actions compact-actions">
       <button class="primary-button" type="button" data-save-discover-tv-meta="${escapeAttr(key)}">Save rating & notes</button>
@@ -4272,7 +4435,8 @@ function saveDiscoverTVPersonalMetadata(key) {
   item.updatedAt = new Date().toISOString();
 
   for (const entry of state.history) {
-    if (entry.sourceItemId === item.id && entry.kind === 'series-watched') {
+    if (entry.sourceItemId !== item.id) continue;
+    if (['series-watched', 'movie-watched', 'book-finished', 'item-completed'].includes(entry.kind)) {
       entry.rating = item.rating;
       entry.notes = item.notes;
     }
@@ -4516,6 +4680,7 @@ async function renderDiscoverMovieDetail(key) {
       <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
       <button class="secondary-button" type="button" data-discover-detail-complete="${escapeAttr(key)}" ${completed ? 'disabled' : ''}>${completed ? '✓ Watched' : '✓ Mark watched'}</button>
     </div>
+    ${discoverTVPersonalMetadataMarkup(findDiscoverItem(result), key)}
     <section class="detail-section streaming-detail"><h3>Streaming</h3><p>${escapeHtml(providerText)}</p>${availability.link ? `<a href="${escapeAttr(availability.link)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}</section>
     ${details.genres?.length ? `<section class="detail-section"><h3>Genres</h3><p>${escapeHtml(details.genres.map(genre => genre.name).join(' · '))}</p></section>` : ''}`;
 }
@@ -4525,9 +4690,12 @@ async function renderDiscoverBookDetail(key) {
   if (!result) return;
   const data = await getCached(`book:${result.providerId}`, () => TrackerAPI.getBookDetails(result.providerId, state.settings));
   const info = data.volumeInfo || {};
-  if (info.categories?.length) item.genres = [...new Set(info.categories)];
-  if (info.publishedDate) item.releaseDate = info.publishedDate;
-  saveItems();
+  const existing = findDiscoverItem(result);
+  if (existing) {
+    if (info.categories?.length) existing.genres = [...new Set(info.categories)];
+    if (info.publishedDate) existing.releaseDate = info.publishedDate;
+    saveItems();
+  }
   const image = info.imageLinks?.large?.replace('http://','https://') || info.imageLinks?.thumbnail?.replace('http://','https://') || result.image;
   const completed = isDiscoverCompleted(result);
   els.detailBody.innerHTML = `
@@ -4540,6 +4708,7 @@ async function renderDiscoverBookDetail(key) {
       <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
       <button class="secondary-button" type="button" data-discover-detail-complete="${escapeAttr(key)}" ${completed ? 'disabled' : ''}>${completed ? '✓ Read' : '✓ Mark read'}</button>
     </div>
+    ${discoverTVPersonalMetadataMarkup(findDiscoverItem(result), key)}
     ${info.categories?.length ? `<section class="detail-section"><h3>Categories</h3><p>${escapeHtml(info.categories.join(' · '))}</p></section>` : ''}`;
 }
 
@@ -4742,6 +4911,25 @@ function streakBadgeMarkup(type) {
   return text ? `<span class="type-streak-badge">${escapeHtml(text)}</span>` : '';
 }
 
+function renderTrackStreakSummary() {
+  if (!els.trackStreakSummary) return;
+  const active = getRecognizedTypes()
+    .map(({ type, label }) => ({ type, label, text: streakText(type) }))
+    .filter(entry => entry.text);
+
+  els.trackStreakSummary.hidden = active.length === 0;
+  if (!active.length) {
+    els.trackStreakSummary.innerHTML = '';
+    return;
+  }
+
+  els.trackStreakSummary.innerHTML = active.map(entry => `
+    <div class="track-streak-card">
+      <span class="track-streak-sticker">${calendarStickerMarkup(entry.type, state.history.find(item => item.type === entry.type) || {})}</span>
+      <span class="track-streak-copy"><strong>${escapeHtml(entry.label)}</strong><small>${escapeHtml(entry.text)}</small></span>
+    </div>`).join('');
+}
+
 function openStreakSettings() {
   if (!els.streakSettingsModal || !els.streakSettingsRows) return;
   renderStreakSettingsRows();
@@ -4888,7 +5076,7 @@ function refreshLibraryGenreFilter() {
   const genres = new Map();
   state.items
     .filter(item => getQueueStatus(item) !== 'tbr')
-    .filter(item => type === 'all' || item.type === type)
+    .filter(item => type === 'all' || libraryTypeGroupKey(item) === type)
     .forEach(item => (item.genres || []).forEach(genre => {
       const key = normalizeGenre(genre);
       if (key && !genres.has(key)) genres.set(key, genre);
@@ -4914,7 +5102,7 @@ function renderLibrary() {
   let filtered = state.items
     .filter(item => getQueueStatus(item) !== 'tbr')
     .filter(item => state.libraryView !== 'recommended' || item.recommended)
-    .filter(item => filter === 'all' || item.type === filter)
+    .filter(item => filter === 'all' || libraryTypeGroupKey(item) === filter)
     .filter(item => genre === 'all' || (item.genres || []).some(value => normalizeGenre(value) === genre));
 
   const compare = sort === 'rating'
@@ -4923,17 +5111,22 @@ function renderLibrary() {
       ? (a,b) => a.title.localeCompare(b.title)
       : (a,b) => String(itemLibraryDate(b)).localeCompare(String(itemLibraryDate(a))) || Number(b.rating || 0) - Number(a.rating || 0) || a.title.localeCompare(b.title);
 
-  const preferredOrder = ['tv','movie','book','music','workout','other'];
+  // Library grouping is based on the visible type name, not the content/API source.
+  // A YouTube item labelled "Workout" and a manual item labelled "Workout" therefore
+  // share one shelf while retaining their separate sourceType/provider internally.
+  const preferredLabels = ['TV','Movie','Book','Music','Workout','Other'];
+  const preferredOrder = preferredLabels.map(label => slugifyType(label));
   const grouped = new Map();
   for (const item of filtered) {
-    if (!grouped.has(item.type)) grouped.set(item.type, []);
-    grouped.get(item.type).push(item);
+    const groupKey = libraryTypeGroupKey(item);
+    if (!grouped.has(groupKey)) grouped.set(groupKey, []);
+    grouped.get(groupKey).push(item);
   }
   for (const values of grouped.values()) values.sort(compare);
 
   const customOrder = [...grouped.keys()]
-    .filter(type => !preferredOrder.includes(type))
-    .sort((a,b) => getTypeLabel(a).localeCompare(getTypeLabel(b)));
+    .filter(key => !preferredOrder.includes(key))
+    .sort((a,b) => libraryTypeGroupLabel(grouped.get(a), a).localeCompare(libraryTypeGroupLabel(grouped.get(b), b)));
   const order = [...preferredOrder, ...customOrder];
 
   els.libraryGroups.innerHTML = '';
@@ -4943,21 +5136,21 @@ function renderLibrary() {
     return;
   }
 
-  for (const type of order) {
-    const items = grouped.get(type);
+  for (const groupKey of order) {
+    const items = grouped.get(groupKey);
     if (!items?.length) continue;
-    const expanded = state.libraryExpandedGroups.has(type);
+    const groupLabel = libraryTypeGroupLabel(items, groupKey);
+    const expanded = state.libraryExpandedGroups.has(groupKey);
     const section = document.createElement('section');
     section.className = `library-group library-shelf${expanded ? ' is-expanded' : ''}`;
-    section.dataset.libraryGroup = type;
+    section.dataset.libraryGroup = groupKey;
     section.innerHTML = `
       <div class="library-group-heading-row">
         <div class="library-group-title-wrap">
-          <h2 class="library-group-title">${escapeHtml(getTypeLabel(type))}</h2>
+          <h2 class="library-group-title">${escapeHtml(groupLabel)}</h2>
           <span class="library-group-count">${items.length}</span>
-          ${streakBadgeMarkup(type)}
         </div>
-        <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(type)}">${expanded ? 'Collapse' : `Show all`}</button>
+        <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(groupKey)}">${expanded ? 'Collapse' : `Show all`}</button>
       </div>
       <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
     const grid = section.querySelector('.library-poster-grid');
@@ -4969,9 +5162,11 @@ function renderLibrary() {
       poster.dataset.detailsId = item.id;
       poster.setAttribute('aria-label', `Open ${item.title}`);
       poster.title = [item.title, item.rating ? `${item.rating}/5` : '', item.genres?.[0] || ''].filter(Boolean).join(' · ');
-      poster.innerHTML = item.image
+      const personalRating = Math.max(0, Math.min(5, Number(item.rating || 0)));
+      poster.innerHTML = `${item.image
         ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />`
-        : `<span class="library-poster-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`;
+        : `<span class="library-poster-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`}
+        ${personalRating > 0 ? `<span class="library-rating-badge" aria-label="Your rating ${personalRating} out of 5">★ ${escapeHtml(formatPersonalRating(personalRating))}</span>` : ''}`;
       grid.appendChild(poster);
     }
     els.libraryGroups.appendChild(section);
@@ -5091,18 +5286,42 @@ function registerCustomType(type, label) {
   scheduleCloudSync();
 }
 
-function refreshTypeFilter() {
-  const current = els.typeFilter.value || 'all';
-  const types = new Map();
-  Object.keys(TYPE_LABELS).forEach(type => types.set(type, getTypeLabel(type)));
-  state.customTypes.forEach(entry => types.set(entry.type, entry.label));
-  state.items.filter(item => getQueueStatus(item) !== 'tbr').forEach(item => types.set(item.type, getItemTypeLabel(item)));
+function libraryTypeGroupKey(item) {
+  return slugifyType(getItemTypeLabel(item));
+}
 
-  els.typeFilter.innerHTML = '<option value="all">All</option>';
-  const ordered = [...types.entries()].sort(([aType,aLabel],[bType,bLabel]) => {
-    const preferred = ['tv','movie','book','music','workout','other'];
-    const ai = preferred.indexOf(aType);
-    const bi = preferred.indexOf(bType);
+function libraryTypeGroupLabel(items = [], groupKey = '') {
+  // Prefer the canonical built-in spelling/capitalization when one exists.
+  for (const label of Object.values(TYPE_LABELS)) {
+    if (slugifyType(label) === groupKey) return label;
+  }
+  const labels = items
+    .map(item => cleanTypeLabel(getItemTypeLabel(item)))
+    .filter(Boolean);
+  return labels[0] || getTypeLabel(groupKey);
+}
+
+function refreshTypeFilter() {
+  if (!els.typeFilter) return;
+  const current = els.typeFilter.value || 'all';
+  const groups = new Map();
+
+  // Keep the familiar built-in options, but de-duplicate by visible label.
+  for (const label of Object.values(TYPE_LABELS)) {
+    const key = slugifyType(label);
+    if (!groups.has(key)) groups.set(key, label);
+  }
+
+  for (const item of state.items.filter(item => getQueueStatus(item) !== 'tbr')) {
+    const key = libraryTypeGroupKey(item);
+    const existing = groups.get(key);
+    if (!existing) groups.set(key, getItemTypeLabel(item));
+  }
+
+  const preferred = ['tv','movie','book','music','workout','other'];
+  const ordered = [...groups.entries()].sort(([aKey,aLabel],[bKey,bLabel]) => {
+    const ai = preferred.indexOf(aKey);
+    const bi = preferred.indexOf(bKey);
     if (ai !== -1 || bi !== -1) {
       if (ai === -1) return 1;
       if (bi === -1) return -1;
@@ -5111,14 +5330,16 @@ function refreshTypeFilter() {
     return aLabel.localeCompare(bLabel);
   });
 
-  for (const [type, label] of ordered) {
+  els.typeFilter.innerHTML = '<option value="all">All</option>';
+  for (const [key, label] of ordered) {
     const option = document.createElement('option');
-    option.value = type;
+    option.value = key;
     option.textContent = label;
     els.typeFilter.appendChild(option);
   }
-  els.typeFilter.value = types.has(current) || current === 'all' ? current : 'all';
+  els.typeFilter.value = groups.has(current) || current === 'all' ? current : 'all';
 }
+
 
 // ---------------------------
 // SETTINGS / CACHE / STORAGE

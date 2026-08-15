@@ -12,6 +12,19 @@ export const TrackerAPI = (() => {
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+  // Google Books is much less tolerant of bursty browser traffic than TMDB.
+  // Keep Books requests serialized with a small gap so Discover's parallel TV/movie
+  // work cannot accidentally fire several Books calls at the same instant.
+  let googleBooksQueue = Promise.resolve();
+  function fetchGoogleBooksJson(url) {
+    const run = googleBooksQueue.then(async () => {
+      await sleep(140);
+      return fetchJson(url);
+    });
+    googleBooksQueue = run.catch(() => undefined);
+    return run;
+  }
+
   async function fetchJson(url, options = {}) {
     // Catalogue APIs occasionally return transient 429/5xx responses. Retrying
     // here keeps one flaky upstream request from breaking an entire Discover row.
@@ -93,11 +106,14 @@ export const TrackerAPI = (() => {
   async function searchBooks(query, settings) {
     const key = required(settings.googleBooksKey, 'Google Books API key');
     const url = `${GOOGLE_BOOKS_ROOT}/volumes?q=${encodeURIComponent(query)}&maxResults=12&printType=books&key=${encodeURIComponent(key)}`;
-    const data = await fetchJson(url);
+    const data = await fetchGoogleBooksJson(url);
+    const subjectMatch = String(query || '').match(/subject:(?:\"([^\"]+)\"|([^\s]+))/i);
+    const trustedSubject = String(subjectMatch?.[1] || subjectMatch?.[2] || '').trim().toLowerCase();
     return (data.items || []).map(item => {
       const info = item.volumeInfo || {};
       const thumb = info.imageLinks?.thumbnail?.replace('http://', 'https://') || '';
       return {
+        sourceType: 'book',
         provider: 'googleBooks',
         providerId: item.id,
         title: info.title || 'Untitled',
@@ -105,6 +121,8 @@ export const TrackerAPI = (() => {
         image: thumb,
         description: info.description || '',
         pageCount: info.pageCount || null,
+        categories: info.categories || [],
+        _bookGenreSubject: trustedSubject,
         raw: item
       };
     });
@@ -112,7 +130,7 @@ export const TrackerAPI = (() => {
 
   async function getBookDetails(id, settings) {
     const key = required(settings.googleBooksKey, 'Google Books API key');
-    return fetchJson(`${GOOGLE_BOOKS_ROOT}/volumes/${encodeURIComponent(id)}?key=${encodeURIComponent(key)}`);
+    return fetchGoogleBooksJson(`${GOOGLE_BOOKS_ROOT}/volumes/${encodeURIComponent(id)}?key=${encodeURIComponent(key)}`);
   }
 
   async function searchMusic(query, settings) {
@@ -219,6 +237,36 @@ export const TrackerAPI = (() => {
     return (data.genres || []).map(genre => ({ id: String(genre.id), name: genre.name || '' })).filter(genre => genre.id && genre.name);
   }
 
+  const tmdbKeywordCache = new Map();
+
+  async function getTMDBKeywordIds(terms, settings) {
+    const wanted = [...new Set((terms || []).map(term => String(term || '').trim()).filter(Boolean))];
+    const ids = [];
+    for (const term of wanted) {
+      const key = term.toLowerCase();
+      if (tmdbKeywordCache.has(key)) {
+        ids.push(...tmdbKeywordCache.get(key));
+        continue;
+      }
+      const data = await fetchJson(`${TMDB_ROOT}/search/keyword?query=${encodeURIComponent(term)}&page=1`, { headers: tmdbHeaders(settings) });
+      const results = data.results || [];
+      const normalized = key.replace(/[^a-z0-9]+/g, ' ').trim();
+      const exact = results.filter(result => String(result.name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() === normalized);
+      const chosen = exact.length ? exact : results.slice(0, 2);
+      const found = [...new Set(chosen.map(result => String(result.id)).filter(Boolean))];
+      tmdbKeywordCache.set(key, found);
+      ids.push(...found);
+    }
+    return [...new Set(ids)];
+  }
+
+  async function getTMDBItemKeywords(type, id, settings) {
+    const mediaType = type === 'tv' ? 'tv' : 'movie';
+    const data = await fetchJson(`${TMDB_ROOT}/${mediaType}/${encodeURIComponent(id)}/keywords`, { headers: tmdbHeaders(settings) });
+    const list = mediaType === 'tv' ? (data.results || []) : (data.keywords || []);
+    return list.map(keyword => ({ id: String(keyword.id), name: keyword.name || '' })).filter(keyword => keyword.id);
+  }
+
   async function getTMDBDiscover(type, page = 1, settings, options = {}) {
     const mediaType = type === 'tv' ? 'tv' : 'movie';
     const params = new URLSearchParams({
@@ -241,6 +289,11 @@ export const TrackerAPI = (() => {
     const genreIds = (options.genreIds || (options.genreId ? [options.genreId] : [])).map(String).filter(Boolean);
     if (genreIds.length) params.set('with_genres', genreIds.join('|'));
 
+    const keywordIds = (options.keywordIds || []).map(String).filter(Boolean);
+    if (keywordIds.length) params.set('with_keywords', keywordIds.join('|'));
+
+    if (options.originalLanguage) params.set('with_original_language', String(options.originalLanguage));
+
     const providerIds = (options.providerIds || []).map(String).filter(Boolean);
     if (providerIds.length) {
       params.set('watch_region', String(settings.tmdbWatchRegion || 'CA').toUpperCase());
@@ -252,14 +305,17 @@ export const TrackerAPI = (() => {
     return {
       page: Number(data.page || page),
       totalPages: Number(data.total_pages || 1),
-      results: (data.results || []).map(result => mapTMDBDiscoverResult(result, mediaType))
+      results: (data.results || []).map(result => ({
+        ...mapTMDBDiscoverResult(result, mediaType),
+        _discoverGenreTag: options.genreTag || ''
+      }))
     };
   }
 
   async function getBookFeed(startIndex = 0, settings, options = {}) {
     const key = required(settings.googleBooksKey, 'Google Books API key');
     const requestedQuery = String(options.query || 'subject:fiction').trim();
-    const requestedMax = Math.min(40, Math.max(1, Number(options.maxResults) || 40));
+    const requestedMax = Math.min(20, Math.max(1, Number(options.maxResults) || 20));
     const normalizedStart = Math.max(0, Number(startIndex) || 0);
     const orderBy = options.orderBy === 'newest' ? 'newest' : 'relevance';
 
@@ -272,11 +328,13 @@ export const TrackerAPI = (() => {
         orderBy,
         key
       });
-      const data = await fetchJson(`${GOOGLE_BOOKS_ROOT}/volumes?${params.toString()}`);
+      const data = await fetchGoogleBooksJson(`${GOOGLE_BOOKS_ROOT}/volumes?${params.toString()}`);
+      const subjectMatch = String(query || '').match(/subject:(?:\"([^\"]+)\"|([^\s]+))/i);
+      const trustedSubject = String(subjectMatch?.[1] || subjectMatch?.[2] || '').trim().toLowerCase();
       return {
         startIndex: normalizedStart,
         totalItems: Number(data.totalItems || 0),
-        results: (data.items || []).map(mapBook)
+        results: (data.items || []).map(mapBook).map(book => ({ ...book, _bookGenreSubject: trustedSubject }))
       };
     }
 
@@ -289,18 +347,19 @@ export const TrackerAPI = (() => {
       // Google Books can be flaky on larger subject-filtered pages. A smaller
       // request usually succeeds while preserving the exact subject query.
       try {
-        return await requestBooks(requestedQuery, Math.min(20, requestedMax));
+        return await requestBooks(requestedQuery, Math.min(12, requestedMax));
       } catch (smallerError) {
-        const subjectMatch = requestedQuery.match(/^subject:(?:"([^"]+)"|(.+))$/i);
+        const subjectMatch = requestedQuery.match(/subject:(?:"([^"]+)"|([^\s]+))/i);
         if (!subjectMatch) throw smallerError;
 
         // Last-resort fallback: search the subject phrase as ordinary text, then
         // keep only results whose categories/metadata still look like that genre.
         const subject = String(subjectMatch[1] || subjectMatch[2] || '').trim();
         if (!subject) throw smallerError;
-        const broad = await requestBooks(subject, Math.min(20, requestedMax));
+        const broadQuery = subject.toLowerCase() === 'romance' ? 'romance fiction' : subject;
+        const broad = await requestBooks(broadQuery, Math.min(12, requestedMax));
         const terms = subject.toLowerCase().split(/\s+/).filter(Boolean);
-        broad.results = broad.results.filter(book => {
+        const filtered = broad.results.filter(book => {
           const info = book.raw?.volumeInfo || {};
           const haystack = [
             ...(book.categories || []),
@@ -308,8 +367,15 @@ export const TrackerAPI = (() => {
             info.subtitle || '',
             info.description || ''
           ].join(' ').toLowerCase();
-          return terms.every(term => haystack.includes(term));
+          return terms.some(term => haystack.includes(term));
         });
+        // Google frequently omits volumeInfo.categories even for books returned by
+        // its own subject/text search. Do not turn a successful Romance query into
+        // an empty shelf just because that optional metadata is absent.
+        broad.results = (filtered.length >= 4 ? filtered : broad.results).map(book => ({
+          ...book,
+          _bookGenreSubject: subject.toLowerCase()
+        }));
         return broad;
       }
     }
@@ -423,7 +489,7 @@ export const TrackerAPI = (() => {
     const key = required(settings.googleBooksKey, 'Google Books API key');
     const query = 'subject:fiction';
     const url = `${GOOGLE_BOOKS_ROOT}/volumes?q=${encodeURIComponent(query)}&maxResults=20&printType=books&orderBy=newest&key=${encodeURIComponent(key)}`;
-    const data = await fetchJson(url);
+    const data = await fetchGoogleBooksJson(url);
     return (data.items || []).map(mapBook).slice(0, 12);
   }
 
@@ -435,7 +501,7 @@ export const TrackerAPI = (() => {
     const author = (info.authors || [])[0];
     let query = category ? `subject:${category}` : author ? `inauthor:${author}` : 'subject:fiction';
     const url = `${GOOGLE_BOOKS_ROOT}/volumes?q=${encodeURIComponent(query)}&maxResults=20&printType=books&orderBy=relevance&key=${encodeURIComponent(key)}`;
-    const data = await fetchJson(url);
+    const data = await fetchGoogleBooksJson(url);
     return (data.items || []).map(mapBook).filter(book => String(book.providerId) !== String(seedId)).slice(0, 12);
   }
 
@@ -443,7 +509,7 @@ export const TrackerAPI = (() => {
     const key = required(settings.googleBooksKey, 'Google Books API key');
     const query = `inauthor:${author}`;
     const url = `${GOOGLE_BOOKS_ROOT}/volumes?q=${encodeURIComponent(query)}&maxResults=20&printType=books&orderBy=relevance&key=${encodeURIComponent(key)}`;
-    const data = await fetchJson(url);
+    const data = await fetchGoogleBooksJson(url);
     return (data.items || []).map(mapBook).slice(0, 12);
   }
 
@@ -486,6 +552,8 @@ export const TrackerAPI = (() => {
     getTrending,
     getTMDBDiscover,
     getTMDBGenres,
+    getTMDBKeywordIds,
+    getTMDBItemKeywords,
     getBookFeed,
     getTMDBRecommendations,
     getWatchProviderCatalog,

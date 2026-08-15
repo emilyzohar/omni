@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=upnext-refined-1" />
+  <link rel="stylesheet" href="style.css?v=library-meta-calendar-tools-1" />
 </head>
 <body class="auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -99,8 +99,14 @@
               <button id="currentWeek" class="week-today-button" type="button">Today</button>
               <button id="nextWeek" class="week-nav-button" type="button" aria-label="Next week">→</button>
             </div>
+            <div class="calendar-tool-buttons" aria-label="Calendar settings">
+              <button id="openStickerSettings" class="calendar-tool-button" type="button">Stickers</button>
+              <button id="openStreakSettings" class="calendar-tool-button" type="button">Streaks</button>
+            </div>
           </div>
         </div>
+
+        <div id="trackStreakSummary" class="track-streak-summary" hidden></div>
 
         <div class="tracker-scroll">
           <div id="trackerGrid" class="tracker-grid"></div>
@@ -124,8 +130,6 @@
               <button class="library-folder-tab" type="button" data-library-view="recommended" role="tab" aria-selected="false">Recommended</button>
             </div>
             <button id="openLibraryAdd" class="library-add-button" type="button">+ Add</button>
-            <button id="openStickerSettings" class="library-add-button" type="button">Stickers</button>
-            <button id="openStreakSettings" class="library-add-button" type="button">Streaks</button>
             <label class="filter-control">
               <span>Type</span>
               <select id="typeFilter">
