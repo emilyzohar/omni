@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=library-meta-calendar-tools-1" />
+  <link rel="stylesheet" href="style.css?v=library-type-multiselect-1" />
 </head>
 <body class="auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -130,24 +130,14 @@
               <button class="library-folder-tab" type="button" data-library-view="recommended" role="tab" aria-selected="false">Recommended</button>
             </div>
             <button id="openLibraryAdd" class="library-add-button" type="button">+ Add</button>
-            <label class="filter-control">
-              <span>Type</span>
-              <select id="typeFilter">
-                <option value="all">All types</option>
-                <option value="tv">TV</option>
-                <option value="movie">Movies</option>
-                <option value="book">Books</option>
-                <option value="music">Music</option>
-                <option value="workout">Workouts</option>
-                <option value="other">Other</option>
-              </select>
-            </label>
-            <label class="filter-control">
-              <span>Genre</span>
-              <select id="libraryGenreFilter">
-                <option value="all">All genres</option>
-              </select>
-            </label>
+            <div class="filter-control library-type-filter-control">
+              <span>Types</span>
+              <details id="typeFilter" class="library-type-filter">
+                <summary id="typeFilterSummary">TV, Movie, Book</summary>
+                <div id="typeFilterOptions" class="library-type-options" role="group" aria-label="Library types"></div>
+              </details>
+            </div>
+            <button id="openLibrarySettings" class="library-settings-button" type="button" aria-label="Library display settings">Settings</button>
             <label class="filter-control">
               <span>Sort</span>
               <select id="librarySort">
@@ -164,6 +154,26 @@
       </div>
     </section>
   </main>
+
+  <!-- LIBRARY DISPLAY SETTINGS -->
+  <dialog id="librarySettingsModal" class="modal small-modal library-settings-modal">
+    <button class="modal-x" type="button" data-close="librarySettingsModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">LIBRARY</p>
+      <h2>Default visible types</h2>
+      <p>Choose which sections appear whenever you open the Library. You can still temporarily add or remove types with the Types filter.</p>
+    </div>
+    <form id="librarySettingsForm" class="settings-form">
+      <div id="libraryDefaultTypeOptions" class="library-default-type-options"></div>
+      <div class="modal-actions">
+        <button id="resetLibraryDefaults" class="quiet-button" type="button">Movie, TV &amp; Book</button>
+        <div class="actions-right">
+          <button class="quiet-button" type="button" data-close="librarySettingsModal">Cancel</button>
+          <button class="primary-button" type="submit">Save defaults</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
 
   <!-- STICKER CUSTOMIZATION -->
   <dialog id="stickerSettingsModal" class="modal sticker-settings-modal">
@@ -518,6 +528,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=bookranges-1"></script>
+  <script type="module" src="app.js?v=library-type-multiselect-1"></script>
 </body>
 </html>

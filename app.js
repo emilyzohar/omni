@@ -9,6 +9,7 @@ const HISTORY_KEY = 'zoharTracker.history.v1';
 const DISCOVER_PREFS_KEY = 'zoharTracker.discoverPrefs.v1';
 const STICKER_PREFS_KEY = 'zoharTracker.stickerPrefs.v1';
 const STREAK_PREFS_KEY = 'zoharTracker.streakPrefs.v1';
+const LIBRARY_PREFS_KEY = 'zoharTracker.libraryPrefs.v1';
 const ATTACHMENT_DB_NAME = 'zoharTracker.attachments.v1';
 const ATTACHMENT_STORE_NAME = 'files';
 const STATE_DB_NAME = 'zoharTracker.state.v1';
@@ -38,6 +39,7 @@ const STICKER_COLORS = ['rust', 'red', 'coral', 'orange', 'yellow', 'cream', 'pe
 
 const CLOUD_STATE_VERSION = 2;
 const DEFAULT_DISCOVER_PREFS = { streamingProviderIds: [], streamingProviderNames: [], prioritizeAuthors: true, englishTVOnly: false, contentType: 'all', genre: 'all' };
+const DEFAULT_LIBRARY_PREFS = { defaultTypeKeys: null };
 let currentUser = null;
 let appStarted = false;
 let localOnlyMode = false;
@@ -57,6 +59,7 @@ const state = {
   discoverPrefs: loadJSON(DISCOVER_PREFS_KEY, DEFAULT_DISCOVER_PREFS),
   stickerPrefs: loadJSON(STICKER_PREFS_KEY, {}),
   streakPrefs: loadJSON(STREAK_PREFS_KEY, {}),
+  libraryPrefs: loadJSON(LIBRARY_PREFS_KEY, DEFAULT_LIBRARY_PREFS),
   watchProviderCatalog: [],
   discoverProviderDraft: new Map(),
   selectedSource: null,
@@ -90,6 +93,7 @@ const state = {
   discoverGenreCatalog: { tv: [], movie: [] },
   discoverKeywordCatalog: {},
   libraryView: 'all',
+  libraryVisibleTypes: null,
   libraryExpandedGroups: new Set()
 };
 
@@ -133,8 +137,14 @@ const els = {
   currentWeek: $('#currentWeek'),
   nextWeek: $('#nextWeek'),
   typeFilter: $('#typeFilter'),
-  libraryGenreFilter: $('#libraryGenreFilter'),
+  typeFilterSummary: $('#typeFilterSummary'),
+  typeFilterOptions: $('#typeFilterOptions'),
   librarySort: $('#librarySort'),
+  openLibrarySettings: $('#openLibrarySettings'),
+  librarySettingsModal: $('#librarySettingsModal'),
+  librarySettingsForm: $('#librarySettingsForm'),
+  libraryDefaultTypeOptions: $('#libraryDefaultTypeOptions'),
+  resetLibraryDefaults: $('#resetLibraryDefaults'),
   libraryViewTabs: $$('.library-folder-tab[data-library-view]'),
   libraryGroups: $('#libraryGroups'),
   libraryEmpty: $('#libraryEmpty'),
@@ -522,9 +532,11 @@ function bindEvents() {
     renderTracker();
   });
   if (els.trackerGrid) mobileCalendarQuery.addEventListener?.('change', renderTracker);
-  els.typeFilter?.addEventListener('change', () => { refreshLibraryGenreFilter(); renderLibrary(); });
-  els.libraryGenreFilter?.addEventListener('change', renderLibrary);
+  els.typeFilterOptions?.addEventListener('change', handleLibraryTypeFilterChange);
   els.librarySort?.addEventListener('change', renderLibrary);
+  els.openLibrarySettings?.addEventListener('click', openLibrarySettings);
+  els.librarySettingsForm?.addEventListener('submit', saveLibrarySettings);
+  els.resetLibraryDefaults?.addEventListener('click', resetLibrarySettingsDraft);
   els.libraryViewTabs?.forEach(tab => tab.addEventListener('click', () => setLibraryView(tab.dataset.libraryView)));
   els.upNextList?.addEventListener('click', handleUpNextClick);
   els.trackerGrid?.addEventListener('click', handleTrackerClick);
@@ -5751,45 +5763,128 @@ function itemLibraryDate(item) {
   return datedHistory || item.completedAt || item.date || item.updatedAt || item.createdAt || '';
 }
 
-function normalizeGenre(value) {
-  return String(value || '').trim().toLowerCase();
+function normalizeLibraryPrefs(value) {
+  const keys = Array.isArray(value?.defaultTypeKeys)
+    ? [...new Set(value.defaultTypeKeys.map(key => slugifyType(key)).filter(Boolean))]
+    : null;
+  return { defaultTypeKeys: keys };
 }
 
-function refreshLibraryGenreFilter() {
-  if (!els.libraryGenreFilter) return;
-  const current = els.libraryGenreFilter.value || 'all';
-  const type = els.typeFilter?.value || 'all';
-  const genres = new Map();
-  state.items
-    .filter(item => getQueueStatus(item) !== 'tbr')
-    .filter(item => type === 'all' || libraryTypeGroupKey(item) === type)
-    .forEach(item => (item.genres || []).forEach(genre => {
-      const key = normalizeGenre(genre);
-      if (key && !genres.has(key)) genres.set(key, genre);
-    }));
+function isCoreLibraryGroupKey(key) {
+  const normalized = slugifyType(key).replace(/s$/, '');
+  return normalized === 'tv' || normalized === 'movie' || normalized === 'book';
+}
 
-  els.libraryGenreFilter.innerHTML = '<option value="all">All genres</option>';
-  [...genres.entries()].sort((a,b) => a[1].localeCompare(b[1])).forEach(([key,label]) => {
-    const option = document.createElement('option');
-    option.value = key;
-    option.textContent = label;
-    els.libraryGenreFilter.appendChild(option);
+function libraryAvailableTypeGroups() {
+  const groups = new Map();
+  for (const item of state.items.filter(item => getQueueStatus(item) !== 'tbr')) {
+    const key = libraryTypeGroupKey(item);
+    if (!groups.has(key)) groups.set(key, getItemTypeLabel(item));
+  }
+
+  // Keep the three core content types available even before the user has saved
+  // something in each category.
+  [['tv', 'TV'], ['movie', 'Movie'], ['book', 'Book']].forEach(([key, label]) => {
+    if (!groups.has(key) && ![...groups.keys()].some(existing => slugifyType(existing).replace(/s$/, '') === key)) {
+      groups.set(key, label);
+    }
   });
-  els.libraryGenreFilter.value = genres.has(current) || current === 'all' ? current : 'all';
+
+  return [...groups.entries()].sort(([aKey,aLabel],[bKey,bLabel]) => {
+    const preferred = ['tv','movie','movies','book','books'];
+    const ai = preferred.indexOf(aKey);
+    const bi = preferred.indexOf(bKey);
+    if (ai !== -1 || bi !== -1) {
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    }
+    return aLabel.localeCompare(bLabel);
+  });
+}
+
+function libraryDefaultTypeKeys() {
+  const prefs = normalizeLibraryPrefs(state.libraryPrefs);
+  if (Array.isArray(prefs.defaultTypeKeys)) return prefs.defaultTypeKeys;
+  return libraryAvailableTypeGroups().map(([key]) => key).filter(isCoreLibraryGroupKey);
+}
+
+function ensureLibraryVisibleTypes() {
+  if (!(state.libraryVisibleTypes instanceof Set)) {
+    state.libraryVisibleTypes = new Set(libraryDefaultTypeKeys());
+  }
+  return state.libraryVisibleTypes;
+}
+
+function libraryTypeFilterSummary() {
+  const selected = ensureLibraryVisibleTypes();
+  const groups = new Map(libraryAvailableTypeGroups());
+  const labels = [...selected].map(key => groups.get(key) || getTypeLabel(key)).filter(Boolean);
+  if (!labels.length) return 'No types';
+  if (labels.length <= 3) return labels.join(', ');
+  return `${labels.slice(0, 2).join(', ')} +${labels.length - 2}`;
+}
+
+function refreshTypeFilter() {
+  if (!els.typeFilterOptions) return;
+  const selected = ensureLibraryVisibleTypes();
+  const groups = libraryAvailableTypeGroups();
+  els.typeFilterOptions.innerHTML = groups.map(([key,label]) => `
+    <label class="library-type-option">
+      <input type="checkbox" value="${escapeAttr(key)}" ${selected.has(key) ? 'checked' : ''}>
+      <span>${escapeHtml(label)}</span>
+    </label>`).join('');
+  if (els.typeFilterSummary) els.typeFilterSummary.textContent = libraryTypeFilterSummary();
+}
+
+function handleLibraryTypeFilterChange() {
+  state.libraryVisibleTypes = new Set(
+    [...(els.typeFilterOptions?.querySelectorAll('input[type="checkbox"]:checked') || [])].map(input => input.value)
+  );
+  if (els.typeFilterSummary) els.typeFilterSummary.textContent = libraryTypeFilterSummary();
+  renderLibrary();
+}
+
+function renderLibraryDefaultTypeOptions(selectedKeys = new Set(libraryDefaultTypeKeys())) {
+  if (!els.libraryDefaultTypeOptions) return;
+  els.libraryDefaultTypeOptions.innerHTML = libraryAvailableTypeGroups().map(([key,label]) => `
+    <label class="library-default-type-option">
+      <input type="checkbox" value="${escapeAttr(key)}" ${selectedKeys.has(key) ? 'checked' : ''}>
+      <span>${escapeHtml(label)}</span>
+    </label>`).join('');
+}
+
+function openLibrarySettings() {
+  renderLibraryDefaultTypeOptions(new Set(libraryDefaultTypeKeys()));
+  els.librarySettingsModal?.showModal();
+}
+
+function resetLibrarySettingsDraft() {
+  const core = new Set(libraryAvailableTypeGroups().map(([key]) => key).filter(isCoreLibraryGroupKey));
+  renderLibraryDefaultTypeOptions(core);
+}
+
+function saveLibrarySettings(event) {
+  event.preventDefault();
+  const selected = [...(els.libraryDefaultTypeOptions?.querySelectorAll('input[type="checkbox"]:checked') || [])]
+    .map(input => input.value);
+  state.libraryPrefs = { defaultTypeKeys: [...new Set(selected)] };
+  safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
+  state.libraryVisibleTypes = new Set(state.libraryPrefs.defaultTypeKeys);
+  scheduleCloudSync();
+  els.librarySettingsModal?.close();
+  renderLibrary();
 }
 
 function renderLibrary() {
   refreshTypeFilter();
-  refreshLibraryGenreFilter();
-  const filter = els.typeFilter?.value || 'all';
-  const genre = els.libraryGenreFilter?.value || 'all';
+  const visibleTypes = ensureLibraryVisibleTypes();
   const sort = els.librarySort?.value || 'date';
 
   let filtered = state.items
     .filter(item => getQueueStatus(item) !== 'tbr')
     .filter(item => state.libraryView !== 'recommended' || item.recommended)
-    .filter(item => filter === 'all' || libraryTypeGroupKey(item) === filter)
-    .filter(item => genre === 'all' || (item.genres || []).some(value => normalizeGenre(value) === genre));
+    .filter(item => visibleTypes.has(libraryTypeGroupKey(item)));
 
   const compare = sort === 'rating'
     ? (a,b) => Number(b.rating || 0) - Number(a.rating || 0) || String(itemLibraryDate(b)).localeCompare(String(itemLibraryDate(a))) || a.title.localeCompare(b.title)
@@ -5987,45 +6082,6 @@ function libraryTypeGroupLabel(items = [], groupKey = '') {
   return labels[0] || getTypeLabel(groupKey);
 }
 
-function refreshTypeFilter() {
-  if (!els.typeFilter) return;
-  const current = els.typeFilter.value || 'all';
-  const groups = new Map();
-
-  // Keep the familiar built-in options, but de-duplicate by visible label.
-  for (const label of Object.values(TYPE_LABELS)) {
-    const key = slugifyType(label);
-    if (!groups.has(key)) groups.set(key, label);
-  }
-
-  for (const item of state.items.filter(item => getQueueStatus(item) !== 'tbr')) {
-    const key = libraryTypeGroupKey(item);
-    const existing = groups.get(key);
-    if (!existing) groups.set(key, getItemTypeLabel(item));
-  }
-
-  const preferred = ['tv','movie','book','music','workout','other'];
-  const ordered = [...groups.entries()].sort(([aKey,aLabel],[bKey,bLabel]) => {
-    const ai = preferred.indexOf(aKey);
-    const bi = preferred.indexOf(bKey);
-    if (ai !== -1 || bi !== -1) {
-      if (ai === -1) return 1;
-      if (bi === -1) return -1;
-      return ai - bi;
-    }
-    return aLabel.localeCompare(bLabel);
-  });
-
-  els.typeFilter.innerHTML = '<option value="all">All</option>';
-  for (const [key, label] of ordered) {
-    const option = document.createElement('option');
-    option.value = key;
-    option.textContent = label;
-    els.typeFilter.appendChild(option);
-  }
-  els.typeFilter.value = groups.has(current) || current === 'all' ? current : 'all';
-}
-
 
 // ---------------------------
 // SETTINGS / CACHE / STORAGE
@@ -6072,7 +6128,8 @@ function buildCloudState() {
     customTypes: state.customTypes,
     discoverPrefs: state.discoverPrefs,
     stickerPrefs: state.stickerPrefs,
-    streakPrefs: state.streakPrefs
+    streakPrefs: state.streakPrefs,
+    libraryPrefs: normalizeLibraryPrefs(state.libraryPrefs)
   };
 }
 
@@ -6083,6 +6140,7 @@ function hasMeaningfulLocalState(snapshot = buildCloudState()) {
     snapshot.customTypes?.length ||
     Object.keys(snapshot.stickerPrefs || {}).length ||
     Object.keys(snapshot.streakPrefs || {}).length ||
+    Array.isArray(snapshot.libraryPrefs?.defaultTypeKeys) ||
     snapshot.discoverPrefs?.streamingProviderIds?.length
   );
 }
@@ -6100,12 +6158,15 @@ async function persistCloudStateLocally(snapshot) {
   state.streakPrefs = snapshot?.streakPrefs && typeof snapshot.streakPrefs === 'object'
     ? snapshot.streakPrefs
     : {};
+  state.libraryPrefs = normalizeLibraryPrefs(snapshot?.libraryPrefs || DEFAULT_LIBRARY_PREFS);
+  state.libraryVisibleTypes = null;
 
   safeLocalSet(ITEMS_KEY, state.items);
   safeLocalSet(CUSTOM_TYPES_KEY, state.customTypes);
   safeLocalSet(DISCOVER_PREFS_KEY, state.discoverPrefs);
   safeLocalSet(STICKER_PREFS_KEY, state.stickerPrefs);
   safeLocalSet(STREAK_PREFS_KEY, state.streakPrefs);
+  safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
   await saveLargeState(HISTORY_IDB_KEY, state.history);
   localStorage.removeItem(HISTORY_KEY);
 }

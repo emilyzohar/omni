@@ -128,3 +128,7 @@ Reminder repeat options now include **Never**. A one-time reminder uses a specif
 ## Reminder visibility
 
 Reminders stay hidden from **Up Next** before the current occurrence is due. They appear on the scheduled date and remain visible as **Overdue** until checked off. Completing a recurring reminder schedules its next occurrence, which stays hidden until that next due date. One-time reminders disappear after completion.
+
+
+## Library display filters
+Library now defaults to Movie, TV, and Book sections only. The Library Types control is a checkbox multi-select for temporarily showing or hiding any visible type. Genre filtering has been removed. Library Settings lets each profile choose which type sections should be visible by default; that preference is included in the existing Supabase profile JSON and requires no schema migration.
