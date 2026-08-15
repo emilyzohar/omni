@@ -667,13 +667,13 @@ function bindEvents() {
 
     const libraryRating = event.target.closest('[data-library-rating]');
     if (libraryRating) {
-      setLibraryPendingRating(libraryRating.dataset.itemId, Number(libraryRating.dataset.libraryRating));
+      saveLibraryRating(libraryRating.dataset.itemId, Number(libraryRating.dataset.libraryRating));
       return;
     }
 
     const clearLibraryRating = event.target.closest('[data-clear-library-rating]');
     if (clearLibraryRating) {
-      setLibraryPendingRating(clearLibraryRating.dataset.itemId, 0);
+      saveLibraryRating(clearLibraryRating.dataset.itemId, 0);
       return;
     }
 
@@ -3079,7 +3079,7 @@ function libraryPersonalMetadataMarkup(item) {
       <textarea class="library-personal-notes" rows="3" placeholder="Anything you want to remember">${escapeHtml(item.notes || '')}</textarea>
     </label>
     <div class="detail-actions compact-actions">
-      <button class="primary-button" type="button" data-save-library-meta="${escapeAttr(item.id)}">Save rating & notes</button>
+      <button class="primary-button" type="button" data-save-library-meta="${escapeAttr(item.id)}">Save notes</button>
       <span class="library-meta-status" aria-live="polite"></span>
     </div>
   </section>`;
@@ -3101,6 +3101,34 @@ function setLibraryPendingRating(itemId, value) {
   section.querySelectorAll('[data-library-rating]').forEach(button => {
     button.classList.toggle('filled', Number(button.dataset.libraryRating) <= rating);
   });
+}
+
+function saveLibraryRating(itemId, value) {
+  const item = findItem(itemId);
+  const section = els.detailBody?.querySelector(`[data-library-personal-meta="${CSS.escape(itemId)}"]`);
+  if (!item || !section) return;
+
+  const rating = Math.max(0, Math.min(5, Number(value || 0)));
+  setLibraryPendingRating(itemId, rating);
+  item.rating = rating;
+  item.updatedAt = new Date().toISOString();
+
+  for (const entry of state.history) {
+    if (entry.sourceItemId !== item.id) continue;
+    if (['series-watched', 'movie-watched', 'book-finished', 'item-completed'].includes(entry.kind)) {
+      entry.rating = item.rating;
+    }
+  }
+
+  saveItems();
+  saveHistory();
+  renderLibrary();
+
+  const status = section.querySelector('.library-meta-status');
+  if (status) {
+    status.textContent = rating ? 'Rating saved' : 'Rating cleared';
+    setTimeout(() => { if (status.isConnected) status.textContent = ''; }, 1200);
+  }
 }
 
 function saveLibraryPersonalMetadata(itemId) {
@@ -3812,7 +3840,8 @@ function renderWeekTracker() {
       body.innerHTML = '<span class="week-empty">Nothing tracked</span>';
     } else {
       const groupedEntries = [...groups.entries()];
-      body.style.minHeight = `${weekStickerCollectionHeight(groupedEntries.length)}px`;
+      const stickerHeight = weekStickerCollectionHeight(groupedEntries.length);
+      if (stickerHeight > 0) body.style.minHeight = `${stickerHeight}px`;
       for (const [index, [groupKey, typeEntries]] of groupedEntries.entries()) {
         const first = typeEntries[0];
         const label = getCalendarTypeGroupLabel(first);
@@ -3884,27 +3913,31 @@ function weekStickerPilePosition(entry, index, date, groupKey) {
 }
 
 function weekStickerClusterPosition(date, groupKey, index, total) {
-  const columns = total <= 2 ? 1 : total <= 5 ? 2 : 3;
-  const row = Math.floor(index / columns);
-  const column = index % columns;
+  // Keep up to four piles inside the calendar row's natural header height.
+  // Only create another vertical band when there are too many piles to fit.
+  const pilesPerBand = 4;
+  const row = Math.floor(index / pilesPerBand);
+  const column = index % pilesPerBand;
   const seed = stableCalendarHash(`${date}:${groupKey}:cluster:${index}:${total}`);
-  const cellWidth = columns === 1 ? 0 : 88 / columns;
-  const rowOffset = row % 2 === 0 ? 0 : cellWidth * 0.14;
-  const baseLeft = columns === 1 ? 6 : 4 + column * cellWidth + rowOffset;
-  const leftJitter = ((seed % 11) - 5) * (columns === 1 ? 1.2 : 0.9);
-  const left = Math.max(2, Math.min(84, baseLeft + leftJitter));
+  const baseLeftByColumn = [2, 25, 49, 71];
+  const rowShift = row % 2 === 0 ? 0 : 4;
+  const leftJitter = ((seed % 9) - 4) * 0.75;
+  const left = Math.max(1, Math.min(78, baseLeftByColumn[column] + rowShift + leftJitter));
 
-  const baseTop = 3 + row * 52 + (column % 2 === 0 ? 0 : 10);
-  const topJitter = (Math.floor(seed / 17) % 9) - 4;
+  const baseTop = row * 49 + [2, 8, 0, 6][column];
+  const topJitter = (Math.floor(seed / 17) % 7) - 3;
   const top = Math.max(0, baseTop + topJitter);
   const rotate = ((Math.floor(seed / 71) % 17) - 8) * 0.9;
   return { left, top, rotate };
 }
 
 function weekStickerCollectionHeight(total) {
-  const columns = total <= 2 ? 1 : total <= 5 ? 2 : 3;
-  const rows = Math.ceil(total / columns);
-  return Math.max(58, rows * 56 + 18);
+  // Absolute-positioned stickers do not contribute to row height. For one band,
+  // return 0 so the weekday/date header alone determines the row's minimum height.
+  // Extra bands explicitly grow only that day's row.
+  const rows = Math.ceil(Math.max(0, total) / 4);
+  if (rows <= 1) return 0;
+  return 60 + (rows - 1) * 49;
 }
 
 function stableCalendarHash(value) {
@@ -7224,9 +7257,11 @@ function renderLibrary() {
             <h2 class="library-group-title">${escapeHtml(groupLabel)}</h2>
             <span class="library-group-count">${items.length}</span>
           </div>
-          <button class="library-expand-button" type="button" data-library-expand="${rootExpansionKey}">${rootExpanded ? 'Collapse' : 'Expand'}</button>
+          <button class="library-expand-button" type="button" data-library-expand="${rootExpansionKey}">${rootExpanded ? 'Collapse' : 'View all'}</button>
         </div>
-        <div class="tv-library-status-groups" ${rootExpanded ? '' : 'hidden'}></div>`;
+        ${rootExpanded
+          ? '<div class="tv-library-status-groups"></div>'
+          : '<div class="library-poster-grid tv-library-preview"></div>'}`;
 
       if (rootExpanded) {
         const statusHost = section.querySelector('.tv-library-status-groups');
@@ -7250,6 +7285,9 @@ function renderLibrary() {
           for (const item of statusItems) grid.appendChild(makeLibraryPoster(item));
           statusHost.appendChild(statusSection);
         }
+      } else {
+        const previewGrid = section.querySelector('.tv-library-preview');
+        for (const item of items) previewGrid.appendChild(makeLibraryPoster(item));
       }
 
       els.libraryGroups.appendChild(section);

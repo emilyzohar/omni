@@ -4714,11 +4714,15 @@ body.auth-locked > main {
     min-height: 60px;
   }
 
+  .week-day-header {
+    min-height: 60px;
+  }
+
   .week-day-events.week-sticker-collection {
     position: relative;
     display: block;
-    padding: 6px 0 8px;
-    min-height: 58px;
+    padding: 3px 0;
+    min-height: 0;
   }
 
   .week-sticker-cluster {
