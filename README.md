@@ -155,3 +155,18 @@ TV and movie cards in Up Next, TBR, and Library now show TMDB watch-provider ava
 - Up Next now has a **Calendar** tab. It shows future one-time/recurring reminder occurrences, saved Ticketmaster events, followed TV shows' next scheduled episode, and other future-dated/release items in chronological groups.
 - Saved Ticketmaster events use the existing item/profile JSON and therefore require no Supabase schema change.
 - Configure `EXPO_PUBLIC_TICKETMASTER_API_KEY`; optional `EXPO_PUBLIC_HOME_CITY` / `EXPO_PUBLIC_HOME_COUNTRY` provide the initial event location.
+
+
+## Ticketmaster event preferences
+
+Discover Settings now supports persistent Ticketmaster preferences. **Everything** keeps the broad local event feed; turning it off enables a multi-select of event classifications such as Music, Comedy, Hockey, Rock, Theatre, and others. A separate **Never show** multi-select applies exclusions, and optional artist/team/venue names are used as priority keywords. Preferences apply to both the Discover event feed and Discover search and are stored in the existing `discoverPrefs` profile JSON, so no Supabase schema migration is required.
+
+## Discover monthly calendar
+
+Discover now includes a Calendar mode with a Monday-first monthly grid. It combines:
+- Ticketmaster events within the selected month, filtered by the saved event location/category/exclusion preferences.
+- TMDB movie release dates for the configured watch region.
+- TMDB TV series premiere dates.
+- The next scheduled episode for followed TV shows already tracked in Catch All.
+
+The existing Discover Type and Genre filters also apply to the calendar. Books are intentionally omitted from the calendar because Google Books metadata is not a dependable comprehensive source of upcoming book release dates.

@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=ticketmaster-calendar-1" />
+  <link rel="stylesheet" href="style.css?v=discover-calendar-1" />
 </head>
 <body class="discover-page auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -92,6 +92,7 @@
             <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="popular" aria-selected="false">Popular</button>
             <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="for-you" aria-selected="false">For You</button>
             <button class="discover-mode-tab is-active" type="button" role="tab" data-discover-mode="discover" aria-selected="true">Discover</button>
+            <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="calendar" aria-selected="false">Calendar</button>
           </div>
           <div class="discover-filter-group">
             <label class="discover-type-filter">
@@ -115,7 +116,31 @@
 
         <div id="discoverStatus" class="discover-status">Building a fresh mix for you…</div>
 
-        <section class="discover-feed-section" aria-label="Discovery feed">
+        <section id="discoverCalendarSection" class="discover-calendar-section" aria-label="Upcoming release and event calendar" hidden>
+          <div class="discover-calendar-header">
+            <div>
+              <p class="discover-calendar-kicker">UPCOMING</p>
+              <h2 id="discoverCalendarMonthLabel">This month</h2>
+              <p class="discover-calendar-note">Ticketmaster events, movie releases, TV premieres, and upcoming episodes from shows you track. Book release dates are not included because Google Books does not provide a reliable upcoming-release calendar.</p>
+            </div>
+            <div class="discover-calendar-controls" aria-label="Discover calendar month controls">
+              <button id="discoverCalendarPrevious" class="quiet-button" type="button" aria-label="Previous month">←</button>
+              <button id="discoverCalendarToday" class="quiet-button" type="button">Today</button>
+              <button id="discoverCalendarNext" class="quiet-button" type="button" aria-label="Next month">→</button>
+            </div>
+          </div>
+          <div class="discover-calendar-legend" aria-label="Calendar content types">
+            <span><i class="discover-calendar-dot event"></i>Events</span>
+            <span><i class="discover-calendar-dot movie"></i>Movies</span>
+            <span><i class="discover-calendar-dot tv"></i>TV</span>
+          </div>
+          <div class="discover-calendar-scroll">
+            <div id="discoverCalendarGrid" class="discover-calendar-grid" aria-live="polite"></div>
+          </div>
+          <p id="discoverCalendarMessage" class="discover-calendar-message"></p>
+        </section>
+
+        <section id="discoverFeedSection" class="discover-feed-section" aria-label="Discovery feed">
           <div class="discover-feed-intro">
             <p id="discoverFeedIntroText">TV, movies, books, and nearby events mixed together. Your streaming services, watched/read history, ratings, and familiar authors are weighted toward the top — with enough randomness that each visit changes.</p>
           </div>
@@ -173,6 +198,33 @@
             <input id="eventCountry" type="text" maxlength="2" autocomplete="country" placeholder="CA" />
           </label>
         </div>
+
+        <label class="checkbox-field event-everything-option">
+          <input id="eventEverything" type="checkbox" checked />
+          <span><strong>Everything</strong><small>Show all Ticketmaster event categories, except anything excluded below.</small></span>
+        </label>
+
+        <div class="event-preference-block">
+          <div>
+            <h4>Show these event types</h4>
+            <p class="settings-note">Turn off Everything to build a mix such as Music + Comedy + Hockey.</p>
+          </div>
+          <div id="eventCategoryOptions" class="event-preference-grid" aria-label="Ticketmaster event types"></div>
+        </div>
+
+        <div class="event-preference-block">
+          <div>
+            <h4>Never show</h4>
+            <p class="settings-note">Exclusions win over your selections above.</p>
+          </div>
+          <div id="eventExclusionOptions" class="event-preference-grid event-exclusion-grid" aria-label="Excluded Ticketmaster event types"></div>
+        </div>
+
+        <label class="field">
+          <span>Prioritize artists, teams, or venues <em>optional</em></span>
+          <textarea id="eventPriorityTerms" rows="2" placeholder="The National, Toronto Maple Leafs, Massey Hall"></textarea>
+          <small>Separate names with commas. Matching events are pulled directly from Ticketmaster and moved toward the front.</small>
+        </label>
       </section>
 
       <label class="checkbox-field preference-checkbox">
@@ -473,6 +525,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=streaming-inline-details-1"></script>
+  <script type="module" src="app.js?v=discover-calendar-1"></script>
 </body>
 </html>

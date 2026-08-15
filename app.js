@@ -40,7 +40,41 @@ const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'event',
 const STICKER_COLORS = ['rust', 'red', 'coral', 'orange', 'yellow', 'cream', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'teal', 'green', 'mint', 'brown', 'black', 'white'];
 
 const CLOUD_STATE_VERSION = 2;
-const DEFAULT_DISCOVER_PREFS = { streamingProviderIds: [], streamingProviderNames: [], prioritizeAuthors: true, englishTVOnly: false, contentType: 'all', genre: 'all', eventCity: API_CONFIG.homeCity || '', eventCountry: API_CONFIG.homeCountry || API_CONFIG.tmdbWatchRegion || 'CA' };
+const TICKETMASTER_EVENT_CATEGORIES = [
+  { key: 'music', label: 'Music', classificationName: 'Music' },
+  { key: 'sports', label: 'Sports', classificationName: 'Sports' },
+  { key: 'arts-theatre', label: 'Arts & Theatre', classificationName: 'Arts & Theatre' },
+  { key: 'family', label: 'Family', classificationName: 'Family' },
+  { key: 'film', label: 'Film', classificationName: 'Film' },
+  { key: 'comedy', label: 'Comedy', classificationName: 'Comedy' },
+  { key: 'rock', label: 'Rock', classificationName: 'Rock' },
+  { key: 'pop', label: 'Pop', classificationName: 'Pop' },
+  { key: 'hip-hop-rap', label: 'Hip-Hop/Rap', classificationName: 'Hip-Hop/Rap' },
+  { key: 'dance-electronic', label: 'Dance / Electronic', classificationName: 'Dance/Electronic' },
+  { key: 'country', label: 'Country', classificationName: 'Country' },
+  { key: 'hockey', label: 'Hockey', classificationName: 'Hockey' },
+  { key: 'basketball', label: 'Basketball', classificationName: 'Basketball' },
+  { key: 'baseball', label: 'Baseball', classificationName: 'Baseball' },
+  { key: 'football', label: 'Football', classificationName: 'Football' },
+  { key: 'soccer', label: 'Soccer', classificationName: 'Soccer' },
+  { key: 'tennis', label: 'Tennis', classificationName: 'Tennis' },
+  { key: 'theatre', label: 'Theatre', classificationName: 'Theatre' },
+  { key: 'dance', label: 'Dance', classificationName: 'Dance' }
+];
+const DEFAULT_DISCOVER_PREFS = {
+  streamingProviderIds: [],
+  streamingProviderNames: [],
+  prioritizeAuthors: true,
+  englishTVOnly: false,
+  contentType: 'all',
+  genre: 'all',
+  eventCity: API_CONFIG.homeCity || '',
+  eventCountry: API_CONFIG.homeCountry || API_CONFIG.tmdbWatchRegion || 'CA',
+  eventEverything: true,
+  eventCategoryKeys: [],
+  eventExcludedCategoryKeys: [],
+  eventPriorityTerms: []
+};
 const DEFAULT_LIBRARY_PREFS = { defaultTypeKeys: null };
 let currentUser = null;
 let appStarted = false;
@@ -92,6 +126,10 @@ const state = {
   discoverFeedOffsets: { tv: 1, movie: 1, book: 0 },
   discoverFeedSession: Math.random(),
   discoverMode: 'discover',
+  discoverCalendarMonth: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`,
+  discoverCalendarLoading: false,
+  discoverCalendarEntries: [],
+  discoverCalendarExpandedDays: new Set(),
   discoverSearchQuery: '',
   discoverGenreCatalog: { tv: [], movie: [] },
   discoverKeywordCatalog: {},
@@ -157,6 +195,14 @@ const els = {
   discoverFeed: $('#discoverFeed'),
   discoverFeedSentinel: $('#discoverFeedSentinel'),
   discoverFeedMessage: $('#discoverFeedMessage'),
+  discoverFeedSection: $('#discoverFeedSection'),
+  discoverCalendarSection: $('#discoverCalendarSection'),
+  discoverCalendarGrid: $('#discoverCalendarGrid'),
+  discoverCalendarMonthLabel: $('#discoverCalendarMonthLabel'),
+  discoverCalendarMessage: $('#discoverCalendarMessage'),
+  discoverCalendarPrevious: $('#discoverCalendarPrevious'),
+  discoverCalendarToday: $('#discoverCalendarToday'),
+  discoverCalendarNext: $('#discoverCalendarNext'),
   discoverModeTabs: $$('.discover-mode-tab[data-discover-mode]'),
   discoverTypeFilter: $('#discoverTypeFilter'),
   discoverGenreFilter: $('#discoverGenreFilter'),
@@ -182,6 +228,10 @@ const els = {
   clearStreamingProviders: $('#clearStreamingProviders'),
   eventCity: $('#eventCity'),
   eventCountry: $('#eventCountry'),
+  eventEverything: $('#eventEverything'),
+  eventCategoryOptions: $('#eventCategoryOptions'),
+  eventExclusionOptions: $('#eventExclusionOptions'),
+  eventPriorityTerms: $('#eventPriorityTerms'),
   itemModal: $('#itemModal'),
   detailModal: $('#detailModal'),
   detailBody: $('#detailBody'),
@@ -552,6 +602,10 @@ function bindEvents() {
   els.trackerGrid?.addEventListener('click', handleTrackerClick);
   els.libraryGroups?.addEventListener('click', handleLibraryClick);
   els.refreshDiscover?.addEventListener('click', () => renderDiscover(true));
+  els.discoverCalendarPrevious?.addEventListener('click', () => shiftDiscoverCalendarMonth(-1));
+  els.discoverCalendarToday?.addEventListener('click', () => jumpDiscoverCalendarToToday());
+  els.discoverCalendarNext?.addEventListener('click', () => shiftDiscoverCalendarMonth(1));
+  els.discoverCalendarGrid?.addEventListener('click', handleDiscoverCalendarClick);
   els.discoverModeTabs?.forEach(tab => tab.addEventListener('click', () => setDiscoverMode(tab.dataset.discoverMode)));
   els.discoverTypeFilter?.addEventListener('change', async () => {
     state.discoverPrefs = { ...DEFAULT_DISCOVER_PREFS, ...state.discoverPrefs, contentType: els.discoverTypeFilter.value || 'all' };
@@ -582,6 +636,7 @@ function bindEvents() {
   els.streamingProviderSearch?.addEventListener('input', () => renderStreamingProviderOptions(els.streamingProviderSearch.value));
   els.streamingProviderOptions?.addEventListener('change', handleStreamingProviderToggle);
   els.clearStreamingProviders?.addEventListener('click', clearStreamingProviderSelection);
+  els.eventEverything?.addEventListener('change', syncTicketmasterPreferenceControls);
   document.querySelector('#discover')?.addEventListener('click', handleDiscoverClick);
   els.discoverQueueModal?.addEventListener('click', handleDiscoverQueueChoice);
   els.bookProgressForm?.addEventListener('submit', saveBookProgress);
@@ -3960,7 +4015,7 @@ function deleteHistoryEdit() {
 // ---------------------------
 // DISCOVER
 // ---------------------------
-const DISCOVER_MODES = new Set(['new', 'popular', 'for-you', 'discover']);
+const DISCOVER_MODES = new Set(['new', 'popular', 'for-you', 'discover', 'calendar']);
 const DISCOVER_BOOK_BATCH_SIZE = 20;
 const DISCOVER_GENRES = [
   { value: 'action-adventure', label: 'Action & Adventure', tmdb: ['Action', 'Adventure', 'Action & Adventure'], keywords: ['action', 'adventure'], book: ['action', 'adventure'] },
@@ -4098,6 +4153,7 @@ async function discoverSearchResultMatchesGenre(result) {
 async function refreshDiscoverForFilters() {
   await ensureDiscoverGenreCatalog();
   if (state.discoverSearchQuery) return runDiscoverSearch(state.discoverSearchQuery);
+  if (state.discoverMode === 'calendar') return renderDiscoverCalendar(true);
   resetDiscoverFeed(false);
   return loadMoreDiscoverFeed();
 }
@@ -4132,11 +4188,7 @@ async function runDiscoverSearch(forcedQuery = '') {
     const selectedType = state.discoverPrefs.contentType || 'all';
     const types = selectedType === 'all' ? ['tv', 'movie', 'book', 'event'] : [selectedType];
     const settled = await Promise.allSettled(types.map(type => {
-      if (type === 'event') return TrackerAPI.searchTicketmasterEvents(query, state.settings, {
-        city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
-        countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA',
-        size: 30
-      });
+      if (type === 'event') return fetchTicketmasterEventsForPreferences(query, { size: 30, page: 0 });
       if (type !== 'book') return TrackerAPI.searchCatalogue(query, type, state.settings);
       const genre = selectedDiscoverGenre();
       if (!genre?.book?.length) return TrackerAPI.searchCatalogue(query, type, state.settings);
@@ -4148,7 +4200,7 @@ async function runDiscoverSearch(forcedQuery = '') {
       const entry = settled[index];
       if (entry.status !== 'fulfilled') continue;
       const sourceType = types[index];
-      const availableResults = filterAlreadyKnown(entry.value || [], sourceType);
+      const availableResults = filterAlreadyKnown(entry.value || [], sourceType).filter(result => sourceType !== 'event' || ticketmasterMatchesEventPreferences(result));
       for (const result of availableResults) {
         const normalized = { ...result, sourceType, categories: result.raw?.volumeInfo?.categories || result.categories || [] };
         if (state.discoverPrefs.englishTVOnly === true && sourceType === 'tv' && String(normalized.raw?.original_language || '').toLowerCase() !== 'en') continue;
@@ -4180,11 +4232,15 @@ function setDiscoverMode(mode) {
   state.discoverSearchQuery = '';
   if (els.discoverSearchInput) els.discoverSearchInput.value = '';
   if (els.clearDiscoverSearch) els.clearDiscoverSearch.hidden = true;
-  if (state.discoverMode === next && state.discoverFeedInitialized) return;
+  if (state.discoverMode === next && (next === 'calendar' || state.discoverFeedInitialized)) return;
   state.discoverMode = next;
   updateDiscoverModeUI();
-  resetDiscoverFeed(false);
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (next === 'calendar') {
+    renderDiscoverCalendar(false);
+    return;
+  }
+  resetDiscoverFeed(false);
   loadMoreDiscoverFeed();
 }
 
@@ -4194,7 +4250,8 @@ function updateDiscoverModeUI() {
     new: 'Recently released TV, movies, books, plus upcoming events near your configured home location.',
     popular: 'Popular TV, movies, books, and upcoming local events, with titles on your streaming services moved toward the front.',
     'for-you': 'Recommendations based on what you have watched, finished, rated, and the authors you return to, mixed with upcoming events nearby.',
-    discover: 'A shuffled, effectively endless mix of TV, movies, books, and upcoming events. Your tastes influence the ranking, but each session deliberately changes.'
+    discover: 'A shuffled, effectively endless mix of TV, movies, books, and upcoming events. Your tastes influence the ranking, but each session deliberately changes.',
+    calendar: 'A month-by-month view of upcoming local events, movie releases, TV premieres, and the next episodes of TV shows you already track.'
   };
   els.discoverModeTabs?.forEach(tab => {
     const active = tab.dataset.discoverMode === mode;
@@ -4204,6 +4261,10 @@ function updateDiscoverModeUI() {
   if (els.discoverFeedIntroText) els.discoverFeedIntroText.textContent = copy[mode];
   if (els.discoverTypeFilter) els.discoverTypeFilter.value = state.discoverPrefs.contentType || 'all';
   if (els.discoverGenreFilter) els.discoverGenreFilter.value = state.discoverPrefs.genre || 'all';
+  const calendarMode = mode === 'calendar' && !state.discoverSearchQuery;
+  if (els.discoverCalendarSection) els.discoverCalendarSection.hidden = !calendarMode;
+  if (els.discoverFeedSection) els.discoverFeedSection.hidden = calendarMode;
+  if (els.discoverSearchForm) els.discoverSearchForm.hidden = calendarMode;
   if (els.refreshDiscover) els.refreshDiscover.textContent = mode === 'discover' ? 'Shuffle' : 'Refresh';
 }
 
@@ -4212,6 +4273,7 @@ async function renderDiscover(force = false) {
   await ensureDiscoverGenreCatalog();
   updateDiscoverModeUI();
   if (state.discoverSearchQuery) return runDiscoverSearch(state.discoverSearchQuery);
+  if (state.discoverMode === 'calendar') return renderDiscoverCalendar(force);
 
   // The new Discover page is an endless mixed feed. Keep old section helpers below
   // for compatibility with older saved/deployed HTML, but prefer this path.
@@ -4230,6 +4292,330 @@ async function renderDiscover(force = false) {
   if (!state.discoverFeedItems.length && !state.discoverFeedLoading) {
     await loadMoreDiscoverFeed();
   }
+}
+
+function discoverCalendarMonthDate() {
+  const match = String(state.discoverCalendarMonth || '').match(/^(\d{4})-(\d{2})/);
+  const now = new Date();
+  const year = match ? Number(match[1]) : now.getFullYear();
+  const month = match ? Number(match[2]) - 1 : now.getMonth();
+  return new Date(year, month, 1, 12, 0, 0, 0);
+}
+
+function discoverCalendarBounds() {
+  const monthDate = discoverCalendarMonthDate();
+  const start = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1, 12);
+  const end = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 12);
+  return { monthDate, startDate: localDateString(start), endDate: localDateString(end) };
+}
+
+function shiftDiscoverCalendarMonth(delta) {
+  const monthDate = discoverCalendarMonthDate();
+  monthDate.setMonth(monthDate.getMonth() + Number(delta || 0));
+  state.discoverCalendarMonth = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, '0')}-01`;
+  state.discoverCalendarExpandedDays.clear();
+  renderDiscoverCalendar(false);
+}
+
+function jumpDiscoverCalendarToToday() {
+  const now = new Date();
+  state.discoverCalendarMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+  state.discoverCalendarExpandedDays.clear();
+  renderDiscoverCalendar(false);
+}
+
+function discoverCalendarCachePrefix() {
+  const month = String(state.discoverCalendarMonth || '').slice(0, 7);
+  return `discover:calendar:${month}:`;
+}
+
+function clearDiscoverCalendarCache() {
+  const prefix = discoverCalendarCachePrefix();
+  for (const key of Object.keys(state.cache)) {
+    if (key.startsWith(prefix)) delete state.cache[key];
+  }
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
+}
+
+function ticketmasterMonthBoundary(dateString, atEnd = false) {
+  return `${dateString}T${atEnd ? '23:59:59' : '00:00:00'}Z`;
+}
+
+async function renderDiscoverCalendar(force = false) {
+  if (!els.discoverCalendarSection || !els.discoverCalendarGrid || state.discoverCalendarLoading) return;
+  updateDiscoverModeUI();
+  if (force) clearDiscoverCalendarCache();
+  state.discoverCalendarLoading = true;
+  const { monthDate } = discoverCalendarBounds();
+  if (els.discoverCalendarMonthLabel) {
+    els.discoverCalendarMonthLabel.textContent = monthDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  }
+  if (els.discoverStatus) {
+    els.discoverStatus.hidden = false;
+    els.discoverStatus.textContent = 'Loading upcoming events and releases…';
+  }
+  if (els.discoverCalendarMessage) els.discoverCalendarMessage.textContent = '';
+  els.discoverCalendarGrid.innerHTML = '<div class="discover-calendar-loading">Loading calendar…</div>';
+
+  try {
+    const entries = await collectDiscoverCalendarEntries();
+    state.discoverCalendarEntries = entries;
+    renderDiscoverCalendarGrid(entries);
+    if (els.discoverStatus) els.discoverStatus.hidden = true;
+    if (els.discoverCalendarMessage) {
+      const selectedType = state.discoverPrefs.contentType || 'all';
+      if (selectedType === 'book') {
+        els.discoverCalendarMessage.textContent = 'Books are not shown here because Google Books publication metadata is not a dependable calendar of forthcoming releases.';
+      } else if (!entries.length) {
+        els.discoverCalendarMessage.textContent = 'Nothing matching your current type, genre, event preferences, and location was found for this month.';
+      } else {
+        const eventCount = entries.filter(entry => entry.sourceType === 'event').length;
+        const movieCount = entries.filter(entry => entry.sourceType === 'movie').length;
+        const tvCount = entries.filter(entry => entry.sourceType === 'tv').length;
+        els.discoverCalendarMessage.textContent = [
+          eventCount ? `${eventCount} event${eventCount === 1 ? '' : 's'}` : '',
+          movieCount ? `${movieCount} movie release${movieCount === 1 ? '' : 's'}` : '',
+          tvCount ? `${tvCount} TV date${tvCount === 1 ? '' : 's'}` : ''
+        ].filter(Boolean).join(' · ');
+      }
+    }
+  } catch (error) {
+    els.discoverCalendarGrid.innerHTML = '';
+    if (els.discoverStatus) {
+      els.discoverStatus.hidden = false;
+      els.discoverStatus.textContent = `Calendar could not load: ${error.message}`;
+    }
+  } finally {
+    state.discoverCalendarLoading = false;
+  }
+}
+
+async function collectDiscoverCalendarEntries() {
+  const { startDate, endDate } = discoverCalendarBounds();
+  const selectedType = state.discoverPrefs.contentType || 'all';
+  if (selectedType === 'book') return [];
+  const entries = [];
+  state.discoverResults.clear();
+
+  if ((selectedType === 'all' || selectedType === 'event') && state.settings.ticketmasterKey) {
+    const paddedStart = addDaysToDateString(startDate, -1);
+    const paddedEnd = addDaysToDateString(endDate, 1);
+    for (let page = 0; page < 3; page += 1) {
+      const eventCity = String(state.discoverPrefs.eventCity || state.settings.homeCity || '').toLowerCase();
+      const eventCountry = String(state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA').toUpperCase();
+      const key = `${discoverCalendarCachePrefix()}events:${eventCity}:${eventCountry}:${ticketmasterPreferenceSignature()}:${page}`;
+      const events = await getCached(key, () => fetchTicketmasterEventsForPreferences('', {
+        page,
+        size: 50,
+        startDateTime: ticketmasterMonthBoundary(paddedStart),
+        endDateTime: ticketmasterMonthBoundary(paddedEnd, true),
+        skipPrioritySearch: true
+      }));
+      for (const result of events || []) {
+        if (!result.eventDate || result.eventDate < startDate || result.eventDate > endDate) continue;
+        if (!discoverResultMatchesGenre(result)) continue;
+        entries.push({
+          ...result,
+          sourceType: 'event',
+          date: result.eventDate,
+          calendarKind: 'Event',
+          calendarSecondary: [formatEventClock(result.eventTime || ''), result.venueName || result.city || ''].filter(Boolean).join(' · ')
+        });
+      }
+      if ((events || []).length < 50) break;
+    }
+  }
+
+  if (selectedType === 'all' || selectedType === 'movie') {
+    const region = String(state.settings.tmdbWatchRegion || state.discoverPrefs.eventCountry || 'CA').toUpperCase();
+    const options = discoverTMDBOptions('movie', {
+      afterDate: startDate,
+      beforeDate: endDate,
+      dateField: 'release',
+      region,
+      releaseTypes: '2|3|4',
+      sortBy: 'popularity.desc',
+      minVotes: 0
+    });
+    for (let page = 1; page <= 5; page += 1) {
+      const key = `${discoverCalendarCachePrefix()}movies:${region}:${state.discoverPrefs.genre || 'all'}:${page}`;
+      const data = await getCached(key, () => TrackerAPI.getTMDBDiscover('movie', page, state.settings, options));
+      for (const result of data?.results || []) {
+        const date = String(result.raw?.release_date || '').slice(0, 10);
+        if (!date || date < startDate || date > endDate || !discoverResultMatchesGenre(result)) continue;
+        entries.push({
+          ...result,
+          sourceType: 'movie',
+          date,
+          calendarKind: 'Movie release',
+          calendarSecondary: 'Release'
+        });
+      }
+      if (page >= Number(data?.totalPages || 1)) break;
+    }
+  }
+
+  if (selectedType === 'all' || selectedType === 'tv') {
+    const options = discoverTMDBOptions('tv', {
+      afterDate: startDate,
+      beforeDate: endDate,
+      sortBy: 'popularity.desc',
+      minVotes: 0
+    });
+    for (let page = 1; page <= 4; page += 1) {
+      const key = `${discoverCalendarCachePrefix()}tv-premieres:${state.discoverPrefs.genre || 'all'}:${state.discoverPrefs.englishTVOnly ? 'en' : 'any'}:${page}`;
+      const data = await getCached(key, () => TrackerAPI.getTMDBDiscover('tv', page, state.settings, options));
+      for (const result of data?.results || []) {
+        const date = String(result.raw?.first_air_date || '').slice(0, 10);
+        if (!date || date < startDate || date > endDate || !discoverResultMatchesGenre(result)) continue;
+        entries.push({
+          ...result,
+          sourceType: 'tv',
+          date,
+          calendarKind: 'TV premiere',
+          calendarSecondary: 'Series premiere'
+        });
+      }
+      if (page >= Number(data?.totalPages || 1)) break;
+    }
+
+    const tracked = state.items.filter(item => getSourceType(item) === 'tv' && item.providerId && item.watchDisposition !== 'stopped' && item.watchDisposition !== 'watch-later');
+    for (let start = 0; start < tracked.length; start += 5) {
+      const batch = tracked.slice(start, start + 5);
+      const resolved = await Promise.allSettled(batch.map(async item => {
+        const key = `${discoverCalendarCachePrefix()}tracked-tv:${item.providerId}`;
+        const details = await getCached(key, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
+        return { item, details };
+      }));
+      for (const settled of resolved) {
+        if (settled.status !== 'fulfilled') continue;
+        const { item, details } = settled.value;
+        const next = details?.next_episode_to_air;
+        const date = String(next?.air_date || '').slice(0, 10);
+        if (!date || date < startDate || date > endDate) continue;
+        const result = {
+          sourceType: 'tv',
+          provider: 'tmdb',
+          providerId: String(item.providerId),
+          title: details?.name || item.title || 'TV show',
+          subtitle: String(details?.first_air_date || item.subtitle || '').slice(0, 4),
+          image: details?.poster_path ? TrackerAPI.tmdbImage(details.poster_path) : (item.image || ''),
+          description: details?.overview || '',
+          rating: details?.vote_average || 0,
+          raw: { ...details, genre_ids: (details?.genres || []).map(genre => genre.id) }
+        };
+        if (!discoverResultMatchesGenre(result)) continue;
+        const episodeLabel = `S${Number(next.season_number || 0)} E${Number(next.episode_number || 0)}`;
+        entries.push({
+          ...result,
+          date,
+          calendarKind: 'Next episode',
+          calendarSecondary: `${episodeLabel}${next.name ? ` · ${next.name}` : ''}`,
+          calendarEpisode: { season: Number(next.season_number || 0), episode: Number(next.episode_number || 0) }
+        });
+      }
+    }
+  }
+
+  const deduped = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    const episode = entry.calendarEpisode ? `:${entry.calendarEpisode.season}:${entry.calendarEpisode.episode}` : '';
+    const key = `${entry.sourceType}:${entry.providerId}:${entry.date}:${entry.calendarKind}${episode}`;
+    if (!entry.date || seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(entry);
+  }
+  return deduped.sort((a, b) => String(a.date).localeCompare(String(b.date)) || discoverCalendarTypeOrder(a.sourceType) - discoverCalendarTypeOrder(b.sourceType) || String(a.title || '').localeCompare(String(b.title || '')));
+}
+
+function discoverCalendarTypeOrder(type) {
+  return type === 'event' ? 0 : type === 'movie' ? 1 : 2;
+}
+
+function renderDiscoverCalendarGrid(entries) {
+  if (!els.discoverCalendarGrid) return;
+  const { monthDate } = discoverCalendarBounds();
+  const first = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1, 12);
+  const last = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 12);
+  const mondayOffset = (first.getDay() + 6) % 7;
+  const gridStart = new Date(first);
+  gridStart.setDate(first.getDate() - mondayOffset);
+  const lastOffset = (7 - ((last.getDay() + 6) % 7) - 1 + 7) % 7;
+  const gridEnd = new Date(last);
+  gridEnd.setDate(last.getDate() + lastOffset);
+  const byDate = new Map();
+  for (const entry of entries || []) {
+    if (!byDate.has(entry.date)) byDate.set(entry.date, []);
+    byDate.get(entry.date).push(entry);
+  }
+
+  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  let html = weekdays.map(day => `<div class="discover-calendar-weekday">${day}</div>`).join('');
+  const cursor = new Date(gridStart);
+  const today = todayString();
+  const currentMonth = monthDate.getMonth();
+  while (cursor <= gridEnd) {
+    const date = localDateString(cursor);
+    const dayEntries = byDate.get(date) || [];
+    const expanded = state.discoverCalendarExpandedDays.has(date);
+    const limit = expanded ? dayEntries.length : 4;
+    const visible = dayEntries.slice(0, limit);
+    const outside = cursor.getMonth() !== currentMonth;
+    html += `<div class="discover-calendar-day${outside ? ' is-outside' : ''}${date === today ? ' is-today' : ''}" data-discover-calendar-date="${escapeAttr(date)}">
+      <div class="discover-calendar-day-number"><span>${cursor.getDate()}</span>${date === today ? '<small>Today</small>' : ''}</div>
+      <div class="discover-calendar-day-items">
+        ${visible.map(discoverCalendarEntryMarkup).join('')}
+        ${!expanded && dayEntries.length > limit ? `<button class="discover-calendar-more" type="button" data-discover-calendar-expand="${escapeAttr(date)}">+${dayEntries.length - limit} more</button>` : ''}
+        ${expanded && dayEntries.length > 4 ? `<button class="discover-calendar-more" type="button" data-discover-calendar-collapse="${escapeAttr(date)}">Show less</button>` : ''}
+      </div>
+    </div>`;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  els.discoverCalendarGrid.innerHTML = html;
+}
+
+function discoverCalendarEntryMarkup(entry) {
+  const key = rememberDiscoverResult(entry, entry.sourceType);
+  const typeLabel = entry.sourceType === 'event' ? 'Event' : entry.sourceType === 'movie' ? 'Movie' : 'TV';
+  const secondary = entry.calendarSecondary || entry.calendarKind || '';
+  return `<button class="discover-calendar-entry ${escapeAttr(entry.sourceType)}" type="button" data-discover-calendar-key="${escapeAttr(key)}"${entry.calendarEpisode ? ` data-discover-calendar-season="${entry.calendarEpisode.season}" data-discover-calendar-episode="${entry.calendarEpisode.episode}"` : ''}>
+    <span class="discover-calendar-entry-type">${escapeHtml(typeLabel)} · ${escapeHtml(entry.calendarKind || '')}</span>
+    <strong>${escapeHtml(entry.title || 'Untitled')}</strong>
+    ${secondary ? `<small>${escapeHtml(secondary)}</small>` : ''}
+  </button>`;
+}
+
+async function handleDiscoverCalendarClick(event) {
+  const expand = event.target.closest('[data-discover-calendar-expand]');
+  if (expand) {
+    state.discoverCalendarExpandedDays.add(expand.dataset.discoverCalendarExpand);
+    renderDiscoverCalendarGrid(state.discoverCalendarEntries);
+    return;
+  }
+  const collapse = event.target.closest('[data-discover-calendar-collapse]');
+  if (collapse) {
+    state.discoverCalendarExpandedDays.delete(collapse.dataset.discoverCalendarCollapse);
+    renderDiscoverCalendarGrid(state.discoverCalendarEntries);
+    return;
+  }
+  const button = event.target.closest('[data-discover-calendar-key]');
+  if (!button) return;
+  const key = button.dataset.discoverCalendarKey;
+  const season = Number(button.dataset.discoverCalendarSeason || 0);
+  const episode = Number(button.dataset.discoverCalendarEpisode || 0);
+  if (season && episode) {
+    state.openDiscoverKey = key;
+    els.detailModal.showModal();
+    els.detailBody.innerHTML = '<p class="loading-detail">Loading episode…</p>';
+    try {
+      await renderDiscoverTVEpisodeDetail(key, season, episode);
+    } catch (error) {
+      els.detailBody.innerHTML = `<div class="api-error">${escapeHtml(error.message)}</div>`;
+    }
+    return;
+  }
+  await openDiscoverDetail(key);
 }
 
 async function renderLegacyDiscover(force = false) {
@@ -4366,13 +4752,13 @@ async function collectDiscoverFeedCandidates(batchNumber) {
   const eventPage = Math.max(0, batchNumber - 1);
   const eventCity = state.discoverPrefs.eventCity || state.settings.homeCity || '';
   const eventCountry = state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA';
-  const eventCacheKey = `discover:ticketmaster:${String(eventCity).toLowerCase()}:${String(eventCountry).toUpperCase()}:${eventPage}`;
+  const eventCacheKey = `discover:ticketmaster:${String(eventCity).toLowerCase()}:${String(eventCountry).toUpperCase()}:${ticketmasterPreferenceSignature()}:${eventPage}`;
 
   if (contentType === 'event') {
     if (!state.settings.ticketmasterKey) return [];
     try {
-      return filterAlreadyKnown(await getCached(eventCacheKey, () => TrackerAPI.getUpcomingEvents(state.settings, { page: eventPage, size: 24, city: eventCity, countryCode: eventCountry })), 'event')
-        .map(result => ({ ...result, sourceType: 'event', _discoverSource: 'ticketmaster', _discoverBoost: 8 }));
+      return filterAlreadyKnown(await getCached(eventCacheKey, () => fetchTicketmasterEventsForPreferences('', { page: eventPage, size: 24 })), 'event')
+        .map(result => ({ ...result, sourceType: 'event', _discoverSource: 'ticketmaster', _discoverBoost: 8 + ticketmasterPreferenceBoost(result) }));
     } catch {
       return [];
     }
@@ -4386,8 +4772,8 @@ async function collectDiscoverFeedCandidates(batchNumber) {
 
   if (state.settings.ticketmasterKey) {
     try {
-      const events = filterAlreadyKnown(await getCached(eventCacheKey, () => TrackerAPI.getUpcomingEvents(state.settings, { page: eventPage, size: 20, city: eventCity, countryCode: eventCountry })), 'event');
-      candidates.push(...events.map(result => ({ ...result, sourceType: 'event', _discoverSource: 'ticketmaster', _discoverBoost: state.discoverMode === 'discover' ? 5 : 3 })));
+      const events = filterAlreadyKnown(await getCached(eventCacheKey, () => fetchTicketmasterEventsForPreferences('', { page: eventPage, size: 20 })), 'event');
+      candidates.push(...events.map(result => ({ ...result, sourceType: 'event', _discoverSource: 'ticketmaster', _discoverBoost: (state.discoverMode === 'discover' ? 5 : 3) + ticketmasterPreferenceBoost(result) })));
     } catch {}
   }
   return dedupeDiscoverCandidatesByBoost(candidates);
@@ -5077,12 +5463,167 @@ function dedupeDiscoverResults(results) {
   });
 }
 
+function normalizedTicketmasterPreferenceKeys(values) {
+  const valid = new Set(TICKETMASTER_EVENT_CATEGORIES.map(category => category.key));
+  return [...new Set((Array.isArray(values) ? values : []).map(value => String(value || '').trim()).filter(value => valid.has(value)))];
+}
+
+function normalizedTicketmasterPriorityTerms(values) {
+  const source = Array.isArray(values) ? values : String(values || '').split(/[,\n]/);
+  return [...new Set(source.map(value => String(value || '').trim()).filter(Boolean))].slice(0, 20);
+}
+
+function ticketmasterCategoryForKey(key) {
+  return TICKETMASTER_EVENT_CATEGORIES.find(category => category.key === key) || null;
+}
+
+function ticketmasterPreferenceSignature() {
+  const categories = normalizedTicketmasterPreferenceKeys(state.discoverPrefs.eventCategoryKeys).sort();
+  const excluded = normalizedTicketmasterPreferenceKeys(state.discoverPrefs.eventExcludedCategoryKeys).sort();
+  const priorities = normalizedTicketmasterPriorityTerms(state.discoverPrefs.eventPriorityTerms).map(value => value.toLowerCase()).sort();
+  return [state.discoverPrefs.eventEverything !== false ? 'all' : categories.join(','), `x:${excluded.join(',')}`, `p:${priorities.join(',')}`].join('|');
+}
+
+function ticketmasterClassificationText(result) {
+  return (result?.classifications || []).map(value => String(value || '').trim().toLowerCase()).filter(Boolean);
+}
+
+function ticketmasterMatchesCategory(result, key) {
+  const category = ticketmasterCategoryForKey(key);
+  if (!category) return false;
+  const target = category.classificationName.toLowerCase();
+  return ticketmasterClassificationText(result).some(value => value === target || value.includes(target) || target.includes(value));
+}
+
+function ticketmasterMatchesEventPreferences(result) {
+  const excluded = normalizedTicketmasterPreferenceKeys(state.discoverPrefs.eventExcludedCategoryKeys);
+  if (excluded.some(key => ticketmasterMatchesCategory(result, key))) return false;
+  if (state.discoverPrefs.eventEverything !== false) return true;
+  const selected = normalizedTicketmasterPreferenceKeys(state.discoverPrefs.eventCategoryKeys);
+  if (!selected.length) return false;
+  return selected.some(key => ticketmasterMatchesCategory(result, key));
+}
+
+function ticketmasterPriorityHaystack(result) {
+  return [
+    result?.title,
+    result?.venueName,
+    result?.city,
+    ...(result?.attractions || []),
+    ...(result?.classifications || [])
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function ticketmasterPreferenceBoost(result) {
+  const terms = normalizedTicketmasterPriorityTerms(state.discoverPrefs.eventPriorityTerms);
+  if (!terms.length) return 0;
+  const haystack = ticketmasterPriorityHaystack(result);
+  return terms.some(term => haystack.includes(term.toLowerCase())) ? 12 : 0;
+}
+
+function dedupeTicketmasterEvents(results) {
+  const seen = new Set();
+  return (results || []).filter(result => {
+    const key = String(result?.providerId || '').trim() || `${result?.title || ''}:${result?.eventDate || ''}:${result?.venueName || ''}`;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function fetchTicketmasterEventsForPreferences(query = '', options = {}) {
+  if (!state.settings.ticketmasterKey) return [];
+  const city = state.discoverPrefs.eventCity || state.settings.homeCity || '';
+  const countryCode = state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA';
+  const page = Math.max(0, Number(options.page || 0));
+  const size = Math.min(50, Math.max(1, Number(options.size || 20)));
+  const selected = normalizedTicketmasterPreferenceKeys(state.discoverPrefs.eventCategoryKeys);
+  const excluded = normalizedTicketmasterPreferenceKeys(state.discoverPrefs.eventExcludedCategoryKeys);
+  const everything = state.discoverPrefs.eventEverything !== false;
+  const priorityTerms = normalizedTicketmasterPriorityTerms(state.discoverPrefs.eventPriorityTerms);
+  if (!everything && !selected.length) return [];
+
+  const requests = [];
+  const includedClassificationNames = everything
+    ? []
+    : selected.map(key => ticketmasterCategoryForKey(key)?.classificationName).filter(Boolean);
+  const excludedClassificationNames = excluded
+    .map(key => ticketmasterCategoryForKey(key)?.classificationName)
+    .filter(Boolean)
+    .map(name => `-${name}`);
+  const classificationNames = [...includedClassificationNames, ...excludedClassificationNames];
+  requests.push(TrackerAPI.searchTicketmasterEvents(query, state.settings, {
+    city,
+    countryCode,
+    page,
+    size,
+    classificationNames,
+    startDateTime: options.startDateTime,
+    endDateTime: options.endDateTime
+  }));
+
+  // Ticketmaster's default API limit is five requests/second. Keep each feed
+  // batch to at most four requests: one catalogue request plus up to three
+  // rotating priority keyword requests. All saved priority terms still receive
+  // a ranking boost when they occur naturally in the catalogue.
+  if (!options.skipPrioritySearch && !String(query || '').trim() && priorityTerms.length) {
+    const start = (page * 3) % priorityTerms.length;
+    const focusedTerms = Array.from({ length: Math.min(3, priorityTerms.length) }, (_, index) => priorityTerms[(start + index) % priorityTerms.length]);
+    for (const term of focusedTerms) {
+      requests.push(TrackerAPI.searchTicketmasterEvents(term, state.settings, {
+        city,
+        countryCode,
+        page: 0,
+        size: 8,
+        classificationNames,
+        startDateTime: options.startDateTime,
+        endDateTime: options.endDateTime
+      }));
+    }
+  }
+
+  const settled = await Promise.allSettled(requests);
+  let results = settled.flatMap(entry => entry.status === 'fulfilled' ? (entry.value || []) : []);
+  results = dedupeTicketmasterEvents(results).filter(ticketmasterMatchesEventPreferences);
+  results.sort((a, b) => {
+    const boostDiff = ticketmasterPreferenceBoost(b) - ticketmasterPreferenceBoost(a);
+    if (boostDiff) return boostDiff;
+    return String(a.eventDate || '9999-12-31').localeCompare(String(b.eventDate || '9999-12-31'));
+  });
+  return results.slice(0, size);
+}
+
+function renderTicketmasterPreferenceOptions() {
+  if (!els.eventCategoryOptions || !els.eventExclusionOptions) return;
+  const selected = new Set(normalizedTicketmasterPreferenceKeys(state.discoverPrefs.eventCategoryKeys));
+  const excluded = new Set(normalizedTicketmasterPreferenceKeys(state.discoverPrefs.eventExcludedCategoryKeys));
+  const optionMarkup = (category, mode, checked) => `
+    <label class="event-preference-option">
+      <input type="checkbox" value="${escapeAttr(category.key)}" data-event-pref-mode="${mode}" ${checked ? 'checked' : ''} />
+      <span>${escapeHtml(category.label)}</span>
+    </label>`;
+  els.eventCategoryOptions.innerHTML = TICKETMASTER_EVENT_CATEGORIES.map(category => optionMarkup(category, 'include', selected.has(category.key))).join('');
+  els.eventExclusionOptions.innerHTML = TICKETMASTER_EVENT_CATEGORIES.map(category => optionMarkup(category, 'exclude', excluded.has(category.key))).join('');
+  syncTicketmasterPreferenceControls();
+}
+
+function syncTicketmasterPreferenceControls() {
+  const everything = Boolean(els.eventEverything?.checked);
+  els.eventCategoryOptions?.querySelectorAll('input[type="checkbox"]').forEach(input => {
+    input.disabled = everything;
+  });
+  els.eventCategoryOptions?.classList.toggle('is-disabled', everything);
+}
+
 async function openDiscoverSettings() {
   if (!els.discoverSettingsModal) return;
   els.prioritizeAuthors.checked = state.discoverPrefs.prioritizeAuthors !== false;
   if (els.englishTVOnly) els.englishTVOnly.checked = state.discoverPrefs.englishTVOnly === true;
   if (els.eventCity) els.eventCity.value = state.discoverPrefs.eventCity || state.settings.homeCity || '';
   if (els.eventCountry) els.eventCountry.value = (state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA').toUpperCase();
+  if (els.eventEverything) els.eventEverything.checked = state.discoverPrefs.eventEverything !== false;
+  if (els.eventPriorityTerms) els.eventPriorityTerms.value = normalizedTicketmasterPriorityTerms(state.discoverPrefs.eventPriorityTerms).join(', ');
+  renderTicketmasterPreferenceOptions();
   state.discoverProviderDraft = new Map(
     (state.discoverPrefs.streamingProviderIds || []).map((id, index) => [String(id), (state.discoverPrefs.streamingProviderNames || [])[index] || ''])
   );
@@ -5140,6 +5681,9 @@ function clearStreamingProviderSelection() {
 function saveDiscoverSettings(event) {
   event.preventDefault();
   const selectedEntries = [...state.discoverProviderDraft.entries()];
+  const eventCategoryKeys = [...(els.eventCategoryOptions?.querySelectorAll('input[type="checkbox"]:checked') || [])].map(input => input.value);
+  const eventExcludedCategoryKeys = [...(els.eventExclusionOptions?.querySelectorAll('input[type="checkbox"]:checked') || [])].map(input => input.value);
+  const eventPriorityTerms = normalizedTicketmasterPriorityTerms(els.eventPriorityTerms?.value || '');
   state.discoverPrefs = {
     ...DEFAULT_DISCOVER_PREFS,
     ...state.discoverPrefs,
@@ -5150,7 +5694,11 @@ function saveDiscoverSettings(event) {
     contentType: state.discoverPrefs.contentType || 'all',
     genre: state.discoverPrefs.genre || 'all',
     eventCity: String(els.eventCity?.value || '').trim(),
-    eventCountry: String(els.eventCountry?.value || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA').trim().toUpperCase()
+    eventCountry: String(els.eventCountry?.value || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA').trim().toUpperCase(),
+    eventEverything: Boolean(els.eventEverything?.checked),
+    eventCategoryKeys: normalizedTicketmasterPreferenceKeys(eventCategoryKeys),
+    eventExcludedCategoryKeys: normalizedTicketmasterPreferenceKeys(eventExcludedCategoryKeys),
+    eventPriorityTerms
   };
   localStorage.setItem(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
   scheduleCloudSync();

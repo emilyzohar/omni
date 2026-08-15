@@ -280,12 +280,22 @@ export const TrackerAPI = (() => {
     // Keep low-signal catalogue noise down without making the feed only blockbusters.
     params.set('vote_count.gte', String(options.minVotes ?? (mediaType === 'tv' ? 30 : 50)));
 
+    const useAirDate = mediaType === 'tv' && options.dateField === 'air';
+    const useRegionalReleaseDate = mediaType === 'movie' && options.dateField === 'release';
     if (options.beforeDate) {
-      params.set(mediaType === 'tv' ? 'first_air_date.lte' : 'primary_release_date.lte', options.beforeDate);
+      const key = mediaType === 'tv'
+        ? (useAirDate ? 'air_date.lte' : 'first_air_date.lte')
+        : (useRegionalReleaseDate ? 'release_date.lte' : 'primary_release_date.lte');
+      params.set(key, options.beforeDate);
     }
     if (options.afterDate) {
-      params.set(mediaType === 'tv' ? 'first_air_date.gte' : 'primary_release_date.gte', options.afterDate);
+      const key = mediaType === 'tv'
+        ? (useAirDate ? 'air_date.gte' : 'first_air_date.gte')
+        : (useRegionalReleaseDate ? 'release_date.gte' : 'primary_release_date.gte');
+      params.set(key, options.afterDate);
     }
+    if (mediaType === 'movie' && options.region) params.set('region', String(options.region).toUpperCase());
+    if (mediaType === 'movie' && options.releaseTypes) params.set('with_release_type', String(options.releaseTypes));
 
     const genreIds = (options.genreIds || (options.genreId ? [options.genreId] : [])).map(String).filter(Boolean);
     if (genreIds.length) params.set('with_genres', genreIds.join('|'));
@@ -556,6 +566,7 @@ export const TrackerAPI = (() => {
     const genre = classification?.genre?.name || '';
     const subGenre = classification?.subGenre?.name || '';
     const price = event?.priceRanges?.[0] || {};
+    const attractions = (event?._embedded?.attractions || []).map(attraction => attraction?.name).filter(Boolean);
     return {
       sourceType: 'event',
       provider: 'ticketmaster',
@@ -578,6 +589,7 @@ export const TrackerAPI = (() => {
       salesEnd: event?.sales?.public?.endDateTime || '',
       status: event?.dates?.status?.code || '',
       classifications: [segment, genre, subGenre].filter(value => value && value !== 'Undefined'),
+      attractions,
       priceRange: Number.isFinite(Number(price?.min)) || Number.isFinite(Number(price?.max)) ? {
         min: Number(price?.min || 0),
         max: Number(price?.max || 0),
@@ -607,10 +619,18 @@ export const TrackerAPI = (() => {
       sort: options.sort || 'date,asc',
       startDateTime: options.startDateTime || ticketmasterDateTime()
     });
+    if (options.endDateTime) params.set('endDateTime', String(options.endDateTime));
     const keyword = String(query || '').trim();
     if (keyword) params.set('keyword', keyword);
     for (const [name, value] of Object.entries(ticketmasterLocationParams(settings, options))) params.set(name, value);
-    if (options.classificationName) params.set('classificationName', options.classificationName);
+    const classificationNames = Array.isArray(options.classificationNames)
+      ? options.classificationNames
+      : (options.classificationName ? [options.classificationName] : []);
+    for (const classificationName of classificationNames.map(value => String(value || '').trim()).filter(Boolean)) {
+      params.append('classificationName', classificationName);
+    }
+    if (options.attractionId) params.set('attractionId', String(options.attractionId));
+    if (options.venueId) params.set('venueId', String(options.venueId));
     if (options.radius) params.set('radius', String(options.radius));
     if (options.unit) params.set('unit', String(options.unit));
     const data = await fetchJson(`${TICKETMASTER_ROOT}/events.json?${params.toString()}`);
