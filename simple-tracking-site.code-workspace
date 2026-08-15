@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "simple-tracking-site",
+			"path": "."
+		},
+		{
+			"name": ".github",
+			"path": "../simple-tracking-site-github-fix/.github"
+		}
+	],
+	"settings": {}
+}
