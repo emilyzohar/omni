@@ -111,6 +111,7 @@ const state = {
   openDiscoverKey: null,
   openDiscoverEpisode: null,
   pendingDiscoverRatingKey: null,
+  pendingDiscoverRatingTrackTV: false,
   tvDraftProviderId: '',
   tvDraftWatched: new Set(),
   tvDraftInitialWatched: new Set(),
@@ -244,6 +245,7 @@ const els = {
   historyEditId: $('#historyEditId'),
   historyEditTitle: $('#historyEditTitle'),
   historyEditType: $('#historyEditType'),
+  historyEditSubcategory: $('#historyEditSubcategory'),
   historyEditSubtitle: $('#historyEditSubtitle'),
   historyEditDate: $('#historyEditDate'),
   historyEditRating: $('#historyEditRating'),
@@ -257,6 +259,7 @@ const els = {
   itemSourceType: $('#itemSourceType'),
   displayTypeBlock: $('#displayTypeBlock'),
   itemDisplayType: $('#itemDisplayType'),
+  itemSubcategory: $('#itemSubcategory'),
   displayTypeLabel: $('#displayTypeLabel'),
   displayTypeHint: $('#displayTypeHint'),
   catalogueSearchBlock: $('#catalogueSearchBlock'),
@@ -715,7 +718,7 @@ function bindEvents() {
   document.querySelector('#discover')?.addEventListener('click', handleDiscoverClick);
   els.discoverQueueModal?.addEventListener('click', handleDiscoverQueueChoice);
   els.discoverRatingModal?.addEventListener('click', handleDiscoverRatingChoice);
-  els.discoverRatingModal?.addEventListener('close', () => { state.pendingDiscoverRatingKey = null; });
+  els.discoverRatingModal?.addEventListener('close', () => { state.pendingDiscoverRatingKey = null; state.pendingDiscoverRatingTrackTV = false; });
   els.bookProgressForm?.addEventListener('submit', saveBookProgress);
   els.bookAddPeriod?.addEventListener('click', () => addBookPeriodEditorRow({ startDate: todayString(), endDate: '' }));
   els.bookPauseResume?.addEventListener('click', toggleBookPauseResume);
@@ -748,13 +751,13 @@ function bindEvents() {
 
     const libraryRating = event.target.closest('[data-library-rating]');
     if (libraryRating) {
-      setLibraryPendingRating(libraryRating.dataset.itemId, Number(libraryRating.dataset.libraryRating));
+      saveLibraryRating(libraryRating.dataset.itemId, Number(libraryRating.dataset.libraryRating));
       return;
     }
 
     const clearLibraryRating = event.target.closest('[data-clear-library-rating]');
     if (clearLibraryRating) {
-      setLibraryPendingRating(clearLibraryRating.dataset.itemId, 0);
+      saveLibraryRating(clearLibraryRating.dataset.itemId, 0);
       return;
     }
 
@@ -809,6 +812,44 @@ function bindEvents() {
     if (tvSeasonCheck) {
       const item = findItem(tvSeasonCheck.dataset.itemId || state.openDetailId);
       if (item) await markTVSeasonWatched(item, Number(tvSeasonCheck.dataset.tvMarkSeason));
+      return;
+    }
+
+    const tvSeriesComplete = event.target.closest('[data-tv-mark-series-complete]');
+    if (tvSeriesComplete) {
+      const item = findItem(tvSeriesComplete.dataset.tvMarkSeriesComplete || state.openDetailId);
+      if (item) await markWholeTVSeriesComplete(item);
+      return;
+    }
+
+    const bookCompleteItem = event.target.closest('[data-book-mark-complete-item]');
+    if (bookCompleteItem) {
+      const item = findItem(bookCompleteItem.dataset.bookMarkCompleteItem || state.openDetailId);
+      if (item) await markWholeBookComplete(item);
+      return;
+    }
+
+    const bookCompleteProgress = event.target.closest('[data-book-mark-complete-progress]');
+    if (bookCompleteProgress) {
+      const total = Math.max(0, Number(els.progressTotalPages?.value || 0));
+      if (!total) {
+        alert('Add the total number of pages first.');
+        return;
+      }
+      els.progressCurrentPage.value = String(total);
+      els.bookProgressForm?.requestSubmit();
+      return;
+    }
+
+    const bookCompleteDraft = event.target.closest('[data-book-mark-complete-draft]');
+    if (bookCompleteDraft) {
+      const total = Math.max(0, Number(els.bookTotalPages?.value || 0));
+      if (!total) {
+        alert('Add the total number of pages first.');
+        return;
+      }
+      els.bookCurrentPage.value = String(total);
+      if (els.bookEndDate && !els.bookEndDate.value) els.bookEndDate.value = todayString();
       return;
     }
 
@@ -1007,8 +1048,8 @@ async function renderUpNext(options = {}) {
     tab.setAttribute('aria-selected', String(active));
   });
 
-  const mobileTBR = view === 'tbr' && mobileCalendarQuery.matches;
-  els.upNextList.classList.toggle('tbr-thumbnail-grid', mobileTBR);
+  const thumbnailTBR = view === 'tbr';
+  els.upNextList.classList.toggle('tbr-thumbnail-grid', thumbnailTBR);
   els.upNextList.innerHTML = '';
   els.upNextEmpty.hidden = items.length > 0;
   els.upNextEmpty.textContent = items.length === 0 && availableItems.length > 0
@@ -1017,7 +1058,7 @@ async function renderUpNext(options = {}) {
       ? 'Save something for later from Discover or the + button.'
       : 'Add something to Up Next to start your queue.';
 
-  if (mobileTBR) {
+  if (thumbnailTBR) {
     for (const item of items) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -1860,7 +1901,8 @@ function tvDetailControls(item) {
   } else {
     watchButtons = `<button class="primary-button" type="button" data-tv-watch-action="resume" data-item-id="${item.id}">Resume watching</button>`;
   }
-  return `<div class="detail-actions tv-watch-actions">${watchButtons}<button class="secondary-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${item.id}">${item.recommended ? '★ Recommended' : '☆ Recommend'}</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
+  const wholeComplete = Boolean(item.completedAt);
+  return `<div class="detail-actions tv-watch-actions"><button class="primary-button${wholeComplete ? ' is-complete' : ''}" type="button" data-tv-mark-series-complete="${item.id}" ${wholeComplete ? 'disabled' : ''}>${wholeComplete ? '✓ Series complete' : '✓ Mark series complete'}</button>${watchButtons}<button class="secondary-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${item.id}">${item.recommended ? '★ Recommended' : '☆ Recommend'}</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
 }
 
 async function applyTVWatchAction(item, action) {
@@ -1881,6 +1923,66 @@ async function applyTVWatchAction(item, action) {
   saveItems();
   renderAll();
   await renderTVDetails(item);
+}
+
+async function markWholeTVSeriesComplete(item) {
+  if (!item || getSourceType(item) !== 'tv' || item.completedAt) return;
+  const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
+  const seasons = (details.seasons || []).filter(season => season.season_number > 0 && season.episode_count > 0);
+  for (const info of seasons) {
+    const season = await getCached(`season:${item.providerId}:${info.season_number}`, () => TrackerAPI.getTVSeason(item.providerId, info.season_number, state.settings));
+    for (const episode of (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep))) {
+      if (!isTVEpisodeLogged(item, info.season_number, episode.episode_number)) addImportedTVEpisode(item, episode, info.season_number);
+    }
+  }
+  await recalculateTVProgress(item);
+  item.completedAt = item.completedAt || todayString();
+  setItemQueueStatus(item, 'library');
+  item.updatedAt = new Date().toISOString();
+  if (!state.history.some(entry => entry.kind === 'series-watched' && entry.sourceItemId === item.id)) {
+    addHistoryRecord({
+      sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: '', showOnCalendar: false,
+      kind: 'series-watched', title: item.title, subtitle: item.subtitle || '', notes: item.notes || '', rating: Number(item.rating || 0),
+      image: item.image || '', provider: item.provider, providerId: item.providerId
+    });
+  }
+  saveItems();
+  saveHistory();
+  renderAll();
+  if (els.detailModal?.open && state.openDetailId === item.id) await renderTVDetails(item);
+}
+
+async function markWholeBookComplete(item) {
+  if (!item || getSourceType(item) !== 'book' || item.completedAt) return;
+  let total = Math.max(0, Number(item.progress?.totalPages || 0));
+  if (!total && item.providerId) {
+    try {
+      const data = await getCached(`book:${item.providerId}`, () => TrackerAPI.getBookDetails(item.providerId, state.settings));
+      total = Math.max(0, Number(data?.volumeInfo?.pageCount || 0));
+    } catch {}
+  }
+  const periods = getBookReadingPeriods(item);
+  if (periods.length) {
+    const latest = periods.at(-1);
+    if (latest && !latest.endDate) latest.endDate = todayString();
+  } else {
+    periods.push({ startDate: todayString(), endDate: todayString() });
+  }
+  item.progress = { ...item.progress, currentPage: total || Number(item.progress?.currentPage || 0), totalPages: total || Number(item.progress?.totalPages || 0), readingPeriods: periods };
+  item.completedAt = todayString();
+  setItemQueueStatus(item, 'library');
+  item.updatedAt = new Date().toISOString();
+  if (!state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'book-finished')) {
+    addHistoryRecord({
+      sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: '', showOnCalendar: false,
+      kind: 'book-finished', title: item.title, subtitle: total ? `Finished · ${total} pages` : 'Finished', notes: item.notes || '',
+      rating: Number(item.rating || 0), image: item.image || '', provider: item.provider, providerId: item.providerId
+    });
+  }
+  saveItems();
+  saveHistory();
+  renderAll();
+  if (els.detailModal?.open && state.openDetailId === item.id) await renderBookDetails(item);
 }
 
 async function toggleSpecificTVEpisode(item, seasonNumber, episodeNumber) {
@@ -2112,6 +2214,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     els.providerImage.value = item.image || '';
     els.providerSubtitle.value = item.subtitle || '';
     els.manualTitle.value = item.title || '';
+    if (els.itemSubcategory) els.itemSubcategory.value = item.subcategory || '';
     els.itemNote.value = item.notes || '';
     els.itemDate.value = item.date || '';
     if (els.itemRecommended) els.itemRecommended.checked = Boolean(item.recommended);
@@ -2168,6 +2271,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.editingId.value = '';
   els.itemSourceType.value = 'tv';
   els.itemDisplayType.value = 'Workout';
+  if (els.itemSubcategory) els.itemSubcategory.value = '';
   els.itemQueueStatus.value = ['upnext','tbr','library'].includes(defaultQueueStatus) ? defaultQueueStatus : 'library';
   els.nextSeason.value = 1;
   els.nextEpisode.value = 1;
@@ -2688,6 +2792,7 @@ async function saveItemFromForm(event) {
     sourceType,
     type,
     typeLabel,
+    subcategory: cleanTypeLabel(els.itemSubcategory?.value || ''),
     title,
     provider,
     providerId,
@@ -2705,6 +2810,7 @@ async function saveItemFromForm(event) {
     active: sourceType === 'reminder' || (els.itemQueueStatus.value || 'library') === 'upnext',
     createdAt: editing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    completedAt: editing?.completedAt || '',
     progress: { ...(editing?.progress || {}) },
     ...(sourceType === 'tv' ? {
       watchDisposition: editing?.watchDisposition || ((els.itemQueueStatus.value || 'library') === 'tbr' ? 'watch-later' : 'following'),
@@ -2766,6 +2872,14 @@ async function saveItemFromForm(event) {
     item.progress.readingPeriods = sanitizeBookReadingPeriods(priorPeriods);
     // Books use reading periods for the calendar rather than a one-day item date.
     item.date = '';
+    if (item.progress.totalPages > 0 && item.progress.currentPage >= item.progress.totalPages) {
+      item.completedAt = editing?.completedAt || todayString();
+      setItemQueueStatus(item, 'library');
+      const latest = item.progress.readingPeriods.at(-1);
+      if (latest && !latest.endDate) latest.endDate = todayString();
+    } else {
+      item.completedAt = '';
+    }
   }
   if (sourceType === 'youtube') {
     item.progress.currentIndex = editing?.progress?.currentIndex || 0;
@@ -2776,6 +2890,15 @@ async function saveItemFromForm(event) {
     state.items = state.items.map(existing => existing.id === item.id ? item : existing);
   } else {
     state.items.push(item);
+  }
+
+  if (sourceType === 'book' && item.completedAt && !state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'book-finished')) {
+    addHistoryRecord({
+      sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: '', showOnCalendar: false,
+      kind: 'book-finished', title: item.title, subtitle: item.progress.totalPages ? `Finished · ${item.progress.totalPages} pages` : 'Finished',
+      notes: item.notes || '', rating: Number(item.rating || 0), image: item.image || '', provider: item.provider, providerId: item.providerId
+    });
+    saveHistory();
   }
 
   if (sourceType === 'tv') {
@@ -3066,7 +3189,7 @@ async function renderBookDetails(item) {
   els.detailBody.innerHTML = `
     ${detailHero({ type:'BOOK', title:info.title || item.title, image, subtitle:(info.authors || []).join(', '), overview:stripHtml(info.description || '') })}
     <div class="detail-progress"><strong>Reading progress</strong>${total ? `Page ${current} of ${total} · ${Math.min(100, Math.round(current/total*100))}%` : `Page ${current}`}<small>${escapeHtml(bookReadingStatusText(item))}</small></div>
-    <div class="detail-actions"><button class="primary-button" type="button" id="detailUpdatePages">Update pages & dates</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>
+    <div class="detail-actions"><button class="primary-button" type="button" data-book-mark-complete-item="${item.id}" ${item.completedAt ? 'disabled' : ''}>${item.completedAt ? '✓ Book complete' : '✓ Mark book complete'}</button><button class="secondary-button" type="button" id="detailUpdatePages">Update pages & dates</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>
     <section class="detail-section"><h3>Reading dates</h3><div class="book-period-summary-list">${periodMarkup}</div></section>
     <section class="detail-section"><h3>Book info</h3><p>${escapeHtml([info.publisher, info.publishedDate, info.pageCount ? `${info.pageCount} pages` : ''].filter(Boolean).join(' · '))}</p></section>
   `;
@@ -3218,7 +3341,7 @@ function libraryPersonalMetadataMarkup(item) {
       <textarea class="library-personal-notes" rows="3" placeholder="Anything you want to remember">${escapeHtml(item.notes || '')}</textarea>
     </label>
     <div class="detail-actions compact-actions">
-      <button class="primary-button" type="button" data-save-library-meta="${escapeAttr(item.id)}">Save rating & notes</button>
+      <button class="primary-button" type="button" data-save-library-meta="${escapeAttr(item.id)}">Save notes</button>
       <span class="library-meta-status" aria-live="polite"></span>
     </div>
   </section>`;
@@ -3240,6 +3363,34 @@ function setLibraryPendingRating(itemId, value) {
   section.querySelectorAll('[data-library-rating]').forEach(button => {
     button.classList.toggle('filled', Number(button.dataset.libraryRating) <= rating);
   });
+}
+
+function saveLibraryRating(itemId, value) {
+  const item = findItem(itemId);
+  const section = els.detailBody?.querySelector(`[data-library-personal-meta="${CSS.escape(itemId)}"]`);
+  if (!item || !section) return;
+
+  const rating = Math.max(0, Math.min(5, Number(value || 0)));
+  setLibraryPendingRating(itemId, rating);
+  item.rating = rating;
+  item.updatedAt = new Date().toISOString();
+
+  for (const entry of state.history) {
+    if (entry.sourceItemId !== item.id) continue;
+    if (['series-watched', 'movie-watched', 'book-finished', 'item-completed'].includes(entry.kind)) {
+      entry.rating = item.rating;
+    }
+  }
+
+  saveItems();
+  saveHistory();
+  renderLibrary();
+
+  const status = section.querySelector('.library-meta-status');
+  if (status) {
+    status.textContent = rating ? 'Rating saved' : 'Rating cleared';
+    setTimeout(() => { if (status.isConnected) status.textContent = ''; }, 1200);
+  }
 }
 
 function saveLibraryPersonalMetadata(itemId) {
@@ -3735,6 +3886,7 @@ function getCalendarEntries() {
       sourceItemId: item.id,
       type: item.type,
       typeLabel: getItemTypeLabel(item),
+      subcategory: item.subcategory || '',
       date: item.date,
       kind: 'dated-item',
       title: item.title,
@@ -3757,6 +3909,12 @@ function getCalendarEntries() {
       if (source && getBookReadingPeriods(source).length) return false;
     }
     return true;
+  }).map(entry => {
+    const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
+    return {
+      ...entry,
+      subcategory: entry.subcategory || source?.subcategory || ''
+    };
   });
 
   return [...savedItems, ...historyEntries, ...bookRanges];
@@ -3787,6 +3945,7 @@ function bookReadingCalendarEntries(item) {
         sourceItemId: item.id,
         type: item.type,
         typeLabel: getItemTypeLabel(item),
+        subcategory: item.subcategory || '',
         date,
         kind: 'book-reading-day',
         title: item.title,
@@ -3870,7 +4029,7 @@ function renderMonthTracker() {
     ? [...groupsByKey.values()]
     : ['workout', 'tv', 'book', 'movie'].map(type => ({
         key: slugifyType(getTypeLabel(type)),
-        label: getTypeLabel(type),
+        label: getCalendarCategoryLabel(type, getTypeLabel(type)),
         representativeType: type,
         representativeEntry: { type, typeLabel: getTypeLabel(type) }
       }));
@@ -3950,7 +4109,10 @@ function renderWeekTracker() {
     if (!groups.size) {
       body.innerHTML = '<span class="week-empty">Nothing tracked</span>';
     } else {
-      for (const [groupKey, typeEntries] of groups) {
+      const groupedEntries = [...groups.entries()];
+      const stickerHeight = weekStickerCollectionHeight(groupedEntries.length);
+      if (stickerHeight > 0) body.style.minHeight = `${stickerHeight}px`;
+      for (const [index, [groupKey, typeEntries]] of groupedEntries.entries()) {
         const first = typeEntries[0];
         const label = getCalendarTypeGroupLabel(first);
         const button = document.createElement('button');
@@ -3961,12 +4123,12 @@ function renderWeekTracker() {
         button.setAttribute('aria-label', `${typeEntries.length} ${label} ${typeEntries.length === 1 ? 'entry' : 'entries'} on ${date}`);
         button.title = `${label} · tap for details`;
 
-        const visibleEntries = typeEntries.slice(0, 6);
-        button.innerHTML = `
-          <span class="week-sticker-cluster-icons">
-            ${visibleEntries.map(entry => calendarStickerMarkup(entry.type, entry)).join('')}
-          </span>
-          ${typeEntries.length > visibleEntries.length ? `<span class="week-entry-count">+${typeEntries.length - visibleEntries.length}</span>` : ''}`;
+        const clusterPosition = weekStickerClusterPosition(date, groupKey, index, groupedEntries.length);
+        button.style.setProperty('--cluster-left', `${clusterPosition.left}%`);
+        button.style.setProperty('--cluster-top', `${clusterPosition.top}px`);
+        button.style.setProperty('--cluster-rotate', `${clusterPosition.rotate}deg`);
+
+        button.innerHTML = weekStickerPileMarkup(typeEntries, date, groupKey);
         body.appendChild(button);
       }
     }
@@ -3995,6 +4157,66 @@ function addDays(date, days) {
   return value;
 }
 
+
+function weekStickerPileMarkup(entries = [], date = '', groupKey = '') {
+  const visibleEntries = (entries || []).slice(0, 6);
+  const stickers = visibleEntries.map((entry, index) => {
+    const position = weekStickerPilePosition(entry, index, date, groupKey);
+    return `<span class="week-sticker-pile-item" style="--pile-left:${position.left}px; --pile-top:${position.top}px; --pile-rotate:${position.rotate}deg; --pile-z:${position.z};">${calendarStickerMarkup(entry.type, entry)}</span>`;
+  }).join('');
+  const extra = entries.length > visibleEntries.length
+    ? `<span class="week-entry-count">+${entries.length - visibleEntries.length}</span>`
+    : '';
+  return `
+    <span class="week-sticker-cluster-icons week-sticker-pile" aria-hidden="true">${stickers}</span>
+    ${extra}`;
+}
+
+function weekStickerPilePosition(entry, index, date, groupKey) {
+  const seed = stableCalendarHash(`${date}:${groupKey}:${entry?.id || entry?.sourceItemId || entry?.title || entry?.type || 'entry'}:${index}`);
+  const leftBase = [2, 17, 33, 8, 24, 40][index] ?? (index * 10);
+  const topBase = [11, 2, 13, 26, 18, 29][index] ?? (8 + index * 3);
+  const left = leftBase + ((seed % 7) - 3);
+  const top = topBase + ((Math.floor(seed / 7) % 7) - 3);
+  const rotate = ((Math.floor(seed / 49) % 13) - 6) + (index % 2 === 0 ? -1 : 1);
+  return { left, top, rotate, z: 10 + index };
+}
+
+function weekStickerClusterPosition(date, groupKey, index, total) {
+  // Keep up to four piles inside the calendar row's natural header height.
+  // Only create another vertical band when there are too many piles to fit.
+  const pilesPerBand = 4;
+  const row = Math.floor(index / pilesPerBand);
+  const column = index % pilesPerBand;
+  const seed = stableCalendarHash(`${date}:${groupKey}:cluster:${index}:${total}`);
+  const baseLeftByColumn = [2, 25, 49, 71];
+  const rowShift = row % 2 === 0 ? 0 : 4;
+  const leftJitter = ((seed % 9) - 4) * 0.75;
+  const left = Math.max(1, Math.min(78, baseLeftByColumn[column] + rowShift + leftJitter));
+
+  const baseTop = row * 49 + [2, 8, 0, 6][column];
+  const topJitter = (Math.floor(seed / 17) % 7) - 3;
+  const top = Math.max(0, baseTop + topJitter);
+  const rotate = ((Math.floor(seed / 71) % 17) - 8) * 0.9;
+  return { left, top, rotate };
+}
+
+function weekStickerCollectionHeight(total) {
+  // Absolute-positioned stickers do not contribute to row height. For one band,
+  // return 0 so the weekday/date header alone determines the row's minimum height.
+  // Extra bands explicitly grow only that day's row.
+  const rows = Math.ceil(Math.max(0, total) / 4);
+  if (rows <= 1) return 0;
+  return 60 + (rows - 1) * 49;
+}
+
+function stableCalendarHash(value) {
+  let hash = 0;
+  const text = String(value || '');
+  for (let i = 0; i < text.length; i += 1) hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  return Math.abs(hash);
+}
+
 function formatWeekRange(start, end) {
   const startMonth = new Intl.DateTimeFormat('en-CA', { month: 'short' }).format(start);
   const endMonth = new Intl.DateTimeFormat('en-CA', { month: 'short' }).format(end);
@@ -4016,13 +4238,21 @@ function calendarStickerMarkup(type, entry = {}) {
   const paletteClass = `sticker-palette-${config.color}`;
   const tiltClass = `sticker-tilt-${config.tilt}`;
   const text = config.shape === 'star' ? '★' : config.shape === 'heart' ? '♥' : escapeHtml(config.label || '');
-  const aria = escapeAttr(`${getTypeLabel(type)} sticker`);
+  const ariaLabel = [getTypeLabel(type), cleanTypeLabel(entry?.subcategory || '')].filter(Boolean).join(' · ');
+  const aria = escapeAttr(`${ariaLabel} sticker`);
   return `<span class="sticker ${shapeClass} ${paletteClass} ${tiltClass}" aria-label="${aria}">${text}</span>`;
+}
+
+function stickerPreferenceKey(type, entry = {}) {
+  const subcategory = cleanTypeLabel(entry?.subcategory || '');
+  return subcategory ? `${type}::subcategory::${slugifyType(subcategory)}` : type;
 }
 
 function getStickerConfig(type, entry = {}) {
   const defaults = getDefaultStickerConfig(type, entry);
-  const saved = state.stickerPrefs?.[type] || {};
+  const key = stickerPreferenceKey(type, entry);
+  const parentSaved = state.stickerPrefs?.[type] || {};
+  const saved = key !== type ? (state.stickerPrefs?.[key] || parentSaved) : parentSaved;
   const shape = ['square', 'circle', 'star', 'heart'].includes(saved.shape) ? saved.shape : defaults.shape;
   const color = STICKER_COLORS.includes(saved.color) ? saved.color : defaults.color;
   const label = cleanStickerLabel(saved.label !== undefined ? saved.label : defaults.label);
@@ -4059,12 +4289,22 @@ function cleanStickerLabel(value) {
   return String(value ?? '').replace(/\s+/g, '').slice(0, 3).toUpperCase();
 }
 
+function getCalendarCategoryLabel(type, fallbackLabel = '') {
+  const saved = state.stickerPrefs?.[type] || {};
+  const custom = cleanTypeLabel(saved.calendarLabel || '');
+  return custom || cleanTypeLabel(fallbackLabel || getTypeLabel(type)) || 'Other';
+}
+
 function getCalendarTypeGroupLabel(entry) {
-  return cleanTypeLabel(entry?.typeLabel || getTypeLabel(entry?.type)) || 'Other';
+  return getCalendarCategoryLabel(entry?.type, entry?.typeLabel || getTypeLabel(entry?.type));
 }
 
 function getCalendarTypeGroupKey(entry) {
-  return slugifyType(getCalendarTypeGroupLabel(entry));
+  // Keep the category's internal identity stable when its Calendar display name changes.
+  // This prevents renaming "TV" to "Shows" from changing grouping behavior or merging it
+  // with a different type that happens to use the same display name.
+  const baseLabel = cleanTypeLabel(entry?.typeLabel || getTypeLabel(entry?.type)) || String(entry?.type || 'other');
+  return slugifyType(baseLabel);
 }
 
 function handleTrackerClick(event) {
@@ -4144,6 +4384,7 @@ function openHistoryEdit(id) {
   els.historyEditId.value = entry.id;
   els.historyEditTitle.value = entry.title || '';
   els.historyEditType.value = entry.typeLabel || getTypeLabel(entry.type) || '';
+  if (els.historyEditSubcategory) els.historyEditSubcategory.value = entry.subcategory || source?.subcategory || '';
   els.historyEditSubtitle.value = entry.subtitle || '';
   els.historyEditDate.value = entry.date || '';
   els.historyEditNote.value = entry.notes || '';
@@ -4181,6 +4422,7 @@ function saveHistoryEdit(event) {
   entry.title = els.historyEditTitle.value.trim() || entry.title;
   entry.type = type;
   entry.typeLabel = typeLabel;
+  entry.subcategory = cleanTypeLabel(els.historyEditSubcategory?.value || '');
   entry.subtitle = els.historyEditSubtitle.value.trim();
   entry.date = els.historyEditDate.value || '';
   entry.rating = Number(els.historyEditRating.value || 0);
@@ -5175,8 +5417,8 @@ async function collectForYouDiscoverCandidates(batchNumber) {
   for (const sourceType of ['tv', 'movie']) {
     const used = new Set();
     for (let i = 0; i < 3; i++) {
-      const seed = pickDiscoverSeed(sourceType);
-      if (!seed?.providerId || used.has(String(seed.providerId))) continue;
+      const seed = pickDiscoverSeed(sourceType, used);
+      if (!seed?.providerId) continue;
       used.add(String(seed.providerId));
       try {
         const recs = await getCached(
@@ -5276,9 +5518,17 @@ function chooseDiscoverBookPlan(readAuthors, batchNumber) {
   return { query: topics[index], orderBy: Math.random() < 0.28 ? 'newest' : 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE, personalized: false };
 }
 
-function pickDiscoverSeed(type) {
+function discoverSeedWeight(item) {
+  const rating = Number(item.rating || 0);
+  let weight = rating >= 5 ? 20 : rating >= 4 ? 11 : rating >= 3 ? 4 : rating === 2 ? .45 : rating === 1 ? .12 : 3;
+  if (item.recommended) weight += 9;
+  if (getSourceType(item) === 'tv' && getTVWatchDisposition(item) === 'stopped') weight *= .12;
+  return Math.max(.05, weight);
+}
+
+function pickDiscoverSeed(type, excludedIds = new Set()) {
   const pool = state.items
-    .filter(item => getSourceType(item) === type && item.providerId)
+    .filter(item => getSourceType(item) === type && item.providerId && !excludedIds.has(String(item.providerId)))
     .filter(item => {
       if (type === 'tv') return item.completedAt || Number(item.progress?.nextSeason || 1) > 1 || Number(item.progress?.nextEpisode || 1) > 1 || state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched');
       if (type === 'book') return item.completedAt || Number(item.progress?.currentPage || 0) > 0;
@@ -5286,17 +5536,14 @@ function pickDiscoverSeed(type) {
       return false;
     });
   if (!pool.length) return null;
+
+  // Keep recommendations responsive to recent activity without letting one recent
+  // low-rated item dominate. Ratings, explicit recommendations, and stopped-TV
+  // status determine the lottery weight.
   const recent = [...pool]
     .sort((a,b) => String(b.updatedAt || b.completedAt || '').localeCompare(String(a.updatedAt || a.completedAt || '')))
-    .slice(0, 12);
-
-  // Higher-rated things are more likely to become recommendation seeds, but
-  // recency still matters because only the recent slice enters this lottery.
-  const weighted = recent.map(item => {
-    const rating = Number(item.rating || 0);
-    const weight = rating > 0 ? Math.max(.5, rating * rating) : 4;
-    return { item, weight };
-  });
+    .slice(0, 24);
+  const weighted = recent.map(item => ({ item, weight: discoverSeedWeight(item) }));
   const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
   let roll = Math.random() * total;
   for (const entry of weighted) {
@@ -5306,10 +5553,69 @@ function pickDiscoverSeed(type) {
   return weighted.at(-1)?.item || null;
 }
 
+function discoverTasteProfile(type) {
+  const profile = new Map();
+  for (const item of state.items) {
+    if (getSourceType(item) !== type || !item.genres?.length) continue;
+    const rating = Number(item.rating || 0);
+    const engaged = Boolean(item.completedAt) || item.recommended ||
+      (type === 'tv' && state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched')) ||
+      (type === 'book' && Number(item.progress?.currentPage || 0) > 0);
+    if (!engaged && !rating) continue;
+
+    let signal = 0;
+    if (rating >= 4) signal += (rating - 3) * 2.2;
+    else if (rating === 3) signal += .5;
+    else if (rating > 0) signal -= (3 - rating) * 2.4;
+    else if (engaged) signal += .7;
+    if (item.recommended) signal += 2.5;
+    if (type === 'tv' && getTVWatchDisposition(item) === 'stopped') signal -= 2.5;
+
+    for (const genre of item.genres) {
+      const key = String(genre || '').trim().toLowerCase();
+      if (!key) continue;
+      profile.set(key, (profile.get(key) || 0) + signal);
+    }
+  }
+  return profile;
+}
+
+function discoverCandidateGenreNames(result) {
+  if (result.sourceType === 'book') {
+    return [...new Set((result.categories || result.raw?.volumeInfo?.categories || []).map(value => String(value || '').trim()).filter(Boolean))];
+  }
+  if (result.sourceType === 'tv' || result.sourceType === 'movie') {
+    const direct = (result.genres || []).map(genre => typeof genre === 'string' ? genre : genre?.name).filter(Boolean);
+    if (direct.length) return [...new Set(direct)];
+    const map = result.sourceType === 'tv' ? TMDB_TV_GENRES : TMDB_MOVIE_GENRES;
+    return [...new Set((result.raw?.genre_ids || []).map(id => map[Number(id)]).filter(Boolean))];
+  }
+  return [];
+}
+
+function discoverGenreAffinity(result, profiles) {
+  const profile = profiles[result.sourceType];
+  if (!profile?.size) return 0;
+  const values = discoverCandidateGenreNames(result)
+    .map(genre => profile.get(String(genre).toLowerCase()) || 0)
+    .filter(value => value !== 0)
+    .sort((a,b) => Math.abs(b) - Math.abs(a));
+  if (!values.length) return 0;
+  // Two strongest genre signals are enough; cap them so genre history guides
+  // ranking without overwhelming seed-based recommendations.
+  const affinity = values.slice(0, 2).reduce((sum, value) => sum + value, 0);
+  return Math.max(-9, Math.min(12, affinity));
+}
+
 async function rankDiscoverFeedCandidates(results, batchSize) {
   const readAuthors = getReadAuthors();
   const authorSet = new Set(readAuthors.map(author => author.toLowerCase()));
   const mode = state.discoverMode || 'discover';
+  const tasteProfiles = mode === 'for-you' ? {
+    tv: discoverTasteProfile('tv'),
+    movie: discoverTasteProfile('movie'),
+    book: discoverTasteProfile('book')
+  } : {};
   const prelim = (results || []).map(result => {
     let score = Number(result._discoverBoost || 0);
     const rating = Number(result.rating || 0);
@@ -5321,6 +5627,10 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
         result = { ...result, authorMatch: true };
         score += mode === 'for-you' ? 10 : 4;
       }
+    }
+
+    if (mode === 'for-you') {
+      score += discoverGenreAffinity(result, tasteProfiles);
     }
 
     if (mode === 'popular') {
@@ -5357,6 +5667,13 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
   ]);
   const annotations = new Map([...tvAnnotated, ...movieAnnotated].map(result => [discoverResultIdentity(result), result]));
   selected = selected.map(result => annotations.get(discoverResultIdentity(result)) || result);
+
+  // Availability is resolved only for the cards in this batch to keep API work
+  // bounded, but it should still affect their order rather than being display-only.
+  if ((state.discoverPrefs.streamingProviderIds || []).length) {
+    selected.sort((a,b) => Number(b.preferredStreaming) - Number(a.preferredStreaming) || Number(b._discoverScore || 0) - Number(a._discoverScore || 0));
+    selected = diversifyDiscoverFeed(selected);
+  }
   return selected;
 }
 
@@ -5639,6 +5956,7 @@ function getReadAuthors() {
   const seen = new Set();
   const books = state.items
     .filter(item => getSourceType(item) === 'book' && (item.completedAt || completedBookIds.has(item.id)))
+    .filter(item => !Number(item.rating || 0) || Number(item.rating || 0) >= 3 || item.recommended)
     .sort((a,b) => String(b.completedAt || b.updatedAt || '').localeCompare(String(a.completedAt || a.updatedAt || '')));
 
   for (const book of books) {
@@ -5989,7 +6307,7 @@ function discoverCardMarkup(result, key, fallbackType) {
       ${result.subtitle && type === 'book' ? `<p class="discover-card-subtitle">${escapeHtml(result.subtitle)}</p>` : ''}
       <div class="discover-card-actions${type === 'event' ? ' no-complete' : ''}">
         ${type === 'event' ? '' : `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" ${completed && type !== 'tv' ? 'disabled' : ''} aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Already completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Completed' : 'Mark watched / read'}">✓</button>`}
-        <button class="discover-recommend-button${recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}" aria-label="${recommended ? 'Remove from Recommended' : 'Add to Recommended'}" title="${recommended ? 'Recommended' : 'Add to Recommended'}">${recommended ? '★' : '☆'}</button>
+        <button class="discover-recommend-button${recommended ? ' is-recommended' : ''}" type="button" data-discover-rate-recommend="${escapeAttr(key)}" aria-label="${recommended ? 'Remove from Recommended' : 'Rate and recommend'}" title="${recommended ? 'Remove from Recommended' : type === 'tv' ? 'Rate, recommend & track watched' : ['movie','book'].includes(type) ? 'Rate, recommend & mark complete' : 'Recommend'}">${recommended ? '★' : '☆'}</button>
         <button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>
       </div>
     </div>
@@ -5997,6 +6315,12 @@ function discoverCardMarkup(result, key, fallbackType) {
 }
 
 async function handleDiscoverClick(event) {
+  const rateRecommend = event.target.closest('[data-discover-rate-recommend]');
+  if (rateRecommend) {
+    await handleDiscoverRateRecommend(rateRecommend.dataset.discoverRateRecommend);
+    return;
+  }
+
   const complete = event.target.closest('[data-discover-complete]');
   if (complete) {
     const key = complete.dataset.discoverComplete;
@@ -6022,6 +6346,45 @@ async function handleDiscoverClick(event) {
   const detail = event.target.closest('[data-discover-detail]');
   if (detail) {
     await openDiscoverDetail(detail.dataset.discoverDetail);
+  }
+}
+
+async function handleDiscoverRateRecommend(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const existing = findDiscoverItem(result);
+
+  // A filled star is deliberately simple: remove Recommended only.
+  // Ratings and watched/read history remain intact.
+  if (existing?.recommended) {
+    existing.recommended = false;
+    existing.updatedAt = new Date().toISOString();
+    saveItems();
+    renderLibrary();
+    renderDiscoverCardInPlace(key);
+    return;
+  }
+
+  const item = ensureDiscoverItem(result, 'library');
+  item.recommended = true;
+  item.updatedAt = new Date().toISOString();
+  saveItems();
+  renderLibrary();
+  renderDiscoverCardInPlace(key);
+
+  if (result.sourceType === 'tv') {
+    state.pendingDiscoverRatingTrackTV = true;
+    openDiscoverRatingPrompt(key, { allowTV: true });
+    return;
+  }
+
+  if (result.sourceType === 'movie' || result.sourceType === 'book') {
+    if (!isDiscoverCompleted(result)) {
+      await markDiscoverCompleted(key, { promptForRating: true });
+    } else {
+      openDiscoverRatingPrompt(key);
+    }
+    return;
   }
 }
 
@@ -6179,19 +6542,20 @@ async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
   renderAll();
   if (els.detailModal?.open && state.openDiscoverKey === key) {
     await openDiscoverDetail(key);
-    if (promptForRating && result.sourceType === 'movie') {
+    if (promptForRating && ['movie','book'].includes(result.sourceType)) {
       requestAnimationFrame(() => els.detailBody?.querySelector('.discover-personal-meta')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
     }
-  } else if (promptForRating && result.sourceType === 'movie') {
+  } else if (promptForRating && ['movie','book'].includes(result.sourceType)) {
     openDiscoverRatingPrompt(key);
   }
 }
 
-function openDiscoverRatingPrompt(key) {
+function openDiscoverRatingPrompt(key, { allowTV = false } = {}) {
   const result = state.discoverResults.get(key);
-  if (!result || result.sourceType !== 'movie' || !els.discoverRatingModal) return;
+  const allowed = ['movie','book'].includes(result?.sourceType) || (allowTV && result?.sourceType === 'tv');
+  if (!result || !allowed || !els.discoverRatingModal) return;
   state.pendingDiscoverRatingKey = key;
-  if (els.discoverRatingTitle) els.discoverRatingTitle.textContent = `Rate ${result.title || 'this movie'}`;
+  if (els.discoverRatingTitle) els.discoverRatingTitle.textContent = `Rate ${result.title || (result.sourceType === 'book' ? 'this book' : 'this movie')}`;
   const existing = findDiscoverItem(result);
   const rating = Math.max(0, Math.min(5, Number(existing?.rating || 0)));
   els.discoverRatingPicker?.querySelectorAll('[data-discover-rating-choice]').forEach(button => {
@@ -6203,15 +6567,30 @@ function openDiscoverRatingPrompt(key) {
 function handleDiscoverRatingChoice(event) {
   const choice = event.target.closest('[data-discover-rating-choice]');
   if (choice && state.pendingDiscoverRatingKey) {
-    persistDiscoverRating(state.pendingDiscoverRatingKey, Number(choice.dataset.discoverRatingChoice));
-    els.discoverRatingModal?.close();
+    const key = state.pendingDiscoverRatingKey;
+    const trackTV = Boolean(state.pendingDiscoverRatingTrackTV);
+    persistDiscoverRating(key, Number(choice.dataset.discoverRatingChoice));
     state.pendingDiscoverRatingKey = null;
+    state.pendingDiscoverRatingTrackTV = false;
+    els.discoverRatingModal?.close();
+    if (trackTV) openDiscoverTVTrackingAfterRating(key);
     return;
   }
   if (event.target.closest('[data-discover-rating-skip]')) {
-    els.discoverRatingModal?.close();
+    const key = state.pendingDiscoverRatingKey;
+    const trackTV = Boolean(state.pendingDiscoverRatingTrackTV);
     state.pendingDiscoverRatingKey = null;
+    state.pendingDiscoverRatingTrackTV = false;
+    els.discoverRatingModal?.close();
+    if (trackTV && key) openDiscoverTVTrackingAfterRating(key);
   }
+}
+
+async function openDiscoverTVTrackingAfterRating(key) {
+  await openDiscoverDetail(key);
+  requestAnimationFrame(() => {
+    els.detailBody?.querySelector('[data-tv-watch-picker]')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  });
 }
 
 async function openDiscoverDetail(key) {
@@ -6406,7 +6785,7 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
     <div class="discover-detail-actions">
       <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
       <button class="secondary-button${existing?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}">${existing?.recommended ? '★ Recommended' : '☆ Recommend'}</button>
-      <button class="secondary-button" type="button" data-discover-mark-all-tv="${escapeAttr(key)}">${seriesCompleted ? '✓ Clear watched series' : '✓ Mark all watched'}</button>
+      <button class="secondary-button${seriesCompleted ? ' is-complete' : ''}" type="button" data-discover-mark-all-tv="${escapeAttr(key)}" ${seriesCompleted ? 'disabled' : ''}>${seriesCompleted ? '✓ Series complete' : '✓ Mark series complete'}</button>
     </div>
     ${discoverTVPersonalMetadataMarkup(existing, key)}
     <section class="detail-section streaming-detail"><h3>Streaming</h3><p>${escapeHtml(providerText)}</p>${availability.link ? `<a href="${escapeAttr(availability.link)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}</section>
@@ -6653,18 +7032,54 @@ function openStickerSettings() {
   els.stickerSettingsModal.showModal();
 }
 
+function getRecognizedStickerTargets() {
+  const parents = getRecognizedTypes();
+  const targets = [];
+  for (const parent of parents) {
+    targets.push({ type: parent.type, label: parent.label, subcategory: '', key: parent.type });
+    const subcategories = new Set();
+    state.items.forEach(item => {
+      if (item.type === parent.type && cleanTypeLabel(item.subcategory || '')) subcategories.add(cleanTypeLabel(item.subcategory));
+    });
+    state.history.forEach(entry => {
+      if (entry.type === parent.type && cleanTypeLabel(entry.subcategory || '')) subcategories.add(cleanTypeLabel(entry.subcategory));
+    });
+    [...subcategories].sort((a,b) => a.localeCompare(b)).forEach(subcategory => {
+      targets.push({
+        type: parent.type,
+        label: `${parent.label} · ${subcategory}`,
+        subcategory,
+        key: stickerPreferenceKey(parent.type, { subcategory })
+      });
+    });
+  }
+  return targets;
+}
+
 function renderStickerSettingsRows() {
-  const types = getRecognizedTypes();
+  const targets = getRecognizedStickerTargets();
   els.stickerSettingsRows.innerHTML = '';
 
-  for (const { type, label } of types) {
-    const config = getStickerConfig(type, state.history.find(entry => entry.type === type) || {});
+  for (const target of targets) {
+    const sampleEntry = state.history.find(entry => entry.type === target.type && cleanTypeLabel(entry.subcategory || '') === target.subcategory)
+      || state.items.find(item => item.type === target.type && cleanTypeLabel(item.subcategory || '') === target.subcategory)
+      || { type: target.type, subcategory: target.subcategory };
+    const config = getStickerConfig(target.type, sampleEntry);
     const row = document.createElement('div');
-    row.className = 'sticker-setting-row';
-    row.dataset.stickerType = type;
+    row.className = `sticker-setting-row${target.subcategory ? ' sticker-setting-subcategory' : ''}`;
+    row.dataset.stickerType = target.type;
+    row.dataset.stickerKey = target.key;
+    row.dataset.stickerSubcategory = target.subcategory;
+    const parentSaved = state.stickerPrefs?.[target.type] || {};
     row.innerHTML = `
-      <strong class="sticker-setting-type">${escapeHtml(label)}</strong>
-      <div class="sticker-setting-preview">${calendarStickerMarkup(type, state.history.find(entry => entry.type === type) || {})}</div>
+      <strong class="sticker-setting-type">${escapeHtml(target.label)}</strong>
+      ${target.subcategory
+        ? `<span class="sticker-setting-calendar-inherit">Uses ${escapeHtml(getCalendarCategoryLabel(target.type, getTypeLabel(target.type)))}</span>`
+        : `<label class="sticker-setting-field sticker-setting-calendar-name">
+            <span class="sticker-setting-mobile-label">Calendar name</span>
+            <input data-sticker-field="calendar-label" type="text" maxlength="30" value="${escapeAttr(parentSaved.calendarLabel || '')}" placeholder="${escapeAttr(target.label)}" />
+          </label>`}
+      <div class="sticker-setting-preview">${calendarStickerMarkup(target.type, sampleEntry)}</div>
       <label class="sticker-setting-field">
         <span class="sticker-setting-mobile-label">Shape</span>
         <select data-sticker-field="shape">
@@ -6696,7 +7111,8 @@ function previewStickerSettings(event) {
   const labelInput = row.querySelector('[data-sticker-field="label"]');
   if (labelInput) labelInput.disabled = ['star','heart'].includes(shape);
   const label = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(labelInput?.value ?? '');
-  const defaults = getDefaultStickerConfig(row.dataset.stickerType, state.history.find(entry => entry.type === row.dataset.stickerType) || {});
+  const sampleEntry = { type: row.dataset.stickerType, subcategory: row.dataset.stickerSubcategory || '' };
+  const defaults = getDefaultStickerConfig(row.dataset.stickerType, sampleEntry);
   const preview = row.querySelector('.sticker-setting-preview');
   if (preview) {
     const symbol = shape === 'star' ? '★' : shape === 'heart' ? '♥' : escapeHtml(label);
@@ -6709,11 +7125,18 @@ function saveStickerSettings(event) {
   const next = { ...state.stickerPrefs };
 
   els.stickerSettingsRows.querySelectorAll('.sticker-setting-row[data-sticker-type]').forEach(row => {
-    const type = row.dataset.stickerType;
+    const key = row.dataset.stickerKey || row.dataset.stickerType;
     const shape = row.querySelector('[data-sticker-field="shape"]')?.value || 'square';
     const color = row.querySelector('[data-sticker-field="color"]')?.value || 'cream';
     const label = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(row.querySelector('[data-sticker-field="label"]')?.value ?? '');
-    next[type] = { shape, color, label };
+    const existing = next[key] || {};
+    const calendarInput = row.querySelector('[data-sticker-field="calendar-label"]');
+    const calendarLabel = calendarInput ? cleanTypeLabel(calendarInput.value) : existing.calendarLabel;
+    next[key] = { ...existing, shape, color, label };
+    if (calendarInput) {
+      if (calendarLabel) next[key].calendarLabel = calendarLabel;
+      else delete next[key].calendarLabel;
+    }
   });
 
   state.stickerPrefs = next;
@@ -7074,7 +7497,17 @@ function itemLibraryDate(item) {
     .map(entry => entry.date)
     .sort()
     .at(-1);
-  return datedHistory || item.completedAt || item.date || item.updatedAt || item.createdAt || '';
+
+  // "Recent" means the latest meaningful activity on the Library item, not
+  // only when it was originally watched/read. Rating an older movie today should
+  // therefore move it to the front instead of being pinned to its old completedAt.
+  return [
+    item.updatedAt,
+    datedHistory,
+    item.completedAt,
+    item.date,
+    item.createdAt
+  ].filter(Boolean).sort().at(-1) || '';
 }
 
 function normalizeLibraryPrefs(value) {
@@ -7207,6 +7640,22 @@ function tvLibraryStatusLabel(key) {
   })[key] || key;
 }
 
+function tvLibraryProgressScore(item) {
+  let watchedEpisodes = 0;
+  for (const entry of state.history) {
+    if (entry.sourceItemId === item.id && entry.kind === 'episode-watched') watchedEpisodes += 1;
+  }
+  const nextSeason = Number(item.progress?.nextSeason || 1);
+  const nextEpisode = Number(item.progress?.nextEpisode || 1);
+  return watchedEpisodes * 100000 + nextSeason * 1000 + nextEpisode;
+}
+
+function compareTVLibraryProgress(a, b) {
+  return tvLibraryProgressScore(b) - tvLibraryProgressScore(a)
+    || String(b.updatedAt || b.completedAt || '').localeCompare(String(a.updatedAt || a.completedAt || ''))
+    || a.title.localeCompare(b.title);
+}
+
 function makeLibraryPoster(item) {
   const poster = document.createElement('button');
   poster.type = 'button';
@@ -7266,8 +7715,10 @@ function renderLibrary() {
     const groupLabel = libraryTypeGroupLabel(items, groupKey);
 
     if (slugifyType(groupKey).replace(/s$/, '') === 'tv') {
+      const rootExpansionKey = 'tv:root';
+      const rootExpanded = state.libraryExpandedGroups.has(rootExpansionKey);
       const section = document.createElement('section');
-      section.className = 'library-group library-shelf library-tv-shelf';
+      section.className = `library-group library-shelf library-tv-shelf${rootExpanded ? ' is-expanded' : ' is-collapsed'}`;
       section.dataset.libraryGroup = groupKey;
       section.innerHTML = `
         <div class="library-group-heading-row">
@@ -7275,29 +7726,37 @@ function renderLibrary() {
             <h2 class="library-group-title">${escapeHtml(groupLabel)}</h2>
             <span class="library-group-count">${items.length}</span>
           </div>
+          <button class="library-expand-button" type="button" data-library-expand="${rootExpansionKey}">${rootExpanded ? 'Collapse' : 'View all'}</button>
         </div>
-        <div class="tv-library-status-groups"></div>`;
+        ${rootExpanded
+          ? '<div class="tv-library-status-groups"></div>'
+          : '<div class="library-poster-grid tv-library-preview"></div>'}`;
 
-      const statusHost = section.querySelector('.tv-library-status-groups');
-      for (const statusKey of ['in-progress', 'up-to-date', 'finished', 'stopped']) {
-        const statusItems = items.filter(item => tvLibraryStatusKey(item) === statusKey);
-        if (!statusItems.length) continue;
-        const expansionKey = `tv:${statusKey}`;
-        const expanded = state.libraryExpandedGroups.has(expansionKey);
-        const statusSection = document.createElement('section');
-        statusSection.className = `tv-library-status-group${expanded ? ' is-expanded' : ''}`;
-        statusSection.innerHTML = `
-          <div class="tv-library-status-heading">
-            <div>
-              <h3 class="tv-library-status-title">${escapeHtml(tvLibraryStatusLabel(statusKey))}</h3>
-              <span class="library-group-count">${statusItems.length}</span>
+      if (rootExpanded) {
+        const statusHost = section.querySelector('.tv-library-status-groups');
+        for (const statusKey of ['in-progress', 'up-to-date', 'finished', 'stopped']) {
+          const statusItems = items.filter(item => tvLibraryStatusKey(item) === statusKey).sort(compareTVLibraryProgress);
+          if (!statusItems.length) continue;
+          const expansionKey = `tv:${statusKey}`;
+          const expanded = state.libraryExpandedGroups.has(expansionKey);
+          const statusSection = document.createElement('section');
+          statusSection.className = `tv-library-status-group${expanded ? ' is-expanded' : ''}`;
+          statusSection.innerHTML = `
+            <div class="tv-library-status-heading">
+              <div>
+                <h3 class="tv-library-status-title">${escapeHtml(tvLibraryStatusLabel(statusKey))}</h3>
+                <span class="library-group-count">${statusItems.length}</span>
+              </div>
+              <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(expansionKey)}">${expanded ? 'Carousel' : 'View all'}</button>
             </div>
-            <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(expansionKey)}">${expanded ? 'Collapse' : 'Show all'}</button>
-          </div>
-          <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
-        const grid = statusSection.querySelector('.library-poster-grid');
-        for (const item of statusItems) grid.appendChild(makeLibraryPoster(item));
-        statusHost.appendChild(statusSection);
+            <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
+          const grid = statusSection.querySelector('.library-poster-grid');
+          for (const item of statusItems) grid.appendChild(makeLibraryPoster(item));
+          statusHost.appendChild(statusSection);
+        }
+      } else {
+        const previewGrid = section.querySelector('.tv-library-preview');
+        for (const item of items) previewGrid.appendChild(makeLibraryPoster(item));
       }
 
       els.libraryGroups.appendChild(section);
@@ -7314,7 +7773,7 @@ function renderLibrary() {
           <h2 class="library-group-title">${escapeHtml(groupLabel)}</h2>
           <span class="library-group-count">${items.length}</span>
         </div>
-        <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(groupKey)}">${expanded ? 'Collapse' : `Show all`}</button>
+        <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(groupKey)}">${expanded ? 'Carousel' : `View all`}</button>
       </div>
       <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
     const grid = section.querySelector('.library-poster-grid');
@@ -7746,9 +8205,11 @@ function safeLocalSet(key, value) {
 }
 
 function addHistoryRecord(record) {
+  const source = record?.sourceItemId ? findItem(record.sourceItemId) : null;
   state.history.push({
     id: makeId(),
     createdAt: new Date().toISOString(),
+    subcategory: source?.subcategory || '',
     ...record
   });
 }

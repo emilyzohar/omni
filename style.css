@@ -383,7 +383,6 @@ h3 { margin-bottom: 0; font-size: 1.65rem; }
 
 /* dialogs */
 .modal {
-  position: relative;
   width: min(700px, calc(100% - 30px));
   max-height: min(88vh, 900px);
   overflow: auto;
@@ -397,11 +396,10 @@ h3 { margin-bottom: 0; font-size: 1.65rem; }
 .modal::backdrop { background: rgba(31,22,20,.52); backdrop-filter: blur(2px); }
 .small-modal { width: min(460px, calc(100% - 30px)); }
 .modal-x {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  margin: 0;
-  z-index: 6;
+  position: sticky;
+  top: 0;
+  margin-left: auto;
+  z-index: 3;
   width: 40px;
   height: 40px;
   border: 0;
@@ -411,7 +409,7 @@ h3 { margin-bottom: 0; font-size: 1.65rem; }
   font-size: 1.8rem;
   line-height: 1;
 }
-.modal-heading { margin: 0 0 26px; padding-right: 54px; }
+.modal-heading { margin: -18px 0 26px; padding-right: 50px; }
 .modal-eyebrow { color: #827967; }
 
 .item-form,
@@ -1285,7 +1283,7 @@ h3 { margin-bottom: 0; font-size: 1.65rem; }
 .sticker-circle.sticker-palette-pink { background: #c98598; color: #fff7e6; }
 .sticker-star.sticker-palette-pink { color: #c98598; background: transparent; }
 
-.sticker-settings-modal { width: min(780px, calc(100% - 30px)); }
+.sticker-settings-modal { width: min(980px, calc(100% - 30px)); }
 .sticker-settings-intro {
   margin: 8px 0 0;
   max-width: 620px;
@@ -1297,7 +1295,7 @@ h3 { margin-bottom: 0; font-size: 1.65rem; }
 .sticker-settings-head,
 .sticker-setting-row {
   display: grid;
-  grid-template-columns: minmax(130px, 1fr) 70px 116px 86px 116px;
+  grid-template-columns: minmax(120px, .95fr) minmax(130px, 1fr) 64px 104px 82px 104px;
   gap: 12px;
   align-items: center;
 }
@@ -1343,6 +1341,12 @@ h3 { margin-bottom: 0; font-size: 1.65rem; }
   color: var(--navy);
 }
 .sticker-setting-field input { text-align: center; font-weight: 800; letter-spacing: .04em; }
+.sticker-setting-calendar-name input { text-align: left; font-weight: 600; letter-spacing: 0; }
+.sticker-setting-calendar-inherit {
+  color: #8a867d;
+  font-size: .76rem;
+  line-height: 1.3;
+}
 .sticker-setting-field input:disabled { opacity: .38; cursor: not-allowed; }
 .sticker-setting-mobile-label { display: none; }
 
@@ -1357,6 +1361,10 @@ h3 { margin-bottom: 0; font-size: 1.65rem; }
   }
   .sticker-setting-type { font-size: 1rem; }
   .sticker-setting-preview { width: 54px; min-height: 44px; justify-self: end; }
+  .sticker-setting-calendar-inherit {
+    grid-column: 1 / -1;
+    padding-left: 71px;
+  }
   .sticker-setting-field {
     grid-column: 1 / -1;
     display: grid;
@@ -4716,30 +4724,39 @@ body.auth-locked > main {
     min-height: 60px;
   }
 
+  .week-day-header {
+    min-height: 60px;
+  }
+
   .week-day-events.week-sticker-collection {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    align-content: center;
-    gap: 7px;
-    padding: 8px 0;
+    position: relative;
+    display: block;
+    padding: 3px 0;
+    min-height: 0;
   }
 
   .week-sticker-cluster {
-    min-height: 40px;
+    position: absolute;
+    left: var(--cluster-left, 4%);
+    top: var(--cluster-top, 0px);
+    min-height: 0;
     display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    border: 1px solid rgba(255,255,255,.18);
-    border-radius: 999px;
-    padding: 6px 9px;
-    background: rgba(255,255,255,.08);
+    align-items: flex-start;
+    gap: 2px;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    background: transparent;
     color: #fff8df;
     cursor: pointer;
+    transform: rotate(var(--cluster-rotate, 0deg));
+    transform-origin: center;
+    transition: transform .16s ease, filter .16s ease;
   }
 
   .week-sticker-cluster:active {
-    background: rgba(255,255,255,.16);
+    transform: translateY(1px) rotate(var(--cluster-rotate, 0deg)) scale(.97);
+    filter: brightness(1.03);
   }
 
   .week-sticker-cluster-icons {
@@ -4748,12 +4765,33 @@ body.auth-locked > main {
     min-width: 24px;
   }
 
+  .week-sticker-pile {
+    position: relative;
+    display: block;
+    width: 70px;
+    height: 54px;
+    min-width: 70px;
+  }
+
+  .week-sticker-pile-item {
+    position: absolute;
+    left: var(--pile-left, 0px);
+    top: var(--pile-top, 0px);
+    z-index: var(--pile-z, 1);
+    display: block;
+    transform: rotate(var(--pile-rotate, 0deg));
+  }
+
   .week-sticker-cluster-icons .sticker + .sticker {
-    margin-left: -7px;
+    margin-left: 0;
   }
 
   .week-sticker-cluster .sticker {
     transform: none;
+  }
+
+  .week-sticker-pile-item .sticker {
+    filter: drop-shadow(0 2px 3px rgba(21,36,58,.16));
   }
 
   .upnext-list.tbr-thumbnail-grid {
@@ -4810,45 +4848,131 @@ body.auth-locked > main {
 }
 
 /* =========================================================
-   Mobile settings cleanup — sticker + streak dialogs
-   Keep desktop tables unchanged; use touch-friendly cards on phones.
+   TBR thumbnail parity + scrollable Library shelves
+   ========================================================= */
+
+/* TBR uses the same compact poster language on desktop and mobile. */
+.upnext-list.tbr-thumbnail-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 140px)) !important;
+  justify-content: start;
+  gap: 12px !important;
+}
+.tbr-thumbnail-button {
+  aspect-ratio: 2 / 3;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  overflow: hidden;
+  background: rgba(21,36,58,.08);
+  box-shadow: 0 5px 12px rgba(21,36,58,.08);
+  cursor: pointer;
+  transition: transform .16s ease, box-shadow .16s ease;
+}
+.tbr-thumbnail-button:hover,
+.tbr-thumbnail-button:focus-visible {
+  transform: translateY(-4px);
+  box-shadow: 0 11px 20px rgba(21,36,58,.16);
+  outline: none;
+}
+.tbr-thumbnail-image,
+.tbr-thumbnail-placeholder {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.tbr-thumbnail-image { object-fit: cover; }
+.tbr-thumbnail-placeholder {
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, rgba(139,153,202,.28), rgba(247,231,196,.9));
+  color: var(--navy);
+  font: 600 1.8rem/1 var(--serif);
+}
+
+/* A collapsed shelf is a horizontally scrollable carousel. "View all" switches
+   the same posters into the full wrapping grid. */
+.library-poster-grid:not(.is-expanded) {
+  display: flex;
+  grid-template-columns: none;
+  grid-auto-rows: unset;
+  gap: 11px;
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 10px;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+.library-poster-grid:not(.is-expanded) .library-poster-button {
+  flex: 0 0 var(--library-poster-width);
+  width: var(--library-poster-width);
+  height: var(--library-row-height);
+  scroll-snap-align: start;
+}
+.library-poster-grid.is-expanded {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, var(--library-poster-width));
+  grid-auto-rows: var(--library-row-height);
+  gap: 11px;
+  max-height: none;
+  overflow: visible;
+}
+.library-poster-grid.is-expanded .library-poster-button {
+  width: 100%;
+  height: 100%;
+}
+.library-tv-shelf.is-collapsed .library-group-heading-row {
+  margin-bottom: 0;
+}
+
+@media (max-width: 760px) {
+  .upnext-list.tbr-thumbnail-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 7px !important;
+  }
+  .library-poster-grid:not(.is-expanded) {
+    display: flex;
+    gap: 7px;
+  }
+  .library-poster-grid.is-expanded {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 7px;
+  }
+  .library-poster-grid.is-expanded .library-poster-button {
+    aspect-ratio: 2 / 3;
+    height: auto;
+  }
+}
+
+@media (max-width: 430px) {
+  .upnext-list.tbr-thumbnail-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+  .library-poster-grid.is-expanded {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Subcategory sticker rows */
+.sticker-setting-row.sticker-setting-subcategory .sticker-setting-type {
+  padding-left: 14px;
+  font-weight: 600;
+}
+.sticker-setting-row.sticker-setting-subcategory .sticker-setting-type::before {
+  content: "↳ ";
+  opacity: .55;
+}
+
+
+/* =========================================================
+   Mobile streak settings cleanup (kept from recent update)
    ========================================================= */
 @media (max-width: 620px) {
-  .sticker-settings-modal,
-  .streak-settings-modal {
-    width: calc(100% - 16px);
-    max-height: 92dvh;
-    padding: 16px;
-    border-radius: 16px;
-  }
-
-  .sticker-settings-modal .modal-x,
-  .streak-settings-modal .modal-x {
-    width: 36px;
-    height: 36px;
-  }
-
-  .sticker-settings-modal .modal-heading,
-  .streak-settings-modal .modal-heading {
-    margin: -8px 0 18px;
-    padding-right: 42px;
-  }
-
-  .sticker-settings-modal .modal-heading h2,
-  .streak-settings-modal .modal-heading h2 {
-    font-size: clamp(1.8rem, 9vw, 2.35rem);
-    line-height: 1.05;
-  }
-
-  .sticker-settings-intro,
-  .streak-settings-intro {
-    margin-top: 10px;
-    font-size: .82rem;
-    line-height: 1.45;
-  }
-
-  /* Avoid a scrollable list inside a scrollable dialog on mobile. */
-  .sticker-settings-rows,
   .streak-settings-rows {
     max-height: none;
     overflow: visible;
@@ -4856,56 +4980,18 @@ body.auth-locked > main {
     gap: 10px;
   }
 
-  .sticker-setting-row,
   .streak-setting-row {
     min-height: 0;
     padding: 13px;
     border: 1px solid rgba(21,36,58,.10);
     border-radius: 13px;
     background: rgba(255,255,255,.45);
-  }
-
-  .sticker-setting-row:last-child,
-  .streak-setting-row:last-child {
-    border-bottom: 1px solid rgba(21,36,58,.10);
-  }
-
-  /* Sticker settings: type + preview, then one full-width control per line. */
-  .sticker-setting-row {
-    grid-template-columns: minmax(0,1fr) 48px;
-    gap: 11px 12px;
-  }
-
-  .sticker-setting-type {
-    align-self: center;
-    min-width: 0;
-    font-size: .96rem;
-    line-height: 1.2;
-  }
-
-  .sticker-setting-preview {
-    width: 48px;
-    min-height: 42px;
-    justify-self: end;
-  }
-
-  .sticker-setting-field {
-    grid-column: 1 / -1;
-    grid-template-columns: 68px minmax(0,1fr);
-    gap: 10px;
-  }
-
-  .sticker-setting-field select,
-  .sticker-setting-field input {
-    min-width: 0;
-    min-height: 42px;
-    font-size: 16px; /* prevents iOS input zoom */
-  }
-
-  /* Streak settings: compact title/toggle header, then clearly labelled sections. */
-  .streak-setting-row {
     grid-template-columns: minmax(0,1fr) auto;
     gap: 12px;
+  }
+
+  .streak-setting-row:last-child {
+    border-bottom: 1px solid rgba(21,36,58,.10);
   }
 
   .streak-setting-type {
@@ -4940,10 +5026,7 @@ body.auth-locked > main {
     text-transform: uppercase;
   }
 
-  .rest-day-chip {
-    min-width: 0;
-  }
-
+  .rest-day-chip { min-width: 0; }
   .rest-day-chip span {
     width: 100%;
     min-width: 0;
@@ -4970,22 +5053,16 @@ body.auth-locked > main {
     text-transform: uppercase;
   }
 
-  /* Footer buttons stay separated and never squeeze into each other. */
-  .sticker-settings-form .modal-actions,
   .streak-settings-form .modal-actions {
     align-items: stretch;
     flex-direction: column;
     gap: 8px;
     margin-top: 4px;
   }
-
-  .sticker-settings-form .modal-actions > #resetStickerSettings,
   .streak-settings-form .modal-actions > #resetStreakSettings {
     width: 100%;
     min-height: 42px;
   }
-
-  .sticker-settings-form .actions-right,
   .streak-settings-form .actions-right {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -4993,8 +5070,6 @@ body.auth-locked > main {
     margin-left: 0;
     gap: 8px;
   }
-
-  .sticker-settings-form .actions-right > *,
   .streak-settings-form .actions-right > * {
     min-width: 0;
     min-height: 44px;
@@ -5002,27 +5077,10 @@ body.auth-locked > main {
 }
 
 @media (max-width: 380px) {
-  .sticker-settings-modal,
-  .streak-settings-modal {
-    width: calc(100% - 10px);
-    padding: 13px;
-  }
-
-  .sticker-setting-field,
-  .streak-setting-current {
-    grid-template-columns: 60px minmax(0,1fr);
-  }
-
-  .rest-day-picker {
-    gap: 4px;
-  }
-
-  .rest-day-chip span {
-    height: 34px;
-    font-size: .66rem;
-  }
+  .streak-setting-current { grid-template-columns: 60px minmax(0,1fr); }
+  .rest-day-picker { gap: 4px; }
+  .rest-day-chip span { height: 34px; font-size: .66rem; }
 }
-
 
 /* =========================================================
    Reminder recurrence + Discover quick actions + mobile sheets
@@ -5168,5 +5226,48 @@ body.auth-locked > main {
 @media (max-width: 380px) {
   .discover-card-actions.no-complete {
     grid-template-columns: 34px minmax(0, 1fr);
+  }
+}
+
+
+/* =========================================================
+   Mobile dialogs are true bottom sheets
+   ========================================================= */
+.whole-item-complete-button {
+  justify-self: start;
+  margin-bottom: 2px;
+}
+
+@media (max-width: 760px) {
+  dialog.modal,
+  dialog.modal.small-modal,
+  dialog.modal.sticker-settings-modal,
+  dialog.modal.streak-settings-modal,
+  dialog.modal.history-edit-modal {
+    position: fixed !important;
+    inset: auto 0 0 0 !important;
+    width: 100vw !important;
+    max-width: none !important;
+    max-height: min(92dvh, 900px) !important;
+    margin: 0 !important;
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom)) !important;
+    border-radius: 22px 22px 0 0 !important;
+    overscroll-behavior: contain;
+  }
+
+  dialog.modal::before {
+    margin-top: -6px;
+    margin-bottom: 12px;
+  }
+
+  dialog.modal .modal-x {
+    top: 10px !important;
+    right: 10px !important;
+  }
+
+  .whole-item-complete-button {
+    width: 100%;
+    min-height: 44px;
+    justify-self: stretch;
   }
 }

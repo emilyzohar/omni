@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=reminders-discover-mobile-1" />
+  <link rel="stylesheet" href="style.css?v=integrated-mobile-tracking-1" />
 </head>
 <body class="discover-page auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -312,6 +312,14 @@
         </label>
       </div>
 
+      <div class="item-calendar-meta-fields">
+        <label class="field compact-field">
+          <span>Subcategory <em>optional</em></span>
+          <input id="itemSubcategory" type="text" autocomplete="off" placeholder="e.g. Documentary, Lecture, Gym" />
+          <small class="field-hint">Stays inside the main type, but can use its own calendar sticker.</small>
+        </label>
+      </div>
+
       <div id="tvProgressFields" class="progress-fields tv-watch-history-setup" hidden>
         <input id="nextSeason" type="hidden" value="1" />
         <input id="nextEpisode" type="hidden" value="1" />
@@ -321,7 +329,7 @@
             <p class="field-hint">Mark seasons or individual episodes before saving. These imported watches go to your Library history, not today's calendar.</p>
           </div>
           <div class="tv-watch-setup-actions">
-            <button id="tvMarkAllWatched" class="secondary-button" type="button">Mark all aired</button>
+            <button id="tvMarkAllWatched" class="secondary-button" type="button">✓ Mark series complete</button>
             <button id="tvClearWatched" class="quiet-button" type="button">Clear</button>
           </div>
         </div>
@@ -330,6 +338,7 @@
       </div>
 
       <div id="bookProgressFields" class="progress-fields" hidden>
+        <button class="secondary-button whole-item-complete-button" type="button" data-book-mark-complete-draft>✓ Mark book complete</button>
         <div class="two-column-fields">
           <label class="field compact-field">
             <span>Current page</span>
@@ -425,15 +434,15 @@
     </div>
   </dialog>
 
-  <!-- QUICK MOVIE RATING -->
+  <!-- QUICK RATING -->
   <dialog id="discoverRatingModal" class="modal small-modal discover-rating-modal">
     <button class="modal-x" type="button" data-close="discoverRatingModal" aria-label="Close">×</button>
     <div class="modal-heading">
-      <p class="modal-eyebrow">WATCHED</p>
-      <h2 id="discoverRatingTitle">Rate this movie</h2>
+      <p class="modal-eyebrow">RATE &amp; RECOMMEND</p>
+      <h2 id="discoverRatingTitle">Rate this</h2>
     </div>
     <p class="discover-rating-note">Add a rating now, or skip and rate it later from your Library.</p>
-    <div id="discoverRatingPicker" class="star-picker discover-rating-picker" aria-label="Movie rating out of five stars">
+    <div id="discoverRatingPicker" class="star-picker discover-rating-picker" aria-label="Rating out of five stars">
       <button type="button" data-discover-rating-choice="1" aria-label="1 star">★</button>
       <button type="button" data-discover-rating-choice="2" aria-label="2 stars">★</button>
       <button type="button" data-discover-rating-choice="3" aria-label="3 stars">★</button>
@@ -469,6 +478,10 @@
           <input id="historyEditDate" type="date" />
         </label>
       </div>
+      <label class="field">
+        <span>Subcategory <em>optional</em></span>
+        <input id="historyEditSubcategory" type="text" autocomplete="off" />
+      </label>
       <label class="field">
         <span>Episode / subtitle <em>optional</em></span>
         <input id="historyEditSubtitle" type="text" />
@@ -528,6 +541,7 @@
     </div>
     <form id="bookProgressForm" class="book-progress-form">
       <input id="bookProgressId" type="hidden" />
+      <button class="secondary-button whole-item-complete-button" type="button" data-book-mark-complete-progress>✓ Mark book complete</button>
       <label class="field">
         <span>Current page</span>
         <input id="progressCurrentPage" type="number" min="0" step="1" required />
@@ -545,6 +559,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=reminders-discover-mobile-1"></script>
+  <script type="module" src="app.js?v=integrated-mobile-tracking-1"></script>
 </body>
 </html>
