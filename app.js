@@ -195,6 +195,10 @@ const els = {
   searchResults: $('#searchResults'),
   selectedSource: $('#selectedSource'),
   workoutBlock: $('#workoutBlock'),
+  reminderBlock: $('#reminderBlock'),
+  reminderFrequency: $('#reminderFrequency'),
+  reminderWeekdayField: $('#reminderWeekdayField'),
+  reminderWeekday: $('#reminderWeekday'),
   playlistInput: $('#playlistInput'),
   playlistLoadButton: $('#playlistLoadButton'),
   playlistPreview: $('#playlistPreview'),
@@ -210,6 +214,8 @@ const els = {
   bookProgressFields: $('#bookProgressFields'),
   bookCurrentPage: $('#bookCurrentPage'),
   bookTotalPages: $('#bookTotalPages'),
+  bookStartDate: $('#bookStartDate'),
+  bookEndDate: $('#bookEndDate'),
   itemRating: $('#itemRating'),
   starPicker: $('#starPicker'),
   clearRating: $('#clearRating'),
@@ -224,6 +230,7 @@ const els = {
   attachmentTitle: $('#attachmentTitle'),
   attachmentBody: $('#attachmentBody'),
   itemDate: $('#itemDate'),
+  itemDateField: $('#itemDateField'),
   itemRecommended: $('#itemRecommended'),
   queueStatusField: $('#queueStatusField'),
   itemQueueStatus: $('#itemQueueStatus'),
@@ -240,7 +247,10 @@ const els = {
   bookProgressId: $('#bookProgressId'),
   bookProgressTitle: $('#bookProgressTitle'),
   progressCurrentPage: $('#progressCurrentPage'),
-  progressTotalPages: $('#progressTotalPages')
+  progressTotalPages: $('#progressTotalPages'),
+  bookPeriodsList: $('#bookPeriodsList'),
+  bookAddPeriod: $('#bookAddPeriod'),
+  bookPauseResume: $('#bookPauseResume')
 };
 
 bootstrapAuth();
@@ -480,6 +490,7 @@ function bindEvents() {
     }
   });
   els.playlistLoadButton?.addEventListener('click', loadPlaylistPreview);
+  els.reminderFrequency?.addEventListener('change', updateReminderFormFields);
   els.tvWatchSetupList?.addEventListener('change', handleTVDraftEpisodeToggle);
   els.tvWatchSetupList?.addEventListener('click', handleTVDraftSeasonAction);
   els.tvMarkAllWatched?.addEventListener('click', () => setAllTVDraftEpisodes(true));
@@ -550,6 +561,10 @@ function bindEvents() {
   document.querySelector('#discover')?.addEventListener('click', handleDiscoverClick);
   els.discoverQueueModal?.addEventListener('click', handleDiscoverQueueChoice);
   els.bookProgressForm?.addEventListener('submit', saveBookProgress);
+  els.bookAddPeriod?.addEventListener('click', () => addBookPeriodEditorRow({ startDate: todayString(), endDate: '' }));
+  els.bookPauseResume?.addEventListener('click', toggleBookPauseResume);
+  els.bookPeriodsList?.addEventListener('click', handleBookPeriodEditorClick);
+  els.bookPeriodsList?.addEventListener('input', updateBookPauseResumeButton);
 
   document.addEventListener('click', async event => {
     const close = event.target.closest('[data-close]');
@@ -631,6 +646,21 @@ function bindEvents() {
     if (tvSeasonCheck) {
       const item = findItem(tvSeasonCheck.dataset.itemId || state.openDetailId);
       if (item) await markTVSeasonWatched(item, Number(tvSeasonCheck.dataset.tvMarkSeason));
+      return;
+    }
+
+    const reminderCompleteButton = event.target.closest('[data-reminder-complete]');
+    if (reminderCompleteButton) {
+      const item = findItem(reminderCompleteButton.dataset.reminderComplete);
+      if (!item) return;
+      const record = reminderCompletionRecord(item);
+      addHistoryRecord(record);
+      item.lastCompletedAt = new Date().toISOString();
+      setItemQueueStatus(item, 'upnext');
+      saveItems();
+      saveHistory();
+      renderAll();
+      renderReminderDetails(item);
       return;
     }
 
@@ -756,7 +786,7 @@ async function renderUpNext() {
   const view = state.queueView === 'tbr' ? 'tbr' : 'upnext';
   const items = state.items
     .filter(item => getQueueStatus(item) === view)
-    .sort((a,b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+    .sort((a,b) => queueSortKey(a, view).localeCompare(queueSortKey(b, view)));
 
   if (els.queueHeading) els.queueHeading.textContent = view === 'tbr' ? 'TBR' : 'Up Next';
   els.queueTabs?.forEach(tab => {
@@ -823,6 +853,10 @@ function queueCardMarkup(item, info) {
     action = `<button class="check-button start-button" type="button" data-action="start" data-id="${item.id}" aria-label="Move to Up Next" title="Move to Up Next">→</button>`;
   } else if (sourceType === 'book') {
     action = `<button class="check-button book-check" type="button" data-action="complete" data-id="${item.id}" aria-label="Update pages" title="Update pages">↗</button>`;
+  } else if (sourceType === 'reminder') {
+    const due = info.dueDate || getNextReminderDueDate(item);
+    const canComplete = !due || due <= todayString();
+    action = `<button class="check-button reminder-check" type="button" data-action="complete" data-id="${item.id}" aria-label="Mark reminder complete" title="${canComplete ? 'Mark complete' : `Due ${escapeAttr(formatLongDate(due))}`}" ${canComplete ? '' : 'disabled'}>✓</button>`;
   } else {
     const label = sourceType === 'tv' ? 'Mark episode watched' : sourceType === 'youtube' ? `Mark ${getItemTypeLabel(item).toLowerCase()} complete` : 'Mark completed';
     action = `<button class="check-button" type="button" data-action="complete" data-id="${item.id}" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}">✓</button>`;
@@ -848,6 +882,7 @@ function tbrMeta(item) {
   if (sourceType === 'tv') return [item.subtitle, 'Not started'].filter(Boolean).join(' · ');
   if (sourceType === 'book') return [item.subtitle, 'To be read'].filter(Boolean).join(' · ');
   if (sourceType === 'youtube') return [item.subtitle, 'Playlist'].filter(Boolean).join(' · ');
+  if (sourceType === 'reminder') return reminderScheduleLabel(item);
   return item.subtitle || 'Saved for later';
 }
 
@@ -878,6 +913,16 @@ async function getUpNextInfo(item) {
       title: video.title,
       meta: `${index + 1} of ${playlist.items.length}${video.channelTitle ? ` · ${video.channelTitle}` : ''}`,
       image: video.image || item.image
+    };
+  }
+
+  if (getSourceType(item) === 'reminder') {
+    const dueDate = getNextReminderDueDate(item);
+    return {
+      title: item.title,
+      meta: `${reminderScheduleLabel(item)} · ${reminderDueLabel(dueDate)}`,
+      image: item.image,
+      dueDate
     };
   }
 
@@ -925,11 +970,16 @@ async function handleUpNextClick(event) {
       let completed = null;
       if (getSourceType(item) === 'tv') completed = await advanceTV(item);
       else if (getSourceType(item) === 'youtube') completed = await advanceWorkout(item);
+      else if (getSourceType(item) === 'reminder') completed = reminderCompletionRecord(item);
       else completed = genericCompletionRecord(item, true);
       if (completed) addHistoryRecord(completed);
-      if (!['tv','youtube'].includes(getSourceType(item))) {
+      if (!['tv','youtube','reminder'].includes(getSourceType(item))) {
         item.completedAt = todayString();
         setItemQueueStatus(item, 'library');
+      }
+      if (getSourceType(item) === 'reminder') {
+        item.lastCompletedAt = new Date().toISOString();
+        setItemQueueStatus(item, 'upnext');
       }
       saveItems();
       saveHistory();
@@ -939,6 +989,92 @@ async function handleUpNextClick(event) {
       button.disabled = false;
     }
   }
+}
+
+function queueSortKey(item, view = 'upnext') {
+  if (view === 'upnext' && getSourceType(item) === 'reminder') return `0:${getNextReminderDueDate(item) || '9999-12-31'}:${item.createdAt || ''}`;
+  return `1:${item.createdAt || ''}`;
+}
+
+function reminderCompletionRecord(item) {
+  const scheduledDate = getNextReminderDueDate(item) || todayString();
+  return {
+    sourceItemId: item.id,
+    type: item.type,
+    typeLabel: getItemTypeLabel(item),
+    date: todayString(),
+    showOnCalendar: true,
+    kind: 'reminder-completed',
+    title: item.title,
+    subtitle: reminderScheduleLabel(item),
+    notes: item.notes || '',
+    rating: Number(item.rating || 0),
+    image: item.image || '',
+    provider: 'reminder',
+    providerId: '',
+    scheduledDate
+  };
+}
+
+function getNextReminderDueDate(item) {
+  if (getSourceType(item) !== 'reminder') return '';
+  const frequency = item.reminder?.frequency === 'daily' ? 'daily' : 'weekly';
+  const weekday = Math.max(0, Math.min(6, Number(item.reminder?.weekday ?? 6)));
+  const scheduleStart = item.reminder?.scheduleStart || localDateString(new Date(item.createdAt || Date.now()));
+  const completed = state.history
+    .filter(entry => entry.sourceItemId === item.id && entry.kind === 'reminder-completed')
+    .sort((a,b) => String(a.date || '').localeCompare(String(b.date || '')));
+
+  if (!completed.length) {
+    if (frequency === 'daily') return scheduleStart <= todayString() ? scheduleStart : scheduleStart;
+    return weekdayOnOrAfter(scheduleStart, weekday);
+  }
+
+  const latest = completed.at(-1);
+  const anchor = latest.date && latest.date > (latest.scheduledDate || '') ? latest.date : (latest.scheduledDate || latest.date || todayString());
+  if (frequency === 'daily') return addDaysToDateString(anchor, 1);
+  return weekdayStrictlyAfter(anchor, weekday);
+}
+
+function weekdayOnOrAfter(dateString, weekday) {
+  const date = parseLocalDateString(dateString);
+  const delta = (weekday - date.getDay() + 7) % 7;
+  return localDateString(addDays(date, delta));
+}
+
+function weekdayStrictlyAfter(dateString, weekday) {
+  const date = parseLocalDateString(dateString);
+  let delta = (weekday - date.getDay() + 7) % 7;
+  if (delta === 0) delta = 7;
+  return localDateString(addDays(date, delta));
+}
+
+function addDaysToDateString(dateString, days) {
+  return localDateString(addDays(parseLocalDateString(dateString), days));
+}
+
+function parseLocalDateString(value) {
+  const [year, month, day] = String(value || todayString()).split('-').map(Number);
+  return new Date(year, Math.max(0, month - 1), Math.max(1, day), 12);
+}
+
+function reminderScheduleLabel(item) {
+  if (item.reminder?.frequency === 'daily') return 'Every day';
+  const weekday = Math.max(0, Math.min(6, Number(item.reminder?.weekday ?? 6)));
+  return `Every ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][weekday]}`;
+}
+
+function reminderDueLabel(dateString) {
+  if (!dateString) return 'Scheduled';
+  const today = todayString();
+  if (dateString === today) return 'Due today';
+  if (dateString < today) return `Overdue · ${formatLongDate(dateString)}`;
+  return `Next ${formatLongDate(dateString)}`;
+}
+
+function formatLongDate(dateString) {
+  if (!dateString) return '';
+  return new Intl.DateTimeFormat('en-CA', { weekday: 'short', month: 'short', day: 'numeric' }).format(parseLocalDateString(dateString));
 }
 
 function genericCompletionRecord(item, showOnCalendar = true) {
@@ -1333,6 +1469,7 @@ async function moveItemToQueue(item, status) {
     else if (sourceType === 'book') await renderBookDetails(item);
     else if (sourceType === 'movie') await renderMovieDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
+    else if (sourceType === 'reminder') renderReminderDetails(item);
     else renderManualDetails(item);
   }
 }
@@ -1426,7 +1563,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     els.itemModalTitle.textContent = item.title;
     const sourceType = getSourceType(item);
     els.itemSourceType.value = sourceType;
-    if (sourceType === 'youtube' || sourceType === 'other') els.itemDisplayType.value = getItemTypeLabel(item);
+    if (['youtube', 'reminder', 'other'].includes(sourceType)) els.itemDisplayType.value = getItemTypeLabel(item);
     els.provider.value = item.provider || 'manual';
     els.providerId.value = item.providerId || '';
     els.providerImage.value = item.image || '';
@@ -1445,12 +1582,19 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     if (sourceType === 'book') {
       els.bookCurrentPage.value = item.progress?.currentPage || 0;
       els.bookTotalPages.value = item.progress?.totalPages || '';
+      const periods = getBookReadingPeriods(item);
+      const latest = periods.at(-1) || null;
+      els.bookStartDate.value = latest?.startDate || '';
+      els.bookEndDate.value = latest?.endDate || '';
     }
     if (sourceType === 'youtube') {
       els.playlistInput.value = item.providerId || '';
       state.loadedPlaylist = null;
       showSelectedSource({ title: item.title, subtitle: item.subtitle, image: item.image }, true);
-    } else if (item.provider && item.provider !== 'manual') {
+    } else if (sourceType === 'reminder') {
+      if (els.reminderFrequency) els.reminderFrequency.value = item.reminder?.frequency === 'daily' ? 'daily' : 'weekly';
+      if (els.reminderWeekday) els.reminderWeekday.value = String(Number.isInteger(Number(item.reminder?.weekday)) ? Number(item.reminder.weekday) : 6);
+    } else if (item.provider && item.provider !== 'manual' && item.provider !== 'reminder') {
       state.selectedSource = { provider: item.provider, providerId: item.providerId, title: item.title, subtitle: item.subtitle, image: item.image };
       showSelectedSource(state.selectedSource);
     }
@@ -1483,6 +1627,10 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.nextEpisode.value = 1;
   els.bookCurrentPage.value = 0;
   els.bookTotalPages.value = '';
+  if (els.bookStartDate) els.bookStartDate.value = '';
+  if (els.bookEndDate) els.bookEndDate.value = '';
+  if (els.reminderFrequency) els.reminderFrequency.value = 'weekly';
+  if (els.reminderWeekday) els.reminderWeekday.value = '6';
   els.provider.value = '';
   els.providerId.value = '';
   els.providerImage.value = '';
@@ -1528,20 +1676,31 @@ function updateItemFormForType() {
   const sourceType = els.itemSourceType.value;
   const isCatalogue = ['tv', 'book', 'movie', 'music'].includes(sourceType);
   const isYouTube = sourceType === 'youtube';
+  const isReminder = sourceType === 'reminder';
   const isManual = sourceType === 'other';
 
   els.catalogueSearchBlock.hidden = !isCatalogue;
   els.workoutBlock.hidden = !isYouTube;
-  els.displayTypeBlock.hidden = !(isYouTube || isManual);
+  if (els.reminderBlock) els.reminderBlock.hidden = !isReminder;
+  els.displayTypeBlock.hidden = !(isYouTube || isReminder || isManual);
   els.manualTitleBlock.hidden = false;
   els.tvProgressFields.hidden = sourceType !== 'tv';
   els.bookProgressFields.hidden = sourceType !== 'book';
-  if (els.queueStatusField) els.queueStatusField.hidden = false;
+  if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder;
+  if (sourceType === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
+    els.bookStartDate.value = todayString();
+  }
+  if (els.queueStatusField) els.queueStatusField.hidden = isReminder;
 
   if (isYouTube) {
     els.displayTypeLabel.textContent = 'Display as';
     els.displayTypeHint.textContent = 'Name this kind of YouTube content. For example: Workout, Pilates, Yoga, Tutorials.';
     if (!els.itemDisplayType.value.trim()) els.itemDisplayType.value = 'Workout';
+  } else if (isReminder) {
+    els.displayTypeLabel.textContent = 'Type';
+    els.displayTypeHint.textContent = 'This is the calendar/streak category for the reminder. For example: Chores, Medication, Cleaning.';
+    if (!els.editingId.value || !els.itemDisplayType.value.trim()) els.itemDisplayType.value = 'Chores';
+    if (els.itemQueueStatus) els.itemQueueStatus.value = 'upnext';
   } else if (isManual) {
     els.displayTypeLabel.textContent = 'New type name';
     els.displayTypeHint.textContent = 'This creates a reusable type for the tracker and library.';
@@ -1551,7 +1710,7 @@ function updateItemFormForType() {
   if (!els.editingId.value) {
     state.selectedSource = null;
     state.loadedPlaylist = null;
-    els.provider.value = isYouTube ? 'youtube' : isManual ? 'manual' : '';
+    els.provider.value = isYouTube ? 'youtube' : isReminder ? 'reminder' : isManual ? 'manual' : '';
     els.providerId.value = '';
     els.providerImage.value = '';
     els.providerSubtitle.value = '';
@@ -1560,6 +1719,8 @@ function updateItemFormForType() {
     els.playlistPreview.hidden = true;
   }
 
+  updateReminderFormFields();
+
   const placeholders = {
     tv: 'Search TV shows',
     movie: 'Search movies',
@@ -1567,6 +1728,11 @@ function updateItemFormForType() {
     music: 'Search albums'
   };
   els.catalogueQuery.placeholder = placeholders[sourceType] || 'Search title';
+}
+
+function updateReminderFormFields() {
+  if (!els.reminderWeekdayField || !els.reminderFrequency) return;
+  els.reminderWeekdayField.hidden = els.reminderFrequency.value === 'daily';
 }
 
 async function searchCatalogue() {
@@ -1886,6 +2052,14 @@ async function saveItemFromForm(event) {
       image = editing.image;
       subtitle = editing.subtitle;
     }
+  } else if (sourceType === 'reminder') {
+    typeLabel = cleanTypeLabel(els.itemDisplayType.value) || 'Chores';
+    type = displayTypeSlug(typeLabel, 'other');
+    registerCustomType(type, typeLabel);
+    provider = 'reminder';
+    providerId = '';
+    image = '';
+    subtitle = '';
   } else if (sourceType === 'other') {
     typeLabel = cleanTypeLabel(els.itemDisplayType.value);
     if (!typeLabel) {
@@ -1952,9 +2126,9 @@ async function saveItemFromForm(event) {
     releaseDate: extractItemReleaseDate(sourceType, state.selectedSource, editing),
     attachments: attachmentFiles,
     links: state.attachmentDraft.links.map(link => ({ ...link })),
-    date: els.itemDate.value || '',
-    queueStatus: els.itemQueueStatus.value || 'library',
-    active: (els.itemQueueStatus.value || 'library') === 'upnext',
+    date: sourceType === 'reminder' ? '' : (els.itemDate.value || ''),
+    queueStatus: sourceType === 'reminder' ? 'upnext' : (els.itemQueueStatus.value || 'library'),
+    active: sourceType === 'reminder' || (els.itemQueueStatus.value || 'library') === 'upnext',
     createdAt: editing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     progress: { ...(editing?.progress || {}) },
@@ -1964,6 +2138,13 @@ async function saveItemFromForm(event) {
     } : {})
   };
 
+  if (sourceType === 'reminder') {
+    item.reminder = {
+      frequency: els.reminderFrequency?.value === 'daily' ? 'daily' : 'weekly',
+      weekday: Math.max(0, Math.min(6, Number(els.reminderWeekday?.value ?? 6))),
+      scheduleStart: editing?.reminder?.scheduleStart || todayString()
+    };
+  }
   if (sourceType === 'tv') {
     item.progress.nextSeason = Math.max(1, Number(els.nextSeason.value || 1));
     item.progress.nextEpisode = Math.max(1, Number(els.nextEpisode.value || 1));
@@ -1971,6 +2152,20 @@ async function saveItemFromForm(event) {
   if (sourceType === 'book') {
     item.progress.currentPage = Math.max(0, Number(els.bookCurrentPage.value || 0));
     item.progress.totalPages = Math.max(0, Number(els.bookTotalPages.value || 0));
+    const priorPeriods = getBookReadingPeriods(editing || item);
+    const startDate = els.bookStartDate?.value || '';
+    const endDate = els.bookEndDate?.value || '';
+    if (startDate && endDate && endDate < startDate) {
+      showFormMessage('The book end/pause date cannot be before the reading start date.');
+      return;
+    }
+    if (startDate) {
+      if (priorPeriods.length) priorPeriods[priorPeriods.length - 1] = { ...priorPeriods.at(-1), startDate, endDate };
+      else priorPeriods.push({ startDate, endDate });
+    }
+    item.progress.readingPeriods = sanitizeBookReadingPeriods(priorPeriods);
+    // Books use reading periods for the calendar rather than a one-day item date.
+    item.date = '';
   }
   if (sourceType === 'youtube') {
     item.progress.currentIndex = editing?.progress?.currentIndex || 0;
@@ -2044,6 +2239,7 @@ async function openDetails(id) {
     else if (sourceType === 'book') await renderBookDetails(item);
     else if (sourceType === 'movie') await renderMovieDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
+    else if (sourceType === 'reminder') renderReminderDetails(item);
     else renderManualDetails(item);
     appendLibraryPersonalMetadata(item);
     appendItemResources(item);
@@ -2251,20 +2447,22 @@ async function renderYouTubeVideoDetail(item, videoId) {
 async function renderBookDetails(item) {
   const data = await getCached(`book:${item.providerId}`, () => TrackerAPI.getBookDetails(item.providerId, state.settings));
   const info = data.volumeInfo || {};
-  const existing = findDiscoverItem(result);
-  if (existing) {
-    if (info.categories?.length) existing.genres = [...new Set(info.categories)];
-    if (info.publishedDate) existing.releaseDate = info.publishedDate;
-    saveItems();
-  }
+  if (info.categories?.length) item.genres = [...new Set(info.categories)];
+  if (info.publishedDate) item.releaseDate = info.publishedDate;
+  saveItems();
   const image = info.imageLinks?.large?.replace('http://','https://') || info.imageLinks?.thumbnail?.replace('http://','https://') || item.image;
   const current = Number(item.progress?.currentPage || 0);
   const total = Number(item.progress?.totalPages || info.pageCount || 0);
 
+  const periods = getBookReadingPeriods(item);
+  const periodMarkup = periods.length
+    ? periods.map((period, index) => `<div class="book-period-summary"><span>Period ${index + 1}</span><strong>${escapeHtml(formatShortCalendarDate(period.startDate))}${period.endDate ? ` → ${escapeHtml(formatShortCalendarDate(period.endDate))}` : ' → now'}</strong></div>`).join('')
+    : '<p class="detail-meta">No reading dates yet.</p>';
   els.detailBody.innerHTML = `
     ${detailHero({ type:'BOOK', title:info.title || item.title, image, subtitle:(info.authors || []).join(', '), overview:stripHtml(info.description || '') })}
-    <div class="detail-progress"><strong>Reading progress</strong>${total ? `Page ${current} of ${total} · ${Math.min(100, Math.round(current/total*100))}%` : `Page ${current}`}</div>
-    <div class="detail-actions"><button class="primary-button" type="button" id="detailUpdatePages">Update pages</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>
+    <div class="detail-progress"><strong>Reading progress</strong>${total ? `Page ${current} of ${total} · ${Math.min(100, Math.round(current/total*100))}%` : `Page ${current}`}<small>${escapeHtml(bookReadingStatusText(item))}</small></div>
+    <div class="detail-actions"><button class="primary-button" type="button" id="detailUpdatePages">Update pages & dates</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>
+    <section class="detail-section"><h3>Reading dates</h3><div class="book-period-summary-list">${periodMarkup}</div></section>
     <section class="detail-section"><h3>Book info</h3><p>${escapeHtml([info.publisher, info.publishedDate, info.pageCount ? `${info.pageCount} pages` : ''].filter(Boolean).join(' · '))}</p></section>
   `;
   $('#detailUpdatePages')?.addEventListener('click', () => { els.detailModal.close(); openBookProgress(item); });
@@ -2292,6 +2490,18 @@ async function renderMusicDetails(item) {
     ${detailEditButton(item)}
     <section class="detail-section"><h3>Tracks</h3><div class="track-list">${tracks || 'No tracks returned.'}</div></section>
   `;
+}
+
+function renderReminderDetails(item) {
+  const dueDate = getNextReminderDueDate(item);
+  const dueNow = !dueDate || dueDate <= todayString();
+  els.detailBody.innerHTML = `
+    ${detailHero({ type:getItemTypeLabel(item), title:item.title, image:'', subtitle:reminderScheduleLabel(item), overview:item.notes || '' })}
+    <div class="detail-progress"><strong>Next reminder</strong>${escapeHtml(reminderDueLabel(dueDate))}</div>
+    <div class="detail-actions">
+      <button class="primary-button" type="button" data-reminder-complete="${escapeAttr(item.id)}" ${dueNow ? '' : 'disabled'}>✓ ${dueNow ? 'Mark complete' : 'Not due yet'}</button>
+      ${detailEditButton(item).replace('<div class="detail-actions">','').replace('</div>','')}
+    </div>`;
 }
 
 function renderManualDetails(item) {
@@ -2660,14 +2870,136 @@ async function deleteAttachmentBlob(id) {
 }
 
 // ---------------------------
-// BOOK PROGRESS
+// BOOK PROGRESS / READING PERIODS
 // ---------------------------
+function getBookReadingPeriods(item) {
+  if (!item) return [];
+  const explicit = Array.isArray(item.progress?.readingPeriods) ? item.progress.readingPeriods : [];
+  if (explicit.length) return sanitizeBookReadingPeriods(explicit);
+
+  // Backward-compatible fallback for books saved before reading periods existed.
+  // A legacy date becomes the reading start, and a completion date closes it.
+  if (item.date) {
+    return sanitizeBookReadingPeriods([{ startDate: item.date, endDate: item.completedAt || '' }]);
+  }
+  return [];
+}
+
+function sanitizeBookReadingPeriods(periods) {
+  return (periods || [])
+    .map(period => ({
+      startDate: String(period?.startDate || '').slice(0, 10),
+      endDate: String(period?.endDate || '').slice(0, 10)
+    }))
+    .filter(period => /^\d{4}-\d{2}-\d{2}$/.test(period.startDate))
+    .map(period => ({
+      ...period,
+      endDate: /^\d{4}-\d{2}-\d{2}$/.test(period.endDate) ? period.endDate : ''
+    }))
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+}
+
 function openBookProgress(item) {
   els.bookProgressId.value = item.id;
   els.bookProgressTitle.textContent = item.title;
   els.progressCurrentPage.value = item.progress?.currentPage || 0;
   els.progressTotalPages.value = item.progress?.totalPages || '';
+  renderBookPeriodsEditor(item);
   els.bookProgressModal.showModal();
+}
+
+function renderBookPeriodsEditor(item) {
+  if (!els.bookPeriodsList) return;
+  els.bookPeriodsList.innerHTML = '';
+  const periods = getBookReadingPeriods(item);
+  if (!periods.length) periods.push({ startDate: todayString(), endDate: '' });
+  periods.forEach(period => addBookPeriodEditorRow(period));
+  updateBookPauseResumeButton();
+}
+
+function addBookPeriodEditorRow(period = { startDate: '', endDate: '' }) {
+  if (!els.bookPeriodsList) return;
+  const row = document.createElement('div');
+  row.className = 'book-period-row';
+  row.innerHTML = `
+    <label class="field compact-field">
+      <span>Start</span>
+      <input data-book-period-start type="date" value="${escapeAttr(period.startDate || '')}" />
+    </label>
+    <label class="field compact-field">
+      <span>End / pause</span>
+      <input data-book-period-end type="date" value="${escapeAttr(period.endDate || '')}" />
+    </label>
+    <button class="quiet-button book-period-remove" type="button" data-remove-book-period aria-label="Remove reading period">×</button>`;
+  els.bookPeriodsList.appendChild(row);
+  updateBookPauseResumeButton();
+}
+
+function handleBookPeriodEditorClick(event) {
+  const remove = event.target.closest('[data-remove-book-period]');
+  if (!remove) return;
+  remove.closest('.book-period-row')?.remove();
+  if (els.bookPeriodsList && !els.bookPeriodsList.children.length) addBookPeriodEditorRow({ startDate: todayString(), endDate: '' });
+  updateBookPauseResumeButton();
+}
+
+function collectBookPeriodEditorRows() {
+  const periods = [...(els.bookPeriodsList?.querySelectorAll('.book-period-row') || [])]
+    .map(row => ({
+      startDate: row.querySelector('[data-book-period-start]')?.value || '',
+      endDate: row.querySelector('[data-book-period-end]')?.value || ''
+    }))
+    .filter(period => period.startDate);
+
+  for (const period of periods) {
+    if (period.endDate && period.endDate < period.startDate) {
+      throw new Error(`A reading period ends before it starts (${period.startDate} → ${period.endDate}).`);
+    }
+  }
+  return sanitizeBookReadingPeriods(periods);
+}
+
+function toggleBookPauseResume() {
+  if (!els.bookPeriodsList) return;
+  const rows = [...els.bookPeriodsList.querySelectorAll('.book-period-row')];
+  const last = rows.at(-1);
+  if (!last) {
+    addBookPeriodEditorRow({ startDate: todayString(), endDate: '' });
+    return;
+  }
+  const start = last.querySelector('[data-book-period-start]');
+  const end = last.querySelector('[data-book-period-end]');
+  if (start?.value && !end?.value) {
+    end.value = todayString();
+  } else {
+    addBookPeriodEditorRow({ startDate: todayString(), endDate: '' });
+  }
+  updateBookPauseResumeButton();
+}
+
+function updateBookPauseResumeButton() {
+  if (!els.bookPauseResume || !els.bookPeriodsList) return;
+  const rows = [...els.bookPeriodsList.querySelectorAll('.book-period-row')];
+  const last = rows.at(-1);
+  const active = Boolean(last?.querySelector('[data-book-period-start]')?.value && !last?.querySelector('[data-book-period-end]')?.value);
+  els.bookPauseResume.textContent = active ? 'Pause today' : 'Resume today';
+}
+
+function bookReadingStatusText(item) {
+  const periods = getBookReadingPeriods(item);
+  if (!periods.length) return 'No reading dates yet';
+  const latest = periods.at(-1);
+  if (!latest.endDate) return `Reading since ${formatShortCalendarDate(latest.startDate)}`;
+  return `Paused after ${formatShortCalendarDate(latest.endDate)}`;
+}
+
+function formatShortCalendarDate(date) {
+  if (!date) return '';
+  try {
+    return new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${date}T12:00:00`));
+  } catch {
+    return date;
+  }
 }
 
 function saveBookProgress(event) {
@@ -2677,16 +3009,32 @@ function saveBookProgress(event) {
   const wasFinished = Boolean(item.completedAt) && Number(item.progress?.totalPages || 0) > 0 && Number(item.progress?.currentPage || 0) >= Number(item.progress?.totalPages || 0);
   const current = Math.max(0, Number(els.progressCurrentPage.value || 0));
   const total = Math.max(0, Number(els.progressTotalPages.value || 0));
-  item.progress = { ...item.progress, currentPage: current, totalPages: total };
+
+  let periods;
+  try {
+    periods = collectBookPeriodEditorRows();
+  } catch (error) {
+    alert(error.message);
+    return;
+  }
+
+  item.progress = { ...item.progress, currentPage: current, totalPages: total, readingPeriods: periods };
+  item.date = '';
+
   if (total && current >= total) {
     setItemQueueStatus(item, 'library');
     item.completedAt = todayString();
+    // Finishing the book closes an active reading period today. The range itself
+    // represents the completion on the calendar, so the completion history is undated.
+    const latest = item.progress.readingPeriods.at(-1);
+    if (latest && !latest.endDate) latest.endDate = todayString();
     if (!wasFinished && !state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'book-finished')) {
       addHistoryRecord({
         sourceItemId: item.id,
         type: item.type,
         typeLabel: getItemTypeLabel(item),
-        date: todayString(),
+        date: '',
+        showOnCalendar: false,
         kind: 'book-finished',
         title: item.title,
         subtitle: `Finished · ${total} pages`,
@@ -2697,7 +3045,10 @@ function saveBookProgress(event) {
         providerId: item.providerId
       });
     }
+  } else if (item.completedAt && (!total || current < total)) {
+    item.completedAt = '';
   }
+
   saveItems();
   saveHistory();
   els.bookProgressModal.close();
@@ -2709,7 +3060,7 @@ function saveBookProgress(event) {
 // ---------------------------
 function getCalendarEntries() {
   const savedItems = state.items
-    .filter(item => item.date)
+    .filter(item => item.date && getSourceType(item) !== 'book')
     .map(item => ({
       id: `item:${item.id}`,
       sourceItemId: item.id,
@@ -2726,7 +3077,89 @@ function getCalendarEntries() {
       createdAt: item.createdAt || item.updatedAt || ''
     }));
 
-  return [...savedItems, ...state.history.filter(entry => entry.showOnCalendar !== false)];
+  const bookRanges = state.items
+    .filter(item => getSourceType(item) === 'book')
+    .flatMap(item => bookReadingCalendarEntries(item));
+
+  const historyEntries = state.history.filter(entry => {
+    if (entry.showOnCalendar === false) return false;
+    if (entry.kind === 'book-finished') {
+      const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
+      if (source && getBookReadingPeriods(source).length) return false;
+    }
+    return true;
+  });
+
+  return [...savedItems, ...historyEntries, ...bookRanges];
+}
+
+function bookReadingCalendarEntries(item) {
+  const periods = getBookReadingPeriods(item);
+  const today = todayString();
+  const output = [];
+
+  periods.forEach((period, periodIndex) => {
+    const start = period.startDate;
+    const effectiveEnd = period.endDate || today;
+    if (!start || effectiveEnd < start) return;
+
+    let cursor = parseLocalDate(start);
+    const end = parseLocalDate(effectiveEnd);
+    let guard = 0;
+    while (cursor <= end && guard < 5000) {
+      const date = localDateString(cursor);
+      let rangePosition = 'middle';
+      if (date === start && date === effectiveEnd) rangePosition = 'single';
+      else if (date === start) rangePosition = 'start';
+      else if (date === effectiveEnd) rangePosition = period.endDate ? 'end' : 'open-end';
+
+      output.push({
+        id: `book-range:${item.id}:${periodIndex}:${date}`,
+        sourceItemId: item.id,
+        type: item.type,
+        typeLabel: getItemTypeLabel(item),
+        date,
+        kind: 'book-reading-day',
+        title: item.title,
+        subtitle: item.subtitle || '',
+        notes: item.notes || '',
+        rating: Number(item.rating || 0),
+        image: item.image || '',
+        provider: item.provider || 'googleBooks',
+        providerId: item.providerId || '',
+        bookPeriodIndex: periodIndex,
+        rangeStart: start,
+        rangeEnd: period.endDate || '',
+        rangePosition,
+        createdAt: item.createdAt || item.updatedAt || ''
+      });
+      cursor = addDays(cursor, 1);
+      guard += 1;
+    }
+  });
+
+  return output;
+}
+
+function parseLocalDate(value) {
+  const [year, month, day] = String(value || '').split('-').map(Number);
+  return new Date(year, (month || 1) - 1, day || 1, 12);
+}
+
+function bookRangeLane(itemId) {
+  let hash = 0;
+  for (const char of String(itemId || 'book')) hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+  return Math.abs(hash) % 4;
+}
+
+function bookRangeColorClass(entry) {
+  const config = getStickerConfig(entry.type, entry);
+  return `sticker-palette-${config.color}`;
+}
+
+function bookRangeSegmentMarkup(entry) {
+  const position = ['start','middle','end','single','open-end'].includes(entry.rangePosition) ? entry.rangePosition : 'middle';
+  return `<button class="book-range-segment book-range-${position} ${bookRangeColorClass(entry)}" type="button" data-book-range-source="${escapeAttr(entry.sourceItemId)}" title="${escapeAttr(`${entry.title} · ${entry.rangeStart}${entry.rangeEnd ? ` to ${entry.rangeEnd}` : ' · currently reading'}`)}"><span></span></button>`;
 }
 
 function renderTracker() {
@@ -2782,16 +3215,25 @@ function renderMonthTracker() {
       const container = cell('tracker-cell', '');
       const date = `${yearText}-${monthText}-${String(day).padStart(2, '0')}`;
       const matches = dated.filter(entry => getCalendarTypeGroupKey(entry) === group.key && entry.date === date);
+      const rangeMatches = matches.filter(entry => entry.kind === 'book-reading-day');
+      const eventMatches = matches.filter(entry => entry.kind !== 'book-reading-day');
 
-      if (matches.length) {
-        const first = matches[0];
+      if (rangeMatches.length) {
+        const stack = document.createElement('div');
+        stack.className = 'book-range-stack';
+        stack.innerHTML = rangeMatches.map(bookRangeSegmentMarkup).join('');
+        container.appendChild(stack);
+      }
+
+      if (eventMatches.length) {
+        const first = eventMatches[0];
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'sticker-button sticker-group-button';
         button.dataset.groupKey = group.key;
         button.dataset.date = date;
-        button.title = matches.length === 1 ? first.title : `${matches.length} ${group.label} entries`;
-        button.innerHTML = `${calendarStickerMarkup(first.type, first)}${matches.length > 1 ? `<span class="sticker-count">${matches.length}</span>` : ''}`;
+        button.title = eventMatches.length === 1 ? first.title : `${eventMatches.length} ${group.label} entries`;
+        button.innerHTML = `${calendarStickerMarkup(first.type, first)}${eventMatches.length > 1 ? `<span class="sticker-count">${eventMatches.length}</span>` : ''}`;
         container.appendChild(button);
       }
       els.trackerGrid.appendChild(container);
@@ -2815,9 +3257,10 @@ function renderWeekTracker() {
     const day = addDays(start, offset);
     const date = localDateString(day);
     const matches = entries.filter(entry => entry.date === date);
+    const bookRanges = matches.filter(entry => entry.kind === 'book-reading-day');
     const groups = new Map();
 
-    for (const entry of matches) {
+    for (const entry of matches.filter(entry => entry.kind !== 'book-reading-day')) {
       const key = getCalendarTypeGroupKey(entry);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(entry);
@@ -2836,9 +3279,19 @@ function renderWeekTracker() {
     const body = document.createElement('div');
     body.className = 'week-day-events';
 
-    if (!groups.size) {
+    if (!groups.size && !bookRanges.length) {
       body.innerHTML = '<span class="week-empty">Nothing tracked</span>';
     } else {
+      for (const rangeEntry of bookRanges) {
+        const rangeButton = document.createElement('button');
+        rangeButton.type = 'button';
+        rangeButton.className = `week-book-range week-book-range-${rangeEntry.rangePosition} ${bookRangeColorClass(rangeEntry)}`;
+        rangeButton.dataset.bookRangeSource = rangeEntry.sourceItemId;
+        rangeButton.style.setProperty('--book-lane', String(bookRangeLane(rangeEntry.sourceItemId)));
+        rangeButton.innerHTML = `<span class="week-book-range-rail"></span><span class="week-book-range-copy"><strong>${escapeHtml(rangeEntry.title)}</strong><small>${escapeHtml(rangeEntry.rangePosition === 'start' || rangeEntry.rangePosition === 'single' ? 'Started reading' : rangeEntry.rangePosition === 'end' ? 'Finished / paused' : rangeEntry.rangePosition === 'open-end' ? 'Currently reading' : 'Reading')}</small></span><span class="week-entry-arrow">→</span>`;
+        body.appendChild(rangeButton);
+      }
+
       for (const [groupKey, typeEntries] of groups) {
         const first = typeEntries[0];
         const label = getCalendarTypeGroupLabel(first);
@@ -2960,6 +3413,11 @@ function getCalendarTypeGroupKey(entry) {
 }
 
 function handleTrackerClick(event) {
+  const bookRange = event.target.closest('[data-book-range-source]');
+  if (bookRange) {
+    openDetails(bookRange.dataset.bookRangeSource);
+    return;
+  }
   const button = event.target.closest('.sticker-group-button[data-date][data-group-key]');
   if (!button) return;
   openCalendarGroup(button.dataset.groupKey, button.dataset.date);
@@ -2975,7 +3433,7 @@ function openCalendarGroup(groupKey, date) {
   const rows = entries.map(entry => {
     const rating = Number(entry.rating || 0);
     const ratingMarkup = rating > 0 ? `<div class="calendar-event-rating" aria-label="${rating} out of 5 stars">${'★'.repeat(Math.floor(rating))}${rating % 1 ? '½' : ''} <span>${rating}/5</span></div>` : '';
-    const editButton = entry.kind === 'dated-item'
+    const editButton = (entry.kind === 'dated-item' || entry.kind === 'book-reading-day')
       ? `<button class="secondary-button" type="button" data-edit-calendar-item="${escapeAttr(entry.sourceItemId)}">Edit</button>`
       : `<button class="secondary-button" type="button" data-edit-history-id="${escapeAttr(entry.id)}">Edit</button>`;
     return `
@@ -3288,7 +3746,8 @@ async function runDiscoverSearch(forcedQuery = '') {
       const entry = settled[index];
       if (entry.status !== 'fulfilled') continue;
       const sourceType = types[index];
-      for (const result of entry.value || []) {
+      const availableResults = filterAlreadyKnown(entry.value || [], sourceType);
+      for (const result of availableResults) {
         const normalized = { ...result, sourceType, categories: result.raw?.volumeInfo?.categories || result.categories || [] };
         if (state.discoverPrefs.englishTVOnly === true && sourceType === 'tv' && String(normalized.raw?.original_language || '').toLowerCase() !== 'en') continue;
         if (!(await discoverSearchResultMatchesGenre(normalized))) continue;
@@ -3856,8 +4315,59 @@ function diversifyDiscoverFeed(results) {
   return output;
 }
 
+function normalizeBookMatchText(value) {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function bookAuthorNames(value) {
+  if (Array.isArray(value)) return value.map(normalizeBookMatchText).filter(Boolean);
+  return String(value || '')
+    .split(/,|\s+&\s+|\s+and\s+/i)
+    .map(normalizeBookMatchText)
+    .filter(Boolean);
+}
+
+function bookTitleAuthorSignature(title, authors) {
+  const normalizedTitle = normalizeBookMatchText(title);
+  const normalizedAuthors = bookAuthorNames(authors).sort();
+  if (!normalizedTitle || !normalizedAuthors.length) return '';
+  return `${normalizedTitle}::${normalizedAuthors.join('|')}`;
+}
+
+function discoverBookSignature(result) {
+  return bookTitleAuthorSignature(
+    result?.title || result?.raw?.volumeInfo?.title || '',
+    result?.raw?.volumeInfo?.authors || result?.authors || result?.subtitle || ''
+  );
+}
+
+function trackedBookSignatures() {
+  const signatures = new Set();
+  for (const item of state.items) {
+    if (getSourceType(item) !== 'book') continue;
+    const signature = bookTitleAuthorSignature(
+      item.title,
+      item.raw?.volumeInfo?.authors || item.authors || item.subtitle || ''
+    );
+    if (signature) signatures.add(signature);
+  }
+  return signatures;
+}
+
 function discoverResultIdentity(result) {
-  if (!result?.providerId) return '';
+  if (!result) return '';
+  if (result.sourceType === 'book') {
+    const signature = discoverBookSignature(result);
+    if (signature) return `book:${signature}`;
+  }
+  if (!result.providerId) return '';
   return `${result.sourceType || 'book'}:${result.providerId}`;
 }
 
@@ -4045,8 +4555,18 @@ function filterAlreadyKnown(results, type) {
     if (type === 'tv' && entry.kind === 'episode-watched') blocked.add(String(entry.providerId));
     if (type === 'book' && entry.kind === 'book-finished') blocked.add(String(entry.providerId));
   }
+
+  // Google Books assigns a different volume ID to many editions of the same
+  // book. Block by normalized title + author as well as provider ID so Discover
+  // does not recommend another edition of a book the user already tracks.
+  const knownBookSignatures = type === 'book' ? trackedBookSignatures() : null;
+
   return (results || []).filter(result => {
     if (blocked.has(String(result.providerId))) return false;
+    if (type === 'book') {
+      const signature = discoverBookSignature(result);
+      if (signature && knownBookSignatures.has(signature)) return false;
+    }
     if (type === 'tv' && state.discoverPrefs.englishTVOnly === true) {
       return String(result.raw?.original_language || '').toLowerCase() === 'en';
     }
@@ -4719,12 +5239,9 @@ async function renderDiscoverBookDetail(key) {
   if (!result) return;
   const data = await getCached(`book:${result.providerId}`, () => TrackerAPI.getBookDetails(result.providerId, state.settings));
   const info = data.volumeInfo || {};
-  const existing = findDiscoverItem(result);
-  if (existing) {
-    if (info.categories?.length) existing.genres = [...new Set(info.categories)];
-    if (info.publishedDate) existing.releaseDate = info.publishedDate;
-    saveItems();
-  }
+  if (info.categories?.length) item.genres = [...new Set(info.categories)];
+  if (info.publishedDate) item.releaseDate = info.publishedDate;
+  saveItems();
   const image = info.imageLinks?.large?.replace('http://','https://') || info.imageLinks?.thumbnail?.replace('http://','https://') || result.image;
   const completed = isDiscoverCompleted(result);
   els.detailBody.innerHTML = `
@@ -5322,7 +5839,7 @@ function getSourceType(item) {
 function getQueueStatus(item) {
   if (!item) return 'library';
   if (['upnext', 'tbr', 'library'].includes(item.queueStatus)) return item.queueStatus;
-  if (item.active !== false && ['tv', 'youtube', 'book'].includes(getSourceType(item))) return 'upnext';
+  if (item.active !== false && ['tv', 'youtube', 'book', 'reminder'].includes(getSourceType(item))) return 'upnext';
   return 'library';
 }
 

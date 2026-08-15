@@ -4001,3 +4001,158 @@ body.auth-locked > main {
     font-size: .63rem;
   }
 }
+
+
+/* Book reading ranges ------------------------------------------------------ */
+.book-reading-fields { gap: 12px; }
+.book-period-editor {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(21,36,58,.10);
+  border-radius: 14px;
+  background: rgba(139,153,202,.06);
+}
+.book-period-editor-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 14px;
+}
+.book-period-editor-heading small {
+  display: block;
+  margin-top: 4px;
+  color: #77746c;
+  line-height: 1.4;
+}
+.book-period-list { display: grid; gap: 8px; }
+.book-period-row {
+  display: grid;
+  grid-template-columns: minmax(130px,1fr) minmax(130px,1fr) 38px;
+  align-items: end;
+  gap: 9px;
+  padding: 9px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.62);
+}
+.book-period-remove { min-width: 38px; width: 38px; padding: 0; height: 42px; }
+.book-add-period { justify-self: start; }
+.book-period-summary-list { display: grid; gap: 7px; }
+.book-period-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(21,36,58,.08);
+}
+.book-period-summary:last-child { border-bottom: 0; }
+.book-period-summary span { color: #77746c; }
+.detail-progress small { display: block; margin-top: 4px; font-weight: 500; opacity: .72; }
+
+/* Desktop: one continuous bar per reading interval. Adjacent day cells touch,
+   so these segments visually join across the month row. */
+.tracker-cell:has(.book-range-stack) { align-content: center; }
+.book-range-stack {
+  width: calc(100% + 1px);
+  display: grid;
+  gap: 3px;
+  padding: 4px 0;
+  z-index: 1;
+}
+.book-range-segment {
+  --range-color: var(--sticker-accent, #f6df7c);
+  width: calc(100% + 1px);
+  height: 7px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  display: block;
+  position: relative;
+}
+.book-range-segment > span {
+  position: absolute;
+  inset: 0 -1px 0 0;
+  background: var(--range-color);
+  box-shadow: 0 1px 0 rgba(0,0,0,.08);
+}
+.book-range-start > span { border-radius: 999px 0 0 999px; left: 3px; }
+.book-range-end > span { border-radius: 0 999px 999px 0; right: 3px; }
+.book-range-single > span { border-radius: 999px; left: 3px; right: 3px; }
+.book-range-open-end > span { border-radius: 0 999px 999px 0; right: 3px; }
+.book-range-open-end::after {
+  content: '';
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  transform: translateY(-50%);
+  background: var(--range-color);
+  box-shadow: 0 0 0 2px rgba(255,255,255,.65);
+}
+.book-range-segment:hover > span,
+.book-range-segment:focus-visible > span { filter: brightness(1.08); transform: translateY(-1px); }
+
+/* Mobile week view: the same reading interval becomes a connected vertical rail. */
+.week-book-range {
+  --range-color: var(--sticker-accent, #f6df7c);
+  position: relative;
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 18px minmax(0,1fr) auto;
+  gap: 9px;
+  align-items: center;
+  border: 0;
+  background: rgba(255,255,255,.08);
+  color: inherit;
+  text-align: left;
+  border-radius: 9px;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+.week-book-range:hover,
+.week-book-range:focus-visible { background: rgba(255,255,255,.13); }
+.week-book-range-rail {
+  position: absolute;
+  left: calc(7px + (var(--book-lane, 0) * 3px));
+  width: 4px;
+  top: -10px;
+  bottom: -10px;
+  border-radius: 4px;
+  background: var(--range-color);
+}
+.week-book-range-start .week-book-range-rail,
+.week-book-range-single .week-book-range-rail { top: 50%; }
+.week-book-range-end .week-book-range-rail,
+.week-book-range-single .week-book-range-rail,
+.week-book-range-open-end .week-book-range-rail { bottom: 50%; }
+.week-book-range-copy { min-width: 0; display: grid; gap: 1px; }
+.week-book-range-copy strong { font-family: var(--serif); font-size: .9rem; }
+.week-book-range-copy small { color: rgba(255,255,255,.72); font-size: .72rem; }
+
+@media (max-width: 760px) {
+  .book-period-editor-heading { align-items: stretch; flex-direction: column; }
+  .book-period-editor-heading .secondary-button { align-self: start; }
+  .book-period-row { grid-template-columns: 1fr 1fr 36px; gap: 7px; }
+  .book-period-summary { display: grid; gap: 2px; }
+}
+
+@media (max-width: 480px) {
+  .book-period-row { grid-template-columns: 1fr; }
+  .book-period-remove { width: 100%; }
+}
+
+/* Recurring reminders */
+.reminder-fields {
+  padding: 14px 0 2px;
+}
+
+.reminder-check:disabled,
+.detail-actions button[data-reminder-complete]:disabled {
+  opacity: .42;
+  cursor: default;
+}

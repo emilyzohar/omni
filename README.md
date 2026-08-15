@@ -103,3 +103,20 @@ This avoids treating the movie and TV genre taxonomies as identical.
 
 ## Same-name Library grouping
 Library shelves and the Library type filter now group by the visible type label rather than the underlying API/source type. For example, a YouTube-backed `Workout` item and a manually entered `Workout` item appear in the same `Workout` shelf while retaining their own source/provider behavior when opened.
+
+## Book reading ranges
+
+Books can now store one or more reading periods (`startDate` + optional `endDate`).
+An open period means the book is currently being read. Pausing closes the current
+period; resuming starts a new period. Desktop month view renders each period as a
+continuous horizontal line, while mobile week view renders it as a connected
+vertical rail. These periods are stored inside the existing profile JSON, so no
+Supabase schema change is required.
+
+## Recurring reminders
+
+Choose **Reminder** in Add/Edit, give it a title (for example `Laundry`) and a visible type (for example `Chores`). Reminders can repeat every day or weekly on a selected weekday. They live in Up Next. Checking a due reminder logs that completion to today's calendar under its visible type, contributes to that type's streak, and automatically advances the next occurrence. Future reminders remain visible but cannot be checked before they are due.
+
+## Book edition deduplication
+
+Discover now treats a Google Books result as already tracked when its normalized title and author(s) match a saved book, even when Google Books returns a different volume ID for another edition. The same title/author signature is also used to deduplicate multiple editions inside the Discover feed itself.

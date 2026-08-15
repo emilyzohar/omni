@@ -237,6 +237,7 @@
           <option value="book">Book</option>
           <option value="music">Music</option>
           <option value="youtube">YouTube</option>
+          <option value="reminder">Reminder</option>
           <option value="other">Other</option>
         </select>
       </label>
@@ -270,6 +271,31 @@
         <div id="playlistPreview" class="selected-source" hidden></div>
       </div>
 
+      <div id="reminderBlock" class="progress-fields reminder-fields" hidden>
+        <div class="two-column-fields">
+          <label class="field compact-field">
+            <span>Repeat</span>
+            <select id="reminderFrequency">
+              <option value="weekly">Every week</option>
+              <option value="daily">Every day</option>
+            </select>
+          </label>
+          <label id="reminderWeekdayField" class="field compact-field">
+            <span>Day</span>
+            <select id="reminderWeekday">
+              <option value="0">Sunday</option>
+              <option value="1">Monday</option>
+              <option value="2">Tuesday</option>
+              <option value="3">Wednesday</option>
+              <option value="4">Thursday</option>
+              <option value="5">Friday</option>
+              <option value="6" selected>Saturday</option>
+            </select>
+          </label>
+        </div>
+        <p class="field-hint">Checking the reminder logs it on the calendar under its display type, then automatically schedules the next occurrence.</p>
+      </div>
+
       <div id="manualTitleBlock">
         <label class="field">
           <span>Title</span>
@@ -294,7 +320,7 @@
         <div id="tvWatchSetupList" class="tv-watch-setup-list"></div>
       </div>
 
-      <div id="bookProgressFields" class="progress-fields" hidden>
+      <div id="bookProgressFields" class="progress-fields book-reading-fields" hidden>
         <div class="two-column-fields">
           <label class="field compact-field">
             <span>Current page</span>
@@ -305,6 +331,17 @@
             <input id="bookTotalPages" type="number" min="1" step="1" />
           </label>
         </div>
+        <div class="two-column-fields">
+          <label class="field compact-field">
+            <span>Reading start</span>
+            <input id="bookStartDate" type="date" />
+          </label>
+          <label class="field compact-field">
+            <span>End / pause date <em>optional</em></span>
+            <input id="bookEndDate" type="date" />
+          </label>
+        </div>
+        <p class="field-hint">Leave the end blank while you are actively reading. If you pause and resume later, the book can have multiple reading periods and the calendar line will break between them.</p>
       </div>
 
       <fieldset class="rating-fieldset">
@@ -350,7 +387,7 @@
         <span>Add to Recommended folder</span>
       </label>
 
-      <label class="field">
+      <label id="itemDateField" class="field">
         <span>Date <em>optional</em></span>
         <input id="itemDate" type="date" />
       </label>
@@ -476,6 +513,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=seasonchecks-1"></script>
+  <script type="module" src="app.js?v=bookranges-1"></script>
 </body>
 </html>
