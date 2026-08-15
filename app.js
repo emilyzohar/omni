@@ -4248,14 +4248,22 @@ function renderMonthTracker() {
         representativeEntry: { type, typeLabel: getTypeLabel(type) }
       }));
 
+  const today = todayString();
+  const isCurrentMonth = today.startsWith(`${yearText}-${monthText}-`);
+
   els.trackerGrid.appendChild(cell('tracker-cell tracker-corner', ''));
-  for (let day=1; day<=days; day++) els.trackerGrid.appendChild(cell('tracker-cell tracker-day', String(day)));
+  for (let day=1; day<=days; day++) {
+    const date = `${yearText}-${monthText}-${String(day).padStart(2, '0')}`;
+    const dayCell = cell(`tracker-cell tracker-day${isCurrentMonth && date === today ? ' is-today' : ''}`, String(day));
+    if (isCurrentMonth && date === today) dayCell.setAttribute('aria-current', 'date');
+    els.trackerGrid.appendChild(dayCell);
+  }
 
   for (const group of displayGroups) {
     els.trackerGrid.appendChild(cell('tracker-cell tracker-category', group.label.toLowerCase()));
     for (let day=1; day<=days; day++) {
-      const container = cell('tracker-cell', '');
       const date = `${yearText}-${monthText}-${String(day).padStart(2, '0')}`;
+      const container = cell(`tracker-cell${isCurrentMonth && date === today ? ' is-today-column' : ''}`, '');
       const matches = dated.filter(entry => getCalendarTypeGroupKey(entry) === group.key && entry.date === date);
       const rangeMatches = matches.filter(entry => entry.kind === 'book-reading-day');
       const eventMatches = matches.filter(entry => entry.kind !== 'book-reading-day');
@@ -4312,8 +4320,9 @@ function renderWeekTracker() {
 
     const header = document.createElement('div');
     header.className = 'week-day-header';
+    const isToday = date === todayString();
     header.innerHTML = `
-      <span class="week-weekday">${new Intl.DateTimeFormat('en-CA', { weekday: 'long' }).format(day)}</span>
+      <span class="week-weekday-row"><span class="week-weekday">${new Intl.DateTimeFormat('en-CA', { weekday: 'long' }).format(day)}</span>${isToday ? '<span class="week-today-badge">Today</span>' : ''}</span>
       <span class="week-date">${new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric' }).format(day)}</span>`;
     section.appendChild(header);
 
