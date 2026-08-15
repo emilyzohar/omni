@@ -3953,6 +3953,34 @@ body.auth-locked > main {
 }
 
 .library-poster-button { position: relative; }
+
+.library-recommended-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  max-width: calc(100% - 12px);
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(114,0,20,.9);
+  color: #fff9ea;
+  box-shadow: 0 2px 7px rgba(0,0,0,.14);
+  backdrop-filter: blur(5px);
+  font: 800 .62rem/1 var(--sans);
+  letter-spacing: .01em;
+  white-space: nowrap;
+}
+.library-text-card-button .library-recommended-badge {
+  top: 7px;
+  right: 7px;
+}
+.library-text-card-button:has(.library-recommended-badge) .library-text-card-title {
+  padding-right: 42px;
+}
+
 .library-rating-badge {
   position: absolute;
   left: 6px;

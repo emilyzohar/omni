@@ -7906,33 +7906,36 @@ function setLibraryView(view) {
 }
 
 function itemLibraryDate(item) {
-  const datedHistory = state.history
-    .filter(entry => entry.sourceItemId === item.id && entry.date)
+  // Library → Recent follows the calendar, not when an item was added, edited,
+  // rated, or silently completed. If an item has been removed from the calendar,
+  // it is intentionally treated as undated here as well.
+  if (!item || item.calendarHidden) return '';
+
+  const dates = state.history
+    .filter(entry => entry.sourceItemId === item.id && entry.date && entry.showOnCalendar !== false)
     .map(entry => String(entry.date).slice(0, 10))
     .filter(Boolean);
 
   const sourceType = getSourceType(item);
-  const consumedDates = [...datedHistory];
 
-  // Books may have reading periods even when their completion/history record is
-  // intentionally hidden from the calendar. Use the actual reading dates for
-  // Library recency, not the date the book was saved or later edited.
+  // Non-book items with an explicit item date appear on the calendar directly.
+  if (sourceType !== 'book' && item.date) {
+    dates.push(String(item.date).slice(0, 10));
+  }
+
+  // Book reading periods generate calendar entries for each day in the range.
+  // The most recent visible day is the end date, or today for an active period.
   if (sourceType === 'book') {
+    const today = todayString();
     for (const period of getBookReadingPeriods(item)) {
-      if (period.endDate) consumedDates.push(period.endDate);
-      else if (period.startDate && Number(item.progress?.currentPage || 0) > 0) consumedDates.push(period.startDate);
+      const start = String(period?.startDate || '').slice(0, 10);
+      if (!start) continue;
+      const end = String(period?.endDate || today).slice(0, 10);
+      if (end >= start) dates.push(end);
     }
   }
 
-  if (item.completedAt) consumedDates.push(String(item.completedAt).slice(0, 10));
-
-  // For manually dated/logged items, item.date is itself the consumed/logged date.
-  // Do not use it for untouched catalogue items merely because they have metadata.
-  if (!['tv', 'movie', 'book', 'music'].includes(sourceType) && item.date) {
-    consumedDates.push(String(item.date).slice(0, 10));
-  }
-
-  return consumedDates.filter(Boolean).sort().at(-1) || '';
+  return dates.sort().at(-1) || '';
 }
 
 function normalizeLibraryPrefs(value) {
@@ -8158,10 +8161,15 @@ function makeLibraryPoster(item) {
   const personalRating = Math.max(0, Math.min(5, Number(item.rating || 0)));
   const hasThumbnail = Boolean(String(item.image || '').trim());
   if (!hasThumbnail) poster.classList.add('library-text-card-button');
+  const recommendedBadge = item.recommended
+    ? `<span class="library-recommended-badge" aria-label="Recommended">♥ Recommended</span>`
+    : '';
   poster.innerHTML = hasThumbnail
     ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />
+       ${recommendedBadge}
        ${personalRating > 0 ? `<span class="library-rating-badge" aria-label="Your rating ${personalRating} out of 5">★ ${escapeHtml(formatPersonalRating(personalRating))}</span>` : ''}`
     : `<span class="library-text-card">
+         ${recommendedBadge}
          <strong class="library-text-card-title">${escapeHtml(item.title || 'Untitled')}</strong>
          ${personalRating > 0 ? `<span class="library-text-card-rating">★ ${escapeHtml(formatPersonalRating(personalRating))} / 5</span>` : ''}
          ${String(item.notes || '').trim() ? `<span class="library-text-card-notes">${escapeHtml(String(item.notes || '').trim())}</span>` : ''}
@@ -8179,11 +8187,22 @@ function renderLibrary() {
     .filter(item => state.libraryView !== 'recommended' || item.recommended)
     .filter(item => visibleTypes.has(libraryTypeGroupKey(item)));
 
+  // For Recent, dated/calendar-associated items always come first in descending
+  // date order. Undated items are deliberately shuffled at the end instead of
+  // falling back to rating/title/createdAt, which previously made "Recent" feel wrong.
+  const undatedRecentOrder = new Map(filtered.map(item => [item.id, Math.random()]));
   const compare = sort === 'rating'
     ? (a,b) => Number(b.rating || 0) - Number(a.rating || 0) || String(itemLibraryDate(b)).localeCompare(String(itemLibraryDate(a))) || a.title.localeCompare(b.title)
     : sort === 'title'
       ? (a,b) => a.title.localeCompare(b.title)
-      : (a,b) => String(itemLibraryDate(b)).localeCompare(String(itemLibraryDate(a))) || Number(b.rating || 0) - Number(a.rating || 0) || a.title.localeCompare(b.title);
+      : (a,b) => {
+          const aDate = itemLibraryDate(a);
+          const bDate = itemLibraryDate(b);
+          if (aDate && bDate) return String(bDate).localeCompare(String(aDate));
+          if (aDate) return -1;
+          if (bDate) return 1;
+          return Number(undatedRecentOrder.get(a.id) || 0) - Number(undatedRecentOrder.get(b.id) || 0);
+        };
 
   const preferredLabels = ['TV','Movie','Book','Music','Workout','Other'];
   const preferredOrder = preferredLabels.map(label => slugifyType(label));
@@ -8236,7 +8255,7 @@ function renderLibrary() {
       if (rootExpanded) {
         const statusHost = section.querySelector('.tv-library-status-groups');
         for (const statusKey of ['in-progress', 'up-to-date', 'finished', 'stopped']) {
-          const statusItems = items.filter(item => tvLibraryStatusKey(item) === statusKey).sort(compareTVLibraryProgress);
+          const statusItems = items.filter(item => tvLibraryStatusKey(item) === statusKey).sort(compare);
           if (!statusItems.length) continue;
           const expansionKey = `tv:${statusKey}`;
           const expanded = state.libraryExpandedGroups.has(expansionKey);
