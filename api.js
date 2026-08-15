@@ -10,23 +10,42 @@ export const TrackerAPI = (() => {
     return value;
   }
 
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
   async function fetchJson(url, options = {}) {
-    const response = await fetch(url, options);
-    if (!response.ok) {
-      let message = `${response.status} ${response.statusText}`;
-      try {
-        const payload = await response.json();
-        message = payload?.status_message || payload?.error?.message || payload?.error?.errors?.[0]?.message || message;
-        const reason = payload?.error?.errors?.[0]?.reason || payload?.error?.details?.[0]?.reason || '';
-        if (url.includes('youtube.googleapis.com') || url.includes('www.googleapis.com/youtube')) {
-          if (/blocked/i.test(message) || /API_KEY_.*BLOCKED/i.test(reason)) {
-            message += ' Check that EXPO_PUBLIC_YOUTUBE_API_KEY belongs to a project with YouTube Data API v3 enabled and that the key restrictions allow YouTube Data API v3 (including playlists.list and playlistItems.list) from this site.';
-          }
-        }
-      } catch {}
-      throw new Error(message);
+    // Catalogue APIs occasionally return transient 429/5xx responses. Retrying
+    // here keeps one flaky upstream request from breaking an entire Discover row.
+    const transientStatuses = new Set([429, 500, 502, 503, 504]);
+    const maxAttempts = 3;
+    let response;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      response = await fetch(url, options);
+      if (response.ok) return response.json();
+
+      if (transientStatuses.has(response.status) && attempt < maxAttempts) {
+        const retryAfter = Number(response.headers.get('retry-after'));
+        const delay = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(retryAfter * 1000, 5000)
+          : 350 * (2 ** (attempt - 1)) + Math.floor(Math.random() * 180);
+        await sleep(delay);
+        continue;
+      }
+      break;
     }
-    return response.json();
+
+    let message = `${response?.status || ''} ${response?.statusText || 'Request failed'}`.trim();
+    try {
+      const payload = await response.json();
+      message = payload?.status_message || payload?.error?.message || payload?.error?.errors?.[0]?.message || message;
+      const reason = payload?.error?.errors?.[0]?.reason || payload?.error?.details?.[0]?.reason || '';
+      if (url.includes('youtube.googleapis.com') || url.includes('www.googleapis.com/youtube')) {
+        if (/blocked/i.test(message) || /API_KEY_.*BLOCKED/i.test(reason)) {
+          message += ' Check that EXPO_PUBLIC_YOUTUBE_API_KEY belongs to a project with YouTube Data API v3 enabled and that the key restrictions allow YouTube Data API v3 (including playlists.list and playlistItems.list) from this site.';
+        }
+      }
+    } catch {}
+    throw new Error(message);
   }
 
   function tmdbHeaders(settings) {
@@ -239,21 +258,61 @@ export const TrackerAPI = (() => {
 
   async function getBookFeed(startIndex = 0, settings, options = {}) {
     const key = required(settings.googleBooksKey, 'Google Books API key');
-    const query = options.query || 'subject:fiction';
-    const params = new URLSearchParams({
-      q: query,
-      startIndex: String(Math.max(0, Number(startIndex) || 0)),
-      maxResults: String(Math.min(40, Math.max(1, Number(options.maxResults) || 40))),
-      printType: 'books',
-      orderBy: options.orderBy === 'newest' ? 'newest' : 'relevance',
-      key
-    });
-    const data = await fetchJson(`${GOOGLE_BOOKS_ROOT}/volumes?${params.toString()}`);
-    return {
-      startIndex: Math.max(0, Number(startIndex) || 0),
-      totalItems: Number(data.totalItems || 0),
-      results: (data.items || []).map(mapBook)
-    };
+    const requestedQuery = String(options.query || 'subject:fiction').trim();
+    const requestedMax = Math.min(40, Math.max(1, Number(options.maxResults) || 40));
+    const normalizedStart = Math.max(0, Number(startIndex) || 0);
+    const orderBy = options.orderBy === 'newest' ? 'newest' : 'relevance';
+
+    async function requestBooks(query, maxResults) {
+      const params = new URLSearchParams({
+        q: query,
+        startIndex: String(normalizedStart),
+        maxResults: String(maxResults),
+        printType: 'books',
+        orderBy,
+        key
+      });
+      const data = await fetchJson(`${GOOGLE_BOOKS_ROOT}/volumes?${params.toString()}`);
+      return {
+        startIndex: normalizedStart,
+        totalItems: Number(data.totalItems || 0),
+        results: (data.items || []).map(mapBook)
+      };
+    }
+
+    try {
+      return await requestBooks(requestedQuery, requestedMax);
+    } catch (error) {
+      const transient = /(^|\b)(429|500|502|503|504)(\b|$)|backend|temporar|unavailable/i.test(String(error?.message || ''));
+      if (!transient) throw error;
+
+      // Google Books can be flaky on larger subject-filtered pages. A smaller
+      // request usually succeeds while preserving the exact subject query.
+      try {
+        return await requestBooks(requestedQuery, Math.min(20, requestedMax));
+      } catch (smallerError) {
+        const subjectMatch = requestedQuery.match(/^subject:(?:"([^"]+)"|(.+))$/i);
+        if (!subjectMatch) throw smallerError;
+
+        // Last-resort fallback: search the subject phrase as ordinary text, then
+        // keep only results whose categories/metadata still look like that genre.
+        const subject = String(subjectMatch[1] || subjectMatch[2] || '').trim();
+        if (!subject) throw smallerError;
+        const broad = await requestBooks(subject, Math.min(20, requestedMax));
+        const terms = subject.toLowerCase().split(/\s+/).filter(Boolean);
+        broad.results = broad.results.filter(book => {
+          const info = book.raw?.volumeInfo || {};
+          const haystack = [
+            ...(book.categories || []),
+            info.title || '',
+            info.subtitle || '',
+            info.description || ''
+          ].join(' ').toLowerCase();
+          return terms.every(term => haystack.includes(term));
+        });
+        return broad;
+      }
+    }
   }
 
   async function getTrending(type, settings) {

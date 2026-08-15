@@ -72,3 +72,8 @@ Discover now includes:
 - Clear Search returns to the selected endless Discover feed.
 
 TMDB catalogue requests use genre IDs when available; Google Books feed requests use subject queries for the selected genre.
+
+
+## Google Books resilience
+
+Discover book catalogue requests automatically retry transient 429/5xx responses. Subject filters such as Romance first retry with a smaller result page and then fall back to a broader query that is filtered back to the selected genre.
