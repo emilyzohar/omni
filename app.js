@@ -68,6 +68,7 @@ const state = {
   openDiscoverKey: null,
   tvDraftProviderId: '',
   tvDraftWatched: new Set(),
+  tvDraftInitialWatched: new Set(),
   tvDraftLocked: new Set(),
   tvDraftSeasons: [],
   tvDraftDetails: null,
@@ -79,7 +80,8 @@ const state = {
   discoverFeedInitialized: false,
   discoverFeedEmptyPasses: 0,
   discoverFeedOffsets: { tv: 1, movie: 1, book: 0 },
-  discoverFeedSession: Math.random()
+  discoverFeedSession: Math.random(),
+  discoverMode: 'discover'
 };
 
 const $ = selector => document.querySelector(selector);
@@ -128,6 +130,8 @@ const els = {
   discoverFeed: $('#discoverFeed'),
   discoverFeedSentinel: $('#discoverFeedSentinel'),
   discoverFeedMessage: $('#discoverFeedMessage'),
+  discoverModeTabs: $$('.discover-mode-tab[data-discover-mode]'),
+  discoverFeedIntroText: $('#discoverFeedIntroText'),
   discoverTrendingTV: $('#discoverTrendingTV'),
   discoverTrendingMovies: $('#discoverTrendingMovies'),
   discoverNewBooks: $('#discoverNewBooks'),
@@ -488,6 +492,7 @@ function bindEvents() {
   els.trackerGrid?.addEventListener('click', handleTrackerClick);
   els.libraryGroups?.addEventListener('click', handleLibraryClick);
   els.refreshDiscover?.addEventListener('click', () => renderDiscover(true));
+  els.discoverModeTabs?.forEach(tab => tab.addEventListener('click', () => setDiscoverMode(tab.dataset.discoverMode)));
   els.openDiscoverSettings?.addEventListener('click', openDiscoverSettings);
   els.discoverSettingsForm?.addEventListener('submit', saveDiscoverSettings);
   els.streamingProviderSearch?.addEventListener('input', () => renderStreamingProviderOptions(els.streamingProviderSearch.value));
@@ -517,7 +522,7 @@ function bindEvents() {
     const tvEpisodeCheck = event.target.closest('[data-check-tv-episode]');
     if (tvEpisodeCheck) {
       const item = findItem(tvEpisodeCheck.dataset.itemId || state.openDetailId);
-      if (item) await logSpecificTVEpisode(item, Number(tvEpisodeCheck.dataset.tvSeasonNumber), Number(tvEpisodeCheck.dataset.checkTvEpisode));
+      if (item) await toggleSpecificTVEpisode(item, Number(tvEpisodeCheck.dataset.tvSeasonNumber), Number(tvEpisodeCheck.dataset.checkTvEpisode));
       return;
     }
 
@@ -857,6 +862,7 @@ async function advanceTV(item) {
 
   if (next) {
     item.progress = { ...item.progress, nextSeason: next.seasonNumber, nextEpisode: next.episodeNumber };
+    item.completedAt = '';
   } else {
     setItemQueueStatus(item, 'library');
     item.completedAt = todayString();
@@ -878,7 +884,7 @@ function tvHistoryRecord(item, episode, seasonNumber, episodeNumber) {
     kind: 'episode-watched',
     title: item.title,
     subtitle: `S${seasonNumber} E${episodeNumber} · ${episode.name || 'Episode'}`,
-    notes: episode.overview || '',
+    notes: '',
     rating: Number(item.rating || 0),
     image: TrackerAPI.tmdbImage(episode.still_path) || item.image || '',
     provider: item.provider,
@@ -898,11 +904,35 @@ function isTVEpisodeLogged(item, seasonNumber, episodeNumber) {
 }
 
 function isTVEpisodeConsumed(item, seasonNumber, episodeNumber) {
-  if (isTVEpisodeLogged(item, seasonNumber, episodeNumber)) return true;
-  const nextSeason = Number(item.progress?.nextSeason || 1);
-  const nextEpisode = Number(item.progress?.nextEpisode || 1);
-  return Number(seasonNumber) < nextSeason ||
-    (Number(seasonNumber) === nextSeason && Number(episodeNumber) < nextEpisode);
+  // Episode history is the source of truth. Progress is derived from history,
+  // so a checked episode can always be unchecked later.
+  return isTVEpisodeLogged(item, seasonNumber, episodeNumber);
+}
+
+function removeTVEpisodeHistory(item, seasonNumber, episodeNumber) {
+  const before = state.history.length;
+  state.history = state.history.filter(entry => !(
+    entry.kind === 'episode-watched' &&
+    entry.sourceItemId === item.id &&
+    Number(entry.seasonNumber) === Number(seasonNumber) &&
+    Number(entry.episodeNumber) === Number(episodeNumber)
+  ));
+  // A series-level completion marker is no longer valid after any episode is cleared.
+  state.history = state.history.filter(entry => !(
+    entry.kind === 'series-watched' && entry.sourceItemId === item.id
+  ));
+  return state.history.length !== before;
+}
+
+async function recalculateTVProgress(item) {
+  const next = await findNextUnwatchedTVEpisode(item, 0, 0);
+  if (next) {
+    item.progress = { ...item.progress, nextSeason: next.seasonNumber, nextEpisode: next.episodeNumber };
+    item.completedAt = '';
+  } else {
+    item.completedAt = item.completedAt || todayString();
+  }
+  await reconcileSingleTVItem(item);
 }
 
 function isEpisodeAvailable(episode) {
@@ -1066,44 +1096,51 @@ async function applyTVWatchAction(item, action) {
   await renderTVDetails(item);
 }
 
-async function logSpecificTVEpisode(item, seasonNumber, episodeNumber) {
-  if (isTVEpisodeLogged(item, seasonNumber, episodeNumber)) return;
+async function toggleSpecificTVEpisode(item, seasonNumber, episodeNumber) {
+  const alreadyWatched = isTVEpisodeLogged(item, seasonNumber, episodeNumber);
 
-  const currentSeason = Number(item.progress?.nextSeason || 1);
-  const currentEpisode = Number(item.progress?.nextEpisode || 1);
-  let record;
-
-  if (seasonNumber === currentSeason && episodeNumber === currentEpisode) {
-    record = await advanceTV(item);
+  if (alreadyWatched) {
+    removeTVEpisodeHistory(item, seasonNumber, episodeNumber);
+    await recalculateTVProgress(item);
   } else {
     const episode = await getTVEpisodeFromSeason(item, seasonNumber, episodeNumber);
     if (!episode) throw new Error(`Could not find S${seasonNumber} E${episodeNumber}.`);
-    record = tvHistoryRecord(item, episode, seasonNumber, episodeNumber);
+    // A single episode checked from the normal show detail is something watched now,
+    // so it is eligible for today's calendar. Whole-season/import actions are not.
+    addHistoryRecord(tvHistoryRecord(item, episode, seasonNumber, episodeNumber));
+    await recalculateTVProgress(item);
   }
 
-  addHistoryRecord(record);
+  item.updatedAt = new Date().toISOString();
   saveItems();
   saveHistory();
   renderAll();
-  await renderTVSeasonDetail(item, seasonNumber);
+  if (els.detailModal?.open) await renderTVSeasonDetail(item, seasonNumber);
 }
-
 
 async function markTVSeasonWatched(item, seasonNumber) {
   const season = await getCached(`season:${item.providerId}:${seasonNumber}`, () => TrackerAPI.getTVSeason(item.providerId, seasonNumber, state.settings));
-  let added = 0;
-  for (const episode of (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep))) {
-    if (isTVEpisodeConsumed(item, seasonNumber, episode.episode_number)) continue;
-    addHistoryRecord(tvHistoryRecord(item, episode, seasonNumber, episode.episode_number));
-    added += 1;
+  const aired = (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep));
+  const allWatched = aired.length > 0 && aired.every(ep => isTVEpisodeLogged(item, seasonNumber, ep.episode_number));
+
+  if (allWatched) {
+    for (const episode of aired) removeTVEpisodeHistory(item, seasonNumber, episode.episode_number);
+  } else {
+    for (const episode of aired) {
+      if (isTVEpisodeLogged(item, seasonNumber, episode.episode_number)) continue;
+      const record = tvHistoryRecord(item, episode, seasonNumber, episode.episode_number);
+      // Marking an entire season is historical/imported state, not an event today.
+      addHistoryRecord({ ...record, date: '', showOnCalendar: false, imported: true, importedAt: new Date().toISOString() });
+    }
   }
-  await reconcileSingleTVItem(item);
+
+  await recalculateTVProgress(item);
   item.updatedAt = new Date().toISOString();
   saveHistory();
   saveItems();
   renderAll();
   if (els.detailModal?.open) await renderTVSeasonDetail(item, seasonNumber);
-  return added;
+  return aired.length;
 }
 
 async function moveItemToQueue(item, status) {
@@ -1434,6 +1471,7 @@ function selectCatalogueResult(result) {
 function resetTVDraftSetup() {
   state.tvDraftProviderId = '';
   state.tvDraftWatched = new Set();
+  state.tvDraftInitialWatched = new Set();
   state.tvDraftLocked = new Set();
   state.tvDraftSeasons = [];
   state.tvDraftDetails = null;
@@ -1449,6 +1487,7 @@ async function prepareTVWatchSetup(providerId, itemId = '') {
   if (!providerId || !els.tvWatchSetupList) return;
   state.tvDraftProviderId = String(providerId);
   state.tvDraftWatched = new Set();
+  state.tvDraftInitialWatched = new Set();
   state.tvDraftLocked = new Set();
   state.tvDraftSeasons = [];
   if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = 'Loading seasons and episodes…';
@@ -1480,7 +1519,7 @@ async function prepareTVWatchSetup(providerId, itemId = '') {
         const key = tvDraftEpisodeKey(season.seasonNumber, episode.episode_number);
         if (isTVEpisodeConsumed(existing, season.seasonNumber, episode.episode_number)) {
           state.tvDraftWatched.add(key);
-          state.tvDraftLocked.add(key);
+          state.tvDraftInitialWatched.add(key);
         }
       }
     }
@@ -1508,13 +1547,12 @@ function renderTVWatchSetup() {
       const key = tvDraftEpisodeKey(season.seasonNumber, ep.episode_number);
       const available = isEpisodeAvailable(ep);
       const checked = state.tvDraftWatched.has(key);
-      const locked = state.tvDraftLocked.has(key);
-      return `<label class="tv-watch-episode${available ? '' : ' is-future'}${locked ? ' is-locked' : ''}">
-        <input type="checkbox" data-tv-draft-episode="${escapeAttr(key)}" ${checked ? 'checked' : ''} ${!available || locked ? 'disabled' : ''} />
+      return `<label class="tv-watch-episode${available ? '' : ' is-future'}">
+        <input type="checkbox" data-tv-draft-episode="${escapeAttr(key)}" ${checked ? 'checked' : ''} ${!available ? 'disabled' : ''} />
         <span class="tv-watch-check">✓</span>
         <span class="tv-watch-episode-copy">
           <strong>E${ep.episode_number} · ${escapeHtml(ep.name || 'Episode')}</strong>
-          <small>${escapeHtml([ep.air_date || '', locked ? 'already watched' : !available ? 'not aired yet' : ''].filter(Boolean).join(' · '))}</small>
+          <small>${escapeHtml([ep.air_date || '', checked ? 'watched' : !available ? 'not aired yet' : ''].filter(Boolean).join(' · '))}</small>
         </span>
       </label>`;
     }).join('');
@@ -1539,7 +1577,6 @@ function handleTVDraftEpisodeToggle(event) {
   const input = event.target.closest('[data-tv-draft-episode]');
   if (!input) return;
   const key = input.dataset.tvDraftEpisode;
-  if (state.tvDraftLocked.has(key)) return;
   if (input.checked) state.tvDraftWatched.add(key);
   else state.tvDraftWatched.delete(key);
   renderTVWatchSetup();
@@ -1556,7 +1593,6 @@ function handleTVDraftSeasonAction(event) {
   const allSelected = aired.length > 0 && aired.every(ep => state.tvDraftWatched.has(tvDraftEpisodeKey(seasonNumber, ep.episode_number)));
   for (const ep of aired) {
     const key = tvDraftEpisodeKey(seasonNumber, ep.episode_number);
-    if (state.tvDraftLocked.has(key)) continue;
     if (allSelected) state.tvDraftWatched.delete(key);
     else state.tvDraftWatched.add(key);
   }
@@ -1567,7 +1603,6 @@ function setAllTVDraftEpisodes(markWatched) {
   for (const season of state.tvDraftSeasons) {
     for (const ep of season.episodes.filter(isEpisodeAvailable)) {
       const key = tvDraftEpisodeKey(season.seasonNumber, ep.episode_number);
-      if (state.tvDraftLocked.has(key)) continue;
       if (markWatched) state.tvDraftWatched.add(key);
       else state.tvDraftWatched.delete(key);
     }
@@ -1582,27 +1617,33 @@ function findTVDraftEpisode(seasonNumber, episodeNumber) {
 
 async function persistTVDraftWatchHistory(item) {
   if (!item || getSourceType(item) !== 'tv' || String(item.providerId) !== state.tvDraftProviderId) return;
+
+  // Remove episodes that were previously watched but have now been unchecked.
+  const existingRecords = state.history.filter(entry => entry.kind === 'episode-watched' && entry.sourceItemId === item.id);
+  for (const entry of existingRecords) {
+    const key = tvDraftEpisodeKey(entry.seasonNumber, entry.episodeNumber);
+    if (!state.tvDraftWatched.has(key)) removeTVEpisodeHistory(item, entry.seasonNumber, entry.episodeNumber);
+  }
+
+  // Add newly checked episodes as undated imported history.
   for (const key of state.tvDraftWatched) {
-    if (state.tvDraftLocked.has(key)) continue;
     const [seasonNumber, episodeNumber] = key.split(':').map(Number);
     if (isTVEpisodeLogged(item, seasonNumber, episodeNumber)) continue;
     const episode = findTVDraftEpisode(seasonNumber, episodeNumber);
     if (!episode || !isEpisodeAvailable(episode)) continue;
     const record = tvHistoryRecord(item, episode, seasonNumber, episodeNumber);
-    record.showOnCalendar = false;
-    record.imported = true;
-    record.importedAt = new Date().toISOString();
-    addHistoryRecord(record);
+    addHistoryRecord({
+      ...record,
+      date: '',
+      showOnCalendar: false,
+      imported: true,
+      importedAt: new Date().toISOString()
+    });
   }
-  if (!els.editingId?.value) {
-    item.progress = { ...(item.progress || {}), nextSeason: 1, nextEpisode: 1 };
-  }
-  await reconcileSingleTVItem(item, state.tvDraftDetails || null);
-  if (!item.tvMeta?.hasUnwatched) {
-    setItemQueueStatus(item, 'library');
-    item.watchDisposition = 'following';
-  }
+
+  await recalculateTVProgress(item);
 }
+
 
 function showSelectedSource(source, playlist = false) {
   const target = playlist ? els.playlistPreview : els.selectedSource;
@@ -1857,12 +1898,14 @@ async function renderTVDetails(item) {
       <div><div class="list-title">E${ep.episode_number} · ${escapeHtml(ep.name || 'Episode')}</div><div class="list-meta">${escapeHtml(shorten(ep.overview || '', 120))}</div></div>
       <div class="episode-row-actions">
         <span class="watched-label">${isLogged || isPast ? 'WATCHED' : ep.episode_number === episodeNumber ? 'NEXT' : ''}</span>
-        <button class="episode-check-button${isLogged ? ' is-checked' : ''}" type="button" data-check-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" ${isLogged ? 'disabled' : ''} aria-label="${isLogged ? 'Episode logged' : `Mark episode ${ep.episode_number} watched`}">✓</button>
+        <button class="episode-check-button${isLogged ? ' is-checked' : ''}" type="button" data-check-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" aria-label="${isLogged ? `Mark episode ${ep.episode_number} not watched` : `Mark episode ${ep.episode_number} watched`}" title="${isLogged ? 'Mark not watched' : 'Mark watched'}">✓</button>
         <button class="detail-arrow-button" type="button" data-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" aria-label="Open episode ${ep.episode_number}">→</button>
       </div>
     </div>`;
   }).join('');
 
+  const seasonAired = (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep));
+  const seasonAllWatched = seasonAired.length > 0 && seasonAired.every(ep => isTVEpisodeLogged(item, seasonNumber, ep.episode_number));
   const hasUnwatched = Boolean(item.tvMeta?.hasUnwatched);
   els.detailBody.innerHTML = `
     ${detailHero({ type:'TV', title:details.name || item.title, image:TrackerAPI.tmdbImage(details.poster_path) || item.image, subtitle:[details.first_air_date?.slice(0,4), details.genres?.map(g=>g.name).join(' · ')].filter(Boolean).join(' · '), overview:details.overview || '' })}
@@ -1870,7 +1913,7 @@ async function renderTVDetails(item) {
     <div class="detail-progress"><strong>${hasUnwatched ? 'Up next' : 'Progress'}</strong>${hasUnwatched && next ? `S${seasonNumber} E${episodeNumber} · ${escapeHtml(next.name || 'Episode')}` : hasUnwatched ? `S${seasonNumber} E${episodeNumber}` : isTerminalSeriesStatus(details.status) ? 'All available episodes watched.' : 'You are caught up. New aired episodes will return to Up Next automatically.'}</div>
     ${tvDetailControls(item)}
     <section class="detail-section"><h3>Seasons</h3><div class="season-list season-list-rows">${seasons || '—'}</div></section>
-    <section class="detail-section"><div class="detail-section-heading"><h3>Season ${seasonNumber}</h3><button class="quiet-button" type="button" data-tv-mark-season="${seasonNumber}" data-item-id="${item.id}">✓ Mark season watched</button></div><div class="episode-list">${episodes || 'No episodes found.'}</div></section>
+    <section class="detail-section"><div class="detail-section-heading"><h3>Season ${seasonNumber}</h3><button class="quiet-button" type="button" data-tv-mark-season="${seasonNumber}" data-item-id="${item.id}">${seasonAllWatched ? 'Clear season watched' : '✓ Mark season watched'}</button></div><p class="discover-history-note">Whole-season changes are saved without a date and do not create calendar stickers.</p><div class="episode-list">${episodes || 'No episodes found.'}</div></section>
   `;
 }
 
@@ -1897,11 +1940,13 @@ async function renderTVSeasonDetail(item, seasonNumber) {
         </div>
         <div class="episode-row-actions">
           <span class="watched-label">${isLogged || watched ? 'WATCHED' : isNext ? 'NEXT' : ''}</span>
-          <button class="episode-check-button${isLogged ? ' is-checked' : ''}" type="button" data-check-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" ${isLogged ? 'disabled' : ''} aria-label="${isLogged ? 'Episode logged' : `Mark episode ${ep.episode_number} watched`}">✓</button>
+          <button class="episode-check-button${isLogged ? ' is-checked' : ''}" type="button" data-check-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" aria-label="${isLogged ? `Mark episode ${ep.episode_number} not watched` : `Mark episode ${ep.episode_number} watched`}" title="${isLogged ? 'Mark not watched' : 'Mark watched'}">✓</button>
           <button class="detail-arrow-button" type="button" data-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" aria-label="Open episode ${ep.episode_number}">→</button>
         </div>
       </div>`;
     }).join('');
+    const seasonAired = (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep));
+    const seasonAllWatched = seasonAired.length > 0 && seasonAired.every(ep => isTVEpisodeLogged(item, seasonNumber, ep.episode_number));
 
     els.detailBody.innerHTML = `
       <button class="detail-back-button" type="button" data-tv-series="true" data-item-id="${item.id}">← Series</button>
@@ -1912,7 +1957,7 @@ async function renderTVSeasonDetail(item, seasonNumber) {
         subtitle: [season.air_date?.slice(0,4), `${(season.episodes || []).length} episodes`].filter(Boolean).join(' · '),
         overview: season.overview || series.overview || ''
       })}
-      <section class="detail-section"><div class="detail-section-heading"><h3>Episodes</h3><button class="quiet-button" type="button" data-tv-mark-season="${seasonNumber}" data-item-id="${item.id}">✓ Mark season watched</button></div><div class="episode-list">${episodes || 'No episodes found.'}</div></section>
+      <section class="detail-section"><div class="detail-section-heading"><h3>Episodes</h3><button class="quiet-button" type="button" data-tv-mark-season="${seasonNumber}" data-item-id="${item.id}">${seasonAllWatched ? 'Clear season watched' : '✓ Mark season watched'}</button></div><p class="discover-history-note">Whole-season changes are saved without a date and do not create calendar stickers.</p><div class="episode-list">${episodes || 'No episodes found.'}</div></section>
     `;
   } catch (error) {
     els.detailBody.innerHTML = `<button class="detail-back-button" type="button" data-tv-series="true" data-item-id="${item.id}">← Series</button><div class="api-error">${escapeHtml(error.message)}</div>`;
@@ -1942,7 +1987,7 @@ async function renderTVEpisodeDetail(item, seasonNumber, episodeNumber) {
         overview: episode.overview || ''
       })}
       <div class="detail-actions">
-        <button class="primary-button" type="button" data-check-tv-episode="${episodeNumber}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" ${isTVEpisodeLogged(item, seasonNumber, episodeNumber) ? 'disabled' : ''}>${isTVEpisodeLogged(item, seasonNumber, episodeNumber) ? '✓ Logged' : '✓ Mark watched'}</button>
+        <button class="primary-button" type="button" data-check-tv-episode="${episodeNumber}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}">${isTVEpisodeLogged(item, seasonNumber, episodeNumber) ? '✓ Mark not watched' : '✓ Mark watched'}</button>
       </div>
       ${credits.length ? `<section class="detail-section"><h3>People</h3><p>${escapeHtml(credits.join(' · '))}</p></section>` : ''}
     `;
@@ -2754,8 +2799,38 @@ function deleteHistoryEdit() {
 // ---------------------------
 // DISCOVER
 // ---------------------------
+const DISCOVER_MODES = new Set(['new', 'popular', 'for-you', 'discover']);
+
+function setDiscoverMode(mode) {
+  const next = DISCOVER_MODES.has(mode) ? mode : 'discover';
+  if (state.discoverMode === next && state.discoverFeedInitialized) return;
+  state.discoverMode = next;
+  updateDiscoverModeUI();
+  resetDiscoverFeed(false);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  loadMoreDiscoverFeed();
+}
+
+function updateDiscoverModeUI() {
+  const mode = DISCOVER_MODES.has(state.discoverMode) ? state.discoverMode : 'discover';
+  const copy = {
+    new: 'Recently released and newly published TV, movies, and books. Your streaming services are still prioritized where availability is known.',
+    popular: 'What is popular now across TV, movies, and books, with titles on your streaming services moved toward the front.',
+    'for-you': 'Recommendations based on what you have watched, finished, rated, and the authors you return to.',
+    discover: 'A shuffled, effectively endless mix of TV, movies, and books. Your tastes influence the ranking, but each session deliberately changes.'
+  };
+  els.discoverModeTabs?.forEach(tab => {
+    const active = tab.dataset.discoverMode === mode;
+    tab.classList.toggle('is-active', active);
+    tab.setAttribute('aria-selected', String(active));
+  });
+  if (els.discoverFeedIntroText) els.discoverFeedIntroText.textContent = copy[mode];
+  if (els.refreshDiscover) els.refreshDiscover.textContent = mode === 'discover' ? 'Shuffle' : 'Refresh';
+}
+
 async function renderDiscover(force = false) {
   if (!els.discoverStatus) return;
+  updateDiscoverModeUI();
 
   // The new Discover page is an endless mixed feed. Keep old section helpers below
   // for compatibility with older saved/deployed HTML, but prefer this path.
@@ -2825,18 +2900,19 @@ function resetDiscoverFeed(clearApiCache = false) {
   state.discoverFeedInitialized = true;
   state.discoverFeedEmptyPasses = 0;
   state.discoverFeedSession = Math.random();
+  const shuffled = state.discoverMode === 'discover';
   state.discoverFeedOffsets = {
-    tv: 1 + Math.floor(Math.random() * 4),
-    movie: 1 + Math.floor(Math.random() * 4),
-    book: Math.floor(Math.random() * 4)
+    tv: shuffled ? 1 + Math.floor(Math.random() * 4) : 1,
+    movie: shuffled ? 1 + Math.floor(Math.random() * 4) : 1,
+    book: shuffled ? Math.floor(Math.random() * 4) : 0
   };
   state.discoverResults.clear();
   if (els.discoverFeed) els.discoverFeed.innerHTML = '';
   if (els.discoverStatus) {
     els.discoverStatus.hidden = false;
-    els.discoverStatus.textContent = 'Building a fresh mix for you…';
+    els.discoverStatus.textContent = discoverLoadingLabel(false);
   }
-  if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = 'Keep scrolling — more will load automatically.';
+  if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = discoverEndlessLabel();
 }
 
 function setupDiscoverInfiniteScroll() {
@@ -2855,7 +2931,7 @@ async function loadMoreDiscoverFeed() {
 
   if (els.discoverStatus) {
     els.discoverStatus.hidden = false;
-    els.discoverStatus.textContent = state.discoverFeedItems.length ? 'Finding more…' : 'Building a fresh mix for you…';
+    els.discoverStatus.textContent = discoverLoadingLabel(Boolean(state.discoverFeedItems.length));
   }
   els.discoverFeedSentinel?.classList.add('is-loading');
 
@@ -2874,7 +2950,7 @@ async function loadMoreDiscoverFeed() {
       state.discoverFeedEmptyPasses += 1;
       if (state.discoverFeedEmptyPasses >= 3) {
         state.discoverFeedDone = true;
-        if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = 'You’ve reached the end of this mix. Shuffle to start a different one.';
+        if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = state.discoverMode === 'discover' ? 'You’ve reached the end of this mix. Shuffle to start a different one.' : 'No more results found in this view right now.';
       }
     } else {
       state.discoverFeedEmptyPasses = 0;
@@ -2883,7 +2959,7 @@ async function loadMoreDiscoverFeed() {
         state.discoverFeedItems.push(result);
       }
       appendDiscoverFeedItems(ranked);
-      if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = 'Keep scrolling — more will load automatically.';
+      if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = discoverEndlessLabel();
     }
 
     if (els.discoverStatus) els.discoverStatus.hidden = true;
@@ -2899,6 +2975,13 @@ async function loadMoreDiscoverFeed() {
 }
 
 async function collectDiscoverFeedCandidates(batchNumber) {
+  if (state.discoverMode === 'new') return collectNewDiscoverCandidates(batchNumber);
+  if (state.discoverMode === 'popular') return collectPopularDiscoverCandidates(batchNumber);
+  if (state.discoverMode === 'for-you') return collectForYouDiscoverCandidates(batchNumber);
+  return collectShuffledDiscoverCandidates(batchNumber);
+}
+
+async function collectShuffledDiscoverCandidates(batchNumber) {
   const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
   const tvPage = Math.min(500, state.discoverFeedOffsets.tv + batchNumber - 1);
   const moviePage = Math.min(500, state.discoverFeedOffsets.movie + batchNumber - 1);
@@ -2985,6 +3068,152 @@ async function collectDiscoverFeedCandidates(batchNumber) {
   return dedupeDiscoverCandidatesByBoost(candidates);
 }
 
+async function collectNewDiscoverCandidates(batchNumber) {
+  const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
+  const today = todayString();
+  const tvPage = Math.min(500, batchNumber);
+  const moviePage = Math.min(500, batchNumber);
+  const bookStart = (batchNumber - 1) * 40;
+  const tasks = [
+    TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings, { sortBy: 'first_air_date.desc', minVotes: 5, beforeDate: today }),
+    TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, { sortBy: 'primary_release_date.desc', minVotes: 10, beforeDate: today }),
+    TrackerAPI.getBookFeed(bookStart, state.settings, { query: 'subject:fiction', orderBy: 'newest', maxResults: 40 })
+  ];
+  if (selectedProviders.length) {
+    tasks.push(TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings, { sortBy: 'first_air_date.desc', minVotes: 3, beforeDate: today, providerIds: selectedProviders }));
+    tasks.push(TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, { sortBy: 'primary_release_date.desc', minVotes: 5, beforeDate: today, providerIds: selectedProviders }));
+  }
+  const settled = await Promise.allSettled(tasks);
+  const candidates = [];
+  const add = (results, sourceType, source, boost = 0) => (results || []).forEach(result => candidates.push({ ...result, sourceType, _discoverSource: source, _discoverBoost: boost }));
+  add(filterAlreadyKnown(settled[0].status === 'fulfilled' ? settled[0].value.results : [], 'tv'), 'tv', 'new', 2);
+  add(filterAlreadyKnown(settled[1].status === 'fulfilled' ? settled[1].value.results : [], 'movie'), 'movie', 'new', 2);
+  add(filterAlreadyKnown(settled[2].status === 'fulfilled' ? settled[2].value.results : [], 'book'), 'book', 'new', 2);
+  if (selectedProviders.length) {
+    add(filterAlreadyKnown(settled[3]?.status === 'fulfilled' ? settled[3].value.results : [], 'tv'), 'tv', 'preferred-streaming', 6);
+    add(filterAlreadyKnown(settled[4]?.status === 'fulfilled' ? settled[4].value.results : [], 'movie'), 'movie', 'preferred-streaming', 6);
+  }
+  return dedupeDiscoverCandidatesByBoost(candidates);
+}
+
+async function collectPopularDiscoverCandidates(batchNumber) {
+  const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
+  const topics = ['subject:fiction','subject:mystery','subject:romance','subject:fantasy','subject:biography','subject:history','subject:science','subject:psychology'];
+  const bookQuery = topics[(batchNumber - 1) % topics.length];
+  const bookStart = Math.floor((batchNumber - 1) / topics.length) * 40;
+  const tasks = [
+    TrackerAPI.getTMDBDiscover('tv', batchNumber, state.settings, { sortBy: 'popularity.desc', minVotes: 100 }),
+    TrackerAPI.getTMDBDiscover('movie', batchNumber, state.settings, { sortBy: 'popularity.desc', minVotes: 150 }),
+    TrackerAPI.getBookFeed(bookStart, state.settings, { query: bookQuery, orderBy: 'relevance', maxResults: 40 })
+  ];
+  if (selectedProviders.length) {
+    tasks.push(TrackerAPI.getTMDBDiscover('tv', Math.min(batchNumber, 30), state.settings, { sortBy: 'popularity.desc', minVotes: 30, providerIds: selectedProviders }));
+    tasks.push(TrackerAPI.getTMDBDiscover('movie', Math.min(batchNumber, 30), state.settings, { sortBy: 'popularity.desc', minVotes: 50, providerIds: selectedProviders }));
+  }
+  const settled = await Promise.allSettled(tasks);
+  const candidates = [];
+  const add = (results, sourceType, source, boost = 0) => (results || []).forEach(result => candidates.push({ ...result, sourceType, _discoverSource: source, _discoverBoost: boost }));
+  add(filterAlreadyKnown(settled[0].status === 'fulfilled' ? settled[0].value.results : [], 'tv'), 'tv', 'popular', 3);
+  add(filterAlreadyKnown(settled[1].status === 'fulfilled' ? settled[1].value.results : [], 'movie'), 'movie', 'popular', 3);
+  add(filterAlreadyKnown(settled[2].status === 'fulfilled' ? settled[2].value.results : [], 'book'), 'book', 'popular', 2);
+  if (selectedProviders.length) {
+    add(filterAlreadyKnown(settled[3]?.status === 'fulfilled' ? settled[3].value.results : [], 'tv'), 'tv', 'preferred-streaming', 6);
+    add(filterAlreadyKnown(settled[4]?.status === 'fulfilled' ? settled[4].value.results : [], 'movie'), 'movie', 'preferred-streaming', 6);
+  }
+  if (batchNumber === 1) {
+    const current = await Promise.allSettled([
+      getCached('discover:trending:tv', () => TrackerAPI.getTrending('tv', state.settings)),
+      getCached('discover:trending:movie', () => TrackerAPI.getTrending('movie', state.settings))
+    ]);
+    if (current[0].status === 'fulfilled') add(filterAlreadyKnown(current[0].value, 'tv'), 'tv', 'trending', 8);
+    if (current[1].status === 'fulfilled') add(filterAlreadyKnown(current[1].value, 'movie'), 'movie', 'trending', 8);
+  }
+  return dedupeDiscoverCandidatesByBoost(candidates);
+}
+
+async function collectForYouDiscoverCandidates(batchNumber) {
+  const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
+  const candidates = [];
+  const add = (results, sourceType, source, boost = 0) => (results || []).forEach(result => candidates.push({ ...result, sourceType, _discoverSource: source, _discoverBoost: boost }));
+  const recommendationPage = 1 + ((batchNumber - 1) % 3);
+
+  for (const sourceType of ['tv', 'movie']) {
+    const used = new Set();
+    for (let i = 0; i < 3; i++) {
+      const seed = pickDiscoverSeed(sourceType);
+      if (!seed?.providerId || used.has(String(seed.providerId))) continue;
+      used.add(String(seed.providerId));
+      try {
+        const recs = await getCached(
+          `discover:for-you:${sourceType}:${seed.providerId}:${recommendationPage}`,
+          () => TrackerAPI.getTMDBRecommendations(sourceType, seed.providerId, state.settings, recommendationPage)
+        );
+        add(filterAlreadyKnown(recs, sourceType), sourceType, 'personal', 11 + Number(seed.rating || 0));
+      } catch {}
+    }
+  }
+
+  const readAuthors = getReadAuthors();
+  if (readAuthors.length && state.discoverPrefs.prioritizeAuthors !== false) {
+    const start = ((batchNumber - 1) * 2) % readAuthors.length;
+    for (const author of [readAuthors[start], readAuthors[(start + 1) % readAuthors.length]].filter(Boolean)) {
+      try {
+        const books = await getCached(`discover:for-you:author:${author.toLowerCase()}`, () => TrackerAPI.getBooksByAuthor(author, state.settings));
+        add(filterAlreadyKnown(books, 'book'), 'book', 'familiar-author', 13);
+      } catch {}
+    }
+  }
+
+  const bookSeed = pickDiscoverSeed('book');
+  if (bookSeed?.providerId) {
+    try {
+      const books = await getCached(`discover:for-you:book:${bookSeed.providerId}`, () => TrackerAPI.getBookRecommendations(bookSeed.providerId, state.settings));
+      add(filterAlreadyKnown(books, 'book'), 'book', 'personal', 11 + Number(bookSeed.rating || 0));
+    } catch {}
+  }
+
+  if (selectedProviders.length) {
+    const providerPage = 1 + ((batchNumber - 1) % 8);
+    const providerResults = await Promise.allSettled([
+      TrackerAPI.getTMDBDiscover('tv', providerPage, state.settings, { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 20 }),
+      TrackerAPI.getTMDBDiscover('movie', providerPage, state.settings, { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 30 })
+    ]);
+    if (providerResults[0].status === 'fulfilled') add(filterAlreadyKnown(providerResults[0].value.results, 'tv'), 'tv', 'preferred-streaming', 8);
+    if (providerResults[1].status === 'fulfilled') add(filterAlreadyKnown(providerResults[1].value.results, 'movie'), 'movie', 'preferred-streaming', 8);
+  }
+
+  // A broad fallback prevents an empty For You page for newer profiles.
+  if (candidates.length < 20) {
+    const fallback = await Promise.allSettled([
+      TrackerAPI.getTMDBDiscover('tv', batchNumber, state.settings, { sortBy: 'popularity.desc', minVotes: 50 }),
+      TrackerAPI.getTMDBDiscover('movie', batchNumber, state.settings, { sortBy: 'popularity.desc', minVotes: 75 }),
+      TrackerAPI.getBookFeed((batchNumber - 1) * 40, state.settings, { query: chooseDiscoverBookPlan(readAuthors, batchNumber).query, orderBy: 'relevance', maxResults: 40 })
+    ]);
+    if (fallback[0].status === 'fulfilled') add(filterAlreadyKnown(fallback[0].value.results, 'tv'), 'tv', 'fallback', 0);
+    if (fallback[1].status === 'fulfilled') add(filterAlreadyKnown(fallback[1].value.results, 'movie'), 'movie', 'fallback', 0);
+    if (fallback[2].status === 'fulfilled') add(filterAlreadyKnown(fallback[2].value.results, 'book'), 'book', 'fallback', 0);
+  }
+
+  return dedupeDiscoverCandidatesByBoost(candidates);
+}
+
+function discoverLoadingLabel(hasItems) {
+  const labels = {
+    new: hasItems ? 'Finding more new releases…' : 'Loading what’s new…',
+    popular: hasItems ? 'Finding more popular picks…' : 'Loading what’s popular…',
+    'for-you': hasItems ? 'Finding more for you…' : 'Building recommendations for you…',
+    discover: hasItems ? 'Finding more…' : 'Building a fresh mix for you…'
+  };
+  return labels[state.discoverMode] || labels.discover;
+}
+
+function discoverEndlessLabel() {
+  if (state.discoverMode === 'discover') return 'Keep scrolling — the mix keeps changing as more loads.';
+  if (state.discoverMode === 'for-you') return 'Keep scrolling — more recommendations will load automatically.';
+  if (state.discoverMode === 'new') return 'Keep scrolling — more recent releases will load automatically.';
+  return 'Keep scrolling — more popular picks will load automatically.';
+}
+
 function dedupeDiscoverCandidatesByBoost(results) {
   const best = new Map();
   for (const result of results || []) {
@@ -3045,22 +3274,32 @@ function pickDiscoverSeed(type) {
 async function rankDiscoverFeedCandidates(results, batchSize) {
   const readAuthors = getReadAuthors();
   const authorSet = new Set(readAuthors.map(author => author.toLowerCase()));
+  const mode = state.discoverMode || 'discover';
   const prelim = (results || []).map(result => {
     let score = Number(result._discoverBoost || 0);
     const rating = Number(result.rating || 0);
-    if (rating) score += Math.min(2.5, rating / 4);
+    if (rating) score += Math.min(3, rating / 3.5);
 
     if (result.sourceType === 'book' && authorSet.size) {
       const resultAuthors = String(result.subtitle || '').split(',').map(value => value.trim().toLowerCase());
       if (resultAuthors.some(author => authorSet.has(author))) {
         result = { ...result, authorMatch: true };
-        score += 7;
+        score += mode === 'for-you' ? 10 : 4;
       }
     }
 
-    // Enough randomness to change each visit, while strong preference signals
-    // still matter more than chance.
-    const jitter = Math.random() * 6.5;
+    if (mode === 'popular') {
+      const popularity = Number(result.raw?.popularity || 0);
+      score += Math.log1p(popularity) * 1.8;
+    }
+    if (mode === 'new') {
+      const rawDate = result.sourceType === 'book' ? result.publishedDate : (result.raw?.first_air_date || result.raw?.release_date || '');
+      const time = Date.parse(rawDate || '');
+      if (Number.isFinite(time)) score += Math.max(0, 8 - ((Date.now() - time) / 86400000) / 60);
+    }
+
+    const jitterMax = mode === 'discover' ? 6.5 : mode === 'for-you' ? 2.2 : .6;
+    const jitter = Math.random() * jitterMax;
     return { ...result, _discoverScore: score + jitter, _discoverJitter: jitter };
   }).sort((a,b) => b._discoverScore - a._discoverScore);
 
@@ -3635,6 +3874,8 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
   const seasonNumber = requestedSeason || Number(existing?.progress?.nextSeason || seasons[0]?.season_number || 1);
   const season = await getCached(`season:${result.providerId}:${seasonNumber}`, () => TrackerAPI.getTVSeason(result.providerId, seasonNumber, state.settings));
   const seriesCompleted = isDiscoverCompleted(result);
+  const discoverSeasonAired = (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep));
+  const discoverSeasonAllWatched = Boolean(existing) && discoverSeasonAired.length > 0 && discoverSeasonAired.every(ep => isTVEpisodeLogged(existing, seasonNumber, ep.episode_number));
   const providers = (availability.providers || []).map(provider => provider.name);
   const providerText = providers.length ? providers.slice(0, 4).join(' · ') : 'No streaming provider listed for your region';
 
@@ -3655,7 +3896,7 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
       </div>
       <div class="episode-row-actions">
         <span class="watched-label">${watched ? 'WATCHED' : ''}</span>
-        <button class="episode-check-button${watched ? ' is-checked' : ''}" type="button" data-discover-check-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-discover-key="${escapeAttr(key)}" ${watched ? 'disabled' : ''} aria-label="${watched ? 'Already watched' : `Mark episode ${ep.episode_number} watched`}">✓</button>
+        <button class="episode-check-button${watched ? ' is-checked' : ''}" type="button" data-discover-check-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-discover-key="${escapeAttr(key)}" aria-label="${watched ? `Mark episode ${ep.episode_number} not watched` : `Mark episode ${ep.episode_number} watched`}" title="${watched ? 'Mark not watched' : 'Mark watched'}">✓</button>
       </div>
     </div>`;
   }).join('');
@@ -3670,12 +3911,12 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
     })}
     <div class="discover-detail-actions">
       <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
-      <button class="secondary-button" type="button" data-discover-mark-all-tv="${escapeAttr(key)}" ${seriesCompleted ? 'disabled' : ''}>${seriesCompleted ? '✓ Series watched' : '✓ Mark all watched'}</button>
+      <button class="secondary-button" type="button" data-discover-mark-all-tv="${escapeAttr(key)}">${seriesCompleted ? '✓ Clear watched series' : '✓ Mark all watched'}</button>
     </div>
     <section class="detail-section streaming-detail"><h3>Streaming</h3><p>${escapeHtml(providerText)}</p>${availability.link ? `<a href="${escapeAttr(availability.link)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}</section>
     <section class="detail-section"><h3>Seasons</h3><div class="season-list season-list-rows">${seasonRows || 'No seasons found.'}</div></section>
     <section class="detail-section">
-      <div class="detail-section-heading"><h3>Season ${seasonNumber}</h3><button class="quiet-button" type="button" data-discover-mark-season="${seasonNumber}" data-discover-key="${escapeAttr(key)}">✓ Mark season watched</button></div>
+      <div class="detail-section-heading"><h3>Season ${seasonNumber}</h3><button class="quiet-button" type="button" data-discover-mark-season="${seasonNumber}" data-discover-key="${escapeAttr(key)}">${discoverSeasonAllWatched ? 'Clear season watched' : '✓ Mark season watched'}</button></div>
       <p class="discover-history-note">Checks here update your Library history only — they do not add calendar stickers.</p>
       <div class="episode-list">${episodeRows || 'No episodes found.'}</div>
     </section>`;
@@ -3685,11 +3926,16 @@ async function logDiscoverTVEpisode(key, seasonNumber, episodeNumber) {
   const result = state.discoverResults.get(key);
   if (!result) return;
   const item = ensureDiscoverItem(result, 'library');
-  if (isTVEpisodeLogged(item, seasonNumber, episodeNumber)) return;
-  const episode = await getTVEpisodeFromSeason(item, seasonNumber, episodeNumber);
-  if (!episode) throw new Error(`Could not find S${seasonNumber} E${episodeNumber}.`);
-  const record = tvHistoryRecord(item, episode, seasonNumber, episodeNumber);
-  addHistoryRecord({ ...record, date: '', showOnCalendar: false });
+
+  if (isTVEpisodeLogged(item, seasonNumber, episodeNumber)) {
+    removeTVEpisodeHistory(item, seasonNumber, episodeNumber);
+  } else {
+    const episode = await getTVEpisodeFromSeason(item, seasonNumber, episodeNumber);
+    if (!episode) throw new Error(`Could not find S${seasonNumber} E${episodeNumber}.`);
+    const record = tvHistoryRecord(item, episode, seasonNumber, episodeNumber);
+    addHistoryRecord({ ...record, date: '', showOnCalendar: false, imported: true });
+  }
+
   await syncDiscoverTVProgress(item);
   saveItems();
   saveHistory();
@@ -3702,11 +3948,19 @@ async function markDiscoverSeasonWatched(key, seasonNumber) {
   if (!result) return;
   const item = ensureDiscoverItem(result, 'library');
   const season = await getCached(`season:${result.providerId}:${seasonNumber}`, () => TrackerAPI.getTVSeason(result.providerId, seasonNumber, state.settings));
-  for (const episode of season.episodes || []) {
-    if (isTVEpisodeLogged(item, seasonNumber, episode.episode_number)) continue;
-    const record = tvHistoryRecord(item, episode, seasonNumber, episode.episode_number);
-    addHistoryRecord({ ...record, date: '', showOnCalendar: false });
+  const aired = (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep));
+  const allWatched = aired.length > 0 && aired.every(ep => isTVEpisodeLogged(item, seasonNumber, ep.episode_number));
+
+  if (allWatched) {
+    for (const episode of aired) removeTVEpisodeHistory(item, seasonNumber, episode.episode_number);
+  } else {
+    for (const episode of aired) {
+      if (isTVEpisodeLogged(item, seasonNumber, episode.episode_number)) continue;
+      const record = tvHistoryRecord(item, episode, seasonNumber, episode.episode_number);
+      addHistoryRecord({ ...record, date: '', showOnCalendar: false, imported: true });
+    }
   }
+
   await syncDiscoverTVProgress(item);
   saveItems();
   saveHistory();
@@ -3717,27 +3971,44 @@ async function markDiscoverSeasonWatched(key, seasonNumber) {
 async function markDiscoverSeriesWatched(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
-  const okay = confirm(`Mark all available episodes of “${result.title}” as watched?`);
-  if (!okay) return;
   const item = ensureDiscoverItem(result, 'library');
   const details = await getCached(`tv:${result.providerId}`, () => TrackerAPI.getTVDetails(result.providerId, state.settings));
   const seasons = (details.seasons || []).filter(season => season.season_number > 0 && season.episode_count > 0);
+  const allEpisodes = [];
   for (const info of seasons) {
     const season = await getCached(`season:${result.providerId}:${info.season_number}`, () => TrackerAPI.getTVSeason(result.providerId, info.season_number, state.settings));
-    for (const episode of season.episodes || []) {
-      if (isTVEpisodeLogged(item, info.season_number, episode.episode_number)) continue;
-      const record = tvHistoryRecord(item, episode, info.season_number, episode.episode_number);
-      addHistoryRecord({ ...record, date: '', showOnCalendar: false });
+    for (const episode of (season.episodes || []).filter(isEpisodeAvailable)) {
+      allEpisodes.push({ seasonNumber: info.season_number, episode });
     }
   }
+
+  const allWatched = allEpisodes.length > 0 && allEpisodes.every(({ seasonNumber, episode }) => isTVEpisodeLogged(item, seasonNumber, episode.episode_number));
+  const okay = confirm(allWatched
+    ? `Clear watched status for all available episodes of “${result.title}”?`
+    : `Mark all available episodes of “${result.title}” as watched?`);
+  if (!okay) return;
+
+  if (allWatched) {
+    for (const { seasonNumber, episode } of allEpisodes) removeTVEpisodeHistory(item, seasonNumber, episode.episode_number);
+    item.completedAt = '';
+  } else {
+    for (const { seasonNumber, episode } of allEpisodes) {
+      if (isTVEpisodeLogged(item, seasonNumber, episode.episode_number)) continue;
+      const record = tvHistoryRecord(item, episode, seasonNumber, episode.episode_number);
+      addHistoryRecord({ ...record, date: '', showOnCalendar: false, imported: true });
+    }
+  }
+
   item.watchDisposition = item.watchDisposition === 'stopped' ? 'stopped' : 'following';
-  setItemQueueStatus(item, 'library');
-  item.completedAt = todayString();
-  if (!state.history.some(entry => entry.kind === 'series-watched' && entry.sourceItemId === item.id)) {
+  await syncDiscoverTVProgress(item);
+  if (!allWatched && !state.history.some(entry => entry.kind === 'series-watched' && entry.sourceItemId === item.id)) {
     addHistoryRecord({
       sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: '', showOnCalendar: false,
-      kind: 'series-watched', title: item.title, subtitle: item.subtitle || '', image: item.image || '', provider: item.provider, providerId: item.providerId
+      kind: 'series-watched', title: item.title, subtitle: item.subtitle || '', notes: '', image: item.image || '', provider: item.provider, providerId: item.providerId
     });
+  }
+  if (allWatched) {
+    state.history = state.history.filter(entry => !(entry.kind === 'series-watched' && entry.sourceItemId === item.id));
   }
   saveItems();
   saveHistory();
@@ -3891,7 +4162,7 @@ function getRecognizedTypes() {
   const types = new Map();
   Object.keys(TYPE_LABELS).forEach(type => types.set(type, getTypeLabel(type)));
   state.customTypes.forEach(entry => types.set(entry.type, entry.label));
-  state.items.forEach(item => types.set(item.type, getItemTypeLabel(item)));
+  state.items.filter(item => getQueueStatus(item) !== 'tbr').forEach(item => types.set(item.type, getItemTypeLabel(item)));
   state.history.forEach(entry => {
     if (entry.type) types.set(entry.type, entry.typeLabel || getTypeLabel(entry.type));
   });
@@ -4076,7 +4347,9 @@ function resetStreakSettings() {
 function renderLibrary() {
   refreshTypeFilter();
   const filter = els.typeFilter.value;
-  const filtered = state.items.filter(item => filter === 'all' || item.type === filter);
+  const filtered = state.items
+    .filter(item => getQueueStatus(item) !== 'tbr')
+    .filter(item => filter === 'all' || item.type === filter);
   const preferredOrder = ['tv','movie','book','music','workout','other'];
   const grouped = new Map();
 
@@ -4231,7 +4504,7 @@ function refreshTypeFilter() {
   const types = new Map();
   Object.keys(TYPE_LABELS).forEach(type => types.set(type, getTypeLabel(type)));
   state.customTypes.forEach(entry => types.set(entry.type, entry.label));
-  state.items.forEach(item => types.set(item.type, getItemTypeLabel(item)));
+  state.items.filter(item => getQueueStatus(item) !== 'tbr').forEach(item => types.set(item.type, getItemTypeLabel(item)));
 
   els.typeFilter.innerHTML = '<option value="all">All</option>';
   const ordered = [...types.entries()].sort(([aType,aLabel],[bType,bLabel]) => {

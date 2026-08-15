@@ -206,6 +206,13 @@ export const TrackerAPI = (() => {
     // Keep low-signal catalogue noise down without making the feed only blockbusters.
     params.set('vote_count.gte', String(options.minVotes ?? (mediaType === 'tv' ? 30 : 50)));
 
+    if (options.beforeDate) {
+      params.set(mediaType === 'tv' ? 'first_air_date.lte' : 'primary_release_date.lte', options.beforeDate);
+    }
+    if (options.afterDate) {
+      params.set(mediaType === 'tv' ? 'first_air_date.gte' : 'primary_release_date.gte', options.afterDate);
+    }
+
     const providerIds = (options.providerIds || []).map(String).filter(Boolean);
     if (providerIds.length) {
       params.set('watch_region', String(settings.tmdbWatchRegion || 'CA').toUpperCase());

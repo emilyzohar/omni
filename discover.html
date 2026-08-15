@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=infinite-discover-1" />
+  <link rel="stylesheet" href="style.css?v=discover-tabs-1" />
 </head>
 <body class="discover-page auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -77,11 +77,18 @@
           </div>
         </div>
 
+        <div class="discover-mode-tabs" role="tablist" aria-label="Discover view">
+          <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="new" aria-selected="false">New</button>
+          <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="popular" aria-selected="false">Popular</button>
+          <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="for-you" aria-selected="false">For You</button>
+          <button class="discover-mode-tab is-active" type="button" role="tab" data-discover-mode="discover" aria-selected="true">Discover</button>
+        </div>
+
         <div id="discoverStatus" class="discover-status">Building a fresh mix for you…</div>
 
-        <section class="discover-feed-section" aria-label="Personalized discovery feed">
+        <section class="discover-feed-section" aria-label="Discovery feed">
           <div class="discover-feed-intro">
-            <p>TV, movies, and books mixed together. Your streaming services, watched/read history, ratings, and familiar authors are weighted toward the top — with enough randomness that each visit changes.</p>
+            <p id="discoverFeedIntroText">TV, movies, and books mixed together. Your streaming services, watched/read history, ratings, and familiar authors are weighted toward the top — with enough randomness that each visit changes.</p>
           </div>
           <div id="discoverFeed" class="discover-feed-grid"></div>
           <div id="discoverFeedSentinel" class="discover-feed-sentinel" aria-hidden="true">
