@@ -4859,8 +4859,77 @@ const WEEKDAY_OPTIONS = [
   { value: 0, short: 'S', label: 'Sunday' }
 ];
 
-function getStreakConfig(type) {
-  const saved = state.streakPrefs?.[type] || {};
+function getRecognizedStreakGroups() {
+  const groups = new Map();
+
+  for (const { type, label } of getRecognizedTypes()) {
+    const cleanLabel = cleanTypeLabel(label || getTypeLabel(type)) || 'Other';
+    const key = slugifyType(cleanLabel);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        label: cleanLabel,
+        memberTypes: [],
+        representativeType: type,
+        representativeEntry: null
+      });
+    }
+    const group = groups.get(key);
+    if (!group.memberTypes.includes(type)) group.memberTypes.push(type);
+  }
+
+  // Calendar entries are the final authority for visible grouping. This also
+  // catches two different internal source types that have the same displayed
+  // type label (for example a YouTube item and a manual item both called
+  // "Workout").
+  for (const entry of getCalendarEntries()) {
+    const label = getCalendarTypeGroupLabel(entry);
+    const key = getCalendarTypeGroupKey(entry);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        label,
+        memberTypes: [],
+        representativeType: entry.type,
+        representativeEntry: entry
+      });
+    }
+    const group = groups.get(key);
+    if (entry.type && !group.memberTypes.includes(entry.type)) group.memberTypes.push(entry.type);
+    if (!group.representativeEntry) group.representativeEntry = entry;
+  }
+
+  return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function resolveStreakGroup(typeOrGroupKey) {
+  const value = String(typeOrGroupKey || '');
+  const groups = getRecognizedStreakGroups();
+  return groups.find(group => group.key === value || group.memberTypes.includes(value)) || {
+    key: slugifyType(getTypeLabel(value) || value || 'Other'),
+    label: getTypeLabel(value) || value || 'Other',
+    memberTypes: value ? [value] : [],
+    representativeType: value || 'other',
+    representativeEntry: null
+  };
+}
+
+function getStreakConfig(typeOrGroupKey) {
+  const group = resolveStreakGroup(typeOrGroupKey);
+
+  // New streak preferences are keyed by the visible type name. Fall back to
+  // the old internal-type keys so existing settings survive this migration.
+  let saved = state.streakPrefs?.[group.key];
+  if (!saved) {
+    for (const memberType of group.memberTypes) {
+      if (state.streakPrefs?.[memberType]) {
+        saved = state.streakPrefs[memberType];
+        break;
+      }
+    }
+  }
+  saved ||= {};
+
   return {
     enabled: Boolean(saved.enabled),
     restDays: Array.isArray(saved.restDays)
@@ -4869,19 +4938,20 @@ function getStreakConfig(type) {
   };
 }
 
-function getTypeActivityDates(type) {
+function getTypeActivityDates(typeOrGroupKey) {
+  const group = resolveStreakGroup(typeOrGroupKey);
   return new Set(
     getCalendarEntries()
-      .filter(entry => entry.type === type && entry.date && entry.showOnCalendar !== false)
+      .filter(entry => getCalendarTypeGroupKey(entry) === group.key && entry.date && entry.showOnCalendar !== false)
       .map(entry => entry.date)
   );
 }
 
-function calculateTypeStreak(type, overrideConfig = null) {
-  const config = overrideConfig || getStreakConfig(type);
+function calculateTypeStreak(typeOrGroupKey, overrideConfig = null) {
+  const config = overrideConfig || getStreakConfig(typeOrGroupKey);
   if (!config.enabled) return { enabled: false, count: 0, restToday: false };
 
-  const activityDates = getTypeActivityDates(type);
+  const activityDates = getTypeActivityDates(typeOrGroupKey);
   const restDays = new Set((config.restDays || []).map(Number));
   const now = new Date();
   let cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
@@ -4923,27 +4993,27 @@ function calculateTypeStreak(type, overrideConfig = null) {
   };
 }
 
-function streakText(type, overrideConfig = null) {
-  const streak = calculateTypeStreak(type, overrideConfig);
+function streakText(typeOrGroupKey, overrideConfig = null) {
+  const streak = calculateTypeStreak(typeOrGroupKey, overrideConfig);
   if (!streak.enabled) return '';
   const base = `${streak.count} day${streak.count === 1 ? '' : 's'} streak`;
   return streak.restToday ? `${base} · rest today` : base;
 }
 
-function streakInlineMarkup(type) {
-  const text = streakText(type);
+function streakInlineMarkup(typeOrGroupKey) {
+  const text = streakText(typeOrGroupKey);
   return text ? `<span class="type-streak-inline"> · ${escapeHtml(text)}</span>` : '';
 }
 
-function streakBadgeMarkup(type) {
-  const text = streakText(type);
+function streakBadgeMarkup(typeOrGroupKey) {
+  const text = streakText(typeOrGroupKey);
   return text ? `<span class="type-streak-badge">${escapeHtml(text)}</span>` : '';
 }
 
 function renderTrackStreakSummary() {
   if (!els.trackStreakSummary) return;
-  const active = getRecognizedTypes()
-    .map(({ type, label }) => ({ type, label, text: streakText(type) }))
+  const active = getRecognizedStreakGroups()
+    .map(group => ({ ...group, text: streakText(group.key) }))
     .filter(entry => entry.text);
 
   els.trackStreakSummary.hidden = active.length === 0;
@@ -4952,11 +5022,16 @@ function renderTrackStreakSummary() {
     return;
   }
 
-  els.trackStreakSummary.innerHTML = active.map(entry => `
-    <div class="track-streak-card">
-      <span class="track-streak-sticker">${calendarStickerMarkup(entry.type, state.history.find(item => item.type === entry.type) || {})}</span>
-      <span class="track-streak-copy"><strong>${escapeHtml(entry.label)}</strong><small>${escapeHtml(entry.text)}</small></span>
-    </div>`).join('');
+  els.trackStreakSummary.innerHTML = active.map(group => {
+    const representative = group.representativeEntry
+      || getCalendarEntries().find(entry => getCalendarTypeGroupKey(entry) === group.key)
+      || { type: group.representativeType, typeLabel: group.label };
+    return `
+      <div class="track-streak-card">
+        <span class="track-streak-sticker">${calendarStickerMarkup(representative.type, representative)}</span>
+        <span class="track-streak-copy"><strong>${escapeHtml(group.label)}</strong><small>${escapeHtml(group.text)}</small></span>
+      </div>`;
+  }).join('');
 }
 
 function openStreakSettings() {
@@ -4969,25 +5044,25 @@ function renderStreakSettingsRows() {
   if (!els.streakSettingsRows) return;
   els.streakSettingsRows.innerHTML = '';
 
-  for (const { type, label } of getRecognizedTypes()) {
-    const config = getStreakConfig(type);
+  for (const group of getRecognizedStreakGroups()) {
+    const config = getStreakConfig(group.key);
     const row = document.createElement('div');
     row.className = `streak-setting-row${config.enabled ? ' is-enabled' : ''}`;
-    row.dataset.streakType = type;
+    row.dataset.streakType = group.key;
     row.innerHTML = `
-      <div class="streak-setting-type"><strong>${escapeHtml(label)}</strong></div>
+      <div class="streak-setting-type"><strong>${escapeHtml(group.label)}</strong></div>
       <label class="streak-toggle">
         <input data-streak-field="enabled" type="checkbox" ${config.enabled ? 'checked' : ''} />
         <span>On</span>
       </label>
-      <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(label)}">
+      <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(group.label)}">
         ${WEEKDAY_OPTIONS.map(day => `
           <label class="rest-day-chip" title="${day.label}">
             <input data-streak-rest-day="${day.value}" type="checkbox" ${config.restDays.includes(day.value) ? 'checked' : ''} />
             <span>${day.short}</span>
           </label>`).join('')}
       </div>
-      <div class="streak-setting-current">${escapeHtml(streakText(type, config) || 'Off')}</div>`;
+      <div class="streak-setting-current">${escapeHtml(streakText(group.key, config) || 'Off')}</div>`;
     els.streakSettingsRows.appendChild(row);
   }
 }
