@@ -873,10 +873,18 @@ async function renderUpNext() {
     card.dataset.id = item.id;
 
     if (view === 'tbr') {
+      let streaming = '';
+      if (isStreamingItem(item)) {
+        try {
+          const availability = await getItemStreamingAvailability(item);
+          streaming = streamingAvailabilityLabel(availability, 3);
+        } catch {}
+      }
       card.innerHTML = queueCardMarkup(item, {
         title: item.title,
         meta: tbrMeta(item),
         image: item.image || '',
+        streaming,
         tbr: true
       });
       els.upNextList.appendChild(card);
@@ -887,7 +895,11 @@ async function renderUpNext() {
     els.upNextList.appendChild(card);
 
     try {
-      const info = await getUpNextInfo(item);
+      const [info, availability] = await Promise.all([
+        getUpNextInfo(item),
+        isStreamingItem(item) ? getItemStreamingAvailability(item).catch(() => null) : Promise.resolve(null)
+      ]);
+      if (availability) info.streaming = streamingAvailabilityLabel(availability, 3);
       card.classList.remove('queue-loading');
       card.innerHTML = queueCardMarkup(item, info);
     } catch (error) {
@@ -934,6 +946,7 @@ function queueCardMarkup(item, info) {
       <div>
         <p class="upnext-title">${escapeHtml(info.title || item.title)}</p>
         <p class="upnext-meta">${escapeHtml(info.meta || progressFallback(item))}</p>
+        ${info.streaming ? `<p class="upnext-streaming">${escapeHtml(info.streaming)}</p>` : ''}
         <p class="upnext-category">${escapeHtml(getItemTypeLabel(item))}${isTBR ? ' · TBR' : ''}</p>
         ${info.error ? `<div class="queue-error">${escapeHtml(info.error)}</div>` : ''}
       </div>
@@ -941,6 +954,33 @@ function queueCardMarkup(item, info) {
     </div>
     <div class="upnext-actions">${action}</div>
   `;
+}
+
+function isStreamingItem(item) {
+  const sourceType = getSourceType(item);
+  return ['tv', 'movie'].includes(sourceType) && Boolean(item?.providerId);
+}
+
+async function getItemStreamingAvailability(item) {
+  if (!isStreamingItem(item)) return { providers: [], link: '' };
+  const sourceType = getSourceType(item);
+  const region = (state.settings.tmdbWatchRegion || 'CA').toUpperCase();
+  return getCached(
+    `watch:${sourceType}:${item.providerId}:${region}`,
+    () => TrackerAPI.getWatchProviders(sourceType, item.providerId, state.settings)
+  );
+}
+
+function streamingProviderNames(availability) {
+  return [...new Set((availability?.providers || []).map(provider => provider?.name).filter(Boolean))];
+}
+
+function streamingAvailabilityLabel(availability, maxProviders = 3, prefix = '') {
+  const names = streamingProviderNames(availability);
+  if (!names.length) return '';
+  const shown = names.slice(0, maxProviders);
+  const extra = names.length - shown.length;
+  return `${prefix}${shown.join(' · ')}${extra > 0 ? ` +${extra}` : ''}`;
 }
 
 function tbrMeta(item) {
@@ -5960,6 +6000,8 @@ function renderLibrary() {
     return;
   }
 
+  const streamingPosterJobs = [];
+
   for (const groupKey of order) {
     const items = grouped.get(groupKey);
     if (!items?.length) continue;
@@ -5979,7 +6021,7 @@ function renderLibrary() {
       <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
     const grid = section.querySelector('.library-poster-grid');
 
-    for (const item of items) {
+    for (const [itemIndex, item] of items.entries()) {
       const poster = document.createElement('button');
       poster.type = 'button';
       poster.className = 'library-poster-button';
@@ -5987,14 +6029,47 @@ function renderLibrary() {
       poster.setAttribute('aria-label', `Open ${item.title}`);
       poster.title = [item.title, item.rating ? `${item.rating}/5` : '', item.genres?.[0] || ''].filter(Boolean).join(' · ');
       const personalRating = Math.max(0, Math.min(5, Number(item.rating || 0)));
+      const streamable = isStreamingItem(item);
       poster.innerHTML = `${item.image
         ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />`
         : `<span class="library-poster-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`}
+        ${streamable ? '<span class="library-streaming-badge" data-library-streaming hidden></span>' : ''}
         ${personalRating > 0 ? `<span class="library-rating-badge" aria-label="Your rating ${personalRating} out of 5">★ ${escapeHtml(formatPersonalRating(personalRating))}</span>` : ''}`;
       grid.appendChild(poster);
+      if (streamable && (expanded || itemIndex < 14)) {
+        streamingPosterJobs.push({ item, badge: poster.querySelector('[data-library-streaming]') });
+      }
     }
     els.libraryGroups.appendChild(section);
   }
+
+  hydrateLibraryStreamingBadges(streamingPosterJobs);
+}
+
+async function hydrateLibraryStreamingBadges(jobs) {
+  if (!jobs?.length) return;
+  let nextIndex = 0;
+  const workerCount = Math.min(5, jobs.length);
+
+  async function worker() {
+    while (nextIndex < jobs.length) {
+      const job = jobs[nextIndex++];
+      if (!job?.badge?.isConnected) continue;
+      try {
+        const availability = await getItemStreamingAvailability(job.item);
+        if (!job.badge.isConnected) continue;
+        const names = streamingProviderNames(availability);
+        if (!names.length) continue;
+        const shown = names.slice(0, 2);
+        const extra = names.length - shown.length;
+        job.badge.textContent = `${shown.join(' · ')}${extra > 0 ? ` +${extra}` : ''}`;
+        job.badge.title = `${names.join(' · ')}`;
+        job.badge.hidden = false;
+      } catch {}
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, worker));
 }
 
 function handleLibraryClick(event) {

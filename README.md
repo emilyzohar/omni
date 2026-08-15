@@ -137,3 +137,6 @@ Library now defaults to Movie, TV, and Book sections only. The Library Types con
 - Mobile book reading periods use the normal per-day calendar sticker rather than the continuous reading rail; desktop month view keeps the continuous book range line.
 - Up Next/TBR now have a visible-type filter (same-name types are grouped together).
 - Discover rating/notes saving now targets the exact tracked item, immediately refreshes after adding from Discover, and fixes the book-detail metadata error that could prevent book details/personal metadata from working.
+
+### Streaming availability on saved cards
+TV and movie cards in Up Next, TBR, and Library now show TMDB watch-provider availability for the configured watch region. Up Next/TBR use a compact “Available on …” line. Library posters show a compact provider badge; collapsed shelves hydrate the visible first row and expanded shelves hydrate all posters. Availability uses the existing one-hour API cache.
