@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=subcategories-1" />
+  <link rel="stylesheet" href="style.css?v=calendar-category-name-1" />
 </head>
 <body class="auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -51,10 +51,8 @@
 
   <header class="site-header">
     <nav class="nav shell" aria-label="Primary">
-      <a href="#upnext">Up Next</a>
-      <a href="#track">Track</a>
+      <a href="#upnext">Home</a>
       <a href="discover.html">Discover</a>
-      <a href="#library">Library</a>
       <span class="nav-spacer"></span>
       <span id="syncStatus" class="sync-status" aria-live="polite"></span>
       <span id="userEmail" class="user-email"></span>
@@ -190,19 +188,19 @@
     <div class="modal-heading">
       <p class="modal-eyebrow">CALENDAR</p>
       <h2>Customize stickers</h2>
-      <p class="sticker-settings-intro">Choose the shape, color, and optional letters for each type and subcategory. Subcategories inherit their parent sticker until you customize them.</p>
+      <p class="sticker-settings-intro">Rename the category as it appears on the Calendar, and choose sticker styles for each type and subcategory. Subcategories inherit their parent sticker until you customize them.</p>
     </div>
 
     <form id="stickerSettingsForm" class="sticker-settings-form">
       <div class="sticker-settings-head" aria-hidden="true">
-        <span>Type</span><span>Preview</span><span>Shape</span><span>Text (optional)</span><span>Color</span>
+        <span>Type</span><span>Calendar name</span><span>Preview</span><span>Shape</span><span>Text (optional)</span><span>Color</span>
       </div>
       <div id="stickerSettingsRows" class="sticker-settings-rows"></div>
       <div class="modal-actions">
         <button id="resetStickerSettings" class="quiet-button" type="button">Reset defaults</button>
         <div class="actions-right">
           <button class="quiet-button" type="button" data-close="stickerSettingsModal">Cancel</button>
-          <button class="primary-button" type="submit">Save stickers</button>
+          <button class="primary-button" type="submit">Save changes</button>
         </div>
       </div>
     </form>
@@ -328,16 +326,11 @@
         </label>
       </div>
 
-      <div class="two-column-fields item-calendar-meta-fields">
+      <div class="item-calendar-meta-fields">
         <label class="field compact-field">
           <span>Subcategory <em>optional</em></span>
           <input id="itemSubcategory" type="text" autocomplete="off" placeholder="e.g. Documentary, Lecture, Gym" />
           <small class="field-hint">Stays inside the main type, but can use its own calendar sticker.</small>
-        </label>
-        <label class="field compact-field">
-          <span>Calendar title <em>optional</em></span>
-          <input id="itemCalendarTitle" type="text" autocomplete="off" placeholder="Use regular title" />
-          <small class="field-hint">Leave blank to show the normal title in Calendar.</small>
         </label>
       </div>
 
@@ -555,6 +548,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=subcategories-1"></script>
+  <script type="module" src="app.js?v=calendar-category-name-1"></script>
 </body>
 </html>

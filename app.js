@@ -255,7 +255,6 @@ const els = {
   displayTypeBlock: $('#displayTypeBlock'),
   itemDisplayType: $('#itemDisplayType'),
   itemSubcategory: $('#itemSubcategory'),
-  itemCalendarTitle: $('#itemCalendarTitle'),
   displayTypeLabel: $('#displayTypeLabel'),
   displayTypeHint: $('#displayTypeHint'),
   catalogueSearchBlock: $('#catalogueSearchBlock'),
@@ -1989,7 +1988,6 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     els.providerSubtitle.value = item.subtitle || '';
     els.manualTitle.value = item.title || '';
     if (els.itemSubcategory) els.itemSubcategory.value = item.subcategory || '';
-    if (els.itemCalendarTitle) els.itemCalendarTitle.value = item.calendarTitle || '';
     els.itemNote.value = item.notes || '';
     els.itemDate.value = item.date || '';
     if (els.itemRecommended) els.itemRecommended.checked = Boolean(item.recommended);
@@ -2045,7 +2043,6 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.itemSourceType.value = 'tv';
   els.itemDisplayType.value = 'Workout';
   if (els.itemSubcategory) els.itemSubcategory.value = '';
-  if (els.itemCalendarTitle) els.itemCalendarTitle.value = '';
   els.itemQueueStatus.value = ['upnext','tbr','library'].includes(defaultQueueStatus) ? defaultQueueStatus : 'library';
   els.nextSeason.value = 1;
   els.nextEpisode.value = 1;
@@ -2559,7 +2556,6 @@ async function saveItemFromForm(event) {
     type,
     typeLabel,
     subcategory: cleanTypeLabel(els.itemSubcategory?.value || ''),
-    calendarTitle: cleanTypeLabel(els.itemCalendarTitle?.value || ''),
     title,
     provider,
     providerId,
@@ -3634,10 +3630,9 @@ function getCalendarEntries() {
       type: item.type,
       typeLabel: getItemTypeLabel(item),
       subcategory: item.subcategory || '',
-      calendarTitle: item.calendarTitle || '',
       date: item.date,
       kind: 'dated-item',
-      title: item.calendarTitle || item.title,
+      title: item.title,
       subtitle: item.subtitle || '',
       notes: item.notes || '',
       rating: Number(item.rating || 0),
@@ -3659,12 +3654,9 @@ function getCalendarEntries() {
     return true;
   }).map(entry => {
     const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
-    const calendarTitle = cleanTypeLabel(entry.calendarTitle || source?.calendarTitle || '');
     return {
       ...entry,
-      subcategory: entry.subcategory || source?.subcategory || '',
-      calendarTitle,
-      title: calendarTitle || entry.title
+      subcategory: entry.subcategory || source?.subcategory || ''
     };
   });
 
@@ -3697,10 +3689,9 @@ function bookReadingCalendarEntries(item) {
         type: item.type,
         typeLabel: getItemTypeLabel(item),
         subcategory: item.subcategory || '',
-        calendarTitle: item.calendarTitle || '',
         date,
         kind: 'book-reading-day',
-        title: item.calendarTitle || item.title,
+        title: item.title,
         subtitle: item.subtitle || '',
         notes: item.notes || '',
         rating: Number(item.rating || 0),
@@ -3781,7 +3772,7 @@ function renderMonthTracker() {
     ? [...groupsByKey.values()]
     : ['workout', 'tv', 'book', 'movie'].map(type => ({
         key: slugifyType(getTypeLabel(type)),
-        label: getTypeLabel(type),
+        label: getCalendarCategoryLabel(type, getTypeLabel(type)),
         representativeType: type,
         representativeEntry: { type, typeLabel: getTypeLabel(type) }
       }));
@@ -4041,12 +4032,22 @@ function cleanStickerLabel(value) {
   return String(value ?? '').replace(/\s+/g, '').slice(0, 3).toUpperCase();
 }
 
+function getCalendarCategoryLabel(type, fallbackLabel = '') {
+  const saved = state.stickerPrefs?.[type] || {};
+  const custom = cleanTypeLabel(saved.calendarLabel || '');
+  return custom || cleanTypeLabel(fallbackLabel || getTypeLabel(type)) || 'Other';
+}
+
 function getCalendarTypeGroupLabel(entry) {
-  return cleanTypeLabel(entry?.typeLabel || getTypeLabel(entry?.type)) || 'Other';
+  return getCalendarCategoryLabel(entry?.type, entry?.typeLabel || getTypeLabel(entry?.type));
 }
 
 function getCalendarTypeGroupKey(entry) {
-  return slugifyType(getCalendarTypeGroupLabel(entry));
+  // Keep the category's internal identity stable when its Calendar display name changes.
+  // This prevents renaming "TV" to "Shows" from changing grouping behavior or merging it
+  // with a different type that happens to use the same display name.
+  const baseLabel = cleanTypeLabel(entry?.typeLabel || getTypeLabel(entry?.type)) || String(entry?.type || 'other');
+  return slugifyType(baseLabel);
 }
 
 function handleTrackerClick(event) {
@@ -4124,7 +4125,7 @@ function openHistoryEdit(id) {
   if (!entry || !els.historyEditModal) return;
   const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
   els.historyEditId.value = entry.id;
-  els.historyEditTitle.value = entry.calendarTitle || source?.calendarTitle || entry.title || '';
+  els.historyEditTitle.value = entry.title || '';
   els.historyEditType.value = entry.typeLabel || getTypeLabel(entry.type) || '';
   if (els.historyEditSubcategory) els.historyEditSubcategory.value = entry.subcategory || source?.subcategory || '';
   els.historyEditSubtitle.value = entry.subtitle || '';
@@ -4161,9 +4162,7 @@ function saveHistoryEdit(event) {
   const type = editableTypeFromLabel(typeLabel, entry.type);
   registerCustomType(type, typeLabel);
 
-  const editedCalendarTitle = els.historyEditTitle.value.trim();
-  entry.calendarTitle = editedCalendarTitle;
-  if (!entry.sourceItemId) entry.title = editedCalendarTitle || entry.title;
+  entry.title = els.historyEditTitle.value.trim() || entry.title;
   entry.type = type;
   entry.typeLabel = typeLabel;
   entry.subcategory = cleanTypeLabel(els.historyEditSubcategory?.value || '');
@@ -6689,8 +6688,15 @@ function renderStickerSettingsRows() {
     row.dataset.stickerType = target.type;
     row.dataset.stickerKey = target.key;
     row.dataset.stickerSubcategory = target.subcategory;
+    const parentSaved = state.stickerPrefs?.[target.type] || {};
     row.innerHTML = `
       <strong class="sticker-setting-type">${escapeHtml(target.label)}</strong>
+      ${target.subcategory
+        ? `<span class="sticker-setting-calendar-inherit">Uses ${escapeHtml(getCalendarCategoryLabel(target.type, getTypeLabel(target.type)))}</span>`
+        : `<label class="sticker-setting-field sticker-setting-calendar-name">
+            <span class="sticker-setting-mobile-label">Calendar name</span>
+            <input data-sticker-field="calendar-label" type="text" maxlength="30" value="${escapeAttr(parentSaved.calendarLabel || '')}" placeholder="${escapeAttr(target.label)}" />
+          </label>`}
       <div class="sticker-setting-preview">${calendarStickerMarkup(target.type, sampleEntry)}</div>
       <label class="sticker-setting-field">
         <span class="sticker-setting-mobile-label">Shape</span>
@@ -6741,7 +6747,14 @@ function saveStickerSettings(event) {
     const shape = row.querySelector('[data-sticker-field="shape"]')?.value || 'square';
     const color = row.querySelector('[data-sticker-field="color"]')?.value || 'cream';
     const label = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(row.querySelector('[data-sticker-field="label"]')?.value ?? '');
-    next[key] = { shape, color, label };
+    const existing = next[key] || {};
+    const calendarInput = row.querySelector('[data-sticker-field="calendar-label"]');
+    const calendarLabel = calendarInput ? cleanTypeLabel(calendarInput.value) : existing.calendarLabel;
+    next[key] = { ...existing, shape, color, label };
+    if (calendarInput) {
+      if (calendarLabel) next[key].calendarLabel = calendarLabel;
+      else delete next[key].calendarLabel;
+    }
   });
 
   state.stickerPrefs = next;
@@ -7815,7 +7828,6 @@ function addHistoryRecord(record) {
     id: makeId(),
     createdAt: new Date().toISOString(),
     subcategory: source?.subcategory || '',
-    calendarTitle: source?.calendarTitle || '',
     ...record
   });
 }
