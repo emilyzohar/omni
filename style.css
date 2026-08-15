@@ -5325,3 +5325,46 @@ body.auth-locked > main {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 }
+
+/* Library items without artwork use readable text cards instead of poster placeholders. */
+.library-poster-button.library-text-card-button {
+  text-align: left;
+  background: var(--paper);
+  border: 1px solid rgba(21,36,58,.12);
+}
+.library-text-card {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 13px 11px 12px;
+  overflow: hidden;
+}
+.library-text-card-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  color: var(--ink);
+  font: 700 .9rem/1.18 var(--sans);
+}
+.library-text-card-rating {
+  flex: 0 0 auto;
+  color: #785f13;
+  font: 800 .7rem/1.1 var(--sans);
+}
+.library-text-card-notes {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+  color: var(--muted);
+  font: 500 .72rem/1.35 var(--sans);
+}
+@media (max-width: 760px) {
+  .library-text-card { padding: 10px 8px 9px; gap: 6px; }
+  .library-text-card-title { font-size: .77rem; -webkit-line-clamp: 3; }
+  .library-text-card-rating { font-size: .63rem; }
+  .library-text-card-notes { font-size: .64rem; -webkit-line-clamp: 4; }
+}

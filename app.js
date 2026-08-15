@@ -3322,7 +3322,7 @@ async function renderBookDetails(item) {
   els.detailBody.innerHTML = `
     ${detailHero({ type:'BOOK', title:info.title || item.title, image, subtitle:(info.authors || []).join(', '), overview:stripHtml(info.description || '') })}
     <div class="detail-progress"><strong>Reading progress</strong>${total ? `Page ${current} of ${total} · ${Math.min(100, Math.round(current/total*100))}%` : `Page ${current}`}<small>${escapeHtml(bookReadingStatusText(item))}</small></div>
-    <div class="detail-actions"><button class="primary-button${item.completedAt ? ' is-complete' : ''}" type="button" data-book-mark-complete-item="${item.id}">${item.completedAt ? '↶ Mark unread' : '✓ Mark book complete'}</button><button class="secondary-button" type="button" id="detailUpdatePages">Update pages & dates</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>
+    <div class="detail-actions"><button class="primary-button${item.completedAt ? ' is-complete' : ''}" type="button" data-book-mark-complete-item="${item.id}">${item.completedAt ? '↶ Mark unread' : '✓ Mark book complete'}</button><button class="secondary-button" type="button" id="detailUpdatePages">Update pages & dates</button>${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>
     <section class="detail-section"><h3>Reading dates</h3><div class="book-period-summary-list">${periodMarkup}</div></section>
     <section class="detail-section"><h3>Book info</h3><p>${escapeHtml([info.publisher, info.publishedDate, info.pageCount ? `${info.pageCount} pages` : ''].filter(Boolean).join(' · '))}</p></section>
   `;
@@ -3446,9 +3446,12 @@ function basicDetailHero(item) {
 
 function itemHasCalendarAssociations(item) {
   if (!item) return false;
+  // Keep the calendar toggle available for anything with logged activity, even if
+  // its calendar entries are currently hidden or an individual log was previously
+  // marked not to show. This makes Remove/Show on calendar reliably reversible.
   if (item.date && getSourceType(item) !== 'book') return true;
   if (getSourceType(item) === 'book' && getBookReadingPeriods(item).length) return true;
-  return state.history.some(entry => entry.sourceItemId === item.id && entry.date && entry.showOnCalendar !== false);
+  return state.history.some(entry => entry.sourceItemId === item.id);
 }
 
 function libraryCalendarToggleButton(item) {
@@ -7809,10 +7812,16 @@ function makeLibraryPoster(item) {
   poster.setAttribute('aria-label', `Open ${item.title}`);
   poster.title = [item.title, item.rating ? `${item.rating}/5` : '', item.genres?.[0] || ''].filter(Boolean).join(' · ');
   const personalRating = Math.max(0, Math.min(5, Number(item.rating || 0)));
-  poster.innerHTML = `${item.image
-    ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />`
-    : `<span class="library-poster-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`}
-    ${personalRating > 0 ? `<span class="library-rating-badge" aria-label="Your rating ${personalRating} out of 5">★ ${escapeHtml(formatPersonalRating(personalRating))}</span>` : ''}`;
+  const hasThumbnail = Boolean(String(item.image || '').trim());
+  if (!hasThumbnail) poster.classList.add('library-text-card-button');
+  poster.innerHTML = hasThumbnail
+    ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />
+       ${personalRating > 0 ? `<span class="library-rating-badge" aria-label="Your rating ${personalRating} out of 5">★ ${escapeHtml(formatPersonalRating(personalRating))}</span>` : ''}`
+    : `<span class="library-text-card">
+         <strong class="library-text-card-title">${escapeHtml(item.title || 'Untitled')}</strong>
+         ${personalRating > 0 ? `<span class="library-text-card-rating">★ ${escapeHtml(formatPersonalRating(personalRating))} / 5</span>` : ''}
+         ${String(item.notes || '').trim() ? `<span class="library-text-card-notes">${escapeHtml(String(item.notes || '').trim())}</span>` : ''}
+       </span>`;
   return poster;
 }
 
