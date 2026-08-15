@@ -37,7 +37,7 @@ const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'other']
 const STICKER_COLORS = ['rust', 'red', 'coral', 'orange', 'yellow', 'cream', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'teal', 'green', 'mint', 'brown', 'black', 'white'];
 
 const CLOUD_STATE_VERSION = 2;
-const DEFAULT_DISCOVER_PREFS = { streamingProviderIds: [], streamingProviderNames: [], prioritizeAuthors: true, englishTVOnly: false, contentType: 'all' };
+const DEFAULT_DISCOVER_PREFS = { streamingProviderIds: [], streamingProviderNames: [], prioritizeAuthors: true, englishTVOnly: false, contentType: 'all', genre: 'all' };
 let currentUser = null;
 let appStarted = false;
 let localOnlyMode = false;
@@ -86,6 +86,8 @@ const state = {
   discoverFeedOffsets: { tv: 1, movie: 1, book: 0 },
   discoverFeedSession: Math.random(),
   discoverMode: 'discover',
+  discoverSearchQuery: '',
+  discoverGenreCatalog: { tv: [], movie: [] },
   libraryView: 'all',
   libraryExpandedGroups: new Set()
 };
@@ -141,6 +143,10 @@ const els = {
   discoverFeedMessage: $('#discoverFeedMessage'),
   discoverModeTabs: $$('.discover-mode-tab[data-discover-mode]'),
   discoverTypeFilter: $('#discoverTypeFilter'),
+  discoverGenreFilter: $('#discoverGenreFilter'),
+  discoverSearchForm: $('#discoverSearchForm'),
+  discoverSearchInput: $('#discoverSearchInput'),
+  clearDiscoverSearch: $('#clearDiscoverSearch'),
   discoverFeedIntroText: $('#discoverFeedIntroText'),
   discoverTrendingTV: $('#discoverTrendingTV'),
   discoverTrendingMovies: $('#discoverTrendingMovies'),
@@ -510,12 +516,29 @@ function bindEvents() {
   els.libraryGroups?.addEventListener('click', handleLibraryClick);
   els.refreshDiscover?.addEventListener('click', () => renderDiscover(true));
   els.discoverModeTabs?.forEach(tab => tab.addEventListener('click', () => setDiscoverMode(tab.dataset.discoverMode)));
-  els.discoverTypeFilter?.addEventListener('change', () => {
+  els.discoverTypeFilter?.addEventListener('change', async () => {
     state.discoverPrefs = { ...DEFAULT_DISCOVER_PREFS, ...state.discoverPrefs, contentType: els.discoverTypeFilter.value || 'all' };
-    localStorage.setItem(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
+    safeLocalSet(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
     scheduleCloudSync();
+    await refreshDiscoverForFilters();
+  });
+  els.discoverGenreFilter?.addEventListener('change', async () => {
+    state.discoverPrefs = { ...DEFAULT_DISCOVER_PREFS, ...state.discoverPrefs, genre: els.discoverGenreFilter.value || 'all' };
+    safeLocalSet(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
+    scheduleCloudSync();
+    await refreshDiscoverForFilters();
+  });
+  els.discoverSearchForm?.addEventListener('submit', async event => {
+    event.preventDefault();
+    await runDiscoverSearch();
+  });
+  els.clearDiscoverSearch?.addEventListener('click', async () => {
+    state.discoverSearchQuery = '';
+    if (els.discoverSearchInput) els.discoverSearchInput.value = '';
+    els.clearDiscoverSearch.hidden = true;
     resetDiscoverFeed(false);
-    loadMoreDiscoverFeed();
+    updateDiscoverModeUI();
+    await loadMoreDiscoverFeed();
   });
   els.openDiscoverSettings?.addEventListener('click', openDiscoverSettings);
   els.discoverSettingsForm?.addEventListener('submit', saveDiscoverSettings);
@@ -2955,9 +2978,155 @@ function deleteHistoryEdit() {
 // DISCOVER
 // ---------------------------
 const DISCOVER_MODES = new Set(['new', 'popular', 'for-you', 'discover']);
+const DISCOVER_GENRES = [
+  { value: 'action-adventure', label: 'Action & Adventure', tmdb: ['Action', 'Adventure', 'Action & Adventure'], book: ['action', 'adventure'] },
+  { value: 'animation', label: 'Animation', tmdb: ['Animation'], book: ['animation', 'graphic novels'] },
+  { value: 'biography', label: 'Biography & Memoir', tmdb: [], book: ['biography', 'memoir'] },
+  { value: 'comedy', label: 'Comedy', tmdb: ['Comedy'], book: ['humor', 'comedy'] },
+  { value: 'crime', label: 'Crime', tmdb: ['Crime'], book: ['crime'] },
+  { value: 'documentary', label: 'Documentary', tmdb: ['Documentary'], book: ['documentary', 'nonfiction'] },
+  { value: 'drama', label: 'Drama', tmdb: ['Drama'], book: ['drama'] },
+  { value: 'family', label: 'Family', tmdb: ['Family'], book: ['family'] },
+  { value: 'fantasy', label: 'Fantasy', tmdb: ['Fantasy', 'Sci-Fi & Fantasy'], book: ['fantasy'] },
+  { value: 'history', label: 'History', tmdb: ['History', 'War & Politics'], book: ['history'] },
+  { value: 'horror', label: 'Horror', tmdb: ['Horror'], book: ['horror'] },
+  { value: 'mystery', label: 'Mystery', tmdb: ['Mystery'], book: ['mystery'] },
+  { value: 'philosophy', label: 'Philosophy', tmdb: [], book: ['philosophy'] },
+  { value: 'psychology', label: 'Psychology', tmdb: [], book: ['psychology'] },
+  { value: 'romance', label: 'Romance', tmdb: ['Romance'], book: ['romance'] },
+  { value: 'science', label: 'Science', tmdb: [], book: ['science'] },
+  { value: 'science-fiction', label: 'Science Fiction', tmdb: ['Science Fiction', 'Sci-Fi & Fantasy'], book: ['science fiction'] },
+  { value: 'thriller', label: 'Thriller', tmdb: ['Thriller'], book: ['thriller', 'suspense'] }
+];
+
+function selectedDiscoverGenre() {
+  return DISCOVER_GENRES.find(genre => genre.value === (state.discoverPrefs.genre || 'all')) || null;
+}
+
+async function ensureDiscoverGenreCatalog() {
+  if (!els.discoverGenreFilter) return;
+  if (!state.discoverGenreCatalog.tv.length || !state.discoverGenreCatalog.movie.length) {
+    const [tv, movie] = await Promise.allSettled([
+      TrackerAPI.getTMDBGenres('tv', state.settings),
+      TrackerAPI.getTMDBGenres('movie', state.settings)
+    ]);
+    if (tv.status === 'fulfilled') state.discoverGenreCatalog.tv = tv.value;
+    if (movie.status === 'fulfilled') state.discoverGenreCatalog.movie = movie.value;
+  }
+  const current = state.discoverPrefs.genre || 'all';
+  els.discoverGenreFilter.innerHTML = '<option value="all">All genres</option>' + DISCOVER_GENRES.map(genre => `<option value="${escapeAttr(genre.value)}">${escapeHtml(genre.label)}</option>`).join('');
+  els.discoverGenreFilter.value = DISCOVER_GENRES.some(genre => genre.value === current) ? current : 'all';
+}
+
+function discoverTMDBGenreIds(type) {
+  const genre = selectedDiscoverGenre();
+  if (!genre) return [];
+  const allowed = new Set(genre.tmdb.map(name => name.toLowerCase()));
+  return (state.discoverGenreCatalog[type] || []).filter(entry => allowed.has(String(entry.name || '').toLowerCase())).map(entry => String(entry.id));
+}
+
+function discoverTMDBOptions(type, options = {}) {
+  const genreIds = discoverTMDBGenreIds(type);
+  return genreIds.length ? { ...options, genreIds } : options;
+}
+
+function discoverBookOptions(options = {}) {
+  const genre = selectedDiscoverGenre();
+  if (!genre?.book?.length) return options;
+  const subject = genre.book[0].includes(' ') ? `subject:"${genre.book[0]}"` : `subject:${genre.book[0]}`;
+  const existing = String(options.query || '').trim();
+  if (!existing || /^subject:/i.test(existing)) return { ...options, query: subject };
+  return { ...options, query: `${existing} ${subject}` };
+}
+
+function discoverResultMatchesGenre(result) {
+  const genre = selectedDiscoverGenre();
+  if (!genre) return true;
+  if (result.sourceType === 'tv' || result.sourceType === 'movie') {
+    const ids = new Set((result.raw?.genre_ids || []).map(String));
+    const allowedIds = discoverTMDBGenreIds(result.sourceType);
+    return allowedIds.length ? allowedIds.some(id => ids.has(String(id))) : false;
+  }
+  if (result.sourceType === 'book') {
+    const categories = result.categories || result.raw?.volumeInfo?.categories || [];
+    const haystack = categories.join(' ').toLowerCase();
+    return genre.book.some(term => haystack.includes(term.toLowerCase()));
+  }
+  return true;
+}
+
+async function refreshDiscoverForFilters() {
+  await ensureDiscoverGenreCatalog();
+  if (state.discoverSearchQuery) return runDiscoverSearch(state.discoverSearchQuery);
+  resetDiscoverFeed(false);
+  return loadMoreDiscoverFeed();
+}
+
+async function runDiscoverSearch(forcedQuery = '') {
+  if (!els.discoverFeed) return;
+  await ensureDiscoverGenreCatalog();
+  const query = String(forcedQuery || els.discoverSearchInput?.value || '').trim();
+  if (!query) {
+    state.discoverSearchQuery = '';
+    if (els.clearDiscoverSearch) els.clearDiscoverSearch.hidden = true;
+    resetDiscoverFeed(false);
+    return loadMoreDiscoverFeed();
+  }
+
+  state.discoverSearchQuery = query;
+  if (els.discoverSearchInput) els.discoverSearchInput.value = query;
+  if (els.clearDiscoverSearch) els.clearDiscoverSearch.hidden = false;
+  state.discoverFeedDone = true;
+  state.discoverFeedLoading = true;
+  state.discoverFeedItems = [];
+  state.discoverFeedSeen = new Set();
+  state.discoverResults.clear();
+  els.discoverFeed.innerHTML = '';
+  if (els.discoverStatus) {
+    els.discoverStatus.hidden = false;
+    els.discoverStatus.textContent = `Searching for “${query}”…`;
+  }
+  if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = 'Search results';
+
+  try {
+    const selectedType = state.discoverPrefs.contentType || 'all';
+    const types = selectedType === 'all' ? ['tv', 'movie', 'book'] : [selectedType];
+    const settled = await Promise.allSettled(types.map(type => TrackerAPI.searchCatalogue(query, type, state.settings)));
+    const results = [];
+    settled.forEach((entry, index) => {
+      if (entry.status !== 'fulfilled') return;
+      const sourceType = types[index];
+      for (const result of entry.value || []) {
+        const normalized = { ...result, sourceType, categories: result.raw?.volumeInfo?.categories || result.categories || [] };
+        if (state.discoverPrefs.englishTVOnly === true && sourceType === 'tv' && String(normalized.raw?.original_language || '').toLowerCase() !== 'en') continue;
+        if (!discoverResultMatchesGenre(normalized)) continue;
+        results.push(normalized);
+      }
+    });
+    const ranked = await rankDiscoverFeedCandidates(results, 36);
+    state.discoverFeedItems = ranked;
+    for (const result of ranked) state.discoverFeedSeen.add(discoverResultIdentity(result));
+    renderDiscoverFeedItems();
+    if (els.discoverStatus) {
+      els.discoverStatus.hidden = ranked.length > 0;
+      els.discoverStatus.textContent = ranked.length ? '' : `No results for “${query}” with these filters.`;
+    }
+    if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = ranked.length ? `${ranked.length} result${ranked.length === 1 ? '' : 's'} shown.` : 'Try another search or change the filters.';
+  } catch (error) {
+    if (els.discoverStatus) {
+      els.discoverStatus.hidden = false;
+      els.discoverStatus.textContent = `Search failed: ${error.message}`;
+    }
+  } finally {
+    state.discoverFeedLoading = false;
+  }
+}
 
 function setDiscoverMode(mode) {
   const next = DISCOVER_MODES.has(mode) ? mode : 'discover';
+  state.discoverSearchQuery = '';
+  if (els.discoverSearchInput) els.discoverSearchInput.value = '';
+  if (els.clearDiscoverSearch) els.clearDiscoverSearch.hidden = true;
   if (state.discoverMode === next && state.discoverFeedInitialized) return;
   state.discoverMode = next;
   updateDiscoverModeUI();
@@ -2981,12 +3150,15 @@ function updateDiscoverModeUI() {
   });
   if (els.discoverFeedIntroText) els.discoverFeedIntroText.textContent = copy[mode];
   if (els.discoverTypeFilter) els.discoverTypeFilter.value = state.discoverPrefs.contentType || 'all';
+  if (els.discoverGenreFilter) els.discoverGenreFilter.value = state.discoverPrefs.genre || 'all';
   if (els.refreshDiscover) els.refreshDiscover.textContent = mode === 'discover' ? 'Shuffle' : 'Refresh';
 }
 
 async function renderDiscover(force = false) {
   if (!els.discoverStatus) return;
+  await ensureDiscoverGenreCatalog();
   updateDiscoverModeUI();
+  if (state.discoverSearchQuery) return runDiscoverSearch(state.discoverSearchQuery);
 
   // The new Discover page is an endless mixed feed. Keep old section helpers below
   // for compatibility with older saved/deployed HTML, but prefer this path.
@@ -3099,9 +3271,9 @@ async function loadMoreDiscoverFeed() {
       const contentType = state.discoverPrefs.contentType || 'all';
       if (contentType !== 'all' && (result.sourceType || '') !== contentType) return false;
       if (state.discoverPrefs.englishTVOnly === true && (result.sourceType || '') === 'tv') {
-        return String(result.raw?.original_language || '').toLowerCase() === 'en';
+        if (String(result.raw?.original_language || '').toLowerCase() !== 'en') return false;
       }
-      return true;
+      return discoverResultMatchesGenre(result);
     });
 
     const batchSize = window.matchMedia('(max-width: 760px)').matches ? 12 : 20;
@@ -3152,17 +3324,17 @@ async function collectShuffledDiscoverCandidates(batchNumber) {
   const bookPlan = chooseDiscoverBookPlan(readAuthors, batchNumber);
 
   const tasks = [
-    TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings),
-    TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings),
-    TrackerAPI.getBookFeed(bookStart, state.settings, bookPlan)
+    TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings, discoverTMDBOptions('tv')),
+    TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, discoverTMDBOptions('movie')),
+    TrackerAPI.getBookFeed(bookStart, state.settings, discoverBookOptions(bookPlan))
   ];
 
   if (selectedProviders.length) {
     // Pull a parallel catalogue slice from services the user actually has. This
     // is a boost, not a filter: the general catalogue above still supplies variety.
     const providerPage = 1 + ((batchNumber + Math.floor(state.discoverFeedSession * 7)) % 6);
-    tasks.push(TrackerAPI.getTMDBDiscover('tv', providerPage, state.settings, { providerIds: selectedProviders }));
-    tasks.push(TrackerAPI.getTMDBDiscover('movie', providerPage, state.settings, { providerIds: selectedProviders }));
+    tasks.push(TrackerAPI.getTMDBDiscover('tv', providerPage, state.settings, discoverTMDBOptions('tv', { providerIds: selectedProviders })));
+    tasks.push(TrackerAPI.getTMDBDiscover('movie', providerPage, state.settings, discoverTMDBOptions('movie', { providerIds: selectedProviders })));
   }
 
   const settled = await Promise.allSettled(tasks);
@@ -3237,13 +3409,13 @@ async function collectNewDiscoverCandidates(batchNumber) {
   const moviePage = Math.min(500, batchNumber);
   const bookStart = (batchNumber - 1) * 40;
   const tasks = [
-    TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings, { sortBy: 'first_air_date.desc', minVotes: 5, beforeDate: today }),
-    TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, { sortBy: 'primary_release_date.desc', minVotes: 10, beforeDate: today }),
-    TrackerAPI.getBookFeed(bookStart, state.settings, { query: 'subject:fiction', orderBy: 'newest', maxResults: 40 })
+    TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings, discoverTMDBOptions('tv', { sortBy: 'first_air_date.desc', minVotes: 5, beforeDate: today })),
+    TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, discoverTMDBOptions('movie', { sortBy: 'primary_release_date.desc', minVotes: 10, beforeDate: today })),
+    TrackerAPI.getBookFeed(bookStart, state.settings, discoverBookOptions({ query: 'subject:fiction', orderBy: 'newest', maxResults: 40 }))
   ];
   if (selectedProviders.length) {
-    tasks.push(TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings, { sortBy: 'first_air_date.desc', minVotes: 3, beforeDate: today, providerIds: selectedProviders }));
-    tasks.push(TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, { sortBy: 'primary_release_date.desc', minVotes: 5, beforeDate: today, providerIds: selectedProviders }));
+    tasks.push(TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings, discoverTMDBOptions('tv', { sortBy: 'first_air_date.desc', minVotes: 3, beforeDate: today, providerIds: selectedProviders })));
+    tasks.push(TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, discoverTMDBOptions('movie', { sortBy: 'primary_release_date.desc', minVotes: 5, beforeDate: today, providerIds: selectedProviders })));
   }
   const settled = await Promise.allSettled(tasks);
   const candidates = [];
@@ -3264,13 +3436,13 @@ async function collectPopularDiscoverCandidates(batchNumber) {
   const bookQuery = topics[(batchNumber - 1) % topics.length];
   const bookStart = Math.floor((batchNumber - 1) / topics.length) * 40;
   const tasks = [
-    TrackerAPI.getTMDBDiscover('tv', batchNumber, state.settings, { sortBy: 'popularity.desc', minVotes: 100 }),
-    TrackerAPI.getTMDBDiscover('movie', batchNumber, state.settings, { sortBy: 'popularity.desc', minVotes: 150 }),
-    TrackerAPI.getBookFeed(bookStart, state.settings, { query: bookQuery, orderBy: 'relevance', maxResults: 40 })
+    TrackerAPI.getTMDBDiscover('tv', batchNumber, state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 100 })),
+    TrackerAPI.getTMDBDiscover('movie', batchNumber, state.settings, discoverTMDBOptions('movie', { sortBy: 'popularity.desc', minVotes: 150 })),
+    TrackerAPI.getBookFeed(bookStart, state.settings, discoverBookOptions({ query: bookQuery, orderBy: 'relevance', maxResults: 40 }))
   ];
   if (selectedProviders.length) {
-    tasks.push(TrackerAPI.getTMDBDiscover('tv', Math.min(batchNumber, 30), state.settings, { sortBy: 'popularity.desc', minVotes: 30, providerIds: selectedProviders }));
-    tasks.push(TrackerAPI.getTMDBDiscover('movie', Math.min(batchNumber, 30), state.settings, { sortBy: 'popularity.desc', minVotes: 50, providerIds: selectedProviders }));
+    tasks.push(TrackerAPI.getTMDBDiscover('tv', Math.min(batchNumber, 30), state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 30, providerIds: selectedProviders })));
+    tasks.push(TrackerAPI.getTMDBDiscover('movie', Math.min(batchNumber, 30), state.settings, discoverTMDBOptions('movie', { sortBy: 'popularity.desc', minVotes: 50, providerIds: selectedProviders })));
   }
   const settled = await Promise.allSettled(tasks);
   const candidates = [];
@@ -3337,8 +3509,8 @@ async function collectForYouDiscoverCandidates(batchNumber) {
   if (selectedProviders.length) {
     const providerPage = 1 + ((batchNumber - 1) % 8);
     const providerResults = await Promise.allSettled([
-      TrackerAPI.getTMDBDiscover('tv', providerPage, state.settings, { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 20 }),
-      TrackerAPI.getTMDBDiscover('movie', providerPage, state.settings, { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 30 })
+      TrackerAPI.getTMDBDiscover('tv', providerPage, state.settings, discoverTMDBOptions('tv', { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 20 })),
+      TrackerAPI.getTMDBDiscover('movie', providerPage, state.settings, discoverTMDBOptions('movie', { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 30 }))
     ]);
     if (providerResults[0].status === 'fulfilled') add(filterAlreadyKnown(providerResults[0].value.results, 'tv'), 'tv', 'preferred-streaming', 8);
     if (providerResults[1].status === 'fulfilled') add(filterAlreadyKnown(providerResults[1].value.results, 'movie'), 'movie', 'preferred-streaming', 8);
@@ -3347,9 +3519,9 @@ async function collectForYouDiscoverCandidates(batchNumber) {
   // A broad fallback prevents an empty For You page for newer profiles.
   if (candidates.length < 20) {
     const fallback = await Promise.allSettled([
-      TrackerAPI.getTMDBDiscover('tv', batchNumber, state.settings, { sortBy: 'popularity.desc', minVotes: 50 }),
-      TrackerAPI.getTMDBDiscover('movie', batchNumber, state.settings, { sortBy: 'popularity.desc', minVotes: 75 }),
-      TrackerAPI.getBookFeed((batchNumber - 1) * 40, state.settings, { query: chooseDiscoverBookPlan(readAuthors, batchNumber).query, orderBy: 'relevance', maxResults: 40 })
+      TrackerAPI.getTMDBDiscover('tv', batchNumber, state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 50 })),
+      TrackerAPI.getTMDBDiscover('movie', batchNumber, state.settings, discoverTMDBOptions('movie', { sortBy: 'popularity.desc', minVotes: 75 })),
+      TrackerAPI.getBookFeed((batchNumber - 1) * 40, state.settings, discoverBookOptions({ query: chooseDiscoverBookPlan(readAuthors, batchNumber).query, orderBy: 'relevance', maxResults: 40 }))
     ]);
     if (fallback[0].status === 'fulfilled') add(filterAlreadyKnown(fallback[0].value.results, 'tv'), 'tv', 'fallback', 0);
     if (fallback[1].status === 'fulfilled') add(filterAlreadyKnown(fallback[1].value.results, 'movie'), 'movie', 'fallback', 0);

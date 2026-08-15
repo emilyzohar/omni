@@ -3492,3 +3492,362 @@ body.auth-locked > main {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* Discover search + genre filtering */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.discover-search-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  margin: 0 0 18px;
+}
+
+.discover-search-field { min-width: 0; }
+.discover-search-field input {
+  width: 100%;
+  min-height: 48px;
+  padding: 11px 16px;
+  border: 1px solid rgba(21,36,58,.16);
+  border-radius: 999px;
+  background: rgba(255,255,255,.7);
+  color: var(--ink);
+  font: 500 .95rem/1.2 var(--sans);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.55);
+}
+.discover-search-field input:focus {
+  outline: 2px solid rgba(114,0,20,.2);
+  outline-offset: 2px;
+  border-color: rgba(114,0,20,.34);
+}
+.discover-search-button,
+.discover-search-clear { min-height: 46px; }
+
+.discover-filter-group {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 760px) {
+  .discover-search-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .discover-search-clear {
+    grid-column: 1 / -1;
+    justify-self: start;
+    min-height: 36px;
+  }
+  .discover-search-field input { min-height: 44px; }
+  .discover-search-button { min-height: 44px; padding-inline: 14px; }
+  .discover-filter-group {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .discover-filter-group .discover-type-filter {
+    display: grid;
+    gap: 6px;
+    width: 100%;
+  }
+  .discover-filter-group .discover-type-filter select {
+    width: 100%;
+    min-width: 0;
+    min-height: 42px;
+  }
+}
+
+/* =========================================================
+   UP NEXT — REFINED / EDITORIAL
+   Flatter, smaller, less cartoon-like than the old queue UI.
+   ========================================================= */
+
+/* Keep the queue heading in scale with the rest of the interface. */
+#queueHeading {
+  font-size: clamp(2.8rem, 3.4vw, 4.35rem) !important;
+  line-height: 1;
+}
+
+.upnext-section {
+  padding-top: clamp(46px, 4vw, 68px) !important;
+  padding-bottom: clamp(50px, 4.5vw, 74px) !important;
+}
+
+.upnext-shell {
+  min-height: 0 !important;
+}
+
+.compact-title-row.queue-title-row {
+  margin-bottom: 28px !important;
+}
+
+.queue-tabs {
+  padding: 3px !important;
+  border: 1px solid rgba(21, 36, 58, .11);
+  background: rgba(255, 255, 255, .28);
+  border-radius: 999px;
+}
+
+.queue-tab {
+  min-height: 32px !important;
+  padding: 6px 12px !important;
+  border-radius: 999px !important;
+  font-size: .7rem !important;
+  letter-spacing: .035em;
+}
+
+.queue-tab.is-active {
+  background: rgba(21, 36, 58, .09) !important;
+  box-shadow: none !important;
+}
+
+.upnext-list {
+  gap: 14px !important;
+}
+
+.upnext-card {
+  min-height: 108px !important;
+  grid-template-columns: 82px minmax(0, 1fr) auto !important;
+  gap: 17px !important;
+  padding: 10px 14px 10px 10px !important;
+  border-radius: 13px !important;
+  background: rgba(251, 250, 245, .82) !important;
+  border: 1px solid rgba(21, 36, 58, .095);
+  box-shadow: 0 3px 10px rgba(27, 31, 24, .075) !important;
+  overflow: visible !important;
+  transition: transform .14s ease, box-shadow .14s ease, border-color .14s ease;
+}
+
+.upnext-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(21, 36, 58, .15);
+  box-shadow: 0 5px 14px rgba(27, 31, 24, .09) !important;
+}
+
+.upnext-art {
+  width: 82px !important;
+  height: 88px !important;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.upnext-art.placeholder {
+  font-size: 1.5rem !important;
+  background: rgba(21, 36, 58, .05);
+}
+
+.upnext-main {
+  gap: 10px !important;
+  align-items: center !important;
+}
+
+.upnext-title {
+  font-family: var(--sans);
+  font-size: clamp(.98rem, .85vw + .35rem, 1.12rem) !important;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -.01em;
+  text-transform: none !important;
+}
+
+.upnext-meta {
+  margin-top: 4px !important;
+  font-size: .84rem !important;
+  font-weight: 500 !important;
+  color: rgba(21, 36, 58, .76);
+}
+
+.upnext-category {
+  margin-top: 5px !important;
+  font-size: .68rem !important;
+  font-weight: 600;
+  letter-spacing: .055em;
+  color: rgba(21, 36, 58, .58);
+}
+
+.upnext-arrow {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 1.15rem !important;
+  color: rgba(21, 36, 58, .76);
+  transition: background .14s ease, transform .14s ease;
+}
+
+.upnext-arrow:hover {
+  transform: translateX(1px) !important;
+  background: rgba(21, 36, 58, .055);
+}
+
+.upnext-actions {
+  gap: 7px !important;
+}
+
+.check-button {
+  width: 42px !important;
+  height: 42px !important;
+  border-radius: 50%;
+  border: 1px solid rgba(21, 36, 58, .11) !important;
+  background: transparent !important;
+  font-size: 1.12rem !important;
+  font-weight: 650 !important;
+  transition: background .14s ease, border-color .14s ease, transform .14s ease;
+}
+
+.check-button:hover {
+  background: rgba(21, 36, 58, .055) !important;
+  border-color: rgba(21, 36, 58, .2) !important;
+  transform: translateY(-1px);
+}
+
+.check-button.book-check {
+  font-size: .82rem !important;
+  width: auto !important;
+  min-width: 54px;
+  padding: 0 9px;
+  border-radius: 999px !important;
+}
+
+.floating-tools {
+  margin-top: 26px !important;
+  gap: 9px !important;
+}
+
+.plus-button {
+  width: 48px !important;
+  height: 48px !important;
+  font-size: 2rem !important;
+  background: transparent !important;
+  border: 1px solid rgba(21, 36, 58, .15) !important;
+  box-shadow: none !important;
+}
+
+.plus-button:hover {
+  background: rgba(255,255,255,.34) !important;
+}
+
+.settings-button {
+  width: 40px !important;
+  height: 40px !important;
+  background: transparent !important;
+  border: 1px solid rgba(21, 36, 58, .12) !important;
+  box-shadow: none !important;
+}
+
+/* Large desktop: queue cards should stay composed rather than grow with the viewport. */
+@media (min-width: 1200px) {
+  .upnext-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .upnext-card {
+    min-height: 108px !important;
+  }
+}
+
+@media (min-width: 1720px) {
+  .upnext-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+}
+
+/* Mobile keeps all queue functionality while matching the quieter styling. */
+@media (max-width: 760px) {
+  #queueHeading {
+    font-size: 2.45rem !important;
+  }
+
+  .upnext-section {
+    padding-top: 34px !important;
+    padding-bottom: 42px !important;
+  }
+
+  .compact-title-row.queue-title-row {
+    margin-bottom: 18px !important;
+  }
+
+  .upnext-list {
+    gap: 10px !important;
+  }
+
+  .upnext-card {
+    min-height: 88px !important;
+    grid-template-columns: 60px minmax(0, 1fr) auto !important;
+    gap: 11px !important;
+    padding: 8px 10px 8px 8px !important;
+    border-radius: 11px !important;
+  }
+
+  .upnext-art {
+    width: 60px !important;
+    height: 72px !important;
+    border-radius: 7px;
+  }
+
+  .upnext-main {
+    grid-template-columns: minmax(0, 1fr) 28px !important;
+    gap: 5px !important;
+  }
+
+  .upnext-title {
+    font-size: .88rem !important;
+  }
+
+  .upnext-meta {
+    font-size: .72rem !important;
+  }
+
+  .upnext-category {
+    font-size: .59rem !important;
+  }
+
+  .upnext-arrow {
+    position: static !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    width: 28px;
+    height: 28px;
+    font-size: 1rem !important;
+  }
+
+  .check-button {
+    width: 36px !important;
+    height: 36px !important;
+    font-size: .98rem !important;
+  }
+
+  .check-button.book-check {
+    width: auto !important;
+    min-width: 48px;
+    padding-inline: 7px;
+    font-size: .7rem !important;
+  }
+
+  .floating-tools {
+    margin-top: 20px !important;
+  }
+
+  .plus-button {
+    width: 44px !important;
+    height: 44px !important;
+    font-size: 1.75rem !important;
+  }
+}

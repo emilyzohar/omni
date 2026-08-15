@@ -194,6 +194,12 @@ export const TrackerAPI = (() => {
     };
   }
 
+  async function getTMDBGenres(type, settings) {
+    const mediaType = type === 'tv' ? 'tv' : 'movie';
+    const data = await fetchJson(`${TMDB_ROOT}/genre/${mediaType}/list?language=en-US`, { headers: tmdbHeaders(settings) });
+    return (data.genres || []).map(genre => ({ id: String(genre.id), name: genre.name || '' })).filter(genre => genre.id && genre.name);
+  }
+
   async function getTMDBDiscover(type, page = 1, settings, options = {}) {
     const mediaType = type === 'tv' ? 'tv' : 'movie';
     const params = new URLSearchParams({
@@ -212,6 +218,9 @@ export const TrackerAPI = (() => {
     if (options.afterDate) {
       params.set(mediaType === 'tv' ? 'first_air_date.gte' : 'primary_release_date.gte', options.afterDate);
     }
+
+    const genreIds = (options.genreIds || (options.genreId ? [options.genreId] : [])).map(String).filter(Boolean);
+    if (genreIds.length) params.set('with_genres', genreIds.join('|'));
 
     const providerIds = (options.providerIds || []).map(String).filter(Boolean);
     if (providerIds.length) {
@@ -417,6 +426,7 @@ export const TrackerAPI = (() => {
     getYouTubeVideo,
     getTrending,
     getTMDBDiscover,
+    getTMDBGenres,
     getBookFeed,
     getTMDBRecommendations,
     getWatchProviderCatalog,

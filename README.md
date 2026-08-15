@@ -60,3 +60,15 @@ After any episode/season of a TV show has been marked watched from Discover, tha
 Watched episode/video/history records are now cached in IndexedDB instead of localStorage. This avoids browser `QuotaExceededError` once the tracker contains hundreds or thousands of history records.
 
 On first load, any legacy `zoharTracker.history.v1` localStorage data is automatically migrated to IndexedDB and the old localStorage copy is removed. Signed-in profiles continue syncing the full history through the existing Supabase `user_state` profile.
+
+## Discover search and genre filters
+
+Discover now includes:
+
+- A direct search across TV, movies, and books.
+- Type filtering for Everything / TV / Movies / Books.
+- Genre filtering across New, Popular, For You, and Discover.
+- Search respects the active Type, Genre, and English-TV preferences.
+- Clear Search returns to the selected endless Discover feed.
+
+TMDB catalogue requests use genre IDs when available; Google Books feed requests use subject queries for the selected genre.

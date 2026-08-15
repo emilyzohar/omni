@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=shelves-1" />
+  <link rel="stylesheet" href="style.css?v=upnext-refined-1" />
 </head>
 <body class="discover-page auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -77,6 +77,15 @@
           </div>
         </div>
 
+        <form id="discoverSearchForm" class="discover-search-form" role="search">
+          <label class="discover-search-field">
+            <span class="sr-only">Search Discover</span>
+            <input id="discoverSearchInput" type="search" autocomplete="off" placeholder="Search TV, movies, or books…" />
+          </label>
+          <button class="primary-button discover-search-button" type="submit">Search</button>
+          <button id="clearDiscoverSearch" class="quiet-button discover-search-clear" type="button" hidden>Clear</button>
+        </form>
+
         <div class="discover-toolbar">
           <div class="discover-mode-tabs" role="tablist" aria-label="Discover view">
             <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="new" aria-selected="false">New</button>
@@ -84,15 +93,23 @@
             <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="for-you" aria-selected="false">For You</button>
             <button class="discover-mode-tab is-active" type="button" role="tab" data-discover-mode="discover" aria-selected="true">Discover</button>
           </div>
-          <label class="discover-type-filter">
-            <span>Type</span>
-            <select id="discoverTypeFilter">
-              <option value="all">Everything</option>
-              <option value="tv">TV</option>
-              <option value="movie">Movies</option>
-              <option value="book">Books</option>
-            </select>
-          </label>
+          <div class="discover-filter-group">
+            <label class="discover-type-filter">
+              <span>Type</span>
+              <select id="discoverTypeFilter">
+                <option value="all">Everything</option>
+                <option value="tv">TV</option>
+                <option value="movie">Movies</option>
+                <option value="book">Books</option>
+              </select>
+            </label>
+            <label class="discover-type-filter">
+              <span>Genre</span>
+              <select id="discoverGenreFilter">
+                <option value="all">All genres</option>
+              </select>
+            </label>
+          </div>
         </div>
 
         <div id="discoverStatus" class="discover-status">Building a fresh mix for you…</div>
