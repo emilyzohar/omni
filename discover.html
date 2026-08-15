@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=calendar-category-name-1" />
+  <link rel="stylesheet" href="style.css?v=reminders-discover-mobile-1" />
 </head>
 <body class="discover-page auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -51,8 +51,10 @@
 
   <header class="site-header">
     <nav class="nav shell" aria-label="Primary">
-      <a href="index.html#upnext">Home</a>
+      <a href="index.html#upnext">Up Next</a>
+      <a href="index.html#track">Track</a>
       <a class="active" href="discover.html" aria-current="page">Discover</a>
+      <a href="index.html#library">Library</a>
       <span class="nav-spacer"></span>
       <span id="syncStatus" class="sync-status" aria-live="polite"></span>
       <span id="userEmail" class="user-email"></span>
@@ -310,14 +312,6 @@
         </label>
       </div>
 
-      <div class="item-calendar-meta-fields">
-        <label class="field compact-field">
-          <span>Subcategory <em>optional</em></span>
-          <input id="itemSubcategory" type="text" autocomplete="off" placeholder="e.g. Documentary, Lecture, Gym" />
-          <small class="field-hint">Stays inside the main type, but can use its own calendar sticker.</small>
-        </label>
-      </div>
-
       <div id="tvProgressFields" class="progress-fields tv-watch-history-setup" hidden>
         <input id="nextSeason" type="hidden" value="1" />
         <input id="nextEpisode" type="hidden" value="1" />
@@ -431,6 +425,26 @@
     </div>
   </dialog>
 
+  <!-- QUICK MOVIE RATING -->
+  <dialog id="discoverRatingModal" class="modal small-modal discover-rating-modal">
+    <button class="modal-x" type="button" data-close="discoverRatingModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">WATCHED</p>
+      <h2 id="discoverRatingTitle">Rate this movie</h2>
+    </div>
+    <p class="discover-rating-note">Add a rating now, or skip and rate it later from your Library.</p>
+    <div id="discoverRatingPicker" class="star-picker discover-rating-picker" aria-label="Movie rating out of five stars">
+      <button type="button" data-discover-rating-choice="1" aria-label="1 star">★</button>
+      <button type="button" data-discover-rating-choice="2" aria-label="2 stars">★</button>
+      <button type="button" data-discover-rating-choice="3" aria-label="3 stars">★</button>
+      <button type="button" data-discover-rating-choice="4" aria-label="4 stars">★</button>
+      <button type="button" data-discover-rating-choice="5" aria-label="5 stars">★</button>
+    </div>
+    <div class="modal-actions end-only">
+      <button class="quiet-button" type="button" data-discover-rating-skip>Not now</button>
+    </div>
+  </dialog>
+
   <!-- EDIT PAST TRACKED ENTRY -->
   <dialog id="historyEditModal" class="modal history-edit-modal">
     <button class="modal-x" type="button" data-close="historyEditModal" aria-label="Close">×</button>
@@ -455,10 +469,6 @@
           <input id="historyEditDate" type="date" />
         </label>
       </div>
-      <label class="field">
-        <span>Subcategory <em>optional</em></span>
-        <input id="historyEditSubcategory" type="text" autocomplete="off" />
-      </label>
       <label class="field">
         <span>Episode / subtitle <em>optional</em></span>
         <input id="historyEditSubtitle" type="text" />
@@ -535,6 +545,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=calendar-category-name-1"></script>
+  <script type="module" src="app.js?v=reminders-discover-mobile-1"></script>
 </body>
 </html>

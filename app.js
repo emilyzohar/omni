@@ -110,6 +110,7 @@ const state = {
   pendingDiscoverKey: null,
   openDiscoverKey: null,
   openDiscoverEpisode: null,
+  pendingDiscoverRatingKey: null,
   tvDraftProviderId: '',
   tvDraftWatched: new Set(),
   tvDraftInitialWatched: new Set(),
@@ -217,6 +218,9 @@ const els = {
   discoverRecommendations: $('#discoverRecommendations'),
   discoverQueueModal: $('#discoverQueueModal'),
   discoverQueueTitle: $('#discoverQueueTitle'),
+  discoverRatingModal: $('#discoverRatingModal'),
+  discoverRatingTitle: $('#discoverRatingTitle'),
+  discoverRatingPicker: $('#discoverRatingPicker'),
   openDiscoverSettings: $('#openDiscoverSettings'),
   discoverSettingsModal: $('#discoverSettingsModal'),
   discoverSettingsForm: $('#discoverSettingsForm'),
@@ -240,7 +244,6 @@ const els = {
   historyEditId: $('#historyEditId'),
   historyEditTitle: $('#historyEditTitle'),
   historyEditType: $('#historyEditType'),
-  historyEditSubcategory: $('#historyEditSubcategory'),
   historyEditSubtitle: $('#historyEditSubtitle'),
   historyEditDate: $('#historyEditDate'),
   historyEditRating: $('#historyEditRating'),
@@ -254,7 +257,6 @@ const els = {
   itemSourceType: $('#itemSourceType'),
   displayTypeBlock: $('#displayTypeBlock'),
   itemDisplayType: $('#itemDisplayType'),
-  itemSubcategory: $('#itemSubcategory'),
   displayTypeLabel: $('#displayTypeLabel'),
   displayTypeHint: $('#displayTypeHint'),
   catalogueSearchBlock: $('#catalogueSearchBlock'),
@@ -266,7 +268,11 @@ const els = {
   reminderBlock: $('#reminderBlock'),
   reminderFrequency: $('#reminderFrequency'),
   reminderDateField: $('#reminderDateField'),
+  reminderDateLabel: $('#reminderDateLabel'),
   reminderDueDate: $('#reminderDueDate'),
+  reminderCustomFields: $('#reminderCustomFields'),
+  reminderInterval: $('#reminderInterval'),
+  reminderIntervalUnit: $('#reminderIntervalUnit'),
   reminderWeekdayField: $('#reminderWeekdayField'),
   reminderWeekday: $('#reminderWeekday'),
   playlistInput: $('#playlistInput'),
@@ -535,6 +541,69 @@ function init() {
   renderAll();
 }
 
+function enableMobileDialogSwipeToClose() {
+  const dialogs = [...document.querySelectorAll('dialog.modal')];
+  for (const dialog of dialogs) {
+    if (dialog.dataset.swipeCloseBound === 'true') continue;
+    dialog.dataset.swipeCloseBound = 'true';
+
+    let startY = 0;
+    let lastY = 0;
+    let startTime = 0;
+    let dragging = false;
+
+    dialog.addEventListener('touchstart', event => {
+      if (!window.matchMedia('(max-width: 760px)').matches || !dialog.open || dialog.scrollTop > 0) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      const rect = dialog.getBoundingClientRect();
+      if (touch.clientY > rect.top + 76) return;
+      if (event.target.closest('button, input, select, textarea, a, label')) return;
+      startY = lastY = touch.clientY;
+      startTime = performance.now();
+      dragging = true;
+      dialog.classList.add('is-swipe-dragging');
+    }, { passive: true });
+
+    dialog.addEventListener('touchmove', event => {
+      if (!dragging) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      const delta = Math.max(0, touch.clientY - startY);
+      lastY = touch.clientY;
+      if (delta < 4) return;
+      event.preventDefault();
+      dialog.style.transform = `translateY(${delta}px)`;
+    }, { passive: false });
+
+    const finishSwipe = () => {
+      if (!dragging) return;
+      const delta = Math.max(0, lastY - startY);
+      const elapsed = Math.max(1, performance.now() - startTime);
+      const velocity = delta / elapsed;
+      dragging = false;
+      dialog.classList.remove('is-swipe-dragging');
+      if (delta > 115 || (delta > 55 && velocity > 0.65)) {
+        dialog.style.transform = 'translateY(105%)';
+        setTimeout(() => {
+          dialog.style.transform = '';
+          if (dialog.open) dialog.close();
+        }, 150);
+      } else {
+        dialog.style.transform = '';
+      }
+    };
+
+    dialog.addEventListener('touchend', finishSwipe, { passive: true });
+    dialog.addEventListener('touchcancel', finishSwipe, { passive: true });
+    dialog.addEventListener('close', () => {
+      dragging = false;
+      dialog.classList.remove('is-swipe-dragging');
+      dialog.style.transform = '';
+    });
+  }
+}
+
 function bindEvents() {
   els.openAddModal?.addEventListener('click', () => openItemModal('', state.queueView === 'tbr' ? 'tbr' : 'upnext'));
   els.queueTabs?.forEach(tab => tab.addEventListener('click', () => setQueueView(tab.dataset.queueTab)));
@@ -565,6 +634,7 @@ function bindEvents() {
   });
   els.playlistLoadButton?.addEventListener('click', loadPlaylistPreview);
   els.reminderFrequency?.addEventListener('change', updateReminderFormFields);
+  els.reminderIntervalUnit?.addEventListener('change', updateReminderFormFields);
   els.tvWatchSetupList?.addEventListener('change', handleTVDraftEpisodeToggle);
   els.tvWatchSetupList?.addEventListener('click', handleTVDraftSeasonAction);
   els.tvMarkAllWatched?.addEventListener('click', () => setAllTVDraftEpisodes(true));
@@ -644,11 +714,14 @@ function bindEvents() {
   els.eventEverything?.addEventListener('change', syncTicketmasterPreferenceControls);
   document.querySelector('#discover')?.addEventListener('click', handleDiscoverClick);
   els.discoverQueueModal?.addEventListener('click', handleDiscoverQueueChoice);
+  els.discoverRatingModal?.addEventListener('click', handleDiscoverRatingChoice);
+  els.discoverRatingModal?.addEventListener('close', () => { state.pendingDiscoverRatingKey = null; });
   els.bookProgressForm?.addEventListener('submit', saveBookProgress);
   els.bookAddPeriod?.addEventListener('click', () => addBookPeriodEditorRow({ startDate: todayString(), endDate: '' }));
   els.bookPauseResume?.addEventListener('click', toggleBookPauseResume);
   els.bookPeriodsList?.addEventListener('click', handleBookPeriodEditorClick);
   els.bookPeriodsList?.addEventListener('input', updateBookPauseResumeButton);
+  enableMobileDialogSwipeToClose();
 
   document.addEventListener('click', async event => {
     const close = event.target.closest('[data-close]');
@@ -667,15 +740,21 @@ function bindEvents() {
       return;
     }
 
+    const discoverRecommend = event.target.closest('[data-discover-recommend]');
+    if (discoverRecommend) {
+      toggleDiscoverRecommended(discoverRecommend.dataset.discoverRecommend);
+      return;
+    }
+
     const libraryRating = event.target.closest('[data-library-rating]');
     if (libraryRating) {
-      saveLibraryRating(libraryRating.dataset.itemId, Number(libraryRating.dataset.libraryRating));
+      setLibraryPendingRating(libraryRating.dataset.itemId, Number(libraryRating.dataset.libraryRating));
       return;
     }
 
     const clearLibraryRating = event.target.closest('[data-clear-library-rating]');
     if (clearLibraryRating) {
-      saveLibraryRating(clearLibraryRating.dataset.itemId, 0);
+      setLibraryPendingRating(clearLibraryRating.dataset.itemId, 0);
       return;
     }
 
@@ -825,7 +904,7 @@ function bindEvents() {
 
     const discoverCompleteFromDetail = event.target.closest('[data-discover-detail-complete]');
     if (discoverCompleteFromDetail) {
-      await markDiscoverCompleted(discoverCompleteFromDetail.dataset.discoverDetailComplete);
+      await markDiscoverCompleted(discoverCompleteFromDetail.dataset.discoverDetailComplete, { promptForRating: true });
       return;
     }
 
@@ -928,8 +1007,8 @@ async function renderUpNext(options = {}) {
     tab.setAttribute('aria-selected', String(active));
   });
 
-  const thumbnailTBR = view === 'tbr';
-  els.upNextList.classList.toggle('tbr-thumbnail-grid', thumbnailTBR);
+  const mobileTBR = view === 'tbr' && mobileCalendarQuery.matches;
+  els.upNextList.classList.toggle('tbr-thumbnail-grid', mobileTBR);
   els.upNextList.innerHTML = '';
   els.upNextEmpty.hidden = items.length > 0;
   els.upNextEmpty.textContent = items.length === 0 && availableItems.length > 0
@@ -938,7 +1017,7 @@ async function renderUpNext(options = {}) {
       ? 'Save something for later from Discover or the + button.'
       : 'Add something to Up Next to start your queue.';
 
-  if (thumbnailTBR) {
+  if (mobileTBR) {
     for (const item of items) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -1109,12 +1188,12 @@ async function buildQueueCalendarEntries() {
       let due = getNextReminderDueDate(item);
       if (!due || due < today) continue;
       const frequency = reminderFrequency(item);
-      const maxOccurrences = frequency === 'none' ? 1 : 12;
+      const recurrence = reminderRecurrence(item);
+      const maxOccurrences = frequency === 'none' ? 1 : 130;
       for (let count = 0; count < maxOccurrences && due && due <= horizon; count += 1) {
         add(item, due, item.title, reminderScheduleLabel(item), item.image, 'reminder');
-        if (frequency === 'daily') due = addDaysToDateString(due, 1);
-        else if (frequency === 'weekly') due = addDaysToDateString(due, 7);
-        else break;
+        if (!recurrence) break;
+        due = advanceReminderDate(due, recurrence);
       }
       continue;
     }
@@ -1414,37 +1493,56 @@ function reminderCompletionRecord(item) {
 
 function reminderFrequency(item) {
   const value = item?.reminder?.frequency;
-  if (value === 'daily' || value === 'weekly' || value === 'none') return value;
+  if (['none', 'daily', 'weekly', 'biweekly', 'monthly', 'custom'].includes(value)) return value;
   return 'weekly';
+}
+
+function reminderRecurrence(item) {
+  const frequency = reminderFrequency(item);
+  if (frequency === 'none') return null;
+  if (frequency === 'daily') return { interval: 1, unit: 'days' };
+  if (frequency === 'weekly') return { interval: 1, unit: 'weeks' };
+  if (frequency === 'biweekly') return { interval: 2, unit: 'weeks' };
+  if (frequency === 'monthly') return { interval: 1, unit: 'months' };
+  const interval = Math.max(1, Math.min(365, Number(item?.reminder?.interval || 1)));
+  const unit = ['days', 'weeks', 'months'].includes(item?.reminder?.intervalUnit) ? item.reminder.intervalUnit : 'weeks';
+  return { interval, unit };
 }
 
 function isOneTimeReminder(item) {
   return getSourceType(item) === 'reminder' && reminderFrequency(item) === 'none';
 }
 
+function getReminderScheduleStart(item) {
+  return item?.reminder?.scheduleStart || item?.reminder?.dueDate || localDateString(new Date(item?.createdAt || Date.now()));
+}
+
 function getNextReminderDueDate(item) {
   if (getSourceType(item) !== 'reminder') return '';
   const frequency = reminderFrequency(item);
-  const scheduleStart = item.reminder?.scheduleStart || localDateString(new Date(item.createdAt || Date.now()));
+  const scheduleStart = getReminderScheduleStart(item);
 
   if (frequency === 'none') {
     return item.reminder?.dueDate || scheduleStart || todayString();
   }
 
-  const weekday = Math.max(0, Math.min(6, Number(item.reminder?.weekday ?? 6)));
   const completed = state.history
     .filter(entry => entry.sourceItemId === item.id && entry.kind === 'reminder-completed')
-    .sort((a,b) => String(a.date || '').localeCompare(String(b.date || '')));
+    .sort((a,b) => String(a.scheduledDate || a.date || '').localeCompare(String(b.scheduledDate || b.date || '')));
 
   if (!completed.length) {
-    if (frequency === 'daily') return scheduleStart;
-    return weekdayOnOrAfter(scheduleStart, weekday);
+    // Legacy weekly reminders stored a weekday separately. Preserve that first occurrence
+    // until the reminder is edited/saved into the newer date-anchored recurrence model.
+    if (frequency === 'weekly' && !item.reminder?.intervalUnit && Number.isInteger(Number(item.reminder?.weekday))) {
+      return weekdayOnOrAfter(scheduleStart, Math.max(0, Math.min(6, Number(item.reminder.weekday))));
+    }
+    return scheduleStart;
   }
 
   const latest = completed.at(-1);
-  const anchor = latest.date && latest.date > (latest.scheduledDate || '') ? latest.date : (latest.scheduledDate || latest.date || todayString());
-  if (frequency === 'daily') return addDaysToDateString(anchor, 1);
-  return weekdayStrictlyAfter(anchor, weekday);
+  const scheduled = latest.scheduledDate || latest.date || scheduleStart;
+  const anchor = latest.date && latest.date > scheduled ? latest.date : scheduled;
+  return advanceReminderDate(anchor, reminderRecurrence(item));
 }
 
 function weekdayOnOrAfter(dateString, weekday) {
@@ -1464,6 +1562,23 @@ function addDaysToDateString(dateString, days) {
   return localDateString(addDays(parseLocalDateString(dateString), days));
 }
 
+function addMonthsToDateString(dateString, months) {
+  const source = parseLocalDateString(dateString);
+  const wantedDay = source.getDate();
+  const target = new Date(source.getFullYear(), source.getMonth() + Number(months || 0), 1, 12);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0, 12).getDate();
+  target.setDate(Math.min(wantedDay, lastDay));
+  return localDateString(target);
+}
+
+function advanceReminderDate(dateString, recurrence) {
+  if (!recurrence) return '';
+  const interval = Math.max(1, Number(recurrence.interval || 1));
+  if (recurrence.unit === 'months') return addMonthsToDateString(dateString, interval);
+  if (recurrence.unit === 'weeks') return addDaysToDateString(dateString, interval * 7);
+  return addDaysToDateString(dateString, interval);
+}
+
 function parseLocalDateString(value) {
   const [year, month, day] = String(value || todayString()).split('-').map(Number);
   return new Date(year, Math.max(0, month - 1), Math.max(1, day), 12);
@@ -1476,8 +1591,18 @@ function reminderScheduleLabel(item) {
     return dueDate ? `Once · ${formatLongDate(dueDate)}` : 'One-time';
   }
   if (frequency === 'daily') return 'Every day';
-  const weekday = Math.max(0, Math.min(6, Number(item.reminder?.weekday ?? 6)));
-  return `Every ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][weekday]}`;
+  if (frequency === 'weekly') {
+    if (!item.reminder?.intervalUnit && Number.isInteger(Number(item.reminder?.weekday))) {
+      const weekday = Math.max(0, Math.min(6, Number(item.reminder.weekday)));
+      return `Every ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][weekday]}`;
+    }
+    return 'Every week';
+  }
+  if (frequency === 'biweekly') return 'Every 2 weeks';
+  if (frequency === 'monthly') return 'Every month';
+  const recurrence = reminderRecurrence(item);
+  const unit = recurrence.unit === 'days' ? 'day' : recurrence.unit === 'weeks' ? 'week' : 'month';
+  return `Every ${recurrence.interval} ${unit}${recurrence.interval === 1 ? '' : 's'}`;
 }
 
 function reminderDueLabel(dateString) {
@@ -1987,7 +2112,6 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     els.providerImage.value = item.image || '';
     els.providerSubtitle.value = item.subtitle || '';
     els.manualTitle.value = item.title || '';
-    if (els.itemSubcategory) els.itemSubcategory.value = item.subcategory || '';
     els.itemNote.value = item.notes || '';
     els.itemDate.value = item.date || '';
     if (els.itemRecommended) els.itemRecommended.checked = Boolean(item.recommended);
@@ -2012,7 +2136,9 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
       showSelectedSource({ title: item.title, subtitle: item.subtitle, image: item.image }, true);
     } else if (sourceType === 'reminder') {
       if (els.reminderFrequency) els.reminderFrequency.value = reminderFrequency(item);
-      if (els.reminderDueDate) els.reminderDueDate.value = item.reminder?.dueDate || item.reminder?.scheduleStart || todayString();
+      if (els.reminderDueDate) els.reminderDueDate.value = (reminderFrequency(item) === 'weekly' && !item.reminder?.intervalUnit && Number.isInteger(Number(item.reminder?.weekday))) ? (getNextReminderDueDate(item) || todayString()) : (item.reminder?.dueDate || item.reminder?.scheduleStart || getNextReminderDueDate(item) || todayString());
+      if (els.reminderInterval) els.reminderInterval.value = String(Math.max(1, Number(item.reminder?.interval || 2)));
+      if (els.reminderIntervalUnit) els.reminderIntervalUnit.value = ['days','weeks','months'].includes(item.reminder?.intervalUnit) ? item.reminder.intervalUnit : 'weeks';
       if (els.reminderWeekday) els.reminderWeekday.value = String(Number.isInteger(Number(item.reminder?.weekday)) ? Number(item.reminder.weekday) : 6);
     } else if (item.provider && item.provider !== 'manual' && item.provider !== 'reminder') {
       state.selectedSource = { provider: item.provider, providerId: item.providerId, title: item.title, subtitle: item.subtitle, image: item.image };
@@ -2042,7 +2168,6 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.editingId.value = '';
   els.itemSourceType.value = 'tv';
   els.itemDisplayType.value = 'Workout';
-  if (els.itemSubcategory) els.itemSubcategory.value = '';
   els.itemQueueStatus.value = ['upnext','tbr','library'].includes(defaultQueueStatus) ? defaultQueueStatus : 'library';
   els.nextSeason.value = 1;
   els.nextEpisode.value = 1;
@@ -2052,6 +2177,8 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.bookEndDate) els.bookEndDate.value = '';
   if (els.reminderFrequency) els.reminderFrequency.value = 'none';
   if (els.reminderDueDate) els.reminderDueDate.value = todayString();
+  if (els.reminderInterval) els.reminderInterval.value = '2';
+  if (els.reminderIntervalUnit) els.reminderIntervalUnit.value = 'weeks';
   if (els.reminderWeekday) els.reminderWeekday.value = '6';
   els.provider.value = '';
   els.providerId.value = '';
@@ -2156,11 +2283,13 @@ function updateItemFormForType() {
 function updateReminderFormFields() {
   if (!els.reminderFrequency) return;
   const frequency = els.reminderFrequency.value;
-  if (els.reminderWeekdayField) els.reminderWeekdayField.hidden = frequency !== 'weekly';
-  if (els.reminderDateField) els.reminderDateField.hidden = frequency !== 'none';
-  if (frequency === 'none' && els.reminderDueDate && !els.reminderDueDate.value) {
-    els.reminderDueDate.value = todayString();
-  }
+  const custom = frequency === 'custom';
+  if (els.reminderWeekdayField) els.reminderWeekdayField.hidden = true;
+  if (els.reminderDateField) els.reminderDateField.hidden = false;
+  if (els.reminderDateLabel) els.reminderDateLabel.textContent = frequency === 'none' ? 'Date' : 'Starts';
+  if (els.reminderCustomFields) els.reminderCustomFields.hidden = !custom;
+  if (els.reminderDueDate && !els.reminderDueDate.value) els.reminderDueDate.value = todayString();
+  if (custom && els.reminderInterval && Number(els.reminderInterval.value || 0) < 1) els.reminderInterval.value = '1';
 }
 
 async function searchCatalogue() {
@@ -2537,8 +2666,12 @@ async function saveItemFromForm(event) {
     showFormMessage('Choose a search result first.', true);
     return;
   }
-  if (sourceType === 'reminder' && els.reminderFrequency?.value === 'none' && !els.reminderDueDate?.value) {
-    showFormMessage('Choose a date for the one-time reminder.', true);
+  if (sourceType === 'reminder' && !els.reminderDueDate?.value) {
+    showFormMessage(els.reminderFrequency?.value === 'none' ? 'Choose a date for the reminder.' : 'Choose a start date for the repeating reminder.', true);
+    return;
+  }
+  if (sourceType === 'reminder' && els.reminderFrequency?.value === 'custom' && Number(els.reminderInterval?.value || 0) < 1) {
+    showFormMessage('Custom repeats must be at least every 1 day, week, or month.', true);
     return;
   }
 
@@ -2555,7 +2688,6 @@ async function saveItemFromForm(event) {
     sourceType,
     type,
     typeLabel,
-    subcategory: cleanTypeLabel(els.itemSubcategory?.value || ''),
     title,
     provider,
     providerId,
@@ -2598,17 +2730,19 @@ async function saveItemFromForm(event) {
   };
 
   if (sourceType === 'reminder') {
-    const frequency = ['none','daily','weekly'].includes(els.reminderFrequency?.value)
+    const frequency = ['none','daily','weekly','biweekly','monthly','custom'].includes(els.reminderFrequency?.value)
       ? els.reminderFrequency.value
       : 'none';
-    const dueDate = frequency === 'none' ? (els.reminderDueDate?.value || todayString()) : '';
+    const scheduleStart = els.reminderDueDate?.value || todayString();
+    const dueDate = frequency === 'none' ? scheduleStart : '';
     item.reminder = {
       frequency,
       dueDate,
-      weekday: Math.max(0, Math.min(6, Number(els.reminderWeekday?.value ?? 6))),
-      scheduleStart: frequency === 'none'
-        ? dueDate
-        : (editing?.reminder?.scheduleStart || todayString())
+      scheduleStart,
+      interval: frequency === 'custom' ? Math.max(1, Math.min(365, Number(els.reminderInterval?.value || 1))) : undefined,
+      intervalUnit: frequency === 'custom' && ['days','weeks','months'].includes(els.reminderIntervalUnit?.value)
+        ? els.reminderIntervalUnit.value
+        : undefined
     };
   }
   if (sourceType === 'tv') {
@@ -3084,7 +3218,7 @@ function libraryPersonalMetadataMarkup(item) {
       <textarea class="library-personal-notes" rows="3" placeholder="Anything you want to remember">${escapeHtml(item.notes || '')}</textarea>
     </label>
     <div class="detail-actions compact-actions">
-      <button class="primary-button" type="button" data-save-library-meta="${escapeAttr(item.id)}">Save notes</button>
+      <button class="primary-button" type="button" data-save-library-meta="${escapeAttr(item.id)}">Save rating & notes</button>
       <span class="library-meta-status" aria-live="polite"></span>
     </div>
   </section>`;
@@ -3106,34 +3240,6 @@ function setLibraryPendingRating(itemId, value) {
   section.querySelectorAll('[data-library-rating]').forEach(button => {
     button.classList.toggle('filled', Number(button.dataset.libraryRating) <= rating);
   });
-}
-
-function saveLibraryRating(itemId, value) {
-  const item = findItem(itemId);
-  const section = els.detailBody?.querySelector(`[data-library-personal-meta="${CSS.escape(itemId)}"]`);
-  if (!item || !section) return;
-
-  const rating = Math.max(0, Math.min(5, Number(value || 0)));
-  setLibraryPendingRating(itemId, rating);
-  item.rating = rating;
-  item.updatedAt = new Date().toISOString();
-
-  for (const entry of state.history) {
-    if (entry.sourceItemId !== item.id) continue;
-    if (['series-watched', 'movie-watched', 'book-finished', 'item-completed'].includes(entry.kind)) {
-      entry.rating = item.rating;
-    }
-  }
-
-  saveItems();
-  saveHistory();
-  renderLibrary();
-
-  const status = section.querySelector('.library-meta-status');
-  if (status) {
-    status.textContent = rating ? 'Rating saved' : 'Rating cleared';
-    setTimeout(() => { if (status.isConnected) status.textContent = ''; }, 1200);
-  }
 }
 
 function saveLibraryPersonalMetadata(itemId) {
@@ -3629,7 +3735,6 @@ function getCalendarEntries() {
       sourceItemId: item.id,
       type: item.type,
       typeLabel: getItemTypeLabel(item),
-      subcategory: item.subcategory || '',
       date: item.date,
       kind: 'dated-item',
       title: item.title,
@@ -3652,12 +3757,6 @@ function getCalendarEntries() {
       if (source && getBookReadingPeriods(source).length) return false;
     }
     return true;
-  }).map(entry => {
-    const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
-    return {
-      ...entry,
-      subcategory: entry.subcategory || source?.subcategory || ''
-    };
   });
 
   return [...savedItems, ...historyEntries, ...bookRanges];
@@ -3688,7 +3787,6 @@ function bookReadingCalendarEntries(item) {
         sourceItemId: item.id,
         type: item.type,
         typeLabel: getItemTypeLabel(item),
-        subcategory: item.subcategory || '',
         date,
         kind: 'book-reading-day',
         title: item.title,
@@ -3772,7 +3870,7 @@ function renderMonthTracker() {
     ? [...groupsByKey.values()]
     : ['workout', 'tv', 'book', 'movie'].map(type => ({
         key: slugifyType(getTypeLabel(type)),
-        label: getCalendarCategoryLabel(type, getTypeLabel(type)),
+        label: getTypeLabel(type),
         representativeType: type,
         representativeEntry: { type, typeLabel: getTypeLabel(type) }
       }));
@@ -3852,10 +3950,7 @@ function renderWeekTracker() {
     if (!groups.size) {
       body.innerHTML = '<span class="week-empty">Nothing tracked</span>';
     } else {
-      const groupedEntries = [...groups.entries()];
-      const stickerHeight = weekStickerCollectionHeight(groupedEntries.length);
-      if (stickerHeight > 0) body.style.minHeight = `${stickerHeight}px`;
-      for (const [index, [groupKey, typeEntries]] of groupedEntries.entries()) {
+      for (const [groupKey, typeEntries] of groups) {
         const first = typeEntries[0];
         const label = getCalendarTypeGroupLabel(first);
         const button = document.createElement('button');
@@ -3866,12 +3961,12 @@ function renderWeekTracker() {
         button.setAttribute('aria-label', `${typeEntries.length} ${label} ${typeEntries.length === 1 ? 'entry' : 'entries'} on ${date}`);
         button.title = `${label} · tap for details`;
 
-        const clusterPosition = weekStickerClusterPosition(date, groupKey, index, groupedEntries.length);
-        button.style.setProperty('--cluster-left', `${clusterPosition.left}%`);
-        button.style.setProperty('--cluster-top', `${clusterPosition.top}px`);
-        button.style.setProperty('--cluster-rotate', `${clusterPosition.rotate}deg`);
-
-        button.innerHTML = weekStickerPileMarkup(typeEntries, date, groupKey);
+        const visibleEntries = typeEntries.slice(0, 6);
+        button.innerHTML = `
+          <span class="week-sticker-cluster-icons">
+            ${visibleEntries.map(entry => calendarStickerMarkup(entry.type, entry)).join('')}
+          </span>
+          ${typeEntries.length > visibleEntries.length ? `<span class="week-entry-count">+${typeEntries.length - visibleEntries.length}</span>` : ''}`;
         body.appendChild(button);
       }
     }
@@ -3900,66 +3995,6 @@ function addDays(date, days) {
   return value;
 }
 
-
-function weekStickerPileMarkup(entries = [], date = '', groupKey = '') {
-  const visibleEntries = (entries || []).slice(0, 6);
-  const stickers = visibleEntries.map((entry, index) => {
-    const position = weekStickerPilePosition(entry, index, date, groupKey);
-    return `<span class="week-sticker-pile-item" style="--pile-left:${position.left}px; --pile-top:${position.top}px; --pile-rotate:${position.rotate}deg; --pile-z:${position.z};">${calendarStickerMarkup(entry.type, entry)}</span>`;
-  }).join('');
-  const extra = entries.length > visibleEntries.length
-    ? `<span class="week-entry-count">+${entries.length - visibleEntries.length}</span>`
-    : '';
-  return `
-    <span class="week-sticker-cluster-icons week-sticker-pile" aria-hidden="true">${stickers}</span>
-    ${extra}`;
-}
-
-function weekStickerPilePosition(entry, index, date, groupKey) {
-  const seed = stableCalendarHash(`${date}:${groupKey}:${entry?.id || entry?.sourceItemId || entry?.title || entry?.type || 'entry'}:${index}`);
-  const leftBase = [2, 17, 33, 8, 24, 40][index] ?? (index * 10);
-  const topBase = [11, 2, 13, 26, 18, 29][index] ?? (8 + index * 3);
-  const left = leftBase + ((seed % 7) - 3);
-  const top = topBase + ((Math.floor(seed / 7) % 7) - 3);
-  const rotate = ((Math.floor(seed / 49) % 13) - 6) + (index % 2 === 0 ? -1 : 1);
-  return { left, top, rotate, z: 10 + index };
-}
-
-function weekStickerClusterPosition(date, groupKey, index, total) {
-  // Keep up to four piles inside the calendar row's natural header height.
-  // Only create another vertical band when there are too many piles to fit.
-  const pilesPerBand = 4;
-  const row = Math.floor(index / pilesPerBand);
-  const column = index % pilesPerBand;
-  const seed = stableCalendarHash(`${date}:${groupKey}:cluster:${index}:${total}`);
-  const baseLeftByColumn = [2, 25, 49, 71];
-  const rowShift = row % 2 === 0 ? 0 : 4;
-  const leftJitter = ((seed % 9) - 4) * 0.75;
-  const left = Math.max(1, Math.min(78, baseLeftByColumn[column] + rowShift + leftJitter));
-
-  const baseTop = row * 49 + [2, 8, 0, 6][column];
-  const topJitter = (Math.floor(seed / 17) % 7) - 3;
-  const top = Math.max(0, baseTop + topJitter);
-  const rotate = ((Math.floor(seed / 71) % 17) - 8) * 0.9;
-  return { left, top, rotate };
-}
-
-function weekStickerCollectionHeight(total) {
-  // Absolute-positioned stickers do not contribute to row height. For one band,
-  // return 0 so the weekday/date header alone determines the row's minimum height.
-  // Extra bands explicitly grow only that day's row.
-  const rows = Math.ceil(Math.max(0, total) / 4);
-  if (rows <= 1) return 0;
-  return 60 + (rows - 1) * 49;
-}
-
-function stableCalendarHash(value) {
-  let hash = 0;
-  const text = String(value || '');
-  for (let i = 0; i < text.length; i += 1) hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
-  return Math.abs(hash);
-}
-
 function formatWeekRange(start, end) {
   const startMonth = new Intl.DateTimeFormat('en-CA', { month: 'short' }).format(start);
   const endMonth = new Intl.DateTimeFormat('en-CA', { month: 'short' }).format(end);
@@ -3981,21 +4016,13 @@ function calendarStickerMarkup(type, entry = {}) {
   const paletteClass = `sticker-palette-${config.color}`;
   const tiltClass = `sticker-tilt-${config.tilt}`;
   const text = config.shape === 'star' ? '★' : config.shape === 'heart' ? '♥' : escapeHtml(config.label || '');
-  const ariaLabel = [getTypeLabel(type), cleanTypeLabel(entry?.subcategory || '')].filter(Boolean).join(' · ');
-  const aria = escapeAttr(`${ariaLabel} sticker`);
+  const aria = escapeAttr(`${getTypeLabel(type)} sticker`);
   return `<span class="sticker ${shapeClass} ${paletteClass} ${tiltClass}" aria-label="${aria}">${text}</span>`;
-}
-
-function stickerPreferenceKey(type, entry = {}) {
-  const subcategory = cleanTypeLabel(entry?.subcategory || '');
-  return subcategory ? `${type}::subcategory::${slugifyType(subcategory)}` : type;
 }
 
 function getStickerConfig(type, entry = {}) {
   const defaults = getDefaultStickerConfig(type, entry);
-  const key = stickerPreferenceKey(type, entry);
-  const parentSaved = state.stickerPrefs?.[type] || {};
-  const saved = key !== type ? (state.stickerPrefs?.[key] || parentSaved) : parentSaved;
+  const saved = state.stickerPrefs?.[type] || {};
   const shape = ['square', 'circle', 'star', 'heart'].includes(saved.shape) ? saved.shape : defaults.shape;
   const color = STICKER_COLORS.includes(saved.color) ? saved.color : defaults.color;
   const label = cleanStickerLabel(saved.label !== undefined ? saved.label : defaults.label);
@@ -4032,22 +4059,12 @@ function cleanStickerLabel(value) {
   return String(value ?? '').replace(/\s+/g, '').slice(0, 3).toUpperCase();
 }
 
-function getCalendarCategoryLabel(type, fallbackLabel = '') {
-  const saved = state.stickerPrefs?.[type] || {};
-  const custom = cleanTypeLabel(saved.calendarLabel || '');
-  return custom || cleanTypeLabel(fallbackLabel || getTypeLabel(type)) || 'Other';
-}
-
 function getCalendarTypeGroupLabel(entry) {
-  return getCalendarCategoryLabel(entry?.type, entry?.typeLabel || getTypeLabel(entry?.type));
+  return cleanTypeLabel(entry?.typeLabel || getTypeLabel(entry?.type)) || 'Other';
 }
 
 function getCalendarTypeGroupKey(entry) {
-  // Keep the category's internal identity stable when its Calendar display name changes.
-  // This prevents renaming "TV" to "Shows" from changing grouping behavior or merging it
-  // with a different type that happens to use the same display name.
-  const baseLabel = cleanTypeLabel(entry?.typeLabel || getTypeLabel(entry?.type)) || String(entry?.type || 'other');
-  return slugifyType(baseLabel);
+  return slugifyType(getCalendarTypeGroupLabel(entry));
 }
 
 function handleTrackerClick(event) {
@@ -4127,7 +4144,6 @@ function openHistoryEdit(id) {
   els.historyEditId.value = entry.id;
   els.historyEditTitle.value = entry.title || '';
   els.historyEditType.value = entry.typeLabel || getTypeLabel(entry.type) || '';
-  if (els.historyEditSubcategory) els.historyEditSubcategory.value = entry.subcategory || source?.subcategory || '';
   els.historyEditSubtitle.value = entry.subtitle || '';
   els.historyEditDate.value = entry.date || '';
   els.historyEditNote.value = entry.notes || '';
@@ -4165,7 +4181,6 @@ function saveHistoryEdit(event) {
   entry.title = els.historyEditTitle.value.trim() || entry.title;
   entry.type = type;
   entry.typeLabel = typeLabel;
-  entry.subcategory = cleanTypeLabel(els.historyEditSubcategory?.value || '');
   entry.subtitle = els.historyEditSubtitle.value.trim();
   entry.date = els.historyEditDate.value || '';
   entry.rating = Number(els.historyEditRating.value || 0);
@@ -5160,8 +5175,8 @@ async function collectForYouDiscoverCandidates(batchNumber) {
   for (const sourceType of ['tv', 'movie']) {
     const used = new Set();
     for (let i = 0; i < 3; i++) {
-      const seed = pickDiscoverSeed(sourceType, used);
-      if (!seed?.providerId) continue;
+      const seed = pickDiscoverSeed(sourceType);
+      if (!seed?.providerId || used.has(String(seed.providerId))) continue;
       used.add(String(seed.providerId));
       try {
         const recs = await getCached(
@@ -5261,17 +5276,9 @@ function chooseDiscoverBookPlan(readAuthors, batchNumber) {
   return { query: topics[index], orderBy: Math.random() < 0.28 ? 'newest' : 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE, personalized: false };
 }
 
-function discoverSeedWeight(item) {
-  const rating = Number(item.rating || 0);
-  let weight = rating >= 5 ? 20 : rating >= 4 ? 11 : rating >= 3 ? 4 : rating === 2 ? .45 : rating === 1 ? .12 : 3;
-  if (item.recommended) weight += 9;
-  if (getSourceType(item) === 'tv' && getTVWatchDisposition(item) === 'stopped') weight *= .12;
-  return Math.max(.05, weight);
-}
-
-function pickDiscoverSeed(type, excludedIds = new Set()) {
+function pickDiscoverSeed(type) {
   const pool = state.items
-    .filter(item => getSourceType(item) === type && item.providerId && !excludedIds.has(String(item.providerId)))
+    .filter(item => getSourceType(item) === type && item.providerId)
     .filter(item => {
       if (type === 'tv') return item.completedAt || Number(item.progress?.nextSeason || 1) > 1 || Number(item.progress?.nextEpisode || 1) > 1 || state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched');
       if (type === 'book') return item.completedAt || Number(item.progress?.currentPage || 0) > 0;
@@ -5279,14 +5286,17 @@ function pickDiscoverSeed(type, excludedIds = new Set()) {
       return false;
     });
   if (!pool.length) return null;
-
-  // Keep recommendations responsive to recent activity without letting one recent
-  // low-rated item dominate. Ratings, explicit recommendations, and stopped-TV
-  // status determine the lottery weight.
   const recent = [...pool]
     .sort((a,b) => String(b.updatedAt || b.completedAt || '').localeCompare(String(a.updatedAt || a.completedAt || '')))
-    .slice(0, 24);
-  const weighted = recent.map(item => ({ item, weight: discoverSeedWeight(item) }));
+    .slice(0, 12);
+
+  // Higher-rated things are more likely to become recommendation seeds, but
+  // recency still matters because only the recent slice enters this lottery.
+  const weighted = recent.map(item => {
+    const rating = Number(item.rating || 0);
+    const weight = rating > 0 ? Math.max(.5, rating * rating) : 4;
+    return { item, weight };
+  });
   const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
   let roll = Math.random() * total;
   for (const entry of weighted) {
@@ -5296,69 +5306,10 @@ function pickDiscoverSeed(type, excludedIds = new Set()) {
   return weighted.at(-1)?.item || null;
 }
 
-function discoverTasteProfile(type) {
-  const profile = new Map();
-  for (const item of state.items) {
-    if (getSourceType(item) !== type || !item.genres?.length) continue;
-    const rating = Number(item.rating || 0);
-    const engaged = Boolean(item.completedAt) || item.recommended ||
-      (type === 'tv' && state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched')) ||
-      (type === 'book' && Number(item.progress?.currentPage || 0) > 0);
-    if (!engaged && !rating) continue;
-
-    let signal = 0;
-    if (rating >= 4) signal += (rating - 3) * 2.2;
-    else if (rating === 3) signal += .5;
-    else if (rating > 0) signal -= (3 - rating) * 2.4;
-    else if (engaged) signal += .7;
-    if (item.recommended) signal += 2.5;
-    if (type === 'tv' && getTVWatchDisposition(item) === 'stopped') signal -= 2.5;
-
-    for (const genre of item.genres) {
-      const key = String(genre || '').trim().toLowerCase();
-      if (!key) continue;
-      profile.set(key, (profile.get(key) || 0) + signal);
-    }
-  }
-  return profile;
-}
-
-function discoverCandidateGenreNames(result) {
-  if (result.sourceType === 'book') {
-    return [...new Set((result.categories || result.raw?.volumeInfo?.categories || []).map(value => String(value || '').trim()).filter(Boolean))];
-  }
-  if (result.sourceType === 'tv' || result.sourceType === 'movie') {
-    const direct = (result.genres || []).map(genre => typeof genre === 'string' ? genre : genre?.name).filter(Boolean);
-    if (direct.length) return [...new Set(direct)];
-    const map = result.sourceType === 'tv' ? TMDB_TV_GENRES : TMDB_MOVIE_GENRES;
-    return [...new Set((result.raw?.genre_ids || []).map(id => map[Number(id)]).filter(Boolean))];
-  }
-  return [];
-}
-
-function discoverGenreAffinity(result, profiles) {
-  const profile = profiles[result.sourceType];
-  if (!profile?.size) return 0;
-  const values = discoverCandidateGenreNames(result)
-    .map(genre => profile.get(String(genre).toLowerCase()) || 0)
-    .filter(value => value !== 0)
-    .sort((a,b) => Math.abs(b) - Math.abs(a));
-  if (!values.length) return 0;
-  // Two strongest genre signals are enough; cap them so genre history guides
-  // ranking without overwhelming seed-based recommendations.
-  const affinity = values.slice(0, 2).reduce((sum, value) => sum + value, 0);
-  return Math.max(-9, Math.min(12, affinity));
-}
-
 async function rankDiscoverFeedCandidates(results, batchSize) {
   const readAuthors = getReadAuthors();
   const authorSet = new Set(readAuthors.map(author => author.toLowerCase()));
   const mode = state.discoverMode || 'discover';
-  const tasteProfiles = mode === 'for-you' ? {
-    tv: discoverTasteProfile('tv'),
-    movie: discoverTasteProfile('movie'),
-    book: discoverTasteProfile('book')
-  } : {};
   const prelim = (results || []).map(result => {
     let score = Number(result._discoverBoost || 0);
     const rating = Number(result.rating || 0);
@@ -5370,10 +5321,6 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
         result = { ...result, authorMatch: true };
         score += mode === 'for-you' ? 10 : 4;
       }
-    }
-
-    if (mode === 'for-you') {
-      score += discoverGenreAffinity(result, tasteProfiles);
     }
 
     if (mode === 'popular') {
@@ -5410,13 +5357,6 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
   ]);
   const annotations = new Map([...tvAnnotated, ...movieAnnotated].map(result => [discoverResultIdentity(result), result]));
   selected = selected.map(result => annotations.get(discoverResultIdentity(result)) || result);
-
-  // Availability is resolved only for the cards in this batch to keep API work
-  // bounded, but it should still affect their order rather than being display-only.
-  if ((state.discoverPrefs.streamingProviderIds || []).length) {
-    selected.sort((a,b) => Number(b.preferredStreaming) - Number(a.preferredStreaming) || Number(b._discoverScore || 0) - Number(a._discoverScore || 0));
-    selected = diversifyDiscoverFeed(selected);
-  }
   return selected;
 }
 
@@ -5699,7 +5639,6 @@ function getReadAuthors() {
   const seen = new Set();
   const books = state.items
     .filter(item => getSourceType(item) === 'book' && (item.completedAt || completedBookIds.has(item.id)))
-    .filter(item => !Number(item.rating || 0) || Number(item.rating || 0) >= 3 || item.recommended)
     .sort((a,b) => String(b.completedAt || b.updatedAt || '').localeCompare(String(a.completedAt || a.updatedAt || '')));
 
   for (const book of books) {
@@ -6034,6 +5973,7 @@ function discoverCardMarkup(result, key, fallbackType) {
     ? [result.eventDate ? formatLongDate(result.eventDate) : '', formatEventClock(result.eventTime || ''), result.venueName || '', result.city || ''].filter(Boolean).join(' · ')
     : [year, rating, streaming].filter(Boolean).join(' · ');
   const queueStatus = item ? getQueueStatus(item) : '';
+  const recommended = Boolean(item?.recommended);
   const plusLabel = queueStatus === 'upnext' ? '+ Queue' : queueStatus === 'tbr' ? '+ TBR' : '+ Add';
 
   return `<article class="discover-card">
@@ -6047,8 +5987,9 @@ function discoverCardMarkup(result, key, fallbackType) {
       <button class="discover-title-button" type="button" data-discover-detail="${escapeAttr(key)}"><h3>${escapeHtml(result.title || 'Untitled')}</h3></button>
       ${meta ? `<p class="discover-card-meta">${escapeHtml(meta)}</p>` : ''}
       ${result.subtitle && type === 'book' ? `<p class="discover-card-subtitle">${escapeHtml(result.subtitle)}</p>` : ''}
-      <div class="discover-card-actions">
+      <div class="discover-card-actions${type === 'event' ? ' no-complete' : ''}">
         ${type === 'event' ? '' : `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" ${completed && type !== 'tv' ? 'disabled' : ''} aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Already completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Completed' : 'Mark watched / read'}">✓</button>`}
+        <button class="discover-recommend-button${recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}" aria-label="${recommended ? 'Remove from Recommended' : 'Add to Recommended'}" title="${recommended ? 'Recommended' : 'Add to Recommended'}">${recommended ? '★' : '☆'}</button>
         <button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>
       </div>
     </div>
@@ -6067,7 +6008,7 @@ async function handleDiscoverClick(event) {
         picker?.scrollIntoView({ block: 'start', behavior: 'smooth' });
       });
     } else {
-      await markDiscoverCompleted(key);
+      await markDiscoverCompleted(key, { promptForRating: true });
     }
     return;
   }
@@ -6082,6 +6023,30 @@ async function handleDiscoverClick(event) {
   if (detail) {
     await openDiscoverDetail(detail.dataset.discoverDetail);
   }
+}
+
+function toggleDiscoverRecommended(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const item = ensureDiscoverItem(result, 'library');
+  item.recommended = !item.recommended;
+  item.updatedAt = new Date().toISOString();
+  saveItems();
+  renderLibrary();
+  renderDiscoverCardInPlace(key);
+  if (els.detailModal?.open && state.openDiscoverKey === key) openDiscoverDetail(key);
+}
+
+function renderDiscoverCardInPlace(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const button = document.querySelector(`[data-discover-detail="${CSS.escape(key)}"]`);
+  const card = button?.closest('.discover-card');
+  if (!card) return;
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = discoverCardMarkup(result, key, result.sourceType).trim();
+  const replacement = wrapper.firstElementChild;
+  if (replacement) card.replaceWith(replacement);
 }
 
 function openDiscoverQueueChoice(key) {
@@ -6180,7 +6145,7 @@ function isDiscoverCompleted(result) {
   );
 }
 
-async function markDiscoverCompleted(key) {
+async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
   const result = state.discoverResults.get(key);
   if (!result || isDiscoverCompleted(result)) return;
   const item = ensureDiscoverItem(result, 'library');
@@ -6212,14 +6177,48 @@ async function markDiscoverCompleted(key) {
   saveItems();
   saveHistory();
   renderAll();
-  if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
+  if (els.detailModal?.open && state.openDiscoverKey === key) {
+    await openDiscoverDetail(key);
+    if (promptForRating && result.sourceType === 'movie') {
+      requestAnimationFrame(() => els.detailBody?.querySelector('.discover-personal-meta')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+    }
+  } else if (promptForRating && result.sourceType === 'movie') {
+    openDiscoverRatingPrompt(key);
+  }
+}
+
+function openDiscoverRatingPrompt(key) {
+  const result = state.discoverResults.get(key);
+  if (!result || result.sourceType !== 'movie' || !els.discoverRatingModal) return;
+  state.pendingDiscoverRatingKey = key;
+  if (els.discoverRatingTitle) els.discoverRatingTitle.textContent = `Rate ${result.title || 'this movie'}`;
+  const existing = findDiscoverItem(result);
+  const rating = Math.max(0, Math.min(5, Number(existing?.rating || 0)));
+  els.discoverRatingPicker?.querySelectorAll('[data-discover-rating-choice]').forEach(button => {
+    button.classList.toggle('filled', Number(button.dataset.discoverRatingChoice) <= rating);
+  });
+  els.discoverRatingModal.showModal();
+}
+
+function handleDiscoverRatingChoice(event) {
+  const choice = event.target.closest('[data-discover-rating-choice]');
+  if (choice && state.pendingDiscoverRatingKey) {
+    persistDiscoverRating(state.pendingDiscoverRatingKey, Number(choice.dataset.discoverRatingChoice));
+    els.discoverRatingModal?.close();
+    state.pendingDiscoverRatingKey = null;
+    return;
+  }
+  if (event.target.closest('[data-discover-rating-skip]')) {
+    els.discoverRatingModal?.close();
+    state.pendingDiscoverRatingKey = null;
+  }
 }
 
 async function openDiscoverDetail(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
   state.openDiscoverKey = key;
-  els.detailModal.showModal();
+  if (!els.detailModal.open) els.detailModal.showModal();
   els.detailBody.innerHTML = '<p class="loading-detail">Loading details…</p>';
   try {
     if (result.sourceType === 'tv') await renderDiscoverTVDetail(key);
@@ -6406,6 +6405,7 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
     })}
     <div class="discover-detail-actions">
       <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
+      <button class="secondary-button${existing?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}">${existing?.recommended ? '★ Recommended' : '☆ Recommend'}</button>
       <button class="secondary-button" type="button" data-discover-mark-all-tv="${escapeAttr(key)}">${seriesCompleted ? '✓ Clear watched series' : '✓ Mark all watched'}</button>
     </div>
     ${discoverTVPersonalMetadataMarkup(existing, key)}
@@ -6573,6 +6573,7 @@ async function renderDiscoverMovieDetail(key) {
     })}
     <div class="discover-detail-actions">
       <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
+      <button class="secondary-button${findDiscoverItem(result)?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}">${findDiscoverItem(result)?.recommended ? '★ Recommended' : '☆ Recommend'}</button>
       <button class="secondary-button" type="button" data-discover-detail-complete="${escapeAttr(key)}" ${completed ? 'disabled' : ''}>${completed ? '✓ Watched' : '✓ Mark watched'}</button>
     </div>
     ${discoverTVPersonalMetadataMarkup(findDiscoverItem(result), key)}
@@ -6597,7 +6598,8 @@ async function renderDiscoverEventDetail(key) {
   els.detailBody.innerHTML = `
     ${detailHero({ type:'EVENT', title:event.title || result.title, image:event.image || result.image, subtitle:dateLine, overview:event.description || result.description || '' })}
     <div class="detail-actions">
-      <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">${item ? (getQueueStatus(item) === 'tbr' ? 'In TBR' : 'In Up Next') : '+ Up Next / TBR'}</button>
+      <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">${item && getQueueStatus(item) === 'tbr' ? 'In TBR' : item && getQueueStatus(item) === 'upnext' ? 'In Up Next' : '+ Up Next / TBR'}</button>
+      <button class="secondary-button${item?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}">${item?.recommended ? '★ Recommended' : '☆ Recommend'}</button>
       ${event.ticketUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(event.ticketUrl)}" target="_blank" rel="noopener">Tickets on Ticketmaster ↗</a>` : ''}
     </div>
     <section class="detail-section"><h3>Event details</h3>${info ? `<p>${escapeHtml(info)}</p>` : ''}${event.address ? `<p class="detail-meta">${escapeHtml(event.address)}</p>` : ''}</section>
@@ -6635,6 +6637,7 @@ async function renderDiscoverBookDetail(key) {
     })}
     <div class="discover-detail-actions">
       <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
+      <button class="secondary-button${existing?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}">${existing?.recommended ? '★ Recommended' : '☆ Recommend'}</button>
       <button class="secondary-button" type="button" data-discover-detail-complete="${escapeAttr(key)}" ${completed ? 'disabled' : ''}>${completed ? '✓ Read' : '✓ Mark read'}</button>
     </div>
     ${discoverTVPersonalMetadataMarkup(existing, key)}
@@ -6650,54 +6653,18 @@ function openStickerSettings() {
   els.stickerSettingsModal.showModal();
 }
 
-function getRecognizedStickerTargets() {
-  const parents = getRecognizedTypes();
-  const targets = [];
-  for (const parent of parents) {
-    targets.push({ type: parent.type, label: parent.label, subcategory: '', key: parent.type });
-    const subcategories = new Set();
-    state.items.forEach(item => {
-      if (item.type === parent.type && cleanTypeLabel(item.subcategory || '')) subcategories.add(cleanTypeLabel(item.subcategory));
-    });
-    state.history.forEach(entry => {
-      if (entry.type === parent.type && cleanTypeLabel(entry.subcategory || '')) subcategories.add(cleanTypeLabel(entry.subcategory));
-    });
-    [...subcategories].sort((a,b) => a.localeCompare(b)).forEach(subcategory => {
-      targets.push({
-        type: parent.type,
-        label: `${parent.label} · ${subcategory}`,
-        subcategory,
-        key: stickerPreferenceKey(parent.type, { subcategory })
-      });
-    });
-  }
-  return targets;
-}
-
 function renderStickerSettingsRows() {
-  const targets = getRecognizedStickerTargets();
+  const types = getRecognizedTypes();
   els.stickerSettingsRows.innerHTML = '';
 
-  for (const target of targets) {
-    const sampleEntry = state.history.find(entry => entry.type === target.type && cleanTypeLabel(entry.subcategory || '') === target.subcategory)
-      || state.items.find(item => item.type === target.type && cleanTypeLabel(item.subcategory || '') === target.subcategory)
-      || { type: target.type, subcategory: target.subcategory };
-    const config = getStickerConfig(target.type, sampleEntry);
+  for (const { type, label } of types) {
+    const config = getStickerConfig(type, state.history.find(entry => entry.type === type) || {});
     const row = document.createElement('div');
-    row.className = `sticker-setting-row${target.subcategory ? ' sticker-setting-subcategory' : ''}`;
-    row.dataset.stickerType = target.type;
-    row.dataset.stickerKey = target.key;
-    row.dataset.stickerSubcategory = target.subcategory;
-    const parentSaved = state.stickerPrefs?.[target.type] || {};
+    row.className = 'sticker-setting-row';
+    row.dataset.stickerType = type;
     row.innerHTML = `
-      <strong class="sticker-setting-type">${escapeHtml(target.label)}</strong>
-      ${target.subcategory
-        ? `<span class="sticker-setting-calendar-inherit">Uses ${escapeHtml(getCalendarCategoryLabel(target.type, getTypeLabel(target.type)))}</span>`
-        : `<label class="sticker-setting-field sticker-setting-calendar-name">
-            <span class="sticker-setting-mobile-label">Calendar name</span>
-            <input data-sticker-field="calendar-label" type="text" maxlength="30" value="${escapeAttr(parentSaved.calendarLabel || '')}" placeholder="${escapeAttr(target.label)}" />
-          </label>`}
-      <div class="sticker-setting-preview">${calendarStickerMarkup(target.type, sampleEntry)}</div>
+      <strong class="sticker-setting-type">${escapeHtml(label)}</strong>
+      <div class="sticker-setting-preview">${calendarStickerMarkup(type, state.history.find(entry => entry.type === type) || {})}</div>
       <label class="sticker-setting-field">
         <span class="sticker-setting-mobile-label">Shape</span>
         <select data-sticker-field="shape">
@@ -6729,8 +6696,7 @@ function previewStickerSettings(event) {
   const labelInput = row.querySelector('[data-sticker-field="label"]');
   if (labelInput) labelInput.disabled = ['star','heart'].includes(shape);
   const label = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(labelInput?.value ?? '');
-  const sampleEntry = { type: row.dataset.stickerType, subcategory: row.dataset.stickerSubcategory || '' };
-  const defaults = getDefaultStickerConfig(row.dataset.stickerType, sampleEntry);
+  const defaults = getDefaultStickerConfig(row.dataset.stickerType, state.history.find(entry => entry.type === row.dataset.stickerType) || {});
   const preview = row.querySelector('.sticker-setting-preview');
   if (preview) {
     const symbol = shape === 'star' ? '★' : shape === 'heart' ? '♥' : escapeHtml(label);
@@ -6743,18 +6709,11 @@ function saveStickerSettings(event) {
   const next = { ...state.stickerPrefs };
 
   els.stickerSettingsRows.querySelectorAll('.sticker-setting-row[data-sticker-type]').forEach(row => {
-    const key = row.dataset.stickerKey || row.dataset.stickerType;
+    const type = row.dataset.stickerType;
     const shape = row.querySelector('[data-sticker-field="shape"]')?.value || 'square';
     const color = row.querySelector('[data-sticker-field="color"]')?.value || 'cream';
     const label = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(row.querySelector('[data-sticker-field="label"]')?.value ?? '');
-    const existing = next[key] || {};
-    const calendarInput = row.querySelector('[data-sticker-field="calendar-label"]');
-    const calendarLabel = calendarInput ? cleanTypeLabel(calendarInput.value) : existing.calendarLabel;
-    next[key] = { ...existing, shape, color, label };
-    if (calendarInput) {
-      if (calendarLabel) next[key].calendarLabel = calendarLabel;
-      else delete next[key].calendarLabel;
-    }
+    next[type] = { shape, color, label };
   });
 
   state.stickerPrefs = next;
@@ -7115,17 +7074,7 @@ function itemLibraryDate(item) {
     .map(entry => entry.date)
     .sort()
     .at(-1);
-
-  // "Recent" means the latest meaningful activity on the Library item, not
-  // only when it was originally watched/read. Rating an older movie today should
-  // therefore move it to the front instead of being pinned to its old completedAt.
-  return [
-    item.updatedAt,
-    datedHistory,
-    item.completedAt,
-    item.date,
-    item.createdAt
-  ].filter(Boolean).sort().at(-1) || '';
+  return datedHistory || item.completedAt || item.date || item.updatedAt || item.createdAt || '';
 }
 
 function normalizeLibraryPrefs(value) {
@@ -7258,22 +7207,6 @@ function tvLibraryStatusLabel(key) {
   })[key] || key;
 }
 
-function tvLibraryProgressScore(item) {
-  let watchedEpisodes = 0;
-  for (const entry of state.history) {
-    if (entry.sourceItemId === item.id && entry.kind === 'episode-watched') watchedEpisodes += 1;
-  }
-  const nextSeason = Number(item.progress?.nextSeason || 1);
-  const nextEpisode = Number(item.progress?.nextEpisode || 1);
-  return watchedEpisodes * 100000 + nextSeason * 1000 + nextEpisode;
-}
-
-function compareTVLibraryProgress(a, b) {
-  return tvLibraryProgressScore(b) - tvLibraryProgressScore(a)
-    || String(b.updatedAt || b.completedAt || '').localeCompare(String(a.updatedAt || a.completedAt || ''))
-    || a.title.localeCompare(b.title);
-}
-
 function makeLibraryPoster(item) {
   const poster = document.createElement('button');
   poster.type = 'button';
@@ -7333,10 +7266,8 @@ function renderLibrary() {
     const groupLabel = libraryTypeGroupLabel(items, groupKey);
 
     if (slugifyType(groupKey).replace(/s$/, '') === 'tv') {
-      const rootExpansionKey = 'tv:root';
-      const rootExpanded = state.libraryExpandedGroups.has(rootExpansionKey);
       const section = document.createElement('section');
-      section.className = `library-group library-shelf library-tv-shelf${rootExpanded ? ' is-expanded' : ' is-collapsed'}`;
+      section.className = 'library-group library-shelf library-tv-shelf';
       section.dataset.libraryGroup = groupKey;
       section.innerHTML = `
         <div class="library-group-heading-row">
@@ -7344,37 +7275,29 @@ function renderLibrary() {
             <h2 class="library-group-title">${escapeHtml(groupLabel)}</h2>
             <span class="library-group-count">${items.length}</span>
           </div>
-          <button class="library-expand-button" type="button" data-library-expand="${rootExpansionKey}">${rootExpanded ? 'Collapse' : 'View all'}</button>
         </div>
-        ${rootExpanded
-          ? '<div class="tv-library-status-groups"></div>'
-          : '<div class="library-poster-grid tv-library-preview"></div>'}`;
+        <div class="tv-library-status-groups"></div>`;
 
-      if (rootExpanded) {
-        const statusHost = section.querySelector('.tv-library-status-groups');
-        for (const statusKey of ['in-progress', 'up-to-date', 'finished', 'stopped']) {
-          const statusItems = items.filter(item => tvLibraryStatusKey(item) === statusKey).sort(compareTVLibraryProgress);
-          if (!statusItems.length) continue;
-          const expansionKey = `tv:${statusKey}`;
-          const expanded = state.libraryExpandedGroups.has(expansionKey);
-          const statusSection = document.createElement('section');
-          statusSection.className = `tv-library-status-group${expanded ? ' is-expanded' : ''}`;
-          statusSection.innerHTML = `
-            <div class="tv-library-status-heading">
-              <div>
-                <h3 class="tv-library-status-title">${escapeHtml(tvLibraryStatusLabel(statusKey))}</h3>
-                <span class="library-group-count">${statusItems.length}</span>
-              </div>
-              <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(expansionKey)}">${expanded ? 'Carousel' : 'View all'}</button>
+      const statusHost = section.querySelector('.tv-library-status-groups');
+      for (const statusKey of ['in-progress', 'up-to-date', 'finished', 'stopped']) {
+        const statusItems = items.filter(item => tvLibraryStatusKey(item) === statusKey);
+        if (!statusItems.length) continue;
+        const expansionKey = `tv:${statusKey}`;
+        const expanded = state.libraryExpandedGroups.has(expansionKey);
+        const statusSection = document.createElement('section');
+        statusSection.className = `tv-library-status-group${expanded ? ' is-expanded' : ''}`;
+        statusSection.innerHTML = `
+          <div class="tv-library-status-heading">
+            <div>
+              <h3 class="tv-library-status-title">${escapeHtml(tvLibraryStatusLabel(statusKey))}</h3>
+              <span class="library-group-count">${statusItems.length}</span>
             </div>
-            <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
-          const grid = statusSection.querySelector('.library-poster-grid');
-          for (const item of statusItems) grid.appendChild(makeLibraryPoster(item));
-          statusHost.appendChild(statusSection);
-        }
-      } else {
-        const previewGrid = section.querySelector('.tv-library-preview');
-        for (const item of items) previewGrid.appendChild(makeLibraryPoster(item));
+            <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(expansionKey)}">${expanded ? 'Collapse' : 'Show all'}</button>
+          </div>
+          <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
+        const grid = statusSection.querySelector('.library-poster-grid');
+        for (const item of statusItems) grid.appendChild(makeLibraryPoster(item));
+        statusHost.appendChild(statusSection);
       }
 
       els.libraryGroups.appendChild(section);
@@ -7391,7 +7314,7 @@ function renderLibrary() {
           <h2 class="library-group-title">${escapeHtml(groupLabel)}</h2>
           <span class="library-group-count">${items.length}</span>
         </div>
-        <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(groupKey)}">${expanded ? 'Carousel' : `View all`}</button>
+        <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(groupKey)}">${expanded ? 'Collapse' : `Show all`}</button>
       </div>
       <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
     const grid = section.querySelector('.library-poster-grid');
@@ -7823,11 +7746,9 @@ function safeLocalSet(key, value) {
 }
 
 function addHistoryRecord(record) {
-  const source = record?.sourceItemId ? findItem(record.sourceItemId) : null;
   state.history.push({
     id: makeId(),
     createdAt: new Date().toISOString(),
-    subcategory: source?.subcategory || '',
     ...record
   });
 }
