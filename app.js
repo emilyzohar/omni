@@ -1,4 +1,4 @@
-import { TrackerAPI } from './api.js';
+import { TrackerAPI } from './api.js?v=book-discover-filter-1';
 import { API_CONFIG } from './config.js';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
@@ -765,6 +765,19 @@ function bindEvents() {
     const saveLibraryMeta = event.target.closest('[data-save-library-meta]');
     if (saveLibraryMeta) {
       saveLibraryPersonalMetadata(saveLibraryMeta.dataset.saveLibraryMeta);
+      return;
+    }
+
+    const calendarVisibility = event.target.closest('[data-toggle-library-calendar]');
+    if (calendarVisibility) {
+      const item = findItem(calendarVisibility.dataset.toggleLibraryCalendar);
+      if (item) {
+        item.calendarHidden = !Boolean(item.calendarHidden);
+        item.updatedAt = new Date().toISOString();
+        saveItems();
+        renderAll();
+        if (els.detailModal?.open) await openDetails(item.id);
+      }
       return;
     }
 
@@ -1933,7 +1946,7 @@ function tvDetailControls(item) {
     watchButtons = `<button class="primary-button" type="button" data-tv-watch-action="resume" data-item-id="${item.id}">Resume watching</button>`;
   }
   const wholeComplete = hasSeriesBulkCompletion(item);
-  return `<div class="detail-actions tv-watch-actions"><button class="primary-button${wholeComplete ? ' is-complete' : ''}" type="button" data-tv-mark-series-complete="${item.id}">${wholeComplete ? '↶ Undo series complete' : '✓ Mark series complete'}</button>${watchButtons}<button class="secondary-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${item.id}">${item.recommended ? '★ Recommended' : '☆ Recommend'}</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
+  return `<div class="detail-actions tv-watch-actions"><button class="primary-button${wholeComplete ? ' is-complete' : ''}" type="button" data-tv-mark-series-complete="${item.id}">${wholeComplete ? '↶ Undo series complete' : '✓ Mark series complete'}</button>${watchButtons}<button class="secondary-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${item.id}">${item.recommended ? '★ Recommended' : '☆ Recommend'}</button>${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
 }
 
 async function applyTVWatchAction(item, action) {
@@ -2010,8 +2023,9 @@ function hasSeriesBulkCompletion(item) {
   return state.history.some(entry => entry.kind === 'series-watched' && entry.sourceItemId === item.id && entry.bulkCompletionToken);
 }
 
-async function markWholeBookComplete(item) {
+async function markWholeBookComplete(item, options = {}) {
   if (!item || getSourceType(item) !== 'book') return;
+  const createReadingPeriod = options.createReadingPeriod !== false;
 
   if (item.completedAt) {
     const snapshot = item.bookCompletionSnapshot || null;
@@ -2048,7 +2062,7 @@ async function markWholeBookComplete(item) {
   if (periods.length) {
     const latest = periods.at(-1);
     if (latest && !latest.endDate) latest.endDate = todayString();
-  } else {
+  } else if (createReadingPeriod) {
     periods.push({ startDate: todayString(), endDate: todayString() });
   }
   item.progress = { ...item.progress, currentPage: total || Number(item.progress?.currentPage || 0), totalPages: total || Number(item.progress?.totalPages || 0), readingPeriods: periods };
@@ -3430,8 +3444,21 @@ function basicDetailHero(item) {
   return detailHero({ type: getItemTypeLabel(item), title:item.title, image:item.image, subtitle:item.subtitle || '', overview:item.notes || '' });
 }
 
+function itemHasCalendarAssociations(item) {
+  if (!item) return false;
+  if (item.date && getSourceType(item) !== 'book') return true;
+  if (getSourceType(item) === 'book' && getBookReadingPeriods(item).length) return true;
+  return state.history.some(entry => entry.sourceItemId === item.id && entry.date && entry.showOnCalendar !== false);
+}
+
+function libraryCalendarToggleButton(item) {
+  if (!itemHasCalendarAssociations(item)) return '';
+  const hidden = Boolean(item.calendarHidden);
+  return `<button class="quiet-button library-calendar-toggle${hidden ? ' is-hidden' : ''}" type="button" data-toggle-library-calendar="${escapeAttr(item.id)}">${hidden ? 'Show on calendar' : 'Remove from calendar'}</button>`;
+}
+
 function detailEditButton(item) {
-  return `<div class="detail-actions">${queueMoveControls(item)}<button class="secondary-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${item.id}">${item.recommended ? '★ Recommended' : '☆ Recommend'}</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
+  return `<div class="detail-actions">${queueMoveControls(item)}<button class="secondary-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${item.id}">${item.recommended ? '★ Recommended' : '☆ Recommend'}</button>${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
 }
 
 function formatPersonalRating(value) {
@@ -4004,7 +4031,7 @@ function saveBookProgress(event) {
 // ---------------------------
 function getCalendarEntries() {
   const savedItems = state.items
-    .filter(item => item.date && getSourceType(item) !== 'book')
+    .filter(item => item.date && getSourceType(item) !== 'book' && !item.calendarHidden)
     .map(item => ({
       id: `item:${item.id}`,
       sourceItemId: item.id,
@@ -4023,11 +4050,13 @@ function getCalendarEntries() {
     }));
 
   const bookRanges = state.items
-    .filter(item => getSourceType(item) === 'book')
+    .filter(item => getSourceType(item) === 'book' && !item.calendarHidden)
     .flatMap(item => bookReadingCalendarEntries(item));
 
   const historyEntries = state.history.filter(entry => {
     if (entry.showOnCalendar === false) return false;
+    const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
+    if (source?.calendarHidden) return false;
     if (entry.kind === 'book-finished') {
       const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
       if (source && getBookReadingPeriods(source).length) return false;
@@ -4782,7 +4811,7 @@ async function runDiscoverSearch(forcedQuery = '') {
         results.push(normalized);
       }
     }
-    const ranked = await rankDiscoverFeedCandidates(results, 36);
+    const ranked = await rankDiscoverFeedCandidates(results, Math.max(1, results.length));
     state.discoverFeedItems = ranked;
     for (const result of ranked) state.discoverFeedSeen.add(discoverResultIdentity(result));
     renderDiscoverFeedItems();
@@ -5846,6 +5875,29 @@ function discoverBookSignature(result) {
   );
 }
 
+function isEnglishDiscoverBook(result) {
+  const language = String(result?.language || result?.raw?.volumeInfo?.language || '').trim().toLowerCase();
+  return language === 'en' || language.startsWith('en-');
+}
+
+function isDiscoverBookBundle(result) {
+  const info = result?.raw?.volumeInfo || {};
+  const text = [result?.title, info.title, info.subtitle].filter(Boolean).join(' ');
+  if (!text) return false;
+  const patterns = [
+    /\bbox(?:ed)?\s+set\b/i,
+    /\bbundle\b/i,
+    /\bomnibus\b/i,
+    /\bcomplete\s+(?:series|trilogy|duology|saga|collection)\b/i,
+    /\bbooks?\s*\d+\s*(?:[-–—]|to|through|&|and)\s*\d+\b/i,
+    /\bvol(?:ume)?s?\s*\d+\s*(?:[-–—]|to|through|&|and)\s*\d+\b/i,
+    /\b\d+\s*[- ](?:book|volume)\s+(?:set|collection|bundle)\b/i,
+    /\b\d+\s*[- ]in[- ]1\b/i,
+    /\bbooks?\s+\d+\s*,\s*\d+(?:\s*(?:&|and)\s*\d+)?\b/i
+  ];
+  return patterns.some(pattern => pattern.test(text));
+}
+
 function trackedBookSignatures() {
   const signatures = new Set();
   for (const item of state.items) {
@@ -6062,6 +6114,8 @@ function filterAlreadyKnown(results, type) {
   return (results || []).filter(result => {
     if (blocked.has(String(result.providerId))) return false;
     if (type === 'book') {
+      if (!isEnglishDiscoverBook(result)) return false;
+      if (isDiscoverBookBundle(result)) return false;
       const signature = discoverBookSignature(result);
       if (signature && knownBookSignatures.has(signature)) return false;
     }
@@ -6474,7 +6528,6 @@ async function handleDiscoverRateRecommend(key) {
   // Ratings and watched/read history remain intact.
   if (existing?.recommended) {
     existing.recommended = false;
-    if (!isDiscoverCompleted(result)) updateDiscoverLibraryVisibilityAfterUndo(existing);
     existing.updatedAt = new Date().toISOString();
     saveItems();
     renderLibrary();
@@ -6484,7 +6537,6 @@ async function handleDiscoverRateRecommend(key) {
 
   const item = ensureDiscoverItem(result, 'library');
   item.recommended = true;
-  item.discoverHiddenFromLibrary = false;
   item.updatedAt = new Date().toISOString();
   saveItems();
   renderLibrary();
@@ -6511,8 +6563,6 @@ async function toggleDiscoverRecommended(key) {
   if (!result) return;
   const item = ensureDiscoverItem(result, 'library');
   item.recommended = !item.recommended;
-  if (item.recommended) item.discoverHiddenFromLibrary = false;
-  else if (!isDiscoverCompleted(result)) updateDiscoverLibraryVisibilityAfterUndo(item);
   item.updatedAt = new Date().toISOString();
   saveItems();
   renderLibrary();
@@ -6556,7 +6606,6 @@ function addDiscoverToQueue(key, status) {
   const result = state.discoverResults.get(key);
   if (!result) return null;
   const item = ensureDiscoverItem(result, status);
-  item.discoverHiddenFromLibrary = false;
   setItemQueueStatus(item, status);
   item.completedAt = '';
   item.updatedAt = new Date().toISOString();
@@ -6590,8 +6639,6 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
     rating: 0,
     notes: '',
     recommended: false,
-    discoverHiddenFromLibrary: false,
-    discoverCompletionOrigin: false,
     genres: extractItemGenres(sourceType, result, null),
     releaseDate: extractItemReleaseDate(sourceType, result, null),
     attachments: [],
@@ -6605,7 +6652,7 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
   };
 
   if (sourceType === 'tv') item.progress = { nextSeason: 1, nextEpisode: 1 };
-  if (sourceType === 'book') item.progress = { currentPage: 0, totalPages: Number(result.pageCount || 0) };
+  if (sourceType === 'book') item.progress = { currentPage: 0, totalPages: Number(result.pageCount || 0), readingPeriods: [] };
   if (sourceType === 'event') {
     item.eventMeta = {
       eventDate: result.eventDate || '', eventTime: result.eventTime || '', startDateTime: result.startDateTime || '', timezone: result.timezone || '',
@@ -6618,19 +6665,6 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
   state.items.push(item);
   saveItems();
   return item;
-}
-
-function shouldHideUndoneDiscoverItem(item) {
-  if (!item?.discoverCompletionOrigin) return false;
-  if (item.recommended) return false;
-  if (getQueueStatus(item) !== 'library') return false;
-  return true;
-}
-
-function updateDiscoverLibraryVisibilityAfterUndo(item) {
-  if (!item) return;
-  item.discoverHiddenFromLibrary = shouldHideUndoneDiscoverItem(item);
-  item.updatedAt = new Date().toISOString();
 }
 
 function isDiscoverCompleted(result) {
@@ -6647,17 +6681,11 @@ function isDiscoverCompleted(result) {
 async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
   const result = state.discoverResults.get(key);
   if (!result) return;
-  const existingBeforeCompletion = findDiscoverItem(result);
   const item = ensureDiscoverItem(result, 'library');
-  if (!existingBeforeCompletion) item.discoverCompletionOrigin = true;
 
   if (result.sourceType === 'book') {
     const wasComplete = Boolean(item.completedAt);
-    await markWholeBookComplete(item);
-    if (wasComplete) updateDiscoverLibraryVisibilityAfterUndo(item);
-    else item.discoverHiddenFromLibrary = false;
-    saveItems();
-    renderLibrary();
+    await markWholeBookComplete(item, { createReadingPeriod: false });
     renderDiscoverCardInPlace(key);
     if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
     if (!wasComplete && promptForRating) openDiscoverRatingPrompt(key);
@@ -6670,7 +6698,7 @@ async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
     state.history = state.history.filter(entry => !(
       entry.sourceItemId === item.id && ['movie-watched','item-completed'].includes(entry.kind)
     ));
-    updateDiscoverLibraryVisibilityAfterUndo(item);
+    item.updatedAt = new Date().toISOString();
     saveItems();
     saveHistory();
     renderAll();
@@ -6679,7 +6707,6 @@ async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
     return;
   }
 
-  item.discoverHiddenFromLibrary = false;
   setItemQueueStatus(item, 'library');
   item.completedAt = todayString();
   item.updatedAt = new Date().toISOString();
@@ -6978,9 +7005,7 @@ async function renderDiscoverTVEpisodeDetail(key, seasonNumber, episodeNumber) {
 async function logDiscoverTVEpisode(key, seasonNumber, episodeNumber) {
   const result = state.discoverResults.get(key);
   if (!result) return;
-  const existingBeforeCompletion = findDiscoverItem(result);
   const item = ensureDiscoverItem(result, 'library');
-  if (!existingBeforeCompletion) item.discoverCompletionOrigin = true;
 
   if (isTVEpisodeLogged(item, seasonNumber, episodeNumber)) {
     removeTVEpisodeHistory(item, seasonNumber, episodeNumber);
@@ -6992,8 +7017,6 @@ async function logDiscoverTVEpisode(key, seasonNumber, episodeNumber) {
   }
 
   await syncDiscoverTVProgress(item);
-  if (hasDiscoverTVWatchHistory(item)) item.discoverHiddenFromLibrary = false;
-  else updateDiscoverLibraryVisibilityAfterUndo(item);
   saveItems();
   saveHistory();
   renderAll();
@@ -7007,9 +7030,7 @@ async function logDiscoverTVEpisode(key, seasonNumber, episodeNumber) {
 async function markDiscoverSeasonWatched(key, seasonNumber) {
   const result = state.discoverResults.get(key);
   if (!result) return;
-  const existingBeforeCompletion = findDiscoverItem(result);
   const item = ensureDiscoverItem(result, 'library');
-  if (!existingBeforeCompletion) item.discoverCompletionOrigin = true;
   const season = await getCached(`season:${result.providerId}:${seasonNumber}`, () => TrackerAPI.getTVSeason(result.providerId, seasonNumber, state.settings));
   const aired = (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep));
   const allWatched = aired.length > 0 && aired.every(ep => isTVEpisodeLogged(item, seasonNumber, ep.episode_number));
@@ -7022,8 +7043,6 @@ async function markDiscoverSeasonWatched(key, seasonNumber) {
   }
 
   await syncDiscoverTVProgress(item);
-  if (hasDiscoverTVWatchHistory(item)) item.discoverHiddenFromLibrary = false;
-  else updateDiscoverLibraryVisibilityAfterUndo(item);
   saveItems();
   saveHistory();
   renderAll();
@@ -7033,14 +7052,8 @@ async function markDiscoverSeasonWatched(key, seasonNumber) {
 async function markDiscoverSeriesWatched(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
-  const existingBeforeCompletion = findDiscoverItem(result);
   const item = ensureDiscoverItem(result, 'library');
-  if (!existingBeforeCompletion) item.discoverCompletionOrigin = true;
   await markWholeTVSeriesComplete(item);
-  if (hasDiscoverTVWatchHistory(item)) item.discoverHiddenFromLibrary = false;
-  else updateDiscoverLibraryVisibilityAfterUndo(item);
-  saveItems();
-  renderLibrary();
   await renderDiscoverTVDetail(key);
 }
 
@@ -7810,7 +7823,6 @@ function renderLibrary() {
 
   let filtered = state.items
     .filter(item => getQueueStatus(item) !== 'tbr')
-    .filter(item => !item.discoverHiddenFromLibrary || item.recommended || getQueueStatus(item) !== 'library')
     .filter(item => state.libraryView !== 'recommended' || item.recommended)
     .filter(item => visibleTypes.has(libraryTypeGroupKey(item)));
 

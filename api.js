@@ -106,7 +106,7 @@ export const TrackerAPI = (() => {
 
   async function searchBooks(query, settings) {
     const key = required(settings.googleBooksKey, 'Google Books API key');
-    const url = `${GOOGLE_BOOKS_ROOT}/volumes?q=${encodeURIComponent(query)}&maxResults=12&printType=books&key=${encodeURIComponent(key)}`;
+    const url = `${GOOGLE_BOOKS_ROOT}/volumes?q=${encodeURIComponent(query)}&maxResults=40&printType=books&langRestrict=en&key=${encodeURIComponent(key)}`;
     const data = await fetchGoogleBooksJson(url);
     const subjectMatch = String(query || '').match(/subject:(?:\"([^\"]+)\"|([^\s]+))/i);
     const trustedSubject = String(subjectMatch?.[1] || subjectMatch?.[2] || '').trim().toLowerCase();
@@ -123,6 +123,7 @@ export const TrackerAPI = (() => {
         description: info.description || '',
         pageCount: info.pageCount || null,
         categories: info.categories || [],
+        language: info.language || '',
         _bookGenreSubject: trustedSubject,
         raw: item
       };
@@ -337,6 +338,7 @@ export const TrackerAPI = (() => {
         maxResults: String(maxResults),
         printType: 'books',
         orderBy,
+        langRestrict: 'en',
         key
       });
       const data = await fetchGoogleBooksJson(`${GOOGLE_BOOKS_ROOT}/volumes?${params.toString()}`);
@@ -492,6 +494,7 @@ export const TrackerAPI = (() => {
       pageCount: info.pageCount || null,
       publishedDate: info.publishedDate || '',
       categories: info.categories || [],
+      language: info.language || '',
       raw: item
     };
   }
@@ -499,7 +502,7 @@ export const TrackerAPI = (() => {
   async function getNewBooks(settings) {
     const key = required(settings.googleBooksKey, 'Google Books API key');
     const query = 'subject:fiction';
-    const url = `${GOOGLE_BOOKS_ROOT}/volumes?q=${encodeURIComponent(query)}&maxResults=20&printType=books&orderBy=newest&key=${encodeURIComponent(key)}`;
+    const url = `${GOOGLE_BOOKS_ROOT}/volumes?q=${encodeURIComponent(query)}&maxResults=20&printType=books&orderBy=newest&langRestrict=en&key=${encodeURIComponent(key)}`;
     const data = await fetchGoogleBooksJson(url);
     return (data.items || []).map(mapBook).slice(0, 12);
   }
@@ -511,7 +514,7 @@ export const TrackerAPI = (() => {
     const category = (info.categories || [])[0];
     const author = (info.authors || [])[0];
     let query = category ? `subject:${category}` : author ? `inauthor:${author}` : 'subject:fiction';
-    const url = `${GOOGLE_BOOKS_ROOT}/volumes?q=${encodeURIComponent(query)}&maxResults=20&printType=books&orderBy=relevance&key=${encodeURIComponent(key)}`;
+    const url = `${GOOGLE_BOOKS_ROOT}/volumes?q=${encodeURIComponent(query)}&maxResults=20&printType=books&orderBy=relevance&langRestrict=en&key=${encodeURIComponent(key)}`;
     const data = await fetchGoogleBooksJson(url);
     return (data.items || []).map(mapBook).filter(book => String(book.providerId) !== String(seedId)).slice(0, 12);
   }
@@ -519,7 +522,7 @@ export const TrackerAPI = (() => {
   async function getBooksByAuthor(author, settings) {
     const key = required(settings.googleBooksKey, 'Google Books API key');
     const query = `inauthor:${author}`;
-    const url = `${GOOGLE_BOOKS_ROOT}/volumes?q=${encodeURIComponent(query)}&maxResults=20&printType=books&orderBy=relevance&key=${encodeURIComponent(key)}`;
+    const url = `${GOOGLE_BOOKS_ROOT}/volumes?q=${encodeURIComponent(query)}&maxResults=20&printType=books&orderBy=relevance&langRestrict=en&key=${encodeURIComponent(key)}`;
     const data = await fetchGoogleBooksJson(url);
     return (data.items || []).map(mapBook).slice(0, 12);
   }
