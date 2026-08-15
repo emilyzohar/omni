@@ -926,8 +926,8 @@ async function renderUpNext(options = {}) {
     tab.setAttribute('aria-selected', String(active));
   });
 
-  const mobileTBR = view === 'tbr' && mobileCalendarQuery.matches;
-  els.upNextList.classList.toggle('tbr-thumbnail-grid', mobileTBR);
+  const thumbnailTBR = view === 'tbr';
+  els.upNextList.classList.toggle('tbr-thumbnail-grid', thumbnailTBR);
   els.upNextList.innerHTML = '';
   els.upNextEmpty.hidden = items.length > 0;
   els.upNextEmpty.textContent = items.length === 0 && availableItems.length > 0
@@ -936,7 +936,7 @@ async function renderUpNext(options = {}) {
       ? 'Save something for later from Discover or the + button.'
       : 'Add something to Up Next to start your queue.';
 
-  if (mobileTBR) {
+  if (thumbnailTBR) {
     for (const item of items) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -3822,12 +3822,7 @@ function renderWeekTracker() {
         button.setAttribute('aria-label', `${typeEntries.length} ${label} ${typeEntries.length === 1 ? 'entry' : 'entries'} on ${date}`);
         button.title = `${label} · tap for details`;
 
-        const visibleEntries = typeEntries.slice(0, 6);
-        button.innerHTML = `
-          <span class="week-sticker-cluster-icons">
-            ${visibleEntries.map(entry => calendarStickerMarkup(entry.type, entry)).join('')}
-          </span>
-          ${typeEntries.length > visibleEntries.length ? `<span class="week-entry-count">+${typeEntries.length - visibleEntries.length}</span>` : ''}`;
+        button.innerHTML = weekStickerPileMarkup(typeEntries, date, groupKey);
         body.appendChild(button);
       }
     }
@@ -3854,6 +3849,38 @@ function addDays(date, days) {
   const value = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
   value.setDate(value.getDate() + days);
   return value;
+}
+
+
+function weekStickerPileMarkup(entries = [], date = '', groupKey = '') {
+  const visibleEntries = (entries || []).slice(0, 6);
+  const stickers = visibleEntries.map((entry, index) => {
+    const position = weekStickerPilePosition(entry, index, date, groupKey);
+    return `<span class="week-sticker-pile-item" style="--pile-left:${position.left}px; --pile-top:${position.top}px; --pile-rotate:${position.rotate}deg; --pile-z:${position.z};">${calendarStickerMarkup(entry.type, entry)}</span>`;
+  }).join('');
+  const extra = entries.length > visibleEntries.length
+    ? `<span class="week-entry-count">+${entries.length - visibleEntries.length}</span>`
+    : '';
+  return `
+    <span class="week-sticker-cluster-icons week-sticker-pile" aria-hidden="true">${stickers}</span>
+    ${extra}`;
+}
+
+function weekStickerPilePosition(entry, index, date, groupKey) {
+  const seed = stableCalendarHash(`${date}:${groupKey}:${entry?.id || entry?.sourceItemId || entry?.title || entry?.type || 'entry'}:${index}`);
+  const leftBase = [2, 17, 33, 8, 24, 40][index] ?? (index * 10);
+  const topBase = [11, 2, 13, 26, 18, 29][index] ?? (8 + index * 3);
+  const left = leftBase + ((seed % 7) - 3);
+  const top = topBase + ((Math.floor(seed / 7) % 7) - 3);
+  const rotate = ((Math.floor(seed / 49) % 13) - 6) + (index % 2 === 0 ? -1 : 1);
+  return { left, top, rotate, z: 10 + index };
+}
+
+function stableCalendarHash(value) {
+  let hash = 0;
+  const text = String(value || '');
+  for (let i = 0; i < text.length; i += 1) hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  return Math.abs(hash);
 }
 
 function formatWeekRange(start, end) {
@@ -5036,8 +5063,8 @@ async function collectForYouDiscoverCandidates(batchNumber) {
   for (const sourceType of ['tv', 'movie']) {
     const used = new Set();
     for (let i = 0; i < 3; i++) {
-      const seed = pickDiscoverSeed(sourceType);
-      if (!seed?.providerId || used.has(String(seed.providerId))) continue;
+      const seed = pickDiscoverSeed(sourceType, used);
+      if (!seed?.providerId) continue;
       used.add(String(seed.providerId));
       try {
         const recs = await getCached(
@@ -5137,9 +5164,17 @@ function chooseDiscoverBookPlan(readAuthors, batchNumber) {
   return { query: topics[index], orderBy: Math.random() < 0.28 ? 'newest' : 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE, personalized: false };
 }
 
-function pickDiscoverSeed(type) {
+function discoverSeedWeight(item) {
+  const rating = Number(item.rating || 0);
+  let weight = rating >= 5 ? 20 : rating >= 4 ? 11 : rating >= 3 ? 4 : rating === 2 ? .45 : rating === 1 ? .12 : 3;
+  if (item.recommended) weight += 9;
+  if (getSourceType(item) === 'tv' && getTVWatchDisposition(item) === 'stopped') weight *= .12;
+  return Math.max(.05, weight);
+}
+
+function pickDiscoverSeed(type, excludedIds = new Set()) {
   const pool = state.items
-    .filter(item => getSourceType(item) === type && item.providerId)
+    .filter(item => getSourceType(item) === type && item.providerId && !excludedIds.has(String(item.providerId)))
     .filter(item => {
       if (type === 'tv') return item.completedAt || Number(item.progress?.nextSeason || 1) > 1 || Number(item.progress?.nextEpisode || 1) > 1 || state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched');
       if (type === 'book') return item.completedAt || Number(item.progress?.currentPage || 0) > 0;
@@ -5147,17 +5182,14 @@ function pickDiscoverSeed(type) {
       return false;
     });
   if (!pool.length) return null;
+
+  // Keep recommendations responsive to recent activity without letting one recent
+  // low-rated item dominate. Ratings, explicit recommendations, and stopped-TV
+  // status determine the lottery weight.
   const recent = [...pool]
     .sort((a,b) => String(b.updatedAt || b.completedAt || '').localeCompare(String(a.updatedAt || a.completedAt || '')))
-    .slice(0, 12);
-
-  // Higher-rated things are more likely to become recommendation seeds, but
-  // recency still matters because only the recent slice enters this lottery.
-  const weighted = recent.map(item => {
-    const rating = Number(item.rating || 0);
-    const weight = rating > 0 ? Math.max(.5, rating * rating) : 4;
-    return { item, weight };
-  });
+    .slice(0, 24);
+  const weighted = recent.map(item => ({ item, weight: discoverSeedWeight(item) }));
   const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
   let roll = Math.random() * total;
   for (const entry of weighted) {
@@ -5167,10 +5199,69 @@ function pickDiscoverSeed(type) {
   return weighted.at(-1)?.item || null;
 }
 
+function discoverTasteProfile(type) {
+  const profile = new Map();
+  for (const item of state.items) {
+    if (getSourceType(item) !== type || !item.genres?.length) continue;
+    const rating = Number(item.rating || 0);
+    const engaged = Boolean(item.completedAt) || item.recommended ||
+      (type === 'tv' && state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched')) ||
+      (type === 'book' && Number(item.progress?.currentPage || 0) > 0);
+    if (!engaged && !rating) continue;
+
+    let signal = 0;
+    if (rating >= 4) signal += (rating - 3) * 2.2;
+    else if (rating === 3) signal += .5;
+    else if (rating > 0) signal -= (3 - rating) * 2.4;
+    else if (engaged) signal += .7;
+    if (item.recommended) signal += 2.5;
+    if (type === 'tv' && getTVWatchDisposition(item) === 'stopped') signal -= 2.5;
+
+    for (const genre of item.genres) {
+      const key = String(genre || '').trim().toLowerCase();
+      if (!key) continue;
+      profile.set(key, (profile.get(key) || 0) + signal);
+    }
+  }
+  return profile;
+}
+
+function discoverCandidateGenreNames(result) {
+  if (result.sourceType === 'book') {
+    return [...new Set((result.categories || result.raw?.volumeInfo?.categories || []).map(value => String(value || '').trim()).filter(Boolean))];
+  }
+  if (result.sourceType === 'tv' || result.sourceType === 'movie') {
+    const direct = (result.genres || []).map(genre => typeof genre === 'string' ? genre : genre?.name).filter(Boolean);
+    if (direct.length) return [...new Set(direct)];
+    const map = result.sourceType === 'tv' ? TMDB_TV_GENRES : TMDB_MOVIE_GENRES;
+    return [...new Set((result.raw?.genre_ids || []).map(id => map[Number(id)]).filter(Boolean))];
+  }
+  return [];
+}
+
+function discoverGenreAffinity(result, profiles) {
+  const profile = profiles[result.sourceType];
+  if (!profile?.size) return 0;
+  const values = discoverCandidateGenreNames(result)
+    .map(genre => profile.get(String(genre).toLowerCase()) || 0)
+    .filter(value => value !== 0)
+    .sort((a,b) => Math.abs(b) - Math.abs(a));
+  if (!values.length) return 0;
+  // Two strongest genre signals are enough; cap them so genre history guides
+  // ranking without overwhelming seed-based recommendations.
+  const affinity = values.slice(0, 2).reduce((sum, value) => sum + value, 0);
+  return Math.max(-9, Math.min(12, affinity));
+}
+
 async function rankDiscoverFeedCandidates(results, batchSize) {
   const readAuthors = getReadAuthors();
   const authorSet = new Set(readAuthors.map(author => author.toLowerCase()));
   const mode = state.discoverMode || 'discover';
+  const tasteProfiles = mode === 'for-you' ? {
+    tv: discoverTasteProfile('tv'),
+    movie: discoverTasteProfile('movie'),
+    book: discoverTasteProfile('book')
+  } : {};
   const prelim = (results || []).map(result => {
     let score = Number(result._discoverBoost || 0);
     const rating = Number(result.rating || 0);
@@ -5182,6 +5273,10 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
         result = { ...result, authorMatch: true };
         score += mode === 'for-you' ? 10 : 4;
       }
+    }
+
+    if (mode === 'for-you') {
+      score += discoverGenreAffinity(result, tasteProfiles);
     }
 
     if (mode === 'popular') {
@@ -5218,6 +5313,13 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
   ]);
   const annotations = new Map([...tvAnnotated, ...movieAnnotated].map(result => [discoverResultIdentity(result), result]));
   selected = selected.map(result => annotations.get(discoverResultIdentity(result)) || result);
+
+  // Availability is resolved only for the cards in this batch to keep API work
+  // bounded, but it should still affect their order rather than being display-only.
+  if ((state.discoverPrefs.streamingProviderIds || []).length) {
+    selected.sort((a,b) => Number(b.preferredStreaming) - Number(a.preferredStreaming) || Number(b._discoverScore || 0) - Number(a._discoverScore || 0));
+    selected = diversifyDiscoverFeed(selected);
+  }
   return selected;
 }
 
@@ -5500,6 +5602,7 @@ function getReadAuthors() {
   const seen = new Set();
   const books = state.items
     .filter(item => getSourceType(item) === 'book' && (item.completedAt || completedBookIds.has(item.id)))
+    .filter(item => !Number(item.rating || 0) || Number(item.rating || 0) >= 3 || item.recommended)
     .sort((a,b) => String(b.completedAt || b.updatedAt || '').localeCompare(String(a.completedAt || a.updatedAt || '')));
 
   for (const book of books) {
@@ -7004,6 +7107,22 @@ function tvLibraryStatusLabel(key) {
   })[key] || key;
 }
 
+function tvLibraryProgressScore(item) {
+  let watchedEpisodes = 0;
+  for (const entry of state.history) {
+    if (entry.sourceItemId === item.id && entry.kind === 'episode-watched') watchedEpisodes += 1;
+  }
+  const nextSeason = Number(item.progress?.nextSeason || 1);
+  const nextEpisode = Number(item.progress?.nextEpisode || 1);
+  return watchedEpisodes * 100000 + nextSeason * 1000 + nextEpisode;
+}
+
+function compareTVLibraryProgress(a, b) {
+  return tvLibraryProgressScore(b) - tvLibraryProgressScore(a)
+    || String(b.updatedAt || b.completedAt || '').localeCompare(String(a.updatedAt || a.completedAt || ''))
+    || a.title.localeCompare(b.title);
+}
+
 function makeLibraryPoster(item) {
   const poster = document.createElement('button');
   poster.type = 'button';
@@ -7063,8 +7182,10 @@ function renderLibrary() {
     const groupLabel = libraryTypeGroupLabel(items, groupKey);
 
     if (slugifyType(groupKey).replace(/s$/, '') === 'tv') {
+      const rootExpansionKey = 'tv:root';
+      const rootExpanded = state.libraryExpandedGroups.has(rootExpansionKey);
       const section = document.createElement('section');
-      section.className = 'library-group library-shelf library-tv-shelf';
+      section.className = `library-group library-shelf library-tv-shelf${rootExpanded ? ' is-expanded' : ' is-collapsed'}`;
       section.dataset.libraryGroup = groupKey;
       section.innerHTML = `
         <div class="library-group-heading-row">
@@ -7072,29 +7193,32 @@ function renderLibrary() {
             <h2 class="library-group-title">${escapeHtml(groupLabel)}</h2>
             <span class="library-group-count">${items.length}</span>
           </div>
+          <button class="library-expand-button" type="button" data-library-expand="${rootExpansionKey}">${rootExpanded ? 'Collapse' : 'Expand'}</button>
         </div>
-        <div class="tv-library-status-groups"></div>`;
+        <div class="tv-library-status-groups" ${rootExpanded ? '' : 'hidden'}></div>`;
 
-      const statusHost = section.querySelector('.tv-library-status-groups');
-      for (const statusKey of ['in-progress', 'up-to-date', 'finished', 'stopped']) {
-        const statusItems = items.filter(item => tvLibraryStatusKey(item) === statusKey);
-        if (!statusItems.length) continue;
-        const expansionKey = `tv:${statusKey}`;
-        const expanded = state.libraryExpandedGroups.has(expansionKey);
-        const statusSection = document.createElement('section');
-        statusSection.className = `tv-library-status-group${expanded ? ' is-expanded' : ''}`;
-        statusSection.innerHTML = `
-          <div class="tv-library-status-heading">
-            <div>
-              <h3 class="tv-library-status-title">${escapeHtml(tvLibraryStatusLabel(statusKey))}</h3>
-              <span class="library-group-count">${statusItems.length}</span>
+      if (rootExpanded) {
+        const statusHost = section.querySelector('.tv-library-status-groups');
+        for (const statusKey of ['in-progress', 'up-to-date', 'finished', 'stopped']) {
+          const statusItems = items.filter(item => tvLibraryStatusKey(item) === statusKey).sort(compareTVLibraryProgress);
+          if (!statusItems.length) continue;
+          const expansionKey = `tv:${statusKey}`;
+          const expanded = state.libraryExpandedGroups.has(expansionKey);
+          const statusSection = document.createElement('section');
+          statusSection.className = `tv-library-status-group${expanded ? ' is-expanded' : ''}`;
+          statusSection.innerHTML = `
+            <div class="tv-library-status-heading">
+              <div>
+                <h3 class="tv-library-status-title">${escapeHtml(tvLibraryStatusLabel(statusKey))}</h3>
+                <span class="library-group-count">${statusItems.length}</span>
+              </div>
+              <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(expansionKey)}">${expanded ? 'Carousel' : 'View all'}</button>
             </div>
-            <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(expansionKey)}">${expanded ? 'Collapse' : 'Show all'}</button>
-          </div>
-          <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
-        const grid = statusSection.querySelector('.library-poster-grid');
-        for (const item of statusItems) grid.appendChild(makeLibraryPoster(item));
-        statusHost.appendChild(statusSection);
+            <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
+          const grid = statusSection.querySelector('.library-poster-grid');
+          for (const item of statusItems) grid.appendChild(makeLibraryPoster(item));
+          statusHost.appendChild(statusSection);
+        }
       }
 
       els.libraryGroups.appendChild(section);
@@ -7111,7 +7235,7 @@ function renderLibrary() {
           <h2 class="library-group-title">${escapeHtml(groupLabel)}</h2>
           <span class="library-group-count">${items.length}</span>
         </div>
-        <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(groupKey)}">${expanded ? 'Collapse' : `Show all`}</button>
+        <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(groupKey)}">${expanded ? 'Carousel' : `View all`}</button>
       </div>
       <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
     const grid = section.querySelector('.library-poster-grid');
