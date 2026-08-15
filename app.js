@@ -31,7 +31,7 @@ const SOURCE_ITEM_LABELS = {
 };
 
 const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'other']);
-const STICKER_COLORS = ['rust', 'yellow', 'cream', 'lavender', 'navy', 'green', 'pink'];
+const STICKER_COLORS = ['rust', 'red', 'coral', 'orange', 'yellow', 'cream', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'teal', 'green', 'mint', 'brown', 'black', 'white'];
 
 const CLOUD_STATE_VERSION = 2;
 const DEFAULT_DISCOVER_PREFS = { streamingProviderIds: [], streamingProviderNames: [], prioritizeAuthors: true };
@@ -42,6 +42,7 @@ let cloudSyncTimer = null;
 let cloudSyncBusy = false;
 let cloudSyncQueued = false;
 let lastCloudUpdatedAt = '';
+let discoverFeedObserver = null;
 
 
 const state = {
@@ -64,7 +65,21 @@ const state = {
   attachmentObjectUrl: null,
   queueView: 'upnext',
   pendingDiscoverKey: null,
-  openDiscoverKey: null
+  openDiscoverKey: null,
+  tvDraftProviderId: '',
+  tvDraftWatched: new Set(),
+  tvDraftLocked: new Set(),
+  tvDraftSeasons: [],
+  tvDraftDetails: null,
+  discoverFeedItems: [],
+  discoverFeedSeen: new Set(),
+  discoverFeedPage: 0,
+  discoverFeedLoading: false,
+  discoverFeedDone: false,
+  discoverFeedInitialized: false,
+  discoverFeedEmptyPasses: 0,
+  discoverFeedOffsets: { tv: 1, movie: 1, book: 0 },
+  discoverFeedSession: Math.random()
 };
 
 const $ = selector => document.querySelector(selector);
@@ -110,6 +125,9 @@ const els = {
   libraryEmpty: $('#libraryEmpty'),
   refreshDiscover: $('#refreshDiscover'),
   discoverStatus: $('#discoverStatus'),
+  discoverFeed: $('#discoverFeed'),
+  discoverFeedSentinel: $('#discoverFeedSentinel'),
+  discoverFeedMessage: $('#discoverFeedMessage'),
   discoverTrendingTV: $('#discoverTrendingTV'),
   discoverTrendingMovies: $('#discoverTrendingMovies'),
   discoverNewBooks: $('#discoverNewBooks'),
@@ -128,6 +146,19 @@ const els = {
   itemModal: $('#itemModal'),
   detailModal: $('#detailModal'),
   detailBody: $('#detailBody'),
+  historyEditModal: $('#historyEditModal'),
+  historyEditForm: $('#historyEditForm'),
+  historyEditId: $('#historyEditId'),
+  historyEditTitle: $('#historyEditTitle'),
+  historyEditType: $('#historyEditType'),
+  historyEditSubtitle: $('#historyEditSubtitle'),
+  historyEditDate: $('#historyEditDate'),
+  historyEditRating: $('#historyEditRating'),
+  historyEditNote: $('#historyEditNote'),
+  historyEditShowCalendar: $('#historyEditShowCalendar'),
+  historyEditDelete: $('#historyEditDelete'),
+  historyRatingPicker: $('#historyRatingPicker'),
+  historyClearRating: $('#historyClearRating'),
   bookProgressModal: $('#bookProgressModal'),
   itemForm: $('#itemForm'),
   itemSourceType: $('#itemSourceType'),
@@ -149,6 +180,10 @@ const els = {
   tvProgressFields: $('#tvProgressFields'),
   nextSeason: $('#nextSeason'),
   nextEpisode: $('#nextEpisode'),
+  tvWatchSetupStatus: $('#tvWatchSetupStatus'),
+  tvWatchSetupList: $('#tvWatchSetupList'),
+  tvMarkAllWatched: $('#tvMarkAllWatched'),
+  tvClearWatched: $('#tvClearWatched'),
   bookProgressFields: $('#bookProgressFields'),
   bookCurrentPage: $('#bookCurrentPage'),
   bookTotalPages: $('#bookTotalPages'),
@@ -419,8 +454,16 @@ function bindEvents() {
     }
   });
   els.playlistLoadButton?.addEventListener('click', loadPlaylistPreview);
+  els.tvWatchSetupList?.addEventListener('change', handleTVDraftEpisodeToggle);
+  els.tvWatchSetupList?.addEventListener('click', handleTVDraftSeasonAction);
+  els.tvMarkAllWatched?.addEventListener('click', () => setAllTVDraftEpisodes(true));
+  els.tvClearWatched?.addEventListener('click', () => setAllTVDraftEpisodes(false));
   els.itemForm?.addEventListener('submit', saveItemFromForm);
   els.deleteItem?.addEventListener('click', deleteEditingItem);
+  els.historyEditForm?.addEventListener('submit', saveHistoryEdit);
+  els.historyEditDelete?.addEventListener('click', deleteHistoryEdit);
+  els.historyRatingPicker?.addEventListener('click', chooseHistoryRating);
+  els.historyClearRating?.addEventListener('click', () => setHistoryRating(0));
   els.starPicker?.addEventListener('click', chooseRating);
   els.clearRating?.addEventListener('click', () => setRating(0));
   els.itemFiles?.addEventListener('change', addDraftFiles);
@@ -496,6 +539,20 @@ function bindEvents() {
     if (youtubePlaylistButton) {
       const item = findItem(youtubePlaylistButton.dataset.itemId || state.openDetailId);
       if (item) renderWorkoutDetails(item);
+      return;
+    }
+
+    const tvSeasonCheck = event.target.closest('[data-tv-mark-season]');
+    if (tvSeasonCheck) {
+      const item = findItem(tvSeasonCheck.dataset.itemId || state.openDetailId);
+      if (item) await markTVSeasonWatched(item, Number(tvSeasonCheck.dataset.tvMarkSeason));
+      return;
+    }
+
+    const queueMoveButton = event.target.closest('[data-move-queue]');
+    if (queueMoveButton) {
+      const item = findItem(queueMoveButton.dataset.itemId || state.openDetailId);
+      if (item) await moveItemToQueue(item, queueMoveButton.dataset.moveQueue);
       return;
     }
 
@@ -781,6 +838,7 @@ function genericCompletionRecord(item, showOnCalendar = true) {
     title: item.title,
     subtitle: item.subtitle || '',
     notes: item.notes || '',
+    rating: Number(item.rating || 0),
     image: item.image || '',
     provider: item.provider || getSourceType(item),
     providerId: item.providerId || ''
@@ -821,6 +879,7 @@ function tvHistoryRecord(item, episode, seasonNumber, episodeNumber) {
     title: item.title,
     subtitle: `S${seasonNumber} E${episodeNumber} · ${episode.name || 'Episode'}`,
     notes: episode.overview || '',
+    rating: Number(item.rating || 0),
     image: TrackerAPI.tmdbImage(episode.still_path) || item.image || '',
     provider: item.provider,
     providerId: item.providerId,
@@ -980,7 +1039,7 @@ function tvDetailControls(item) {
   if (disposition === 'following') {
     watchButtons = `
       <button class="secondary-button" type="button" data-tv-watch-action="watch-later" data-item-id="${item.id}">Watch later</button>
-      <button class="quiet-button danger-text" type="button" data-tv-watch-action="stop" data-item-id="${item.id}">Stop watching</button>`;
+      <button class="quiet-button danger-text" type="button" data-tv-watch-action="stop" data-item-id="${item.id}">Move to Library / Stop watching</button>`;
   } else {
     watchButtons = `<button class="primary-button" type="button" data-tv-watch-action="resume" data-item-id="${item.id}">Resume watching</button>`;
   }
@@ -1029,6 +1088,64 @@ async function logSpecificTVEpisode(item, seasonNumber, episodeNumber) {
   await renderTVSeasonDetail(item, seasonNumber);
 }
 
+
+async function markTVSeasonWatched(item, seasonNumber) {
+  const season = await getCached(`season:${item.providerId}:${seasonNumber}`, () => TrackerAPI.getTVSeason(item.providerId, seasonNumber, state.settings));
+  let added = 0;
+  for (const episode of (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep))) {
+    if (isTVEpisodeConsumed(item, seasonNumber, episode.episode_number)) continue;
+    addHistoryRecord(tvHistoryRecord(item, episode, seasonNumber, episode.episode_number));
+    added += 1;
+  }
+  await reconcileSingleTVItem(item);
+  item.updatedAt = new Date().toISOString();
+  saveHistory();
+  saveItems();
+  renderAll();
+  if (els.detailModal?.open) await renderTVSeasonDetail(item, seasonNumber);
+  return added;
+}
+
+async function moveItemToQueue(item, status) {
+  const next = ['upnext', 'tbr', 'library'].includes(status) ? status : 'library';
+  if (getSourceType(item) === 'tv') {
+    if (next === 'upnext') {
+      item.watchDisposition = 'following';
+      setItemQueueStatus(item, 'upnext');
+      await reconcileSingleTVItem(item);
+    } else if (next === 'tbr') {
+      item.watchDisposition = 'watch-later';
+      setItemQueueStatus(item, 'tbr');
+    } else {
+      item.watchDisposition = 'stopped';
+      setItemQueueStatus(item, 'library');
+    }
+  } else {
+    setItemQueueStatus(item, next);
+  }
+  item.updatedAt = new Date().toISOString();
+  saveItems();
+  renderAll();
+  if (els.detailModal?.open && state.openDetailId === item.id) {
+    const sourceType = getSourceType(item);
+    if (sourceType === 'tv') await renderTVDetails(item);
+    else if (sourceType === 'youtube') await renderWorkoutDetails(item);
+    else if (sourceType === 'book') await renderBookDetails(item);
+    else if (sourceType === 'movie') await renderMovieDetails(item);
+    else if (sourceType === 'music') await renderMusicDetails(item);
+    else renderManualDetails(item);
+  }
+}
+
+function queueMoveControls(item) {
+  const current = getQueueStatus(item);
+  const buttons = [];
+  if (current !== 'upnext') buttons.push(`<button class="secondary-button" type="button" data-move-queue="upnext" data-item-id="${item.id}">Move to Up Next</button>`);
+  if (current !== 'tbr') buttons.push(`<button class="secondary-button" type="button" data-move-queue="tbr" data-item-id="${item.id}">Watch later / TBR</button>`);
+  if (current !== 'library') buttons.push(`<button class="quiet-button" type="button" data-move-queue="library" data-item-id="${item.id}">Move to Library</button>`);
+  return buttons.join('');
+}
+
 async function advanceWorkout(item) {
   const playlist = await getPlaylistCached(item.providerId);
   const index = Math.max(0, Number(item.progress?.currentIndex || 0));
@@ -1057,6 +1174,7 @@ function youtubeHistoryRecord(item, playlist, video, index) {
     title: video.title,
     subtitle: `${item.title} · ${index + 1} of ${playlist.items.length}`,
     notes: video.description || '',
+    rating: Number(item.rating || 0),
     image: video.image || item.image || '',
     provider: 'youtube',
     providerId: item.providerId,
@@ -1147,6 +1265,11 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
 
   updateItemFormForType();
   els.itemModal.showModal();
+  if (item && getSourceType(item) === 'tv' && item.providerId) {
+    prepareTVWatchSetup(item.providerId, item.id).catch(error => {
+      if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = error.message;
+    });
+  }
 }
 
 function resetItemForm(defaultQueueStatus = 'library') {
@@ -1173,6 +1296,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.formMessage.hidden = true;
   state.selectedSource = null;
   state.loadedPlaylist = null;
+  resetTVDraftSetup();
   state.attachmentDraft = emptyAttachmentDraft();
   if (els.itemFiles) els.itemFiles.value = '';
   if (els.itemLinkLabel) els.itemLinkLabel.value = '';
@@ -1185,6 +1309,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
 function clearSourceSelectionForTypeChange() {
   state.selectedSource = null;
   state.loadedPlaylist = null;
+  resetTVDraftSetup();
   els.provider.value = '';
   els.providerId.value = '';
   els.providerImage.value = '';
@@ -1297,6 +1422,185 @@ function selectCatalogueResult(result) {
 
   if (els.itemSourceType.value === 'book' && result.pageCount && !els.bookTotalPages.value) {
     els.bookTotalPages.value = result.pageCount;
+  }
+  if (els.itemSourceType.value === 'tv' && result.providerId) {
+    prepareTVWatchSetup(result.providerId).catch(error => {
+      if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = error.message;
+    });
+  }
+}
+
+
+function resetTVDraftSetup() {
+  state.tvDraftProviderId = '';
+  state.tvDraftWatched = new Set();
+  state.tvDraftLocked = new Set();
+  state.tvDraftSeasons = [];
+  state.tvDraftDetails = null;
+  if (els.tvWatchSetupList) els.tvWatchSetupList.innerHTML = '';
+  if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = 'Choose a TV search result to load its seasons and episodes.';
+}
+
+function tvDraftEpisodeKey(seasonNumber, episodeNumber) {
+  return `${Number(seasonNumber)}:${Number(episodeNumber)}`;
+}
+
+async function prepareTVWatchSetup(providerId, itemId = '') {
+  if (!providerId || !els.tvWatchSetupList) return;
+  state.tvDraftProviderId = String(providerId);
+  state.tvDraftWatched = new Set();
+  state.tvDraftLocked = new Set();
+  state.tvDraftSeasons = [];
+  if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = 'Loading seasons and episodes…';
+  els.tvWatchSetupList.innerHTML = '<p class="tv-watch-loading">Loading episode history…</p>';
+
+  const details = await getCached(`tv:${providerId}`, () => TrackerAPI.getTVDetails(providerId, state.settings));
+  const seasonInfos = (details.seasons || [])
+    .filter(info => Number(info.season_number) > 0 && Number(info.episode_count) > 0)
+    .sort((a,b) => Number(a.season_number) - Number(b.season_number));
+
+  const seasons = await Promise.all(seasonInfos.map(async info => {
+    const season = await getCached(`season:${providerId}:${info.season_number}`, () => TrackerAPI.getTVSeason(providerId, info.season_number, state.settings));
+    return {
+      seasonNumber: Number(info.season_number),
+      name: season.name || `Season ${info.season_number}`,
+      airDate: season.air_date || info.air_date || '',
+      episodes: (season.episodes || []).filter(ep => Number(ep.episode_number) > 0)
+    };
+  }));
+
+  if (state.tvDraftProviderId !== String(providerId)) return;
+  state.tvDraftDetails = details;
+  state.tvDraftSeasons = seasons;
+
+  const existing = itemId ? findItem(itemId) : null;
+  if (existing) {
+    for (const season of seasons) {
+      for (const episode of season.episodes) {
+        const key = tvDraftEpisodeKey(season.seasonNumber, episode.episode_number);
+        if (isTVEpisodeConsumed(existing, season.seasonNumber, episode.episode_number)) {
+          state.tvDraftWatched.add(key);
+          state.tvDraftLocked.add(key);
+        }
+      }
+    }
+  }
+
+  renderTVWatchSetup();
+}
+
+function renderTVWatchSetup() {
+  if (!els.tvWatchSetupList) return;
+  if (!state.tvDraftSeasons.length) {
+    els.tvWatchSetupList.innerHTML = '<p class="tv-watch-loading">No seasons found.</p>';
+    if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = 'No episode list is available for this show.';
+    return;
+  }
+
+  let airedCount = 0;
+  let selectedCount = 0;
+  const html = state.tvDraftSeasons.map((season, seasonIndex) => {
+    const aired = season.episodes.filter(isEpisodeAvailable);
+    airedCount += aired.length;
+    selectedCount += aired.filter(ep => state.tvDraftWatched.has(tvDraftEpisodeKey(season.seasonNumber, ep.episode_number))).length;
+    const seasonSelected = aired.length > 0 && aired.every(ep => state.tvDraftWatched.has(tvDraftEpisodeKey(season.seasonNumber, ep.episode_number)));
+    const episodes = season.episodes.map(ep => {
+      const key = tvDraftEpisodeKey(season.seasonNumber, ep.episode_number);
+      const available = isEpisodeAvailable(ep);
+      const checked = state.tvDraftWatched.has(key);
+      const locked = state.tvDraftLocked.has(key);
+      return `<label class="tv-watch-episode${available ? '' : ' is-future'}${locked ? ' is-locked' : ''}">
+        <input type="checkbox" data-tv-draft-episode="${escapeAttr(key)}" ${checked ? 'checked' : ''} ${!available || locked ? 'disabled' : ''} />
+        <span class="tv-watch-check">✓</span>
+        <span class="tv-watch-episode-copy">
+          <strong>E${ep.episode_number} · ${escapeHtml(ep.name || 'Episode')}</strong>
+          <small>${escapeHtml([ep.air_date || '', locked ? 'already watched' : !available ? 'not aired yet' : ''].filter(Boolean).join(' · '))}</small>
+        </span>
+      </label>`;
+    }).join('');
+    return `<details class="tv-watch-season" ${seasonIndex === 0 ? 'open' : ''}>
+      <summary>
+        <span><strong>Season ${season.seasonNumber}</strong><small>${season.episodes.length} episodes${season.airDate ? ` · ${escapeHtml(season.airDate.slice(0,4))}` : ''}</small></span>
+        <span class="tv-watch-season-actions">
+          <button class="tv-season-mark-button${seasonSelected ? ' is-complete' : ''}" type="button" data-tv-draft-season-action="${season.seasonNumber}">${seasonSelected ? '✓ Watched' : 'Mark season watched'}</button>
+        </span>
+      </summary>
+      <div class="tv-watch-episodes">${episodes}</div>
+    </details>`;
+  }).join('');
+
+  els.tvWatchSetupList.innerHTML = html;
+  if (els.tvWatchSetupStatus) {
+    els.tvWatchSetupStatus.textContent = `${selectedCount} of ${airedCount} aired episodes marked watched. Future episodes are ignored until they air.`;
+  }
+}
+
+function handleTVDraftEpisodeToggle(event) {
+  const input = event.target.closest('[data-tv-draft-episode]');
+  if (!input) return;
+  const key = input.dataset.tvDraftEpisode;
+  if (state.tvDraftLocked.has(key)) return;
+  if (input.checked) state.tvDraftWatched.add(key);
+  else state.tvDraftWatched.delete(key);
+  renderTVWatchSetup();
+}
+
+function handleTVDraftSeasonAction(event) {
+  const button = event.target.closest('[data-tv-draft-season-action]');
+  if (!button) return;
+  event.preventDefault();
+  const seasonNumber = Number(button.dataset.tvDraftSeasonAction);
+  const season = state.tvDraftSeasons.find(entry => entry.seasonNumber === seasonNumber);
+  if (!season) return;
+  const aired = season.episodes.filter(isEpisodeAvailable);
+  const allSelected = aired.length > 0 && aired.every(ep => state.tvDraftWatched.has(tvDraftEpisodeKey(seasonNumber, ep.episode_number)));
+  for (const ep of aired) {
+    const key = tvDraftEpisodeKey(seasonNumber, ep.episode_number);
+    if (state.tvDraftLocked.has(key)) continue;
+    if (allSelected) state.tvDraftWatched.delete(key);
+    else state.tvDraftWatched.add(key);
+  }
+  renderTVWatchSetup();
+}
+
+function setAllTVDraftEpisodes(markWatched) {
+  for (const season of state.tvDraftSeasons) {
+    for (const ep of season.episodes.filter(isEpisodeAvailable)) {
+      const key = tvDraftEpisodeKey(season.seasonNumber, ep.episode_number);
+      if (state.tvDraftLocked.has(key)) continue;
+      if (markWatched) state.tvDraftWatched.add(key);
+      else state.tvDraftWatched.delete(key);
+    }
+  }
+  renderTVWatchSetup();
+}
+
+function findTVDraftEpisode(seasonNumber, episodeNumber) {
+  const season = state.tvDraftSeasons.find(entry => entry.seasonNumber === Number(seasonNumber));
+  return season?.episodes.find(ep => Number(ep.episode_number) === Number(episodeNumber)) || null;
+}
+
+async function persistTVDraftWatchHistory(item) {
+  if (!item || getSourceType(item) !== 'tv' || String(item.providerId) !== state.tvDraftProviderId) return;
+  for (const key of state.tvDraftWatched) {
+    if (state.tvDraftLocked.has(key)) continue;
+    const [seasonNumber, episodeNumber] = key.split(':').map(Number);
+    if (isTVEpisodeLogged(item, seasonNumber, episodeNumber)) continue;
+    const episode = findTVDraftEpisode(seasonNumber, episodeNumber);
+    if (!episode || !isEpisodeAvailable(episode)) continue;
+    const record = tvHistoryRecord(item, episode, seasonNumber, episodeNumber);
+    record.showOnCalendar = false;
+    record.imported = true;
+    record.importedAt = new Date().toISOString();
+    addHistoryRecord(record);
+  }
+  if (!els.editingId?.value) {
+    item.progress = { ...(item.progress || {}), nextSeason: 1, nextEpisode: 1 };
+  }
+  await reconcileSingleTVItem(item, state.tvDraftDetails || null);
+  if (!item.tvMeta?.hasUnwatched) {
+    setItemQueueStatus(item, 'library');
+    item.watchDisposition = 'following';
   }
 }
 
@@ -1454,6 +1758,15 @@ async function saveItemFromForm(event) {
     state.items.push(item);
   }
 
+  if (sourceType === 'tv') {
+    try {
+      await persistTVDraftWatchHistory(item);
+      saveHistory();
+    } catch (error) {
+      console.warn('Could not fully reconcile TV watch history:', error);
+    }
+  }
+
   saveItems();
   await deleteRemovedDraftAttachments();
   els.itemModal.close();
@@ -1557,7 +1870,7 @@ async function renderTVDetails(item) {
     <div class="detail-progress"><strong>${hasUnwatched ? 'Up next' : 'Progress'}</strong>${hasUnwatched && next ? `S${seasonNumber} E${episodeNumber} · ${escapeHtml(next.name || 'Episode')}` : hasUnwatched ? `S${seasonNumber} E${episodeNumber}` : isTerminalSeriesStatus(details.status) ? 'All available episodes watched.' : 'You are caught up. New aired episodes will return to Up Next automatically.'}</div>
     ${tvDetailControls(item)}
     <section class="detail-section"><h3>Seasons</h3><div class="season-list season-list-rows">${seasons || '—'}</div></section>
-    <section class="detail-section"><h3>Season ${seasonNumber}</h3><div class="episode-list">${episodes || 'No episodes found.'}</div></section>
+    <section class="detail-section"><div class="detail-section-heading"><h3>Season ${seasonNumber}</h3><button class="quiet-button" type="button" data-tv-mark-season="${seasonNumber}" data-item-id="${item.id}">✓ Mark season watched</button></div><div class="episode-list">${episodes || 'No episodes found.'}</div></section>
   `;
 }
 
@@ -1599,7 +1912,7 @@ async function renderTVSeasonDetail(item, seasonNumber) {
         subtitle: [season.air_date?.slice(0,4), `${(season.episodes || []).length} episodes`].filter(Boolean).join(' · '),
         overview: season.overview || series.overview || ''
       })}
-      <section class="detail-section"><h3>Episodes</h3><div class="episode-list">${episodes || 'No episodes found.'}</div></section>
+      <section class="detail-section"><div class="detail-section-heading"><h3>Episodes</h3><button class="quiet-button" type="button" data-tv-mark-season="${seasonNumber}" data-item-id="${item.id}">✓ Mark season watched</button></div><div class="episode-list">${episodes || 'No episodes found.'}</div></section>
     `;
   } catch (error) {
     els.detailBody.innerHTML = `<button class="detail-back-button" type="button" data-tv-series="true" data-item-id="${item.id}">← Series</button><div class="api-error">${escapeHtml(error.message)}</div>`;
@@ -1748,7 +2061,7 @@ function basicDetailHero(item) {
 }
 
 function detailEditButton(item) {
-  return `<div class="detail-actions"><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
+  return `<div class="detail-actions">${queueMoveControls(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
 }
 
 // ---------------------------
@@ -2051,6 +2364,7 @@ function saveBookProgress(event) {
         title: item.title,
         subtitle: `Finished · ${total} pages`,
         notes: item.notes || '',
+        rating: Number(item.rating || 0),
         image: item.image || '',
         provider: item.provider,
         providerId: item.providerId
@@ -2079,6 +2393,7 @@ function getCalendarEntries() {
       title: item.title,
       subtitle: item.subtitle || '',
       notes: item.notes || '',
+      rating: Number(item.rating || 0),
       image: item.image || '',
       provider: item.provider || getSourceType(item),
       createdAt: item.createdAt || item.updatedAt || ''
@@ -2244,7 +2559,7 @@ function calendarStickerMarkup(type, entry = {}) {
   const shapeClass = `sticker-${config.shape}`;
   const paletteClass = `sticker-palette-${config.color}`;
   const tiltClass = `sticker-tilt-${config.tilt}`;
-  const text = config.shape === 'star' ? '★' : escapeHtml(config.label || '');
+  const text = config.shape === 'star' ? '★' : config.shape === 'heart' ? '♥' : escapeHtml(config.label || '');
   const aria = escapeAttr(`${getTypeLabel(type)} sticker`);
   return `<span class="sticker ${shapeClass} ${paletteClass} ${tiltClass}" aria-label="${aria}">${text}</span>`;
 }
@@ -2252,7 +2567,7 @@ function calendarStickerMarkup(type, entry = {}) {
 function getStickerConfig(type, entry = {}) {
   const defaults = getDefaultStickerConfig(type, entry);
   const saved = state.stickerPrefs?.[type] || {};
-  const shape = ['square', 'circle', 'star'].includes(saved.shape) ? saved.shape : defaults.shape;
+  const shape = ['square', 'circle', 'star', 'heart'].includes(saved.shape) ? saved.shape : defaults.shape;
   const color = STICKER_COLORS.includes(saved.color) ? saved.color : defaults.color;
   const label = cleanStickerLabel(saved.label !== undefined ? saved.label : defaults.label);
   return { ...defaults, shape, color, label };
@@ -2301,22 +2616,33 @@ function openCalendarGroup(type, date) {
   if (!entries.length) return;
 
   const formattedDate = new Intl.DateTimeFormat('en-CA', { weekday:'long', month:'long', day:'numeric', year:'numeric' }).format(new Date(`${date}T12:00:00`));
-  const rows = entries.map(entry => `
-    <article class="calendar-event-row">
-      ${entry.image ? `<img class="calendar-event-image" src="${escapeAttr(entry.image)}" alt="" />` : `<div class="calendar-event-image placeholder"></div>`}
-      <div class="calendar-event-copy">
-        <div class="list-title">${escapeHtml(entry.title)}</div>
-        ${entry.subtitle ? `<div class="list-meta">${escapeHtml(entry.subtitle)}</div>` : ''}
-        ${entry.notes ? `<p class="calendar-event-notes">${escapeHtml(shorten(entry.notes, 240))}</p>` : ''}
-      </div>
-      ${entry.sourceItemId ? `<button class="secondary-button calendar-open-source" type="button" data-open-source-id="${escapeAttr(entry.sourceItemId)}">Open</button>` : ''}
-    </article>`).join('');
+  const rows = entries.map(entry => {
+    const rating = Number(entry.rating || 0);
+    const ratingMarkup = rating > 0 ? `<div class="calendar-event-rating" aria-label="${rating} out of 5 stars">${'★'.repeat(Math.floor(rating))}${rating % 1 ? '½' : ''} <span>${rating}/5</span></div>` : '';
+    const editButton = entry.kind === 'dated-item'
+      ? `<button class="secondary-button" type="button" data-edit-calendar-item="${escapeAttr(entry.sourceItemId)}">Edit</button>`
+      : `<button class="secondary-button" type="button" data-edit-history-id="${escapeAttr(entry.id)}">Edit</button>`;
+    return `
+      <article class="calendar-event-row">
+        ${entry.image ? `<img class="calendar-event-image" src="${escapeAttr(entry.image)}" alt="" />` : `<div class="calendar-event-image placeholder"></div>`}
+        <div class="calendar-event-copy">
+          <div class="list-title">${escapeHtml(entry.title)}</div>
+          ${entry.subtitle ? `<div class="list-meta">${escapeHtml(entry.subtitle)}</div>` : ''}
+          ${ratingMarkup}
+          ${entry.notes ? `<p class="calendar-event-notes">${escapeHtml(shorten(entry.notes, 240))}</p>` : ''}
+        </div>
+        <div class="calendar-event-actions">
+          ${editButton}
+          ${entry.sourceItemId ? `<button class="quiet-button calendar-open-source" type="button" data-open-source-id="${escapeAttr(entry.sourceItemId)}">Open source</button>` : ''}
+        </div>
+      </article>`;
+  }).join('');
 
   els.detailBody.innerHTML = `
     <div class="calendar-group-heading">
       <p class="detail-type">${escapeHtml(getTypeLabel(type))}</p>
       <h2>${escapeHtml(formattedDate)}</h2>
-      <p class="detail-meta">${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}</p>
+      <p class="detail-meta">${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} · every past entry can be edited</p>
     </div>
     <section class="detail-section calendar-event-list">${rows}</section>`;
   els.detailModal.showModal();
@@ -2328,6 +2654,101 @@ function openCalendarGroup(type, date) {
       openDetails(sourceId);
     });
   });
+  els.detailBody.querySelectorAll('[data-edit-calendar-item]').forEach(button => {
+    button.addEventListener('click', () => {
+      els.detailModal.close();
+      openItemModal(button.dataset.editCalendarItem);
+    });
+  });
+  els.detailBody.querySelectorAll('[data-edit-history-id]').forEach(button => {
+    button.addEventListener('click', () => {
+      els.detailModal.close();
+      openHistoryEdit(button.dataset.editHistoryId);
+    });
+  });
+}
+
+function openHistoryEdit(id) {
+  const entry = state.history.find(record => record.id === id);
+  if (!entry || !els.historyEditModal) return;
+  const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
+  els.historyEditId.value = entry.id;
+  els.historyEditTitle.value = entry.title || '';
+  els.historyEditType.value = entry.typeLabel || getTypeLabel(entry.type) || '';
+  els.historyEditSubtitle.value = entry.subtitle || '';
+  els.historyEditDate.value = entry.date || '';
+  els.historyEditNote.value = entry.notes || '';
+  els.historyEditShowCalendar.checked = entry.showOnCalendar !== false;
+  setHistoryRating(Number(entry.rating ?? source?.rating ?? 0));
+  els.historyEditModal.showModal();
+}
+
+function chooseHistoryRating(event) {
+  const button = event.target.closest('[data-history-rating]');
+  if (!button) return;
+  setHistoryRating(Number(button.dataset.historyRating));
+}
+
+function setHistoryRating(value) {
+  const rating = Math.max(0, Math.min(5, Number(value || 0)));
+  if (els.historyEditRating) els.historyEditRating.value = String(rating);
+  if (els.historyRatingPicker) {
+    els.historyRatingPicker.querySelectorAll('[data-history-rating]').forEach(button => {
+      button.classList.toggle('filled', Number(button.dataset.historyRating) <= rating);
+    });
+  }
+}
+
+function saveHistoryEdit(event) {
+  event.preventDefault();
+  const id = els.historyEditId?.value;
+  const entry = state.history.find(record => record.id === id);
+  if (!entry) return;
+
+  const typeLabel = cleanTypeLabel(els.historyEditType.value) || entry.typeLabel || getTypeLabel(entry.type);
+  const type = editableTypeFromLabel(typeLabel, entry.type);
+  registerCustomType(type, typeLabel);
+
+  entry.title = els.historyEditTitle.value.trim() || entry.title;
+  entry.type = type;
+  entry.typeLabel = typeLabel;
+  entry.subtitle = els.historyEditSubtitle.value.trim();
+  entry.date = els.historyEditDate.value || '';
+  entry.rating = Number(els.historyEditRating.value || 0);
+  entry.notes = els.historyEditNote.value.trim();
+  entry.showOnCalendar = Boolean(els.historyEditShowCalendar.checked && entry.date);
+  entry.updatedAt = new Date().toISOString();
+
+  saveHistory();
+  els.historyEditModal.close();
+  renderAll();
+}
+
+
+function editableTypeFromLabel(label, currentType = 'other') {
+  const cleaned = cleanTypeLabel(label).toLowerCase();
+  const builtIns = {
+    tv: 'tv', television: 'tv', 'tv show': 'tv', 'tv shows': 'tv',
+    book: 'book', books: 'book',
+    movie: 'movie', movies: 'movie', film: 'movie', films: 'movie',
+    music: 'music',
+    workout: 'workout', workouts: 'workout',
+    other: 'other'
+  };
+  if (builtIns[cleaned]) return builtIns[cleaned];
+  if (cleanTypeLabel(getTypeLabel(currentType)).toLowerCase() === cleaned) return currentType;
+  return slugifyType(label);
+}
+
+function deleteHistoryEdit() {
+  const id = els.historyEditId?.value;
+  const entry = state.history.find(record => record.id === id);
+  if (!entry) return;
+  if (!confirm(`Delete tracked entry “${entry.title}”?`)) return;
+  state.history = state.history.filter(record => record.id !== id);
+  saveHistory();
+  els.historyEditModal.close();
+  renderAll();
 }
 
 // ---------------------------
@@ -2335,6 +2756,27 @@ function openCalendarGroup(type, date) {
 // ---------------------------
 async function renderDiscover(force = false) {
   if (!els.discoverStatus) return;
+
+  // The new Discover page is an endless mixed feed. Keep old section helpers below
+  // for compatibility with older saved/deployed HTML, but prefer this path.
+  if (!els.discoverFeed) return renderLegacyDiscover(force);
+
+  if (force || !state.discoverFeedInitialized) {
+    resetDiscoverFeed(force);
+  } else {
+    // If something was just added/watched from the feed, remove it without
+    // throwing away the user's current discovery session or scroll position.
+    state.discoverFeedItems = state.discoverFeedItems.filter(result => !findDiscoverItem(result));
+    renderDiscoverFeedItems();
+  }
+
+  setupDiscoverInfiniteScroll();
+  if (!state.discoverFeedItems.length && !state.discoverFeedLoading) {
+    await loadMoreDiscoverFeed();
+  }
+}
+
+async function renderLegacyDiscover(force = false) {
   els.discoverStatus.hidden = false;
   els.discoverStatus.textContent = 'Loading recommendations…';
   if (force) {
@@ -2367,12 +2809,399 @@ async function renderDiscover(force = false) {
   }
 }
 
+function resetDiscoverFeed(clearApiCache = false) {
+  if (clearApiCache) {
+    for (const key of Object.keys(state.cache)) {
+      if (key.startsWith('discover:feed:') || key.startsWith('discover:recommend:') || key.startsWith('discover:author:')) delete state.cache[key];
+    }
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
+  }
+
+  state.discoverFeedItems = [];
+  state.discoverFeedSeen = new Set();
+  state.discoverFeedPage = 0;
+  state.discoverFeedLoading = false;
+  state.discoverFeedDone = false;
+  state.discoverFeedInitialized = true;
+  state.discoverFeedEmptyPasses = 0;
+  state.discoverFeedSession = Math.random();
+  state.discoverFeedOffsets = {
+    tv: 1 + Math.floor(Math.random() * 4),
+    movie: 1 + Math.floor(Math.random() * 4),
+    book: Math.floor(Math.random() * 4)
+  };
+  state.discoverResults.clear();
+  if (els.discoverFeed) els.discoverFeed.innerHTML = '';
+  if (els.discoverStatus) {
+    els.discoverStatus.hidden = false;
+    els.discoverStatus.textContent = 'Building a fresh mix for you…';
+  }
+  if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = 'Keep scrolling — more will load automatically.';
+}
+
+function setupDiscoverInfiniteScroll() {
+  if (!els.discoverFeedSentinel || discoverFeedObserver) return;
+  discoverFeedObserver = new IntersectionObserver(entries => {
+    if (entries.some(entry => entry.isIntersecting)) loadMoreDiscoverFeed();
+  }, { rootMargin: '900px 0px 900px 0px', threshold: 0.01 });
+  discoverFeedObserver.observe(els.discoverFeedSentinel);
+}
+
+async function loadMoreDiscoverFeed() {
+  if (!els.discoverFeed || state.discoverFeedLoading || state.discoverFeedDone) return;
+  state.discoverFeedLoading = true;
+  state.discoverFeedPage += 1;
+  const batchNumber = state.discoverFeedPage;
+
+  if (els.discoverStatus) {
+    els.discoverStatus.hidden = false;
+    els.discoverStatus.textContent = state.discoverFeedItems.length ? 'Finding more…' : 'Building a fresh mix for you…';
+  }
+  els.discoverFeedSentinel?.classList.add('is-loading');
+
+  try {
+    const candidates = await collectDiscoverFeedCandidates(batchNumber);
+    const fresh = candidates.filter(result => {
+      const key = discoverResultIdentity(result);
+      return key && !state.discoverFeedSeen.has(key) && !findDiscoverItem(result);
+    });
+
+    const batchSize = window.matchMedia('(max-width: 760px)').matches ? 12 : 20;
+    let ranked = await rankDiscoverFeedCandidates(fresh, batchSize);
+    ranked = diversifyDiscoverFeed(ranked).slice(0, batchSize);
+
+    if (!ranked.length) {
+      state.discoverFeedEmptyPasses += 1;
+      if (state.discoverFeedEmptyPasses >= 3) {
+        state.discoverFeedDone = true;
+        if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = 'You’ve reached the end of this mix. Shuffle to start a different one.';
+      }
+    } else {
+      state.discoverFeedEmptyPasses = 0;
+      for (const result of ranked) {
+        state.discoverFeedSeen.add(discoverResultIdentity(result));
+        state.discoverFeedItems.push(result);
+      }
+      appendDiscoverFeedItems(ranked);
+      if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = 'Keep scrolling — more will load automatically.';
+    }
+
+    if (els.discoverStatus) els.discoverStatus.hidden = true;
+  } catch (error) {
+    if (els.discoverStatus) {
+      els.discoverStatus.hidden = false;
+      els.discoverStatus.textContent = `Discover could not load more: ${error.message}`;
+    }
+  } finally {
+    state.discoverFeedLoading = false;
+    els.discoverFeedSentinel?.classList.remove('is-loading');
+  }
+}
+
+async function collectDiscoverFeedCandidates(batchNumber) {
+  const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
+  const tvPage = Math.min(500, state.discoverFeedOffsets.tv + batchNumber - 1);
+  const moviePage = Math.min(500, state.discoverFeedOffsets.movie + batchNumber - 1);
+  const bookStart = (state.discoverFeedOffsets.book + batchNumber - 1) * 40;
+  const readAuthors = getReadAuthors();
+  const bookPlan = chooseDiscoverBookPlan(readAuthors, batchNumber);
+
+  const tasks = [
+    TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings),
+    TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings),
+    TrackerAPI.getBookFeed(bookStart, state.settings, bookPlan)
+  ];
+
+  if (selectedProviders.length) {
+    // Pull a parallel catalogue slice from services the user actually has. This
+    // is a boost, not a filter: the general catalogue above still supplies variety.
+    const providerPage = 1 + ((batchNumber + Math.floor(state.discoverFeedSession * 7)) % 6);
+    tasks.push(TrackerAPI.getTMDBDiscover('tv', providerPage, state.settings, { providerIds: selectedProviders }));
+    tasks.push(TrackerAPI.getTMDBDiscover('movie', providerPage, state.settings, { providerIds: selectedProviders }));
+  }
+
+  const settled = await Promise.allSettled(tasks);
+  const candidates = [];
+  const add = (results, sourceType, source, boost = 0) => {
+    for (const result of results || []) {
+      candidates.push({ ...result, sourceType: result.sourceType || sourceType, _discoverSource: source, _discoverBoost: boost });
+    }
+  };
+
+  const generalTV = settled[0].status === 'fulfilled' ? settled[0].value.results : [];
+  const generalMovies = settled[1].status === 'fulfilled' ? settled[1].value.results : [];
+  const generalBooks = settled[2].status === 'fulfilled' ? settled[2].value.results : [];
+  add(filterAlreadyKnown(generalTV, 'tv'), 'tv', 'catalogue', 0);
+  add(filterAlreadyKnown(generalMovies, 'movie'), 'movie', 'catalogue', 0);
+  add(filterAlreadyKnown(generalBooks, 'book'), 'book', bookPlan.personalized ? 'personal-book' : 'books', bookPlan.personalized ? 5 : 1);
+
+  let taskIndex = 3;
+  if (selectedProviders.length) {
+    const preferredTV = settled[taskIndex++]?.status === 'fulfilled' ? settled[taskIndex - 1].value.results : [];
+    const preferredMovies = settled[taskIndex++]?.status === 'fulfilled' ? settled[taskIndex - 1].value.results : [];
+    add(filterAlreadyKnown(preferredTV, 'tv'), 'tv', 'preferred-streaming', 7);
+    add(filterAlreadyKnown(preferredMovies, 'movie'), 'movie', 'preferred-streaming', 7);
+  }
+
+  // Rotate through different things the user has consumed instead of anchoring
+  // the page to the same single seed on every visit.
+  const seedType = batchNumber % 2 === 0 ? 'movie' : 'tv';
+  const seed = pickDiscoverSeed(seedType);
+  if (seed?.providerId) {
+    try {
+      const recommendationPage = 1 + ((batchNumber - 1) % 3);
+      const recs = await getCached(
+        `discover:feed:recommend:${seedType}:${seed.providerId}:${recommendationPage}`,
+        () => TrackerAPI.getTMDBRecommendations(seedType, seed.providerId, state.settings, recommendationPage)
+      );
+      add(filterAlreadyKnown(recs, seedType), seedType, 'personal', 7);
+    } catch {}
+  }
+
+  const bookSeed = pickDiscoverSeed('book');
+  if (bookSeed?.providerId && batchNumber % 2 === 1) {
+    try {
+      const recs = await getCached(
+        `discover:feed:recommend:book:${bookSeed.providerId}`,
+        () => TrackerAPI.getBookRecommendations(bookSeed.providerId, state.settings)
+      );
+      add(filterAlreadyKnown(recs, 'book'), 'book', 'personal', 7);
+    } catch {}
+  }
+
+  // A little current material near the top of each new mix, without making the
+  // whole feed the same trending page every time.
+  if (batchNumber === 1) {
+    const current = await Promise.allSettled([
+      getCached('discover:trending:tv', () => TrackerAPI.getTrending('tv', state.settings)),
+      getCached('discover:trending:movie', () => TrackerAPI.getTrending('movie', state.settings)),
+      getCached('discover:new:books', () => TrackerAPI.getNewBooks(state.settings))
+    ]);
+    if (current[0].status === 'fulfilled') add(filterAlreadyKnown(current[0].value, 'tv'), 'tv', 'trending', 3);
+    if (current[1].status === 'fulfilled') add(filterAlreadyKnown(current[1].value, 'movie'), 'movie', 'trending', 3);
+    if (current[2].status === 'fulfilled') add(filterAlreadyKnown(current[2].value, 'book'), 'book', 'new', 2);
+  }
+
+  return dedupeDiscoverCandidatesByBoost(candidates);
+}
+
+function dedupeDiscoverCandidatesByBoost(results) {
+  const best = new Map();
+  for (const result of results || []) {
+    const key = discoverResultIdentity(result);
+    if (!key) continue;
+    const existing = best.get(key);
+    if (!existing || Number(result._discoverBoost || 0) > Number(existing._discoverBoost || 0)) best.set(key, result);
+  }
+  return [...best.values()];
+}
+
+function chooseDiscoverBookPlan(readAuthors, batchNumber) {
+  const useKnownAuthor = readAuthors.length && state.discoverPrefs.prioritizeAuthors !== false && Math.random() < 0.42;
+  if (useKnownAuthor) {
+    const author = readAuthors[Math.floor(Math.random() * Math.min(readAuthors.length, 8))];
+    return { query: `inauthor:${author}`, orderBy: 'relevance', maxResults: 40, personalized: true };
+  }
+
+  const topics = [
+    'subject:fiction', 'subject:literary fiction', 'subject:mystery', 'subject:biography',
+    'subject:history', 'subject:science', 'subject:psychology', 'subject:philosophy',
+    'subject:fantasy', 'subject:romance', 'subject:memoir', 'subject:essays'
+  ];
+  const index = (batchNumber + Math.floor(state.discoverFeedSession * topics.length) + Math.floor(Math.random() * 4)) % topics.length;
+  return { query: topics[index], orderBy: Math.random() < 0.28 ? 'newest' : 'relevance', maxResults: 40, personalized: false };
+}
+
+function pickDiscoverSeed(type) {
+  const pool = state.items
+    .filter(item => getSourceType(item) === type && item.providerId)
+    .filter(item => {
+      if (type === 'tv') return item.completedAt || Number(item.progress?.nextSeason || 1) > 1 || Number(item.progress?.nextEpisode || 1) > 1 || state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched');
+      if (type === 'book') return item.completedAt || Number(item.progress?.currentPage || 0) > 0;
+      if (type === 'movie') return item.completedAt || item.date || state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'movie-watched');
+      return false;
+    });
+  if (!pool.length) return null;
+  const recent = [...pool]
+    .sort((a,b) => String(b.updatedAt || b.completedAt || '').localeCompare(String(a.updatedAt || a.completedAt || '')))
+    .slice(0, 12);
+
+  // Higher-rated things are more likely to become recommendation seeds, but
+  // recency still matters because only the recent slice enters this lottery.
+  const weighted = recent.map(item => {
+    const rating = Number(item.rating || 0);
+    const weight = rating > 0 ? Math.max(.5, rating * rating) : 4;
+    return { item, weight };
+  });
+  const total = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+  let roll = Math.random() * total;
+  for (const entry of weighted) {
+    roll -= entry.weight;
+    if (roll <= 0) return entry.item;
+  }
+  return weighted.at(-1)?.item || null;
+}
+
+async function rankDiscoverFeedCandidates(results, batchSize) {
+  const readAuthors = getReadAuthors();
+  const authorSet = new Set(readAuthors.map(author => author.toLowerCase()));
+  const prelim = (results || []).map(result => {
+    let score = Number(result._discoverBoost || 0);
+    const rating = Number(result.rating || 0);
+    if (rating) score += Math.min(2.5, rating / 4);
+
+    if (result.sourceType === 'book' && authorSet.size) {
+      const resultAuthors = String(result.subtitle || '').split(',').map(value => value.trim().toLowerCase());
+      if (resultAuthors.some(author => authorSet.has(author))) {
+        result = { ...result, authorMatch: true };
+        score += 7;
+      }
+    }
+
+    // Enough randomness to change each visit, while strong preference signals
+    // still matter more than chance.
+    const jitter = Math.random() * 6.5;
+    return { ...result, _discoverScore: score + jitter, _discoverJitter: jitter };
+  }).sort((a,b) => b._discoverScore - a._discoverScore);
+
+  // Pick the batch first, then resolve watch-provider names only for TV/movies
+  // that will actually be rendered. This matters for an endless feed: it avoids
+  // dozens of unnecessary provider calls for cards the user never sees.
+  let selected = diversifyDiscoverFeed(prelim).slice(0, batchSize);
+  const tv = selected.filter(result => result.sourceType === 'tv');
+  const movie = selected.filter(result => result.sourceType === 'movie');
+  const [tvAnnotated, movieAnnotated] = await Promise.all([
+    tv.length ? prioritizeByStreaming(tv, 'tv') : [],
+    movie.length ? prioritizeByStreaming(movie, 'movie') : []
+  ]);
+  const annotations = new Map([...tvAnnotated, ...movieAnnotated].map(result => [discoverResultIdentity(result), result]));
+  selected = selected.map(result => annotations.get(discoverResultIdentity(result)) || result);
+  return selected;
+}
+
+function diversifyDiscoverFeed(results) {
+  const remaining = [...(results || [])];
+  const output = [];
+  while (remaining.length) {
+    const recentTypes = output.slice(-2).map(item => item.sourceType);
+    let index = remaining.findIndex((item, candidateIndex) => candidateIndex < 8 && !(recentTypes.length === 2 && recentTypes.every(type => type === item.sourceType)));
+    if (index < 0) index = 0;
+    output.push(remaining.splice(index, 1)[0]);
+  }
+  return output;
+}
+
+function discoverResultIdentity(result) {
+  if (!result?.providerId) return '';
+  return `${result.sourceType || 'book'}:${result.providerId}`;
+}
+
+function renderDiscoverFeedItems() {
+  if (!els.discoverFeed) return;
+  els.discoverFeed.innerHTML = '';
+  for (const result of state.discoverFeedItems) {
+    const key = rememberDiscoverResult(result, result.sourceType);
+    els.discoverFeed.insertAdjacentHTML('beforeend', discoverCardMarkup(result, key, result.sourceType));
+  }
+}
+
+function appendDiscoverFeedItems(results) {
+  if (!els.discoverFeed) return;
+  const fragment = document.createDocumentFragment();
+  const holder = document.createElement('div');
+  holder.innerHTML = (results || []).map(result => {
+    const key = rememberDiscoverResult(result, result.sourceType);
+    return discoverCardMarkup(result, key, result.sourceType);
+  }).join('');
+  while (holder.firstChild) fragment.appendChild(holder.firstChild);
+  els.discoverFeed.appendChild(fragment);
+}
+
 function renderDiscoverGrid(container, results, fallbackType) {
   if (!container) return;
   container.innerHTML = '';
   for (const result of (results || []).slice(0, 8)) {
     const key = rememberDiscoverResult(result, fallbackType);
     container.insertAdjacentHTML('beforeend', discoverCardMarkup(result, key, fallbackType));
+  }
+  prepareDiscoverCarousel(container);
+}
+
+function prepareDiscoverCarousel(track) {
+  if (!track || track.dataset.carouselReady === 'true') {
+    if (track) updateDiscoverCarouselControls(track);
+    return;
+  }
+
+  track.dataset.carouselReady = 'true';
+  const parent = track.parentElement;
+  if (!parent) return;
+
+  let controls = parent.querySelector(':scope > .discover-carousel-controls');
+  if (!controls) {
+    controls = document.createElement('div');
+    controls.className = 'discover-carousel-controls';
+    controls.innerHTML = `
+      <button class="discover-carousel-arrow" type="button" data-carousel-direction="-1" aria-label="Previous items">←</button>
+      <span class="discover-carousel-position" aria-live="polite"></span>
+      <button class="discover-carousel-arrow" type="button" data-carousel-direction="1" aria-label="Next items">→</button>`;
+    track.insertAdjacentElement('afterend', controls);
+  }
+
+  controls.querySelectorAll('[data-carousel-direction]').forEach(button => {
+    button.addEventListener('click', () => {
+      const direction = Number(button.dataset.carouselDirection || 1);
+      const card = track.querySelector('.discover-card');
+      const gap = parseFloat(getComputedStyle(track).gap || '12') || 12;
+      const distance = card ? card.getBoundingClientRect().width + gap : track.clientWidth * .8;
+      track.scrollBy({ left: direction * distance, behavior: 'smooth' });
+    });
+  });
+
+  let raf = 0;
+  track.addEventListener('scroll', () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => updateDiscoverCarouselControls(track));
+  }, { passive: true });
+  window.addEventListener('resize', () => updateDiscoverCarouselControls(track), { passive: true });
+  updateDiscoverCarouselControls(track);
+}
+
+function updateDiscoverCarouselControls(track) {
+  const parent = track?.parentElement;
+  const controls = parent?.querySelector(':scope > .discover-carousel-controls');
+  if (!track || !controls) return;
+
+  const cards = [...track.querySelectorAll('.discover-card')];
+  const prev = controls.querySelector('[data-carousel-direction="-1"]');
+  const next = controls.querySelector('[data-carousel-direction="1"]');
+  const position = controls.querySelector('.discover-carousel-position');
+  const maxScroll = Math.max(0, track.scrollWidth - track.clientWidth);
+
+  if (!cards.length || maxScroll <= 2) {
+    controls.classList.add('is-static');
+    if (position) position.textContent = cards.length ? `${cards.length} item${cards.length === 1 ? '' : 's'}` : '';
+    if (prev) prev.disabled = true;
+    if (next) next.disabled = true;
+    return;
+  }
+
+  controls.classList.remove('is-static');
+  if (prev) prev.disabled = track.scrollLeft <= 2;
+  if (next) next.disabled = track.scrollLeft >= maxScroll - 2;
+
+  if (position) {
+    const trackRect = track.getBoundingClientRect();
+    let closestIndex = 0;
+    let closestDistance = Infinity;
+    cards.forEach((card, index) => {
+      const distance = Math.abs(card.getBoundingClientRect().left - trackRect.left);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = index;
+      }
+    });
+    position.textContent = `${closestIndex + 1} / ${cards.length}`;
   }
 }
 
@@ -2424,6 +3253,8 @@ async function renderPersonalRecommendations(readAuthors = getReadAuthors()) {
       return discoverCardMarkup(result, key, group.type);
     }).join('');
     els.discoverRecommendations.insertAdjacentHTML('beforeend', `<section class="recommendation-group"><h3>${escapeHtml(group.title)}</h3><div class="discover-grid">${cards}</div></section>`);
+    const newestGroup = els.discoverRecommendations.lastElementChild;
+    prepareDiscoverCarousel(newestGroup?.querySelector('.discover-grid'));
   }
 }
 
@@ -2764,6 +3595,7 @@ async function markDiscoverCompleted(key) {
     title: item.title,
     subtitle: item.subtitle || '',
     notes: result.description || '',
+    rating: Number(item.rating || 0),
     image: item.image || '',
     provider: item.provider,
     providerId: item.providerId
@@ -2994,11 +3826,12 @@ function renderStickerSettingsRows() {
           <option value="square" ${config.shape === 'square' ? 'selected' : ''}>Square</option>
           <option value="circle" ${config.shape === 'circle' ? 'selected' : ''}>Circle</option>
           <option value="star" ${config.shape === 'star' ? 'selected' : ''}>Star</option>
+          <option value="heart" ${config.shape === 'heart' ? 'selected' : ''}>Heart</option>
         </select>
       </label>
       <label class="sticker-setting-field">
         <span class="sticker-setting-mobile-label">Text</span>
-        <input data-sticker-field="label" type="text" maxlength="3" value="${escapeAttr(config.shape === 'star' ? '' : config.label)}" placeholder="${escapeAttr(defaultStickerLabel(type))}" ${config.shape === 'star' ? 'disabled' : ''} />
+        <input data-sticker-field="label" type="text" maxlength="3" value="${escapeAttr(['star','heart'].includes(config.shape) ? '' : config.label)}" placeholder="leave blank for no text" ${['star','heart'].includes(config.shape) ? 'disabled' : ''} />
       </label>
       <label class="sticker-setting-field">
         <span class="sticker-setting-mobile-label">Color</span>
@@ -3016,12 +3849,13 @@ function previewStickerSettings(event) {
   const shape = row.querySelector('[data-sticker-field="shape"]')?.value || 'square';
   const color = row.querySelector('[data-sticker-field="color"]')?.value || 'cream';
   const labelInput = row.querySelector('[data-sticker-field="label"]');
-  if (labelInput) labelInput.disabled = shape === 'star';
-  const label = shape === 'star' ? '★' : cleanStickerLabel(labelInput?.value || defaultStickerLabel(row.dataset.stickerType));
+  if (labelInput) labelInput.disabled = ['star','heart'].includes(shape);
+  const label = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(labelInput?.value ?? '');
   const defaults = getDefaultStickerConfig(row.dataset.stickerType, state.history.find(entry => entry.type === row.dataset.stickerType) || {});
   const preview = row.querySelector('.sticker-setting-preview');
   if (preview) {
-    preview.innerHTML = `<span class="sticker sticker-${shape} sticker-palette-${color} sticker-tilt-${defaults.tilt}">${shape === 'star' ? '★' : escapeHtml(label)}</span>`;
+    const symbol = shape === 'star' ? '★' : shape === 'heart' ? '♥' : escapeHtml(label);
+    preview.innerHTML = `<span class="sticker sticker-${shape} sticker-palette-${color} sticker-tilt-${defaults.tilt}">${symbol}</span>`;
   }
 }
 
@@ -3033,7 +3867,7 @@ function saveStickerSettings(event) {
     const type = row.dataset.stickerType;
     const shape = row.querySelector('[data-sticker-field="shape"]')?.value || 'square';
     const color = row.querySelector('[data-sticker-field="color"]')?.value || 'cream';
-    const label = shape === 'star' ? '★' : cleanStickerLabel(row.querySelector('[data-sticker-field="label"]')?.value || defaultStickerLabel(type));
+    const label = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(row.querySelector('[data-sticker-field="label"]')?.value ?? '');
     next[type] = { shape, color, label };
   });
 

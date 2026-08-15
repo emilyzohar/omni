@@ -180,6 +180,66 @@ export const TrackerAPI = (() => {
     };
   }
 
+  function mapTMDBDiscoverResult(result, mediaType) {
+    return {
+      sourceType: mediaType,
+      provider: 'tmdb',
+      providerId: String(result.id),
+      title: result.name || result.title || 'Untitled',
+      subtitle: (result.first_air_date || result.release_date || '').slice(0, 4),
+      image: result.poster_path ? `${TMDB_IMAGE}${result.poster_path}` : '',
+      description: result.overview || '',
+      rating: result.vote_average || 0,
+      raw: result
+    };
+  }
+
+  async function getTMDBDiscover(type, page = 1, settings, options = {}) {
+    const mediaType = type === 'tv' ? 'tv' : 'movie';
+    const params = new URLSearchParams({
+      language: 'en-US',
+      include_adult: 'false',
+      page: String(Math.max(1, Number(page) || 1)),
+      sort_by: options.sortBy || 'popularity.desc'
+    });
+
+    // Keep low-signal catalogue noise down without making the feed only blockbusters.
+    params.set('vote_count.gte', String(options.minVotes ?? (mediaType === 'tv' ? 30 : 50)));
+
+    const providerIds = (options.providerIds || []).map(String).filter(Boolean);
+    if (providerIds.length) {
+      params.set('watch_region', String(settings.tmdbWatchRegion || 'CA').toUpperCase());
+      params.set('with_watch_providers', providerIds.join('|'));
+      params.set('with_watch_monetization_types', 'flatrate|free|ads');
+    }
+
+    const data = await fetchJson(`${TMDB_ROOT}/discover/${mediaType}?${params.toString()}`, { headers: tmdbHeaders(settings) });
+    return {
+      page: Number(data.page || page),
+      totalPages: Number(data.total_pages || 1),
+      results: (data.results || []).map(result => mapTMDBDiscoverResult(result, mediaType))
+    };
+  }
+
+  async function getBookFeed(startIndex = 0, settings, options = {}) {
+    const key = required(settings.googleBooksKey, 'Google Books API key');
+    const query = options.query || 'subject:fiction';
+    const params = new URLSearchParams({
+      q: query,
+      startIndex: String(Math.max(0, Number(startIndex) || 0)),
+      maxResults: String(Math.min(40, Math.max(1, Number(options.maxResults) || 40))),
+      printType: 'books',
+      orderBy: options.orderBy === 'newest' ? 'newest' : 'relevance',
+      key
+    });
+    const data = await fetchJson(`${GOOGLE_BOOKS_ROOT}/volumes?${params.toString()}`);
+    return {
+      startIndex: Math.max(0, Number(startIndex) || 0),
+      totalItems: Number(data.totalItems || 0),
+      results: (data.items || []).map(mapBook)
+    };
+  }
+
   async function getTrending(type, settings) {
     const mediaType = type === 'tv' ? 'tv' : 'movie';
     const data = await fetchJson(`${TMDB_ROOT}/trending/${mediaType}/week?language=en-US`, { headers: tmdbHeaders(settings) });
@@ -196,9 +256,9 @@ export const TrackerAPI = (() => {
     }));
   }
 
-  async function getTMDBRecommendations(type, id, settings) {
+  async function getTMDBRecommendations(type, id, settings, page = 1) {
     const mediaType = type === 'tv' ? 'tv' : 'movie';
-    const data = await fetchJson(`${TMDB_ROOT}/${mediaType}/${encodeURIComponent(id)}/recommendations?language=en-US&page=1`, { headers: tmdbHeaders(settings) });
+    const data = await fetchJson(`${TMDB_ROOT}/${mediaType}/${encodeURIComponent(id)}/recommendations?language=en-US&page=${Math.max(1, Number(page) || 1)}`, { headers: tmdbHeaders(settings) });
     return (data.results || []).slice(0, 12).map(result => ({
       sourceType: mediaType,
       provider: 'tmdb',
@@ -349,6 +409,8 @@ export const TrackerAPI = (() => {
     getPlaylist,
     getYouTubeVideo,
     getTrending,
+    getTMDBDiscover,
+    getBookFeed,
     getTMDBRecommendations,
     getWatchProviderCatalog,
     getWatchProviders,

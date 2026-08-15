@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20260814-fullwidth" />
+  <link rel="stylesheet" href="style.css?v=infinite-discover-1" />
 </head>
 <body class="discover-page auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -73,33 +73,22 @@
           </div>
           <div class="discover-heading-actions">
             <button id="openDiscoverSettings" class="secondary-button" type="button">Settings</button>
-            <button id="refreshDiscover" class="secondary-button" type="button">Refresh</button>
+            <button id="refreshDiscover" class="secondary-button" type="button">Shuffle</button>
           </div>
         </div>
 
-        <div id="discoverStatus" class="discover-status">Loading recommendations…</div>
+        <div id="discoverStatus" class="discover-status">Building a fresh mix for you…</div>
 
-        <div id="discoverSections" class="discover-sections">
-          <section class="discover-block" data-discover-block="trending-tv">
-            <div class="discover-block-heading"><h2>Trending TV</h2><span>This week</span></div>
-            <div id="discoverTrendingTV" class="discover-grid"></div>
-          </section>
-
-          <section class="discover-block" data-discover-block="trending-movies">
-            <div class="discover-block-heading"><h2>Trending Movies</h2><span>This week</span></div>
-            <div id="discoverTrendingMovies" class="discover-grid"></div>
-          </section>
-
-          <section class="discover-block" data-discover-block="new-books">
-            <div class="discover-block-heading"><h2>New Books</h2><span>Recently published</span></div>
-            <div id="discoverNewBooks" class="discover-grid"></div>
-          </section>
-
-          <section id="discoverRecommendationsBlock" class="discover-block" hidden>
-            <div class="discover-block-heading"><h2>For You</h2><span>Based on your library and progress</span></div>
-            <div id="discoverRecommendations" class="recommendation-groups"></div>
-          </section>
-        </div>
+        <section class="discover-feed-section" aria-label="Personalized discovery feed">
+          <div class="discover-feed-intro">
+            <p>TV, movies, and books mixed together. Your streaming services, watched/read history, ratings, and familiar authors are weighted toward the top — with enough randomness that each visit changes.</p>
+          </div>
+          <div id="discoverFeed" class="discover-feed-grid"></div>
+          <div id="discoverFeedSentinel" class="discover-feed-sentinel" aria-hidden="true">
+            <span class="discover-feed-spinner"></span>
+          </div>
+          <p id="discoverFeedMessage" class="discover-feed-message">Keep scrolling — more will load automatically.</p>
+        </section>
 
         <p id="watchProviderAttribution" class="watch-provider-attribution">Streaming availability data by JustWatch via TMDB.</p>
       </div>
@@ -212,18 +201,21 @@
         </label>
       </div>
 
-      <div id="tvProgressFields" class="progress-fields" hidden>
-        <p class="field-label">Next episode</p>
-        <div class="two-column-fields">
-          <label class="field compact-field">
-            <span>Season</span>
-            <input id="nextSeason" type="number" min="1" step="1" value="1" />
-          </label>
-          <label class="field compact-field">
-            <span>Episode</span>
-            <input id="nextEpisode" type="number" min="1" step="1" value="1" />
-          </label>
+      <div id="tvProgressFields" class="progress-fields tv-watch-history-setup" hidden>
+        <input id="nextSeason" type="hidden" value="1" />
+        <input id="nextEpisode" type="hidden" value="1" />
+        <div class="tv-watch-setup-heading">
+          <div>
+            <p class="field-label">What have you already watched?</p>
+            <p class="field-hint">Mark seasons or individual episodes before saving. These imported watches go to your Library history, not today's calendar.</p>
+          </div>
+          <div class="tv-watch-setup-actions">
+            <button id="tvMarkAllWatched" class="secondary-button" type="button">Mark all aired</button>
+            <button id="tvClearWatched" class="quiet-button" type="button">Clear</button>
+          </div>
         </div>
+        <p id="tvWatchSetupStatus" class="tv-watch-setup-status">Choose a TV search result to load its seasons and episodes.</p>
+        <div id="tvWatchSetupList" class="tv-watch-setup-list"></div>
       </div>
 
       <div id="bookProgressFields" class="progress-fields" hidden>
@@ -315,6 +307,64 @@
       <button class="queue-choice-button" type="button" data-discover-queue-choice="upnext"><strong>Up Next</strong><span>Start / continue now</span></button>
       <button class="queue-choice-button" type="button" data-discover-queue-choice="tbr"><strong>TBR</strong><span>Save for later</span></button>
     </div>
+  </dialog>
+
+  <!-- EDIT PAST TRACKED ENTRY -->
+  <dialog id="historyEditModal" class="modal history-edit-modal">
+    <button class="modal-x" type="button" data-close="historyEditModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">TRACKED HISTORY</p>
+      <h2>Edit past entry</h2>
+      <p class="field-hint">Changes update the calendar immediately. Changing the date moves the sticker to that day.</p>
+    </div>
+    <form id="historyEditForm" class="item-form history-edit-form">
+      <input id="historyEditId" type="hidden" />
+      <label class="field">
+        <span>Title</span>
+        <input id="historyEditTitle" type="text" required />
+      </label>
+      <div class="two-column-fields">
+        <label class="field compact-field">
+          <span>Type</span>
+          <input id="historyEditType" type="text" required />
+        </label>
+        <label class="field compact-field">
+          <span>Date</span>
+          <input id="historyEditDate" type="date" />
+        </label>
+      </div>
+      <label class="field">
+        <span>Episode / subtitle <em>optional</em></span>
+        <input id="historyEditSubtitle" type="text" />
+      </label>
+      <fieldset class="rating-fieldset">
+        <legend>Rating <span>optional</span></legend>
+        <div id="historyRatingPicker" class="star-picker" aria-label="Rating out of five stars">
+          <button type="button" data-history-rating="1" aria-label="1 star">★</button>
+          <button type="button" data-history-rating="2" aria-label="2 stars">★</button>
+          <button type="button" data-history-rating="3" aria-label="3 stars">★</button>
+          <button type="button" data-history-rating="4" aria-label="4 stars">★</button>
+          <button type="button" data-history-rating="5" aria-label="5 stars">★</button>
+          <button id="historyClearRating" type="button" class="clear-rating">clear</button>
+        </div>
+        <input id="historyEditRating" type="hidden" value="0" />
+      </fieldset>
+      <label class="field">
+        <span>Notes <em>optional</em></span>
+        <textarea id="historyEditNote" rows="5" placeholder="Anything you want to remember"></textarea>
+      </label>
+      <label class="history-calendar-toggle">
+        <input id="historyEditShowCalendar" type="checkbox" checked />
+        <span>Show this entry on the calendar</span>
+      </label>
+      <div class="modal-actions">
+        <button id="historyEditDelete" class="delete-button" type="button">Delete entry</button>
+        <div class="actions-right">
+          <button class="quiet-button" type="button" data-close="historyEditModal">Cancel</button>
+          <button class="primary-button" type="submit">Save changes</button>
+        </div>
+      </div>
+    </form>
   </dialog>
 
   <!-- DETAILS -->

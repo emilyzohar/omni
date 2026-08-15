@@ -2399,3 +2399,768 @@ body.auth-locked > main {
     min-width: 0;
   }
 }
+
+/* =========================================================
+   DESKTOP SCREEN-FIT FIX — 2026-08-14
+   This intentionally overrides every earlier shell/max-width rule.
+   Desktop uses the browser window; mobile keeps its dedicated layout.
+   ========================================================= */
+
+@media (min-width: 761px) {
+  :root {
+    --screen-gutter: clamp(28px, 3vw, 58px);
+  }
+
+  html {
+    font-size: 18px;
+  }
+
+  body {
+    width: 100%;
+    overflow-x: hidden;
+  }
+
+  .shell,
+  .site-header .nav,
+  .discover-page .shell {
+    width: calc(100vw - (var(--screen-gutter) * 2)) !important;
+    max-width: none !important;
+    margin-left: var(--screen-gutter) !important;
+    margin-right: var(--screen-gutter) !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  .site-header {
+    min-height: 66px;
+  }
+
+  .site-header .nav {
+    min-height: 66px;
+    gap: clamp(26px, 2.2vw, 42px);
+    font-size: 1rem;
+    align-items: center;
+  }
+
+  .site-header .nav a {
+    padding: 21px 0 19px;
+  }
+
+  .user-email {
+    max-width: 300px;
+    font-size: .78rem;
+  }
+
+  .sync-status,
+  .sign-out-button {
+    font-size: .75rem;
+  }
+
+  .sign-out-button {
+    padding: 8px 13px;
+  }
+
+  .upnext-section,
+  .track-section,
+  .library-section,
+  .discover-page .discover-section {
+    width: 100vw;
+  }
+
+  .upnext-section {
+    padding: clamp(58px, 5vw, 88px) 0 clamp(62px, 5vw, 92px);
+  }
+
+  .track-section {
+    padding: clamp(56px, 4.5vw, 84px) 0 clamp(62px, 5vw, 92px);
+  }
+
+  .library-section {
+    padding: clamp(58px, 4.5vw, 86px) 0 clamp(72px, 6vw, 110px);
+  }
+
+  .upnext-shell {
+    min-height: 290px;
+  }
+
+  .eyebrow,
+  .modal-eyebrow {
+    font-size: .8rem;
+    margin-bottom: 11px;
+    letter-spacing: .18em;
+  }
+
+  h1 {
+    font-size: clamp(4rem, 5.2vw, 6.6rem) !important;
+    line-height: .95;
+  }
+
+  h2 {
+    font-size: clamp(3rem, 4vw, 5rem);
+  }
+
+  h3 {
+    font-size: 2rem;
+  }
+
+  .section-title-row,
+  .track-heading,
+  .library-heading,
+  .discover-heading {
+    width: 100%;
+    gap: clamp(32px, 4vw, 70px);
+  }
+
+  .compact-title-row {
+    margin-bottom: 44px;
+  }
+
+  .queue-tabs {
+    padding: 5px;
+    gap: 4px;
+  }
+
+  .queue-tab {
+    min-height: 38px;
+    padding: 8px 16px;
+    font-size: .78rem;
+  }
+
+  .empty-state {
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+
+  .upnext-list {
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 24px;
+  }
+
+  .upnext-card {
+    min-height: 152px;
+    grid-template-columns: 124px minmax(0, 1fr) auto;
+    gap: 26px;
+    padding-right: 28px;
+    border-radius: 22px;
+  }
+
+  .upnext-art {
+    width: 124px;
+    height: 152px;
+  }
+
+  .upnext-title {
+    font-size: clamp(1.25rem, 1.4vw, 1.6rem);
+  }
+
+  .upnext-meta {
+    font-size: 1.05rem;
+  }
+
+  .upnext-category {
+    font-size: .88rem;
+  }
+
+  .upnext-arrow {
+    font-size: 2.35rem;
+  }
+
+  .check-button {
+    width: 72px;
+    height: 72px;
+    font-size: 2rem;
+  }
+
+  .floating-tools {
+    margin-top: 44px;
+  }
+
+  .plus-button {
+    width: 88px;
+    height: 88px;
+    font-size: 4.2rem;
+  }
+
+  .track-heading {
+    margin-bottom: 34px;
+  }
+
+  .calendar-controls {
+    gap: 12px;
+  }
+
+  .month-picker {
+    min-height: 46px;
+    padding: 11px 18px;
+    font-size: .92rem;
+  }
+
+  .tracker-scroll {
+    width: 100%;
+    overflow-x: visible;
+  }
+
+  .tracker-grid,
+  .tracker-month-grid {
+    width: 100% !important;
+    min-width: 0 !important;
+    grid-template-columns: 170px repeat(var(--days), minmax(0, 1fr)) !important;
+  }
+
+  .tracker-cell {
+    min-height: 52px;
+  }
+
+  .tracker-day,
+  .tracker-corner {
+    font-size: 1.05rem;
+  }
+
+  .tracker-category {
+    padding-right: 16px;
+    font-size: 1.18rem;
+  }
+
+  .sticker-button {
+    transform-origin: center;
+  }
+
+  .tracker-note {
+    margin-top: 18px;
+    font-size: .82rem;
+  }
+
+  .library-heading {
+    align-items: flex-end;
+    margin-bottom: 46px;
+  }
+
+  .library-controls {
+    gap: 12px;
+  }
+
+  .library-add-button,
+  .filter-control select {
+    min-height: 44px;
+    font-size: .88rem;
+  }
+
+  .library-add-button {
+    padding: 10px 16px;
+  }
+
+  .filter-control span {
+    font-size: .72rem;
+  }
+
+  .library-group-title {
+    font-size: 1.15rem;
+  }
+
+  .library-row {
+    min-height: 86px;
+    padding: 18px 0;
+    grid-template-columns: minmax(340px, 2fr) minmax(140px, .65fr) 170px minmax(300px, 1.25fr) auto !important;
+    gap: 24px;
+    font-size: 1rem;
+  }
+
+  .library-title-button {
+    font-size: 1.08rem;
+  }
+
+  .library-edit-button {
+    min-height: 40px;
+    padding: 8px 14px;
+  }
+
+  /* Discover should also fill the browser rather than reverting to the older narrow shell. */
+  .discover-page .discover-section {
+    padding: 58px 0 90px;
+  }
+
+  .discover-grid {
+    width: 100%;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)) !important;
+    gap: 34px 24px;
+  }
+
+  .discover-card-title {
+    font-size: 1rem;
+  }
+
+  .discover-card-meta {
+    font-size: .82rem;
+  }
+}
+
+/* Large monitors get a third Up Next column and larger calendar without dead side gutters. */
+@media (min-width: 1720px) {
+  .upnext-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .tracker-grid,
+  .tracker-month-grid {
+    grid-template-columns: 190px repeat(var(--days), minmax(0, 1fr)) !important;
+  }
+}
+
+/* Narrow desktop/tablet still uses the month view but reduces scale enough to fit cleanly. */
+@media (min-width: 761px) and (max-width: 1050px) {
+  html { font-size: 16px; }
+
+  .shell,
+  .site-header .nav,
+  .discover-page .shell {
+    width: calc(100vw - 40px) !important;
+    margin-left: 20px !important;
+    margin-right: 20px !important;
+  }
+
+  .upnext-list {
+    grid-template-columns: 1fr !important;
+  }
+
+  .tracker-grid,
+  .tracker-month-grid {
+    grid-template-columns: 120px repeat(var(--days), minmax(0, 1fr)) !important;
+  }
+
+  .tracker-cell { min-height: 40px; }
+  .tracker-day { font-size: .8rem; }
+  .tracker-category { font-size: .9rem; padding-right: 8px; }
+}
+
+/* =========================================================
+   TV add-history + full mobile action parity + richer stickers
+   ========================================================= */
+
+/* Add/edit TV: choose previously watched episodes before saving. */
+.tv-watch-history-setup {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(21,36,58,.12);
+  border-radius: 14px;
+  background: rgba(139,153,202,.055);
+}
+.tv-watch-setup-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+.tv-watch-setup-heading .field-label { margin: 0 0 4px; }
+.tv-watch-setup-heading .field-hint { max-width: 560px; margin: 0; }
+.tv-watch-setup-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+.tv-watch-setup-status {
+  margin: 0;
+  color: #70716d;
+  font-size: .78rem;
+  line-height: 1.45;
+}
+.tv-watch-setup-list {
+  display: grid;
+  gap: 8px;
+  max-height: 45vh;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+}
+.tv-watch-loading { margin: 6px 0; color: #77756c; font-family: var(--serif); font-style: italic; }
+.tv-watch-season {
+  border: 1px solid rgba(21,36,58,.11);
+  border-radius: 11px;
+  background: rgba(255,255,255,.46);
+  overflow: clip;
+}
+.tv-watch-season > summary {
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.tv-watch-season > summary::-webkit-details-marker { display: none; }
+.tv-watch-season > summary::before {
+  content: '›';
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  margin-right: 8px;
+  transform: translateX(-2px);
+  color: #72766f;
+}
+.tv-watch-season[open] > summary::before { transform: translateX(-2px) rotate(90deg); }
+.tv-watch-season > summary > span:first-of-type { padding-left: 16px; }
+.tv-watch-season summary strong { display: block; font-size: .86rem; }
+.tv-watch-season summary small { display: block; margin-top: 2px; color: #777a78; font-size: .7rem; }
+.tv-season-mark-button {
+  min-height: 34px;
+  border: 1px solid rgba(21,36,58,.14);
+  border-radius: 999px;
+  background: #fffdf7;
+  padding: 6px 10px;
+  font-size: .68rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tv-season-mark-button.is-complete { background: #e8edd8; color: #566435; }
+.tv-watch-episodes { border-top: 1px solid rgba(21,36,58,.08); }
+.tv-watch-episode {
+  display: grid;
+  grid-template-columns: 28px minmax(0,1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 7px 12px;
+  border-bottom: 1px solid rgba(21,36,58,.065);
+  cursor: pointer;
+}
+.tv-watch-episode:last-child { border-bottom: 0; }
+.tv-watch-episode input { position: absolute; opacity: 0; pointer-events: none; }
+.tv-watch-check {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(21,36,58,.18);
+  border-radius: 50%;
+  color: transparent;
+  font-size: .76rem;
+  font-weight: 900;
+  background: #fffdf7;
+}
+.tv-watch-episode input:checked + .tv-watch-check { background: #e8edd8; border-color: #b8c590; color: #566435; }
+.tv-watch-episode-copy strong { display: block; font-size: .78rem; line-height: 1.25; }
+.tv-watch-episode-copy small { display: block; margin-top: 2px; color: #7a7c78; font-size: .66rem; }
+.tv-watch-episode.is-future { opacity: .48; cursor: default; }
+.tv-watch-episode.is-locked { opacity: .78; cursor: default; }
+
+.detail-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.detail-section-heading h3 { margin-bottom: 0; }
+
+/* More sticker shapes. */
+.sticker-heart {
+  width: 25px;
+  height: 25px;
+  background: transparent !important;
+  font-size: 1.5rem;
+  line-height: 1;
+  text-shadow: 1px 2px 0 rgba(21,36,58,.10);
+}
+
+/* Palette variables let all four shapes share the expanded color list. */
+.sticker-palette-rust     { --sticker-bg:#8c2940; --sticker-fg:#fff6dc; --sticker-accent:#8c2940; }
+.sticker-palette-red      { --sticker-bg:#a93434; --sticker-fg:#fff7ee; --sticker-accent:#a93434; }
+.sticker-palette-coral    { --sticker-bg:#d97567; --sticker-fg:#fff9ed; --sticker-accent:#d97567; }
+.sticker-palette-orange   { --sticker-bg:#dd8a42; --sticker-fg:#fff8e8; --sticker-accent:#dd8a42; }
+.sticker-palette-yellow   { --sticker-bg:#f6df7c; --sticker-fg:#5d4a12; --sticker-accent:#e7c64a; }
+.sticker-palette-cream    { --sticker-bg:#f7e7c4; --sticker-fg:#23334e; --sticker-accent:#e9d19c; }
+.sticker-palette-peach    { --sticker-bg:#efb99f; --sticker-fg:#603c31; --sticker-accent:#de9f81; }
+.sticker-palette-pink     { --sticker-bg:#c98598; --sticker-fg:#fff7e6; --sticker-accent:#c98598; }
+.sticker-palette-lavender { --sticker-bg:#c8b9df; --sticker-fg:#46375f; --sticker-accent:#8b74ac; }
+.sticker-palette-purple   { --sticker-bg:#80639b; --sticker-fg:#fff7ee; --sticker-accent:#80639b; }
+.sticker-palette-navy     { --sticker-bg:#263852; --sticker-fg:#fff6dc; --sticker-accent:#263852; }
+.sticker-palette-blue     { --sticker-bg:#5477a9; --sticker-fg:#fff9ed; --sticker-accent:#5477a9; }
+.sticker-palette-sky      { --sticker-bg:#8eb8cf; --sticker-fg:#20394c; --sticker-accent:#6aa1bd; }
+.sticker-palette-teal     { --sticker-bg:#4f8d8b; --sticker-fg:#f8fff7; --sticker-accent:#4f8d8b; }
+.sticker-palette-green    { --sticker-bg:#80916d; --sticker-fg:#fff9e8; --sticker-accent:#677b53; }
+.sticker-palette-mint     { --sticker-bg:#a9cdb3; --sticker-fg:#31543b; --sticker-accent:#75ad86; }
+.sticker-palette-brown    { --sticker-bg:#806654; --sticker-fg:#fff7e8; --sticker-accent:#806654; }
+.sticker-palette-black    { --sticker-bg:#26282b; --sticker-fg:#fff8e8; --sticker-accent:#26282b; }
+.sticker-palette-white    { --sticker-bg:#fffdf7; --sticker-fg:#223047; --sticker-accent:#fffdf7; }
+
+.sticker-square[class*="sticker-palette-"],
+.sticker-circle[class*="sticker-palette-"] {
+  background: var(--sticker-bg);
+  color: var(--sticker-fg);
+}
+.sticker-star[class*="sticker-palette-"],
+.sticker-heart[class*="sticker-palette-"] {
+  color: var(--sticker-accent);
+  background: transparent;
+}
+.sticker-palette-white.sticker-square,
+.sticker-palette-white.sticker-circle { border: 1px solid rgba(21,36,58,.16); }
+
+/* Mobile gets the same controls and actions as desktop; only the layout changes. */
+@media (max-width: 760px) {
+  .tv-watch-history-setup { padding: 13px 11px; }
+  .tv-watch-setup-heading { display: grid; gap: 10px; }
+  .tv-watch-setup-actions { justify-content: flex-start; }
+  .tv-watch-setup-actions > * { min-height: 40px; }
+  .tv-watch-setup-list { max-height: 52dvh; }
+  .tv-watch-season > summary { grid-template-columns: minmax(0,1fr); gap: 7px; }
+  .tv-watch-season-actions { padding-left: 16px; }
+  .tv-season-mark-button { min-height: 38px; }
+  .tv-watch-episode { min-height: 52px; }
+
+  .detail-actions,
+  .tv-watch-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0,1fr));
+    width: 100%;
+  }
+  .detail-actions > button,
+  .detail-actions > a,
+  .tv-watch-actions > button { min-height: 44px; width: 100%; }
+
+  .detail-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .detail-section-heading .quiet-button { min-height: 42px; }
+
+  .episode-row,
+  .video-row,
+  .track-row {
+    grid-template-columns: 58px minmax(0,1fr);
+    gap: 9px;
+    padding: 12px 0;
+  }
+  .episode-row img,
+  .video-row img,
+  .episode-image-placeholder { width: 58px; height: 38px; }
+  .episode-row-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+    min-height: 40px;
+  }
+  .episode-check-button,
+  .detail-arrow-button { min-width: 40px; min-height: 40px; }
+  .season-row { min-height: 54px; }
+  .season-row .detail-arrow-button { justify-self: end; }
+}
+
+/* ============================================================
+   ENDLESS DISCOVER FEED
+   A vertical mixed feed replaces the old finite horizontal rows.
+   ============================================================ */
+.discover-page {
+  overflow-x: clip;
+}
+
+.discover-feed-section {
+  width: 100%;
+}
+
+.discover-feed-intro {
+  max-width: 760px;
+  margin: -8px 0 28px;
+}
+
+.discover-feed-intro p {
+  margin: 0;
+  color: rgba(21, 36, 58, .64);
+  font: 500 .88rem/1.55 var(--sans);
+}
+
+.discover-feed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
+  gap: clamp(26px, 2.4vw, 40px) clamp(16px, 1.8vw, 28px);
+  width: 100%;
+  align-items: start;
+}
+
+.discover-feed-grid .discover-card {
+  min-width: 0;
+  width: 100%;
+}
+
+.discover-feed-grid .discover-poster-wrap {
+  aspect-ratio: 2 / 3;
+}
+
+.discover-feed-sentinel {
+  width: 100%;
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+}
+
+.discover-feed-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid rgba(21, 36, 58, .12);
+  border-top-color: rgba(21, 36, 58, .72);
+  opacity: 0;
+  animation: discover-spin .8s linear infinite;
+}
+
+.discover-feed-sentinel.is-loading .discover-feed-spinner {
+  opacity: 1;
+}
+
+@keyframes discover-spin {
+  to { transform: rotate(360deg); }
+}
+
+.discover-feed-message {
+  margin: -42px 0 22px;
+  text-align: center;
+  color: rgba(21, 36, 58, .52);
+  font: 500 .78rem/1.4 var(--sans);
+}
+
+/* Larger browsers can actually use their screen width. */
+@media (min-width: 1200px) {
+  .discover-feed-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1650px) {
+  .discover-feed-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+/* Mobile is vertical, not a sideways page or carousel. */
+@media (max-width: 760px) {
+  .discover-page,
+  .discover-page body,
+  body.discover-page {
+    max-width: 100vw;
+    overflow-x: hidden !important;
+  }
+
+  .discover-feed-intro {
+    margin: -4px 0 20px;
+  }
+
+  .discover-feed-intro p {
+    font-size: .79rem;
+    line-height: 1.5;
+  }
+
+  .discover-feed-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 24px 12px !important;
+    width: 100% !important;
+    overflow: visible !important;
+    scroll-snap-type: none !important;
+    padding: 0 !important;
+  }
+
+  .discover-feed-grid .discover-card {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    scroll-snap-align: none !important;
+  }
+
+  .discover-feed-grid .discover-card-copy h3 {
+    font-size: .9rem;
+    line-height: 1.18;
+  }
+
+  .discover-feed-grid .discover-card-meta,
+  .discover-feed-grid .discover-card-subtitle {
+    font-size: .7rem;
+    line-height: 1.3;
+  }
+
+  .discover-feed-grid .discover-card-actions {
+    gap: 6px;
+  }
+
+  .discover-feed-grid .discover-add-button,
+  .discover-feed-grid .discover-complete-button {
+    min-height: 36px;
+  }
+
+  .discover-feed-sentinel {
+    min-height: 90px;
+  }
+
+  .discover-feed-message {
+    margin-top: -28px;
+    padding-inline: 12px;
+  }
+}
+
+/* Editable past tracking entries */
+.calendar-event-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 8px;
+  min-width: 108px;
+}
+
+.calendar-event-rating {
+  margin-top: 6px;
+  color: #8b0013;
+  font: 700 .82rem/1.2 var(--sans);
+  letter-spacing: .02em;
+}
+
+.calendar-event-rating span {
+  margin-left: 4px;
+  color: var(--ink-soft, #6f6d67);
+  font-weight: 600;
+}
+
+.history-edit-modal {
+  width: min(680px, calc(100vw - 32px));
+}
+
+.history-edit-form {
+  margin-top: 22px;
+}
+
+.history-calendar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font: 600 .88rem/1.3 var(--sans);
+}
+
+.history-calendar-toggle input {
+  width: 18px;
+  height: 18px;
+}
+
+@media (max-width: 760px) {
+  .calendar-event-row {
+    grid-template-columns: 56px minmax(0, 1fr) !important;
+  }
+
+  .calendar-event-actions {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  .calendar-event-actions > * {
+    flex: 1 1 0;
+    min-height: 42px;
+  }
+
+  .history-edit-modal {
+    width: calc(100vw - 16px);
+    max-height: 92dvh;
+  }
+
+  .history-edit-form .two-column-fields {
+    grid-template-columns: 1fr;
+  }
+}
