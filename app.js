@@ -240,6 +240,7 @@ const els = {
   historyEditId: $('#historyEditId'),
   historyEditTitle: $('#historyEditTitle'),
   historyEditType: $('#historyEditType'),
+  historyEditSubcategory: $('#historyEditSubcategory'),
   historyEditSubtitle: $('#historyEditSubtitle'),
   historyEditDate: $('#historyEditDate'),
   historyEditRating: $('#historyEditRating'),
@@ -253,6 +254,8 @@ const els = {
   itemSourceType: $('#itemSourceType'),
   displayTypeBlock: $('#displayTypeBlock'),
   itemDisplayType: $('#itemDisplayType'),
+  itemSubcategory: $('#itemSubcategory'),
+  itemCalendarTitle: $('#itemCalendarTitle'),
   displayTypeLabel: $('#displayTypeLabel'),
   displayTypeHint: $('#displayTypeHint'),
   catalogueSearchBlock: $('#catalogueSearchBlock'),
@@ -1985,6 +1988,8 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     els.providerImage.value = item.image || '';
     els.providerSubtitle.value = item.subtitle || '';
     els.manualTitle.value = item.title || '';
+    if (els.itemSubcategory) els.itemSubcategory.value = item.subcategory || '';
+    if (els.itemCalendarTitle) els.itemCalendarTitle.value = item.calendarTitle || '';
     els.itemNote.value = item.notes || '';
     els.itemDate.value = item.date || '';
     if (els.itemRecommended) els.itemRecommended.checked = Boolean(item.recommended);
@@ -2039,6 +2044,8 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.editingId.value = '';
   els.itemSourceType.value = 'tv';
   els.itemDisplayType.value = 'Workout';
+  if (els.itemSubcategory) els.itemSubcategory.value = '';
+  if (els.itemCalendarTitle) els.itemCalendarTitle.value = '';
   els.itemQueueStatus.value = ['upnext','tbr','library'].includes(defaultQueueStatus) ? defaultQueueStatus : 'library';
   els.nextSeason.value = 1;
   els.nextEpisode.value = 1;
@@ -2551,6 +2558,8 @@ async function saveItemFromForm(event) {
     sourceType,
     type,
     typeLabel,
+    subcategory: cleanTypeLabel(els.itemSubcategory?.value || ''),
+    calendarTitle: cleanTypeLabel(els.itemCalendarTitle?.value || ''),
     title,
     provider,
     providerId,
@@ -3624,9 +3633,11 @@ function getCalendarEntries() {
       sourceItemId: item.id,
       type: item.type,
       typeLabel: getItemTypeLabel(item),
+      subcategory: item.subcategory || '',
+      calendarTitle: item.calendarTitle || '',
       date: item.date,
       kind: 'dated-item',
-      title: item.title,
+      title: item.calendarTitle || item.title,
       subtitle: item.subtitle || '',
       notes: item.notes || '',
       rating: Number(item.rating || 0),
@@ -3646,6 +3657,15 @@ function getCalendarEntries() {
       if (source && getBookReadingPeriods(source).length) return false;
     }
     return true;
+  }).map(entry => {
+    const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
+    const calendarTitle = cleanTypeLabel(entry.calendarTitle || source?.calendarTitle || '');
+    return {
+      ...entry,
+      subcategory: entry.subcategory || source?.subcategory || '',
+      calendarTitle,
+      title: calendarTitle || entry.title
+    };
   });
 
   return [...savedItems, ...historyEntries, ...bookRanges];
@@ -3676,9 +3696,11 @@ function bookReadingCalendarEntries(item) {
         sourceItemId: item.id,
         type: item.type,
         typeLabel: getItemTypeLabel(item),
+        subcategory: item.subcategory || '',
+        calendarTitle: item.calendarTitle || '',
         date,
         kind: 'book-reading-day',
-        title: item.title,
+        title: item.calendarTitle || item.title,
         subtitle: item.subtitle || '',
         notes: item.notes || '',
         rating: Number(item.rating || 0),
@@ -3968,13 +3990,21 @@ function calendarStickerMarkup(type, entry = {}) {
   const paletteClass = `sticker-palette-${config.color}`;
   const tiltClass = `sticker-tilt-${config.tilt}`;
   const text = config.shape === 'star' ? '★' : config.shape === 'heart' ? '♥' : escapeHtml(config.label || '');
-  const aria = escapeAttr(`${getTypeLabel(type)} sticker`);
+  const ariaLabel = [getTypeLabel(type), cleanTypeLabel(entry?.subcategory || '')].filter(Boolean).join(' · ');
+  const aria = escapeAttr(`${ariaLabel} sticker`);
   return `<span class="sticker ${shapeClass} ${paletteClass} ${tiltClass}" aria-label="${aria}">${text}</span>`;
+}
+
+function stickerPreferenceKey(type, entry = {}) {
+  const subcategory = cleanTypeLabel(entry?.subcategory || '');
+  return subcategory ? `${type}::subcategory::${slugifyType(subcategory)}` : type;
 }
 
 function getStickerConfig(type, entry = {}) {
   const defaults = getDefaultStickerConfig(type, entry);
-  const saved = state.stickerPrefs?.[type] || {};
+  const key = stickerPreferenceKey(type, entry);
+  const parentSaved = state.stickerPrefs?.[type] || {};
+  const saved = key !== type ? (state.stickerPrefs?.[key] || parentSaved) : parentSaved;
   const shape = ['square', 'circle', 'star', 'heart'].includes(saved.shape) ? saved.shape : defaults.shape;
   const color = STICKER_COLORS.includes(saved.color) ? saved.color : defaults.color;
   const label = cleanStickerLabel(saved.label !== undefined ? saved.label : defaults.label);
@@ -4094,8 +4124,9 @@ function openHistoryEdit(id) {
   if (!entry || !els.historyEditModal) return;
   const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
   els.historyEditId.value = entry.id;
-  els.historyEditTitle.value = entry.title || '';
+  els.historyEditTitle.value = entry.calendarTitle || source?.calendarTitle || entry.title || '';
   els.historyEditType.value = entry.typeLabel || getTypeLabel(entry.type) || '';
+  if (els.historyEditSubcategory) els.historyEditSubcategory.value = entry.subcategory || source?.subcategory || '';
   els.historyEditSubtitle.value = entry.subtitle || '';
   els.historyEditDate.value = entry.date || '';
   els.historyEditNote.value = entry.notes || '';
@@ -4130,9 +4161,12 @@ function saveHistoryEdit(event) {
   const type = editableTypeFromLabel(typeLabel, entry.type);
   registerCustomType(type, typeLabel);
 
-  entry.title = els.historyEditTitle.value.trim() || entry.title;
+  const editedCalendarTitle = els.historyEditTitle.value.trim();
+  entry.calendarTitle = editedCalendarTitle;
+  if (!entry.sourceItemId) entry.title = editedCalendarTitle || entry.title;
   entry.type = type;
   entry.typeLabel = typeLabel;
+  entry.subcategory = cleanTypeLabel(els.historyEditSubcategory?.value || '');
   entry.subtitle = els.historyEditSubtitle.value.trim();
   entry.date = els.historyEditDate.value || '';
   entry.rating = Number(els.historyEditRating.value || 0);
@@ -6617,18 +6651,47 @@ function openStickerSettings() {
   els.stickerSettingsModal.showModal();
 }
 
+function getRecognizedStickerTargets() {
+  const parents = getRecognizedTypes();
+  const targets = [];
+  for (const parent of parents) {
+    targets.push({ type: parent.type, label: parent.label, subcategory: '', key: parent.type });
+    const subcategories = new Set();
+    state.items.forEach(item => {
+      if (item.type === parent.type && cleanTypeLabel(item.subcategory || '')) subcategories.add(cleanTypeLabel(item.subcategory));
+    });
+    state.history.forEach(entry => {
+      if (entry.type === parent.type && cleanTypeLabel(entry.subcategory || '')) subcategories.add(cleanTypeLabel(entry.subcategory));
+    });
+    [...subcategories].sort((a,b) => a.localeCompare(b)).forEach(subcategory => {
+      targets.push({
+        type: parent.type,
+        label: `${parent.label} · ${subcategory}`,
+        subcategory,
+        key: stickerPreferenceKey(parent.type, { subcategory })
+      });
+    });
+  }
+  return targets;
+}
+
 function renderStickerSettingsRows() {
-  const types = getRecognizedTypes();
+  const targets = getRecognizedStickerTargets();
   els.stickerSettingsRows.innerHTML = '';
 
-  for (const { type, label } of types) {
-    const config = getStickerConfig(type, state.history.find(entry => entry.type === type) || {});
+  for (const target of targets) {
+    const sampleEntry = state.history.find(entry => entry.type === target.type && cleanTypeLabel(entry.subcategory || '') === target.subcategory)
+      || state.items.find(item => item.type === target.type && cleanTypeLabel(item.subcategory || '') === target.subcategory)
+      || { type: target.type, subcategory: target.subcategory };
+    const config = getStickerConfig(target.type, sampleEntry);
     const row = document.createElement('div');
-    row.className = 'sticker-setting-row';
-    row.dataset.stickerType = type;
+    row.className = `sticker-setting-row${target.subcategory ? ' sticker-setting-subcategory' : ''}`;
+    row.dataset.stickerType = target.type;
+    row.dataset.stickerKey = target.key;
+    row.dataset.stickerSubcategory = target.subcategory;
     row.innerHTML = `
-      <strong class="sticker-setting-type">${escapeHtml(label)}</strong>
-      <div class="sticker-setting-preview">${calendarStickerMarkup(type, state.history.find(entry => entry.type === type) || {})}</div>
+      <strong class="sticker-setting-type">${escapeHtml(target.label)}</strong>
+      <div class="sticker-setting-preview">${calendarStickerMarkup(target.type, sampleEntry)}</div>
       <label class="sticker-setting-field">
         <span class="sticker-setting-mobile-label">Shape</span>
         <select data-sticker-field="shape">
@@ -6660,7 +6723,8 @@ function previewStickerSettings(event) {
   const labelInput = row.querySelector('[data-sticker-field="label"]');
   if (labelInput) labelInput.disabled = ['star','heart'].includes(shape);
   const label = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(labelInput?.value ?? '');
-  const defaults = getDefaultStickerConfig(row.dataset.stickerType, state.history.find(entry => entry.type === row.dataset.stickerType) || {});
+  const sampleEntry = { type: row.dataset.stickerType, subcategory: row.dataset.stickerSubcategory || '' };
+  const defaults = getDefaultStickerConfig(row.dataset.stickerType, sampleEntry);
   const preview = row.querySelector('.sticker-setting-preview');
   if (preview) {
     const symbol = shape === 'star' ? '★' : shape === 'heart' ? '♥' : escapeHtml(label);
@@ -6673,11 +6737,11 @@ function saveStickerSettings(event) {
   const next = { ...state.stickerPrefs };
 
   els.stickerSettingsRows.querySelectorAll('.sticker-setting-row[data-sticker-type]').forEach(row => {
-    const type = row.dataset.stickerType;
+    const key = row.dataset.stickerKey || row.dataset.stickerType;
     const shape = row.querySelector('[data-sticker-field="shape"]')?.value || 'square';
     const color = row.querySelector('[data-sticker-field="color"]')?.value || 'cream';
     const label = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(row.querySelector('[data-sticker-field="label"]')?.value ?? '');
-    next[type] = { shape, color, label };
+    next[key] = { shape, color, label };
   });
 
   state.stickerPrefs = next;
@@ -7038,7 +7102,17 @@ function itemLibraryDate(item) {
     .map(entry => entry.date)
     .sort()
     .at(-1);
-  return datedHistory || item.completedAt || item.date || item.updatedAt || item.createdAt || '';
+
+  // "Recent" means the latest meaningful activity on the Library item, not
+  // only when it was originally watched/read. Rating an older movie today should
+  // therefore move it to the front instead of being pinned to its old completedAt.
+  return [
+    item.updatedAt,
+    datedHistory,
+    item.completedAt,
+    item.date,
+    item.createdAt
+  ].filter(Boolean).sort().at(-1) || '';
 }
 
 function normalizeLibraryPrefs(value) {
@@ -7736,9 +7810,12 @@ function safeLocalSet(key, value) {
 }
 
 function addHistoryRecord(record) {
+  const source = record?.sourceItemId ? findItem(record.sourceItemId) : null;
   state.history.push({
     id: makeId(),
     createdAt: new Date().toISOString(),
+    subcategory: source?.subcategory || '',
+    calendarTitle: source?.calendarTitle || '',
     ...record
   });
 }

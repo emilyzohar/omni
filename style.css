@@ -4947,3 +4947,13 @@ body.auth-locked > main {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* Subcategory sticker rows */
+.sticker-setting-row.sticker-setting-subcategory .sticker-setting-type {
+  padding-left: 14px;
+  font-weight: 600;
+}
+.sticker-setting-row.sticker-setting-subcategory .sticker-setting-type::before {
+  content: "↳ ";
+  opacity: .55;
+}

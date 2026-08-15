@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=mobile-sticker-row-height-4" />
+  <link rel="stylesheet" href="style.css?v=subcategories-1" />
 </head>
 <body class="auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -190,7 +190,7 @@
     <div class="modal-heading">
       <p class="modal-eyebrow">CALENDAR</p>
       <h2>Customize stickers</h2>
-      <p class="sticker-settings-intro">Choose the shape, color, and optional letters for each type. Leave Text blank for a plain square or circle.</p>
+      <p class="sticker-settings-intro">Choose the shape, color, and optional letters for each type and subcategory. Subcategories inherit their parent sticker until you customize them.</p>
     </div>
 
     <form id="stickerSettingsForm" class="sticker-settings-form">
@@ -325,6 +325,19 @@
         <label class="field">
           <span>Title</span>
           <input id="manualTitle" type="text" placeholder="Title" required />
+        </label>
+      </div>
+
+      <div class="two-column-fields item-calendar-meta-fields">
+        <label class="field compact-field">
+          <span>Subcategory <em>optional</em></span>
+          <input id="itemSubcategory" type="text" autocomplete="off" placeholder="e.g. Documentary, Lecture, Gym" />
+          <small class="field-hint">Stays inside the main type, but can use its own calendar sticker.</small>
+        </label>
+        <label class="field compact-field">
+          <span>Calendar title <em>optional</em></span>
+          <input id="itemCalendarTitle" type="text" autocomplete="off" placeholder="Use regular title" />
+          <small class="field-hint">Leave blank to show the normal title in Calendar.</small>
         </label>
       </div>
 
@@ -463,6 +476,10 @@
         </label>
       </div>
       <label class="field">
+        <span>Subcategory <em>optional</em></span>
+        <input id="historyEditSubcategory" type="text" autocomplete="off" />
+      </label>
+      <label class="field">
         <span>Episode / subtitle <em>optional</em></span>
         <input id="historyEditSubtitle" type="text" />
       </label>
@@ -538,6 +555,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=library-rating-autosave-5"></script>
+  <script type="module" src="app.js?v=subcategories-1"></script>
 </body>
 </html>
