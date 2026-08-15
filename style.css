@@ -5271,3 +5271,57 @@ body.auth-locked > main {
     justify-self: stretch;
   }
 }
+
+/* =========================================================
+   Desktop Library carousel controls + two-action Discover cards
+   ========================================================= */
+.library-shelf-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.library-carousel-button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0 0 2px;
+  border: 1px solid rgba(21,36,58,.15);
+  border-radius: 50%;
+  background: rgba(255,255,255,.42);
+  color: var(--ink);
+  font: 700 1.25rem/1 var(--sans);
+  cursor: pointer;
+}
+.library-carousel-button:hover {
+  background: rgba(255,255,255,.82);
+  border-color: rgba(21,36,58,.25);
+}
+.library-poster-grid:not(.is-expanded) {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  scroll-behavior: smooth;
+  scrollbar-gutter: stable;
+}
+
+@media (max-width: 760px) {
+  .library-carousel-button { display: none; }
+  .discover-card-actions {
+    grid-template-columns: 36px minmax(0, 1fr) !important;
+  }
+  .discover-card-actions.no-complete {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .discover-card-actions .discover-add-button { width: 100%; }
+}
+
+@media (max-width: 380px) {
+  .discover-card-actions {
+    grid-template-columns: 34px minmax(0, 1fr) !important;
+  }
+  .discover-card-actions.no-complete {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}

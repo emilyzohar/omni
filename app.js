@@ -115,6 +115,7 @@ const state = {
   tvDraftProviderId: '',
   tvDraftWatched: new Set(),
   tvDraftInitialWatched: new Set(),
+  tvDraftBulkBaseline: null,
   tvDraftLocked: new Set(),
   tvDraftSeasons: [],
   tvDraftDetails: null,
@@ -640,8 +641,8 @@ function bindEvents() {
   els.reminderIntervalUnit?.addEventListener('change', updateReminderFormFields);
   els.tvWatchSetupList?.addEventListener('change', handleTVDraftEpisodeToggle);
   els.tvWatchSetupList?.addEventListener('click', handleTVDraftSeasonAction);
-  els.tvMarkAllWatched?.addEventListener('click', () => setAllTVDraftEpisodes(true));
-  els.tvClearWatched?.addEventListener('click', () => setAllTVDraftEpisodes(false));
+  els.tvMarkAllWatched?.addEventListener('click', toggleAllTVDraftEpisodes);
+  els.tvClearWatched?.addEventListener('click', () => { state.tvDraftBulkBaseline = null; setAllTVDraftEpisodes(false); });
   els.itemForm?.addEventListener('submit', saveItemFromForm);
   els.deleteItem?.addEventListener('click', deleteEditingItem);
   els.historyEditForm?.addEventListener('submit', saveHistoryEdit);
@@ -745,7 +746,7 @@ function bindEvents() {
 
     const discoverRecommend = event.target.closest('[data-discover-recommend]');
     if (discoverRecommend) {
-      toggleDiscoverRecommended(discoverRecommend.dataset.discoverRecommend);
+      await toggleDiscoverRecommended(discoverRecommend.dataset.discoverRecommend);
       return;
     }
 
@@ -831,6 +832,14 @@ function bindEvents() {
 
     const bookCompleteProgress = event.target.closest('[data-book-mark-complete-progress]');
     if (bookCompleteProgress) {
+      const item = findItem(els.bookProgressId?.value);
+      if (item?.completedAt) {
+        await markWholeBookComplete(item);
+        els.progressCurrentPage.value = String(item.progress?.currentPage || 0);
+        bookCompleteProgress.textContent = '✓ Mark book complete';
+        bookCompleteProgress.classList.remove('is-complete');
+        return;
+      }
       const total = Math.max(0, Number(els.progressTotalPages?.value || 0));
       if (!total) {
         alert('Add the total number of pages first.');
@@ -848,8 +857,19 @@ function bindEvents() {
         alert('Add the total number of pages first.');
         return;
       }
-      els.bookCurrentPage.value = String(total);
-      if (els.bookEndDate && !els.bookEndDate.value) els.bookEndDate.value = todayString();
+      if (bookCompleteDraft.dataset.bulkActive === 'true') {
+        els.bookCurrentPage.value = bookCompleteDraft.dataset.previousPage || '0';
+        if (els.bookEndDate) els.bookEndDate.value = bookCompleteDraft.dataset.previousEndDate || '';
+        bookCompleteDraft.dataset.bulkActive = 'false';
+        bookCompleteDraft.textContent = '✓ Mark book complete';
+      } else {
+        bookCompleteDraft.dataset.previousPage = els.bookCurrentPage.value || '0';
+        bookCompleteDraft.dataset.previousEndDate = els.bookEndDate?.value || '';
+        bookCompleteDraft.dataset.bulkActive = 'true';
+        els.bookCurrentPage.value = String(total);
+        if (els.bookEndDate && !els.bookEndDate.value) els.bookEndDate.value = todayString();
+        bookCompleteDraft.textContent = '↶ Mark unread';
+      }
       return;
     }
 
@@ -1738,16 +1758,27 @@ function isTVEpisodeConsumed(item, seasonNumber, episodeNumber) {
 
 function removeTVEpisodeHistory(item, seasonNumber, episodeNumber) {
   const before = state.history.length;
+  const oldBulkToken = item?.seriesCompletionToken || '';
   state.history = state.history.filter(entry => !(
     entry.kind === 'episode-watched' &&
     entry.sourceItemId === item.id &&
     Number(entry.seasonNumber) === Number(seasonNumber) &&
     Number(entry.episodeNumber) === Number(episodeNumber)
   ));
-  // A series-level completion marker is no longer valid after any episode is cleared.
+  // Manually clearing any episode breaks the bulk-series completion state. Remaining
+  // watched episodes become ordinary selections so a later bulk undo cannot erase them.
   state.history = state.history.filter(entry => !(
     entry.kind === 'series-watched' && entry.sourceItemId === item.id
   ));
+  if (oldBulkToken) {
+    for (const entry of state.history) {
+      if (entry.sourceItemId === item.id && entry.bulkCompletionToken === oldBulkToken) {
+        delete entry.bulkCompletionToken;
+        delete entry.bulkCompletionScope;
+      }
+    }
+    item.seriesCompletionToken = '';
+  }
   return state.history.length !== before;
 }
 
@@ -1901,8 +1932,8 @@ function tvDetailControls(item) {
   } else {
     watchButtons = `<button class="primary-button" type="button" data-tv-watch-action="resume" data-item-id="${item.id}">Resume watching</button>`;
   }
-  const wholeComplete = Boolean(item.completedAt);
-  return `<div class="detail-actions tv-watch-actions"><button class="primary-button${wholeComplete ? ' is-complete' : ''}" type="button" data-tv-mark-series-complete="${item.id}" ${wholeComplete ? 'disabled' : ''}>${wholeComplete ? '✓ Series complete' : '✓ Mark series complete'}</button>${watchButtons}<button class="secondary-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${item.id}">${item.recommended ? '★ Recommended' : '☆ Recommend'}</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
+  const wholeComplete = hasSeriesBulkCompletion(item);
+  return `<div class="detail-actions tv-watch-actions"><button class="primary-button${wholeComplete ? ' is-complete' : ''}" type="button" data-tv-mark-series-complete="${item.id}">${wholeComplete ? '↶ Undo series complete' : '✓ Mark series complete'}</button>${watchButtons}<button class="secondary-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${item.id}">${item.recommended ? '★ Recommended' : '☆ Recommend'}</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
 }
 
 async function applyTVWatchAction(item, action) {
@@ -1926,34 +1957,82 @@ async function applyTVWatchAction(item, action) {
 }
 
 async function markWholeTVSeriesComplete(item) {
-  if (!item || getSourceType(item) !== 'tv' || item.completedAt) return;
+  if (!item || getSourceType(item) !== 'tv') return;
+
+  const activeToken = item.seriesCompletionToken || state.history.find(entry =>
+    entry.kind === 'series-watched' && entry.sourceItemId === item.id && entry.bulkCompletionToken
+  )?.bulkCompletionToken || '';
+
+  if (activeToken) {
+    state.history = state.history.filter(entry => !(
+      entry.sourceItemId === item.id &&
+      ((entry.kind === 'episode-watched' && entry.bulkCompletionToken === activeToken) || entry.kind === 'series-watched')
+    ));
+    item.seriesCompletionToken = '';
+    item.completedAt = '';
+    await recalculateTVProgress(item);
+    saveItems();
+    saveHistory();
+    renderAll();
+    if (els.detailModal?.open && state.openDetailId === item.id) await renderTVDetails(item);
+    return;
+  }
+
   const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
   const seasons = (details.seasons || []).filter(season => season.season_number > 0 && season.episode_count > 0);
+  const token = `series-${makeId()}`;
   for (const info of seasons) {
     const season = await getCached(`season:${item.providerId}:${info.season_number}`, () => TrackerAPI.getTVSeason(item.providerId, info.season_number, state.settings));
     for (const episode of (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep))) {
-      if (!isTVEpisodeLogged(item, info.season_number, episode.episode_number)) addImportedTVEpisode(item, episode, info.season_number);
+      addImportedTVEpisode(item, episode, info.season_number, { bulkCompletionToken: token, bulkCompletionScope: 'series' });
     }
   }
+  item.seriesCompletionToken = token;
   await recalculateTVProgress(item);
   item.completedAt = item.completedAt || todayString();
   setItemQueueStatus(item, 'library');
   item.updatedAt = new Date().toISOString();
-  if (!state.history.some(entry => entry.kind === 'series-watched' && entry.sourceItemId === item.id)) {
-    addHistoryRecord({
-      sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: '', showOnCalendar: false,
-      kind: 'series-watched', title: item.title, subtitle: item.subtitle || '', notes: item.notes || '', rating: Number(item.rating || 0),
-      image: item.image || '', provider: item.provider, providerId: item.providerId
-    });
-  }
+  state.history = state.history.filter(entry => !(entry.kind === 'series-watched' && entry.sourceItemId === item.id));
+  addHistoryRecord({
+    sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: '', showOnCalendar: false,
+    kind: 'series-watched', title: item.title, subtitle: item.subtitle || '', notes: item.notes || '', rating: Number(item.rating || 0),
+    image: item.image || '', provider: item.provider, providerId: item.providerId, bulkCompletionToken: token
+  });
   saveItems();
   saveHistory();
   renderAll();
   if (els.detailModal?.open && state.openDetailId === item.id) await renderTVDetails(item);
 }
 
+function hasSeriesBulkCompletion(item) {
+  if (!item) return false;
+  if (item.seriesCompletionToken) return true;
+  return state.history.some(entry => entry.kind === 'series-watched' && entry.sourceItemId === item.id && entry.bulkCompletionToken);
+}
+
 async function markWholeBookComplete(item) {
-  if (!item || getSourceType(item) !== 'book' || item.completedAt) return;
+  if (!item || getSourceType(item) !== 'book') return;
+
+  if (item.completedAt) {
+    const snapshot = item.bookCompletionSnapshot || null;
+    if (snapshot) {
+      item.progress = {
+        ...item.progress,
+        currentPage: Number(snapshot.currentPage || 0),
+        readingPeriods: sanitizeBookReadingPeriods(snapshot.readingPeriods || [])
+      };
+    }
+    item.completedAt = '';
+    delete item.bookCompletionSnapshot;
+    state.history = state.history.filter(entry => !(entry.sourceItemId === item.id && entry.kind === 'book-finished'));
+    item.updatedAt = new Date().toISOString();
+    saveItems();
+    saveHistory();
+    renderAll();
+    if (els.detailModal?.open && state.openDetailId === item.id) await renderBookDetails(item);
+    return;
+  }
+
   let total = Math.max(0, Number(item.progress?.totalPages || 0));
   if (!total && item.providerId) {
     try {
@@ -1962,6 +2041,10 @@ async function markWholeBookComplete(item) {
     } catch {}
   }
   const periods = getBookReadingPeriods(item);
+  item.bookCompletionSnapshot = {
+    currentPage: Number(item.progress?.currentPage || 0),
+    readingPeriods: periods.map(period => ({ ...period }))
+  };
   if (periods.length) {
     const latest = periods.at(-1);
     if (latest && !latest.endDate) latest.endDate = todayString();
@@ -1972,13 +2055,12 @@ async function markWholeBookComplete(item) {
   item.completedAt = todayString();
   setItemQueueStatus(item, 'library');
   item.updatedAt = new Date().toISOString();
-  if (!state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'book-finished')) {
-    addHistoryRecord({
-      sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: '', showOnCalendar: false,
-      kind: 'book-finished', title: item.title, subtitle: total ? `Finished · ${total} pages` : 'Finished', notes: item.notes || '',
-      rating: Number(item.rating || 0), image: item.image || '', provider: item.provider, providerId: item.providerId
-    });
-  }
+  state.history = state.history.filter(entry => !(entry.sourceItemId === item.id && entry.kind === 'book-finished'));
+  addHistoryRecord({
+    sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: '', showOnCalendar: false,
+    kind: 'book-finished', title: item.title, subtitle: total ? `Finished · ${total} pages` : 'Finished', notes: item.notes || '',
+    rating: Number(item.rating || 0), image: item.image || '', provider: item.provider, providerId: item.providerId
+  });
   saveItems();
   saveHistory();
   renderAll();
@@ -2032,8 +2114,8 @@ async function getEarlierUnwatchedTVEpisodes(item, seasonNumber) {
   return missing;
 }
 
-function addImportedTVEpisode(item, episode, seasonNumber) {
-  if (isTVEpisodeLogged(item, seasonNumber, episode.episode_number)) return;
+function addImportedTVEpisode(item, episode, seasonNumber, metadata = {}) {
+  if (isTVEpisodeLogged(item, seasonNumber, episode.episode_number)) return false;
   const record = tvHistoryRecord(item, episode, seasonNumber, episode.episode_number);
   addHistoryRecord({
     ...record,
@@ -2041,8 +2123,10 @@ function addImportedTVEpisode(item, episode, seasonNumber) {
     showOnCalendar: false,
     imported: true,
     importedAt: new Date().toISOString(),
-    notes: ''
+    notes: '',
+    ...metadata
   });
+  return true;
 }
 
 async function maybeMarkEarlierTVSeasonsWatched(item, seasonNumber) {
@@ -2305,6 +2389,13 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.itemLinkLabel) els.itemLinkLabel.value = '';
   if (els.itemLinkUrl) els.itemLinkUrl.value = '';
   renderAttachmentEditor();
+  const draftBookComplete = document.querySelector('[data-book-mark-complete-draft]');
+  if (draftBookComplete) {
+    draftBookComplete.dataset.bulkActive = 'false';
+    delete draftBookComplete.dataset.previousPage;
+    delete draftBookComplete.dataset.previousEndDate;
+    draftBookComplete.textContent = '✓ Mark book complete';
+  }
   setRating(0);
   updateItemFormForType();
 }
@@ -2473,6 +2564,7 @@ function resetTVDraftSetup() {
   state.tvDraftProviderId = '';
   state.tvDraftWatched = new Set();
   state.tvDraftInitialWatched = new Set();
+  state.tvDraftBulkBaseline = null;
   state.tvDraftLocked = new Set();
   state.tvDraftSeasons = [];
   state.tvDraftDetails = null;
@@ -2489,6 +2581,7 @@ async function prepareTVWatchSetup(providerId, itemId = '') {
   state.tvDraftProviderId = String(providerId);
   state.tvDraftWatched = new Set();
   state.tvDraftInitialWatched = new Set();
+  state.tvDraftBulkBaseline = null;
   state.tvDraftLocked = new Set();
   state.tvDraftSeasons = [];
   if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = 'Loading seasons and episodes…';
@@ -2572,6 +2665,9 @@ function renderTVWatchSetup() {
   if (els.tvWatchSetupStatus) {
     els.tvWatchSetupStatus.textContent = `${selectedCount} of ${airedCount} aired episodes marked watched. Future episodes are ignored until they air.`;
   }
+  if (els.tvMarkAllWatched) {
+    els.tvMarkAllWatched.textContent = state.tvDraftBulkBaseline instanceof Set ? '↶ Undo series complete' : '✓ Mark series complete';
+  }
 }
 
 function handleTVDraftEpisodeToggle(event) {
@@ -2616,6 +2712,18 @@ function handleTVDraftSeasonAction(event) {
   renderTVWatchSetup();
 }
 
+function toggleAllTVDraftEpisodes() {
+  if (state.tvDraftBulkBaseline instanceof Set) {
+    state.tvDraftWatched = new Set(state.tvDraftBulkBaseline);
+    state.tvDraftBulkBaseline = null;
+  } else {
+    state.tvDraftBulkBaseline = new Set(state.tvDraftWatched);
+    setAllTVDraftEpisodes(true);
+    return;
+  }
+  renderTVWatchSetup();
+}
+
 function setAllTVDraftEpisodes(markWatched) {
   for (const season of state.tvDraftSeasons) {
     for (const ep of season.episodes.filter(isEpisodeAvailable)) {
@@ -2642,19 +2750,30 @@ async function persistTVDraftWatchHistory(item) {
     if (!state.tvDraftWatched.has(key)) removeTVEpisodeHistory(item, entry.seasonNumber, entry.episodeNumber);
   }
 
-  // Add newly checked episodes as undated imported history.
+  const bulkBaseline = state.tvDraftBulkBaseline instanceof Set ? state.tvDraftBulkBaseline : null;
+  const bulkToken = bulkBaseline ? `series-${makeId()}` : '';
+
+  // Add newly checked episodes as undated imported history. When the top-level
+  // series button produced the selection, tag only episodes it added so that
+  // undoing that bulk completion later preserves the user's pre-existing checks.
   for (const key of state.tvDraftWatched) {
     const [seasonNumber, episodeNumber] = key.split(':').map(Number);
     if (isTVEpisodeLogged(item, seasonNumber, episodeNumber)) continue;
     const episode = findTVDraftEpisode(seasonNumber, episodeNumber);
     if (!episode || !isEpisodeAvailable(episode)) continue;
-    const record = tvHistoryRecord(item, episode, seasonNumber, episodeNumber);
+    const metadata = bulkToken && !bulkBaseline.has(key)
+      ? { bulkCompletionToken: bulkToken, bulkCompletionScope: 'series' }
+      : {};
+    addImportedTVEpisode(item, episode, seasonNumber, metadata);
+  }
+
+  if (bulkToken) {
+    item.seriesCompletionToken = bulkToken;
+    state.history = state.history.filter(entry => !(entry.kind === 'series-watched' && entry.sourceItemId === item.id));
     addHistoryRecord({
-      ...record,
-      date: '',
-      showOnCalendar: false,
-      imported: true,
-      importedAt: new Date().toISOString()
+      sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: '', showOnCalendar: false,
+      kind: 'series-watched', title: item.title, subtitle: item.subtitle || '', notes: item.notes || '', rating: Number(item.rating || 0),
+      image: item.image || '', provider: item.provider, providerId: item.providerId, bulkCompletionToken: bulkToken
     });
   }
 
@@ -3189,7 +3308,7 @@ async function renderBookDetails(item) {
   els.detailBody.innerHTML = `
     ${detailHero({ type:'BOOK', title:info.title || item.title, image, subtitle:(info.authors || []).join(', '), overview:stripHtml(info.description || '') })}
     <div class="detail-progress"><strong>Reading progress</strong>${total ? `Page ${current} of ${total} · ${Math.min(100, Math.round(current/total*100))}%` : `Page ${current}`}<small>${escapeHtml(bookReadingStatusText(item))}</small></div>
-    <div class="detail-actions"><button class="primary-button" type="button" data-book-mark-complete-item="${item.id}" ${item.completedAt ? 'disabled' : ''}>${item.completedAt ? '✓ Book complete' : '✓ Mark book complete'}</button><button class="secondary-button" type="button" id="detailUpdatePages">Update pages & dates</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>
+    <div class="detail-actions"><button class="primary-button${item.completedAt ? ' is-complete' : ''}" type="button" data-book-mark-complete-item="${item.id}">${item.completedAt ? '↶ Mark unread' : '✓ Mark book complete'}</button><button class="secondary-button" type="button" id="detailUpdatePages">Update pages & dates</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>
     <section class="detail-section"><h3>Reading dates</h3><div class="book-period-summary-list">${periodMarkup}</div></section>
     <section class="detail-section"><h3>Book info</h3><p>${escapeHtml([info.publisher, info.publishedDate, info.pageCount ? `${info.pageCount} pages` : ''].filter(Boolean).join(' · '))}</p></section>
   `;
@@ -3724,6 +3843,11 @@ function openBookProgress(item) {
   els.bookProgressTitle.textContent = item.title;
   els.progressCurrentPage.value = item.progress?.currentPage || 0;
   els.progressTotalPages.value = item.progress?.totalPages || '';
+  const completeButton = els.bookProgressModal?.querySelector('[data-book-mark-complete-progress]');
+  if (completeButton) {
+    completeButton.textContent = item.completedAt ? '↶ Mark unread' : '✓ Mark book complete';
+    completeButton.classList.toggle('is-complete', Boolean(item.completedAt));
+  }
   renderBookPeriodsEditor(item);
   els.bookProgressModal.showModal();
 }
@@ -6291,7 +6415,6 @@ function discoverCardMarkup(result, key, fallbackType) {
     ? [result.eventDate ? formatLongDate(result.eventDate) : '', formatEventClock(result.eventTime || ''), result.venueName || '', result.city || ''].filter(Boolean).join(' · ')
     : [year, rating, streaming].filter(Boolean).join(' · ');
   const queueStatus = item ? getQueueStatus(item) : '';
-  const recommended = Boolean(item?.recommended);
   const plusLabel = queueStatus === 'upnext' ? '+ Queue' : queueStatus === 'tbr' ? '+ TBR' : '+ Add';
 
   return `<article class="discover-card">
@@ -6306,8 +6429,7 @@ function discoverCardMarkup(result, key, fallbackType) {
       ${meta ? `<p class="discover-card-meta">${escapeHtml(meta)}</p>` : ''}
       ${result.subtitle && type === 'book' ? `<p class="discover-card-subtitle">${escapeHtml(result.subtitle)}</p>` : ''}
       <div class="discover-card-actions${type === 'event' ? ' no-complete' : ''}">
-        ${type === 'event' ? '' : `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" ${completed && type !== 'tv' ? 'disabled' : ''} aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Already completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Completed' : 'Mark watched / read'}">✓</button>`}
-        <button class="discover-recommend-button${recommended ? ' is-recommended' : ''}" type="button" data-discover-rate-recommend="${escapeAttr(key)}" aria-label="${recommended ? 'Remove from Recommended' : 'Rate and recommend'}" title="${recommended ? 'Remove from Recommended' : type === 'tv' ? 'Rate, recommend & track watched' : ['movie','book'].includes(type) ? 'Rate, recommend & mark complete' : 'Recommend'}">${recommended ? '★' : '☆'}</button>
+        ${type === 'event' ? '' : `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo watched / read' : 'Mark watched / read'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>`}
         <button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>
       </div>
     </div>
@@ -6315,12 +6437,6 @@ function discoverCardMarkup(result, key, fallbackType) {
 }
 
 async function handleDiscoverClick(event) {
-  const rateRecommend = event.target.closest('[data-discover-rate-recommend]');
-  if (rateRecommend) {
-    await handleDiscoverRateRecommend(rateRecommend.dataset.discoverRateRecommend);
-    return;
-  }
-
   const complete = event.target.closest('[data-discover-complete]');
   if (complete) {
     const key = complete.dataset.discoverComplete;
@@ -6388,7 +6504,7 @@ async function handleDiscoverRateRecommend(key) {
   }
 }
 
-function toggleDiscoverRecommended(key) {
+async function toggleDiscoverRecommended(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
   const item = ensureDiscoverItem(result, 'library');
@@ -6397,7 +6513,7 @@ function toggleDiscoverRecommended(key) {
   saveItems();
   renderLibrary();
   renderDiscoverCardInPlace(key);
-  if (els.detailModal?.open && state.openDiscoverKey === key) openDiscoverDetail(key);
+  if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
 }
 
 function renderDiscoverCardInPlace(key) {
@@ -6510,44 +6626,49 @@ function isDiscoverCompleted(result) {
 
 async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
   const result = state.discoverResults.get(key);
-  if (!result || isDiscoverCompleted(result)) return;
+  if (!result) return;
   const item = ensureDiscoverItem(result, 'library');
+
+  if (result.sourceType === 'book') {
+    const wasComplete = Boolean(item.completedAt);
+    await markWholeBookComplete(item);
+    renderDiscoverCardInPlace(key);
+    if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
+    if (!wasComplete && promptForRating) openDiscoverRatingPrompt(key);
+    return;
+  }
+
+  const completed = isDiscoverCompleted(result);
+  if (completed) {
+    item.completedAt = '';
+    state.history = state.history.filter(entry => !(
+      entry.sourceItemId === item.id && ['movie-watched','item-completed'].includes(entry.kind)
+    ));
+    item.updatedAt = new Date().toISOString();
+    saveItems();
+    saveHistory();
+    renderAll();
+    renderDiscoverCardInPlace(key);
+    if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
+    return;
+  }
+
   setItemQueueStatus(item, 'library');
   item.completedAt = todayString();
   item.updatedAt = new Date().toISOString();
-
-  if (result.sourceType === 'book') {
-    const total = Number(item.progress?.totalPages || result.pageCount || 0);
-    item.progress = { ...item.progress, currentPage: total || item.progress?.currentPage || 0, totalPages: total };
-  }
-
-  const kind = result.sourceType === 'tv' ? 'series-watched' : result.sourceType === 'movie' ? 'movie-watched' : result.sourceType === 'book' ? 'book-finished' : 'item-completed';
+  const kind = result.sourceType === 'movie' ? 'movie-watched' : 'item-completed';
+  state.history = state.history.filter(entry => !(entry.sourceItemId === item.id && entry.kind === kind));
   addHistoryRecord({
-    sourceItemId: item.id,
-    type: item.type,
-    typeLabel: getItemTypeLabel(item),
-    date: '',
-    showOnCalendar: false,
-    kind,
-    title: item.title,
-    subtitle: item.subtitle || '',
-    notes: result.description || '',
-    rating: Number(item.rating || 0),
-    image: item.image || '',
-    provider: item.provider,
-    providerId: item.providerId
+    sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: '', showOnCalendar: false, kind,
+    title: item.title, subtitle: item.subtitle || '', notes: result.description || '', rating: Number(item.rating || 0),
+    image: item.image || '', provider: item.provider, providerId: item.providerId
   });
   saveItems();
   saveHistory();
   renderAll();
-  if (els.detailModal?.open && state.openDiscoverKey === key) {
-    await openDiscoverDetail(key);
-    if (promptForRating && ['movie','book'].includes(result.sourceType)) {
-      requestAnimationFrame(() => els.detailBody?.querySelector('.discover-personal-meta')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
-    }
-  } else if (promptForRating && ['movie','book'].includes(result.sourceType)) {
-    openDiscoverRatingPrompt(key);
-  }
+  renderDiscoverCardInPlace(key);
+  if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
+  if (promptForRating && result.sourceType === 'movie') openDiscoverRatingPrompt(key);
 }
 
 function openDiscoverRatingPrompt(key, { allowTV = false } = {}) {
@@ -6739,7 +6860,7 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
   const existing = findDiscoverItem(result);
   const seasonNumber = requestedSeason || Number(existing?.progress?.nextSeason || seasons[0]?.season_number || 1);
   const season = await getCached(`season:${result.providerId}:${seasonNumber}`, () => TrackerAPI.getTVSeason(result.providerId, seasonNumber, state.settings));
-  const seriesCompleted = isDiscoverCompleted(result);
+  const seriesCompleted = hasSeriesBulkCompletion(existing);
   const providers = (availability.providers || []).map(provider => provider.name);
   const providerText = providers.length ? providers.slice(0, 4).join(' · ') : 'No streaming provider listed for your region';
 
@@ -6785,7 +6906,7 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
     <div class="discover-detail-actions">
       <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
       <button class="secondary-button${existing?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}">${existing?.recommended ? '★ Recommended' : '☆ Recommend'}</button>
-      <button class="secondary-button${seriesCompleted ? ' is-complete' : ''}" type="button" data-discover-mark-all-tv="${escapeAttr(key)}" ${seriesCompleted ? 'disabled' : ''}>${seriesCompleted ? '✓ Series complete' : '✓ Mark series complete'}</button>
+      <button class="secondary-button${seriesCompleted ? ' is-complete' : ''}" type="button" data-discover-mark-all-tv="${escapeAttr(key)}">${seriesCompleted ? '↶ Undo series complete' : '✓ Mark series complete'}</button>
     </div>
     ${discoverTVPersonalMetadataMarkup(existing, key)}
     <section class="detail-section streaming-detail"><h3>Streaming</h3><p>${escapeHtml(providerText)}</p>${availability.link ? `<a href="${escapeAttr(availability.link)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}</section>
@@ -6878,47 +6999,7 @@ async function markDiscoverSeriesWatched(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
   const item = ensureDiscoverItem(result, 'library');
-  const details = await getCached(`tv:${result.providerId}`, () => TrackerAPI.getTVDetails(result.providerId, state.settings));
-  const seasons = (details.seasons || []).filter(season => season.season_number > 0 && season.episode_count > 0);
-  const allEpisodes = [];
-  for (const info of seasons) {
-    const season = await getCached(`season:${result.providerId}:${info.season_number}`, () => TrackerAPI.getTVSeason(result.providerId, info.season_number, state.settings));
-    for (const episode of (season.episodes || []).filter(isEpisodeAvailable)) {
-      allEpisodes.push({ seasonNumber: info.season_number, episode });
-    }
-  }
-
-  const allWatched = allEpisodes.length > 0 && allEpisodes.every(({ seasonNumber, episode }) => isTVEpisodeLogged(item, seasonNumber, episode.episode_number));
-  const okay = confirm(allWatched
-    ? `Clear watched status for all available episodes of “${result.title}”?`
-    : `Mark all available episodes of “${result.title}” as watched?`);
-  if (!okay) return;
-
-  if (allWatched) {
-    for (const { seasonNumber, episode } of allEpisodes) removeTVEpisodeHistory(item, seasonNumber, episode.episode_number);
-    item.completedAt = '';
-  } else {
-    for (const { seasonNumber, episode } of allEpisodes) {
-      if (isTVEpisodeLogged(item, seasonNumber, episode.episode_number)) continue;
-      const record = tvHistoryRecord(item, episode, seasonNumber, episode.episode_number);
-      addHistoryRecord({ ...record, date: '', showOnCalendar: false, imported: true });
-    }
-  }
-
-  item.watchDisposition = item.watchDisposition === 'stopped' ? 'stopped' : 'following';
-  await syncDiscoverTVProgress(item);
-  if (!allWatched && !state.history.some(entry => entry.kind === 'series-watched' && entry.sourceItemId === item.id)) {
-    addHistoryRecord({
-      sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: '', showOnCalendar: false,
-      kind: 'series-watched', title: item.title, subtitle: item.subtitle || '', notes: '', image: item.image || '', provider: item.provider, providerId: item.providerId
-    });
-  }
-  if (allWatched) {
-    state.history = state.history.filter(entry => !(entry.kind === 'series-watched' && entry.sourceItemId === item.id));
-  }
-  saveItems();
-  saveHistory();
-  renderAll();
+  await markWholeTVSeriesComplete(item);
   await renderDiscoverTVDetail(key);
 }
 
@@ -6928,6 +7009,16 @@ async function syncDiscoverTVProgress(item) {
     item.progress = { ...item.progress, nextSeason: next.seasonNumber, nextEpisode: next.episodeNumber };
     item.completedAt = '';
     state.history = state.history.filter(entry => !(entry.kind === 'series-watched' && entry.sourceItemId === item.id));
+    if (item.seriesCompletionToken) {
+      const token = item.seriesCompletionToken;
+      for (const entry of state.history) {
+        if (entry.sourceItemId === item.id && entry.bulkCompletionToken === token) {
+          delete entry.bulkCompletionToken;
+          delete entry.bulkCompletionScope;
+        }
+      }
+      item.seriesCompletionToken = '';
+    }
   } else {
     setItemQueueStatus(item, 'library');
     item.completedAt = item.completedAt || todayString();
@@ -6953,7 +7044,7 @@ async function renderDiscoverMovieDetail(key) {
     <div class="discover-detail-actions">
       <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
       <button class="secondary-button${findDiscoverItem(result)?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}">${findDiscoverItem(result)?.recommended ? '★ Recommended' : '☆ Recommend'}</button>
-      <button class="secondary-button" type="button" data-discover-detail-complete="${escapeAttr(key)}" ${completed ? 'disabled' : ''}>${completed ? '✓ Watched' : '✓ Mark watched'}</button>
+      <button class="secondary-button${completed ? ' is-complete' : ''}" type="button" data-discover-detail-complete="${escapeAttr(key)}">${completed ? '↶ Mark not watched' : '✓ Mark watched'}</button>
     </div>
     ${discoverTVPersonalMetadataMarkup(findDiscoverItem(result), key)}
     <section class="detail-section streaming-detail"><h3>Streaming</h3><p>${escapeHtml(providerText)}</p>${availability.link ? `<a href="${escapeAttr(availability.link)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}</section>
@@ -7017,7 +7108,7 @@ async function renderDiscoverBookDetail(key) {
     <div class="discover-detail-actions">
       <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
       <button class="secondary-button${existing?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}">${existing?.recommended ? '★ Recommended' : '☆ Recommend'}</button>
-      <button class="secondary-button" type="button" data-discover-detail-complete="${escapeAttr(key)}" ${completed ? 'disabled' : ''}>${completed ? '✓ Read' : '✓ Mark read'}</button>
+      <button class="secondary-button${completed ? ' is-complete' : ''}" type="button" data-discover-detail-complete="${escapeAttr(key)}">${completed ? '↶ Mark unread' : '✓ Mark read'}</button>
     </div>
     ${discoverTVPersonalMetadataMarkup(existing, key)}
     ${info.categories?.length ? `<section class="detail-section"><h3>Categories</h3><p>${escapeHtml(info.categories.join(' · '))}</p></section>` : ''}`;
@@ -7726,7 +7817,10 @@ function renderLibrary() {
             <h2 class="library-group-title">${escapeHtml(groupLabel)}</h2>
             <span class="library-group-count">${items.length}</span>
           </div>
-          <button class="library-expand-button" type="button" data-library-expand="${rootExpansionKey}">${rootExpanded ? 'Collapse' : 'View all'}</button>
+          <div class="library-shelf-controls">
+            ${rootExpanded ? '' : '<button class="library-carousel-button" type="button" data-library-carousel="prev" aria-label="Scroll TV left">‹</button><button class="library-carousel-button" type="button" data-library-carousel="next" aria-label="Scroll TV right">›</button>'}
+            <button class="library-expand-button" type="button" data-library-expand="${rootExpansionKey}">${rootExpanded ? 'Collapse' : 'View all'}</button>
+          </div>
         </div>
         ${rootExpanded
           ? '<div class="tv-library-status-groups"></div>'
@@ -7747,7 +7841,10 @@ function renderLibrary() {
                 <h3 class="tv-library-status-title">${escapeHtml(tvLibraryStatusLabel(statusKey))}</h3>
                 <span class="library-group-count">${statusItems.length}</span>
               </div>
-              <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(expansionKey)}">${expanded ? 'Carousel' : 'View all'}</button>
+              <div class="library-shelf-controls">
+                ${expanded ? '' : '<button class="library-carousel-button" type="button" data-library-carousel="prev" aria-label="Scroll left">‹</button><button class="library-carousel-button" type="button" data-library-carousel="next" aria-label="Scroll right">›</button>'}
+                <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(expansionKey)}">${expanded ? 'Carousel' : 'View all'}</button>
+              </div>
             </div>
             <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
           const grid = statusSection.querySelector('.library-poster-grid');
@@ -7773,7 +7870,10 @@ function renderLibrary() {
           <h2 class="library-group-title">${escapeHtml(groupLabel)}</h2>
           <span class="library-group-count">${items.length}</span>
         </div>
-        <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(groupKey)}">${expanded ? 'Carousel' : `View all`}</button>
+        <div class="library-shelf-controls">
+          ${expanded ? '' : '<button class="library-carousel-button" type="button" data-library-carousel="prev" aria-label="Scroll left">‹</button><button class="library-carousel-button" type="button" data-library-carousel="next" aria-label="Scroll right">›</button>'}
+          <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(groupKey)}">${expanded ? 'Carousel' : `View all`}</button>
+        </div>
       </div>
       <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
     const grid = section.querySelector('.library-poster-grid');
@@ -7783,6 +7883,16 @@ function renderLibrary() {
 }
 
 function handleLibraryClick(event) {
+  const carousel = event.target.closest('[data-library-carousel]');
+  if (carousel) {
+    const shelf = carousel.closest('.library-shelf, .tv-library-status-group');
+    const grid = shelf?.querySelector('.library-poster-grid:not(.is-expanded)');
+    if (grid) {
+      const direction = carousel.dataset.libraryCarousel === 'prev' ? -1 : 1;
+      grid.scrollBy({ left: direction * Math.max(280, grid.clientWidth * .78), behavior: 'smooth' });
+    }
+    return;
+  }
   const expand = event.target.closest('[data-library-expand]');
   if (expand) {
     const type = expand.dataset.libraryExpand;
