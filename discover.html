@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=englishratings-1" />
+  <link rel="stylesheet" href="style.css?v=shelves-1" />
 </head>
 <body class="discover-page auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -77,11 +77,22 @@
           </div>
         </div>
 
-        <div class="discover-mode-tabs" role="tablist" aria-label="Discover view">
-          <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="new" aria-selected="false">New</button>
-          <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="popular" aria-selected="false">Popular</button>
-          <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="for-you" aria-selected="false">For You</button>
-          <button class="discover-mode-tab is-active" type="button" role="tab" data-discover-mode="discover" aria-selected="true">Discover</button>
+        <div class="discover-toolbar">
+          <div class="discover-mode-tabs" role="tablist" aria-label="Discover view">
+            <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="new" aria-selected="false">New</button>
+            <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="popular" aria-selected="false">Popular</button>
+            <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="for-you" aria-selected="false">For You</button>
+            <button class="discover-mode-tab is-active" type="button" role="tab" data-discover-mode="discover" aria-selected="true">Discover</button>
+          </div>
+          <label class="discover-type-filter">
+            <span>Type</span>
+            <select id="discoverTypeFilter">
+              <option value="all">Everything</option>
+              <option value="tv">TV</option>
+              <option value="movie">Movies</option>
+              <option value="book">Books</option>
+            </select>
+          </label>
         </div>
 
         <div id="discoverStatus" class="discover-status">Building a fresh mix for you…</div>
@@ -280,6 +291,11 @@
         </div>
         <div id="linkEditorList" class="attachment-editor-list"></div>
       </section>
+
+      <label class="checkbox-field preference-checkbox item-recommended-field">
+        <input id="itemRecommended" type="checkbox" />
+        <span>Add to Recommended folder</span>
+      </label>
 
       <label class="field">
         <span>Date <em>optional</em></span>

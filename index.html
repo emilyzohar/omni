@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=englishratings-1" />
+  <link rel="stylesheet" href="style.css?v=shelves-1" />
 </head>
 <body class="auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -119,19 +119,37 @@
           </div>
 
           <div class="library-controls">
+            <div class="library-folder-tabs" role="tablist" aria-label="Library folder">
+              <button class="library-folder-tab is-active" type="button" data-library-view="all" role="tab" aria-selected="true">All</button>
+              <button class="library-folder-tab" type="button" data-library-view="recommended" role="tab" aria-selected="false">Recommended</button>
+            </div>
             <button id="openLibraryAdd" class="library-add-button" type="button">+ Add</button>
             <button id="openStickerSettings" class="library-add-button" type="button">Stickers</button>
             <button id="openStreakSettings" class="library-add-button" type="button">Streaks</button>
             <label class="filter-control">
-              <span>Filter by type</span>
+              <span>Type</span>
               <select id="typeFilter">
-                <option value="all">All</option>
+                <option value="all">All types</option>
                 <option value="tv">TV</option>
                 <option value="movie">Movies</option>
                 <option value="book">Books</option>
                 <option value="music">Music</option>
                 <option value="workout">Workouts</option>
                 <option value="other">Other</option>
+              </select>
+            </label>
+            <label class="filter-control">
+              <span>Genre</span>
+              <select id="libraryGenreFilter">
+                <option value="all">All genres</option>
+              </select>
+            </label>
+            <label class="filter-control">
+              <span>Sort</span>
+              <select id="librarySort">
+                <option value="date">Recent</option>
+                <option value="rating">Rating</option>
+                <option value="title">Title</option>
               </select>
             </label>
           </div>
@@ -322,6 +340,11 @@
         </div>
         <div id="linkEditorList" class="attachment-editor-list"></div>
       </section>
+
+      <label class="checkbox-field preference-checkbox item-recommended-field">
+        <input id="itemRecommended" type="checkbox" />
+        <span>Add to Recommended folder</span>
+      </label>
 
       <label class="field">
         <span>Date <em>optional</em></span>

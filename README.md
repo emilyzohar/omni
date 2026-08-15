@@ -54,3 +54,9 @@ All views filter out things already saved/consumed. TBR is a separate queue and 
 Discover Settings now includes **Show only English-language TV shows**. When enabled, TV recommendations in New, Popular, For You, and Discover are filtered using TMDB's original-language metadata.
 
 After any episode/season of a TV show has been marked watched from Discover, that show's detail view includes a personal 1–5 star rating and notes field. These are show-level Library metadata and do not get copied into individual episode notes.
+
+## Large history storage
+
+Watched episode/video/history records are now cached in IndexedDB instead of localStorage. This avoids browser `QuotaExceededError` once the tracker contains hundreds or thousands of history records.
+
+On first load, any legacy `zoharTracker.history.v1` localStorage data is automatically migrated to IndexedDB and the old localStorage copy is removed. Signed-in profiles continue syncing the full history through the existing Supabase `user_state` profile.

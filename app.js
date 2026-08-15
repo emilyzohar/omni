@@ -11,6 +11,9 @@ const STICKER_PREFS_KEY = 'zoharTracker.stickerPrefs.v1';
 const STREAK_PREFS_KEY = 'zoharTracker.streakPrefs.v1';
 const ATTACHMENT_DB_NAME = 'zoharTracker.attachments.v1';
 const ATTACHMENT_STORE_NAME = 'files';
+const STATE_DB_NAME = 'zoharTracker.state.v1';
+const STATE_STORE_NAME = 'largeState';
+const HISTORY_IDB_KEY = 'history';
 const CACHE_TTL = 60 * 60 * 1000;
 const mobileCalendarQuery = window.matchMedia('(max-width: 760px)');
 
@@ -34,7 +37,7 @@ const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'other']
 const STICKER_COLORS = ['rust', 'red', 'coral', 'orange', 'yellow', 'cream', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'teal', 'green', 'mint', 'brown', 'black', 'white'];
 
 const CLOUD_STATE_VERSION = 2;
-const DEFAULT_DISCOVER_PREFS = { streamingProviderIds: [], streamingProviderNames: [], prioritizeAuthors: true, englishTVOnly: false };
+const DEFAULT_DISCOVER_PREFS = { streamingProviderIds: [], streamingProviderNames: [], prioritizeAuthors: true, englishTVOnly: false, contentType: 'all' };
 let currentUser = null;
 let appStarted = false;
 let localOnlyMode = false;
@@ -82,7 +85,9 @@ const state = {
   discoverFeedEmptyPasses: 0,
   discoverFeedOffsets: { tv: 1, movie: 1, book: 0 },
   discoverFeedSession: Math.random(),
-  discoverMode: 'discover'
+  discoverMode: 'discover',
+  libraryView: 'all',
+  libraryExpandedGroups: new Set()
 };
 
 const $ = selector => document.querySelector(selector);
@@ -124,6 +129,9 @@ const els = {
   currentWeek: $('#currentWeek'),
   nextWeek: $('#nextWeek'),
   typeFilter: $('#typeFilter'),
+  libraryGenreFilter: $('#libraryGenreFilter'),
+  librarySort: $('#librarySort'),
+  libraryViewTabs: $$('.library-folder-tab[data-library-view]'),
   libraryGroups: $('#libraryGroups'),
   libraryEmpty: $('#libraryEmpty'),
   refreshDiscover: $('#refreshDiscover'),
@@ -132,6 +140,7 @@ const els = {
   discoverFeedSentinel: $('#discoverFeedSentinel'),
   discoverFeedMessage: $('#discoverFeedMessage'),
   discoverModeTabs: $$('.discover-mode-tab[data-discover-mode]'),
+  discoverTypeFilter: $('#discoverTypeFilter'),
   discoverFeedIntroText: $('#discoverFeedIntroText'),
   discoverTrendingTV: $('#discoverTrendingTV'),
   discoverTrendingMovies: $('#discoverTrendingMovies'),
@@ -207,6 +216,7 @@ const els = {
   attachmentTitle: $('#attachmentTitle'),
   attachmentBody: $('#attachmentBody'),
   itemDate: $('#itemDate'),
+  itemRecommended: $('#itemRecommended'),
   queueStatusField: $('#queueStatusField'),
   itemQueueStatus: $('#itemQueueStatus'),
   editingId: $('#editingId'),
@@ -263,8 +273,9 @@ async function bootstrapAuth() {
 
 function bindAuthEvents() {
   els.authForm?.addEventListener('submit', handleAuthSubmit);
-  els.continueLocalButton?.addEventListener('click', () => {
+  els.continueLocalButton?.addEventListener('click', async () => {
     localOnlyMode = true;
+    await hydrateLargeLocalState();
     unlockApp();
     startAppOnce();
   });
@@ -372,6 +383,7 @@ async function startForUser(user) {
   if (els.userEmail) els.userEmail.textContent = user.email || '';
   setAuthMessage('Loading your profile…', false);
   try {
+    await hydrateLargeLocalState();
     await hydrateCloudProfile(user.id);
     unlockApp();
     startAppOnce();
@@ -489,12 +501,22 @@ function bindEvents() {
     renderTracker();
   });
   if (els.trackerGrid) mobileCalendarQuery.addEventListener?.('change', renderTracker);
-  els.typeFilter?.addEventListener('change', renderLibrary);
+  els.typeFilter?.addEventListener('change', () => { refreshLibraryGenreFilter(); renderLibrary(); });
+  els.libraryGenreFilter?.addEventListener('change', renderLibrary);
+  els.librarySort?.addEventListener('change', renderLibrary);
+  els.libraryViewTabs?.forEach(tab => tab.addEventListener('click', () => setLibraryView(tab.dataset.libraryView)));
   els.upNextList?.addEventListener('click', handleUpNextClick);
   els.trackerGrid?.addEventListener('click', handleTrackerClick);
   els.libraryGroups?.addEventListener('click', handleLibraryClick);
   els.refreshDiscover?.addEventListener('click', () => renderDiscover(true));
   els.discoverModeTabs?.forEach(tab => tab.addEventListener('click', () => setDiscoverMode(tab.dataset.discoverMode)));
+  els.discoverTypeFilter?.addEventListener('change', () => {
+    state.discoverPrefs = { ...DEFAULT_DISCOVER_PREFS, ...state.discoverPrefs, contentType: els.discoverTypeFilter.value || 'all' };
+    localStorage.setItem(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
+    scheduleCloudSync();
+    resetDiscoverFeed(false);
+    loadMoreDiscoverFeed();
+  });
   els.openDiscoverSettings?.addEventListener('click', openDiscoverSettings);
   els.discoverSettingsForm?.addEventListener('submit', saveDiscoverSettings);
   els.streamingProviderSearch?.addEventListener('input', () => renderStreamingProviderOptions(els.streamingProviderSearch.value));
@@ -507,6 +529,19 @@ function bindEvents() {
   document.addEventListener('click', async event => {
     const close = event.target.closest('[data-close]');
     if (close) document.getElementById(close.dataset.close)?.close();
+
+    const recommendToggle = event.target.closest('[data-toggle-recommended]');
+    if (recommendToggle) {
+      const item = findItem(recommendToggle.dataset.toggleRecommended);
+      if (item) {
+        item.recommended = !item.recommended;
+        item.updatedAt = new Date().toISOString();
+        saveItems();
+        renderLibrary();
+        if (els.detailModal?.open) openDetails(item.id);
+      }
+      return;
+    }
 
     const edit = event.target.closest('[data-edit-id]');
     if (edit) {
@@ -1103,7 +1138,7 @@ function tvDetailControls(item) {
   } else {
     watchButtons = `<button class="primary-button" type="button" data-tv-watch-action="resume" data-item-id="${item.id}">Resume watching</button>`;
   }
-  return `<div class="detail-actions tv-watch-actions">${watchButtons}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
+  return `<div class="detail-actions tv-watch-actions">${watchButtons}<button class="secondary-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${item.id}">${item.recommended ? '★ Recommended' : '☆ Recommend'}</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
 }
 
 async function applyTVWatchAction(item, action) {
@@ -1355,6 +1390,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     els.manualTitle.value = item.title || '';
     els.itemNote.value = item.notes || '';
     els.itemDate.value = item.date || '';
+    if (els.itemRecommended) els.itemRecommended.checked = Boolean(item.recommended);
     els.itemQueueStatus.value = getQueueStatus(item);
     setRating(Number(item.rating || 0));
 
@@ -1409,6 +1445,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.providerSubtitle.value = '';
   els.itemModalEyebrow.textContent = 'ADD';
   els.itemModalTitle.textContent = 'Add something';
+  if (els.itemRecommended) els.itemRecommended.checked = false;
   els.deleteItem.hidden = true;
   els.searchResults.hidden = true;
   els.searchResults.innerHTML = '';
@@ -1866,6 +1903,9 @@ async function saveItemFromForm(event) {
     subtitle,
     rating: Number(els.itemRating.value || 0),
     notes: els.itemNote.value.trim(),
+    recommended: Boolean(els.itemRecommended?.checked),
+    genres: extractItemGenres(sourceType, state.selectedSource, editing),
+    releaseDate: extractItemReleaseDate(sourceType, state.selectedSource, editing),
     attachments: attachmentFiles,
     links: state.attachmentDraft.links.map(link => ({ ...link })),
     date: els.itemDate.value || '',
@@ -1970,8 +2010,12 @@ async function openDetails(id) {
 
 async function renderTVDetails(item) {
   const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
+  const detailGenres = (details.genres || []).map(genre => genre.name).filter(Boolean);
+  const metadataChanged = (detailGenres.length && JSON.stringify(item.genres || []) !== JSON.stringify(detailGenres)) || (details.first_air_date && item.releaseDate !== details.first_air_date);
+  if (detailGenres.length) item.genres = detailGenres;
+  if (details.first_air_date) item.releaseDate = details.first_air_date;
   const changed = await reconcileSingleTVItem(item, details);
-  if (changed) saveItems();
+  if (changed || metadataChanged) saveItems();
   const seasonNumber = Number(item.progress?.nextSeason || 1);
   const episodeNumber = Number(item.progress?.nextEpisode || 1);
   const season = await getCached(`season:${item.providerId}:${seasonNumber}`, () => TrackerAPI.getTVSeason(item.providerId, seasonNumber, state.settings));
@@ -2161,6 +2205,9 @@ async function renderYouTubeVideoDetail(item, videoId) {
 async function renderBookDetails(item) {
   const data = await getCached(`book:${item.providerId}`, () => TrackerAPI.getBookDetails(item.providerId, state.settings));
   const info = data.volumeInfo || {};
+  if (info.categories?.length) item.genres = [...new Set(info.categories)];
+  if (info.publishedDate) item.releaseDate = info.publishedDate;
+  saveItems();
   const image = info.imageLinks?.large?.replace('http://','https://') || info.imageLinks?.thumbnail?.replace('http://','https://') || item.image;
   const current = Number(item.progress?.currentPage || 0);
   const total = Number(item.progress?.totalPages || info.pageCount || 0);
@@ -2176,6 +2223,10 @@ async function renderBookDetails(item) {
 
 async function renderMovieDetails(item) {
   const details = await getCached(`movie:${item.providerId}`, () => TrackerAPI.getMovieDetails(item.providerId, state.settings));
+  const detailGenres = (details.genres || []).map(genre => genre.name).filter(Boolean);
+  if (detailGenres.length) item.genres = detailGenres;
+  if (details.release_date) item.releaseDate = details.release_date;
+  saveItems();
   els.detailBody.innerHTML = `
     ${detailHero({ type:'MOVIE', title:details.title || item.title, image:TrackerAPI.tmdbImage(details.poster_path) || item.image, subtitle:[details.release_date?.slice(0,4), details.runtime ? `${details.runtime} min` : '', details.genres?.map(g=>g.name).join(' · ')].filter(Boolean).join(' · '), overview:details.overview || '' })}
     ${detailEditButton(item)}
@@ -2210,7 +2261,7 @@ function basicDetailHero(item) {
 }
 
 function detailEditButton(item) {
-  return `<div class="detail-actions">${queueMoveControls(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
+  return `<div class="detail-actions">${queueMoveControls(item)}<button class="secondary-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${item.id}">${item.recommended ? '★ Recommended' : '☆ Recommend'}</button><button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
 }
 
 // ---------------------------
@@ -2929,6 +2980,7 @@ function updateDiscoverModeUI() {
     tab.setAttribute('aria-selected', String(active));
   });
   if (els.discoverFeedIntroText) els.discoverFeedIntroText.textContent = copy[mode];
+  if (els.discoverTypeFilter) els.discoverTypeFilter.value = state.discoverPrefs.contentType || 'all';
   if (els.refreshDiscover) els.refreshDiscover.textContent = mode === 'discover' ? 'Shuffle' : 'Refresh';
 }
 
@@ -3044,6 +3096,8 @@ async function loadMoreDiscoverFeed() {
     const fresh = candidates.filter(result => {
       const key = discoverResultIdentity(result);
       if (!key || state.discoverFeedSeen.has(key) || findDiscoverItem(result)) return false;
+      const contentType = state.discoverPrefs.contentType || 'all';
+      if (contentType !== 'all' && (result.sourceType || '') !== contentType) return false;
       if (state.discoverPrefs.englishTVOnly === true && (result.sourceType || '') === 'tv') {
         return String(result.raw?.original_language || '').toLowerCase() === 'en';
       }
@@ -3777,7 +3831,8 @@ function saveDiscoverSettings(event) {
     streamingProviderIds: selectedEntries.map(([id]) => id),
     streamingProviderNames: selectedEntries.map(([, name]) => name),
     prioritizeAuthors: els.prioritizeAuthors.checked,
-    englishTVOnly: Boolean(els.englishTVOnly?.checked)
+    englishTVOnly: Boolean(els.englishTVOnly?.checked),
+    contentType: state.discoverPrefs.contentType || 'all'
   };
   localStorage.setItem(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
   scheduleCloudSync();
@@ -3908,6 +3963,9 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
     subtitle: result.subtitle || '',
     rating: 0,
     notes: '',
+    recommended: false,
+    genres: extractItemGenres(sourceType, result, null),
+    releaseDate: extractItemReleaseDate(sourceType, result, null),
     attachments: [],
     links: [],
     date: '',
@@ -4295,6 +4353,9 @@ async function renderDiscoverBookDetail(key) {
   if (!result) return;
   const data = await getCached(`book:${result.providerId}`, () => TrackerAPI.getBookDetails(result.providerId, state.settings));
   const info = data.volumeInfo || {};
+  if (info.categories?.length) item.genres = [...new Set(info.categories)];
+  if (info.publishedDate) item.releaseDate = info.publishedDate;
+  saveItems();
   const image = info.imageLinks?.large?.replace('http://','https://') || info.imageLinks?.thumbnail?.replace('http://','https://') || result.image;
   const completed = isDiscoverCompleted(result);
   els.detailBody.innerHTML = `
@@ -4584,22 +4645,119 @@ function resetStreakSettings() {
 // ---------------------------
 // LIBRARY
 // ---------------------------
+const TMDB_MOVIE_GENRES = {
+  28:'Action', 12:'Adventure', 16:'Animation', 35:'Comedy', 80:'Crime', 99:'Documentary',
+  18:'Drama', 10751:'Family', 14:'Fantasy', 36:'History', 27:'Horror', 10402:'Music',
+  9648:'Mystery', 10749:'Romance', 878:'Science Fiction', 10770:'TV Movie', 53:'Thriller',
+  10752:'War', 37:'Western'
+};
+const TMDB_TV_GENRES = {
+  10759:'Action & Adventure', 16:'Animation', 35:'Comedy', 80:'Crime', 99:'Documentary',
+  18:'Drama', 10751:'Family', 10762:'Kids', 9648:'Mystery', 10763:'News', 10764:'Reality',
+  10765:'Sci-Fi & Fantasy', 10766:'Soap', 10767:'Talk', 10768:'War & Politics', 37:'Western'
+};
+
+function extractItemGenres(sourceType, source, editing) {
+  if (!source && editing?.genres?.length) return [...editing.genres];
+  if (sourceType === 'book') {
+    const categories = source?.categories || source?.raw?.volumeInfo?.categories || editing?.genres || [];
+    return [...new Set(categories.map(value => String(value || '').trim()).filter(Boolean))];
+  }
+  if (sourceType === 'tv' || sourceType === 'movie') {
+    const direct = source?.genres?.map?.(genre => typeof genre === 'string' ? genre : genre?.name).filter(Boolean) || [];
+    if (direct.length) return [...new Set(direct)];
+    const ids = source?.raw?.genre_ids || source?.genre_ids || [];
+    const map = sourceType === 'tv' ? TMDB_TV_GENRES : TMDB_MOVIE_GENRES;
+    const names = ids.map(id => map[Number(id)]).filter(Boolean);
+    return names.length ? [...new Set(names)] : [...(editing?.genres || [])];
+  }
+  if (sourceType === 'music') {
+    const genre = source?.raw?.primaryGenreName || source?.description || editing?.genres?.[0] || '';
+    return genre ? [String(genre)] : [];
+  }
+  return [...(editing?.genres || [])];
+}
+
+function extractItemReleaseDate(sourceType, source, editing) {
+  if (sourceType === 'book') return source?.publishedDate || source?.raw?.volumeInfo?.publishedDate || editing?.releaseDate || '';
+  if (sourceType === 'tv') return source?.raw?.first_air_date || editing?.releaseDate || '';
+  if (sourceType === 'movie') return source?.raw?.release_date || editing?.releaseDate || '';
+  if (sourceType === 'music') return source?.raw?.releaseDate || editing?.releaseDate || '';
+  return editing?.releaseDate || '';
+}
+
+function setLibraryView(view) {
+  state.libraryView = view === 'recommended' ? 'recommended' : 'all';
+  els.libraryViewTabs?.forEach(tab => {
+    const active = tab.dataset.libraryView === state.libraryView;
+    tab.classList.toggle('is-active', active);
+    tab.setAttribute('aria-selected', String(active));
+  });
+  renderLibrary();
+}
+
+function itemLibraryDate(item) {
+  const datedHistory = state.history
+    .filter(entry => entry.sourceItemId === item.id && entry.date)
+    .map(entry => entry.date)
+    .sort()
+    .at(-1);
+  return datedHistory || item.completedAt || item.date || item.updatedAt || item.createdAt || '';
+}
+
+function normalizeGenre(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function refreshLibraryGenreFilter() {
+  if (!els.libraryGenreFilter) return;
+  const current = els.libraryGenreFilter.value || 'all';
+  const type = els.typeFilter?.value || 'all';
+  const genres = new Map();
+  state.items
+    .filter(item => getQueueStatus(item) !== 'tbr')
+    .filter(item => type === 'all' || item.type === type)
+    .forEach(item => (item.genres || []).forEach(genre => {
+      const key = normalizeGenre(genre);
+      if (key && !genres.has(key)) genres.set(key, genre);
+    }));
+
+  els.libraryGenreFilter.innerHTML = '<option value="all">All genres</option>';
+  [...genres.entries()].sort((a,b) => a[1].localeCompare(b[1])).forEach(([key,label]) => {
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = label;
+    els.libraryGenreFilter.appendChild(option);
+  });
+  els.libraryGenreFilter.value = genres.has(current) || current === 'all' ? current : 'all';
+}
+
 function renderLibrary() {
   refreshTypeFilter();
-  const filter = els.typeFilter.value;
-  const filtered = state.items
+  refreshLibraryGenreFilter();
+  const filter = els.typeFilter?.value || 'all';
+  const genre = els.libraryGenreFilter?.value || 'all';
+  const sort = els.librarySort?.value || 'date';
+
+  let filtered = state.items
     .filter(item => getQueueStatus(item) !== 'tbr')
-    .filter(item => filter === 'all' || item.type === filter);
+    .filter(item => state.libraryView !== 'recommended' || item.recommended)
+    .filter(item => filter === 'all' || item.type === filter)
+    .filter(item => genre === 'all' || (item.genres || []).some(value => normalizeGenre(value) === genre));
+
+  const compare = sort === 'rating'
+    ? (a,b) => Number(b.rating || 0) - Number(a.rating || 0) || String(itemLibraryDate(b)).localeCompare(String(itemLibraryDate(a))) || a.title.localeCompare(b.title)
+    : sort === 'title'
+      ? (a,b) => a.title.localeCompare(b.title)
+      : (a,b) => String(itemLibraryDate(b)).localeCompare(String(itemLibraryDate(a))) || Number(b.rating || 0) - Number(a.rating || 0) || a.title.localeCompare(b.title);
+
   const preferredOrder = ['tv','movie','book','music','workout','other'];
   const grouped = new Map();
-
   for (const item of filtered) {
     if (!grouped.has(item.type)) grouped.set(item.type, []);
     grouped.get(item.type).push(item);
   }
-  for (const values of grouped.values()) {
-    values.sort((a,b) => Number(b.rating || 0) - Number(a.rating || 0) || a.title.localeCompare(b.title));
-  }
+  for (const values of grouped.values()) values.sort(compare);
 
   const customOrder = [...grouped.keys()]
     .filter(type => !preferredOrder.includes(type))
@@ -4608,35 +4766,57 @@ function renderLibrary() {
 
   els.libraryGroups.innerHTML = '';
   els.libraryEmpty.hidden = filtered.length > 0;
+  if (!filtered.length) {
+    els.libraryEmpty.textContent = state.libraryView === 'recommended' ? 'Nothing in Recommended yet.' : 'Nothing saved yet.';
+    return;
+  }
 
   for (const type of order) {
     const items = grouped.get(type);
     if (!items?.length) continue;
+    const expanded = state.libraryExpandedGroups.has(type);
     const section = document.createElement('section');
-    section.className = 'library-group';
-    section.innerHTML = `<div class="library-group-heading-row"><h2 class="library-group-title">${escapeHtml(getTypeLabel(type))}</h2>${streakBadgeMarkup(type)}</div><div class="library-items"></div>`;
-    const list = section.querySelector('.library-items');
+    section.className = `library-group library-shelf${expanded ? ' is-expanded' : ''}`;
+    section.dataset.libraryGroup = type;
+    section.innerHTML = `
+      <div class="library-group-heading-row">
+        <div class="library-group-title-wrap">
+          <h2 class="library-group-title">${escapeHtml(getTypeLabel(type))}</h2>
+          <span class="library-group-count">${items.length}</span>
+          ${streakBadgeMarkup(type)}
+        </div>
+        <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(type)}">${expanded ? 'Collapse' : `Show all`}</button>
+      </div>
+      <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
+    const grid = section.querySelector('.library-poster-grid');
 
     for (const item of items) {
-      const row = document.createElement('article');
-      row.className = 'library-row';
-      row.innerHTML = `
-        <div class="library-title-cell" data-details-id="${item.id}" role="button" tabindex="0">
-          ${item.image ? `<img class="library-thumb" src="${escapeAttr(item.image)}" alt="" />` : '<div class="library-thumb"></div>'}
-          <div class="library-title-text">${escapeHtml(item.title)}<div class="library-subtext">${escapeHtml([libraryProgressText(item), resourceSummary(item)].filter(Boolean).join(' · '))}</div></div>
-        </div>
-        <div class="library-type">${escapeHtml(getItemTypeLabel(item))}</div>
-        <div class="library-rating">${ratingStars(item.rating)}</div>
-        <div class="library-note">${escapeHtml(item.notes || '—')}</div>
-        <button class="edit-link" type="button" data-edit-id="${item.id}">Edit</button>`;
-      list.appendChild(row);
+      const poster = document.createElement('button');
+      poster.type = 'button';
+      poster.className = 'library-poster-button';
+      poster.dataset.detailsId = item.id;
+      poster.setAttribute('aria-label', `Open ${item.title}`);
+      poster.title = [item.title, item.rating ? `${item.rating}/5` : '', item.genres?.[0] || ''].filter(Boolean).join(' · ');
+      poster.innerHTML = item.image
+        ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />`
+        : `<span class="library-poster-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`;
+      grid.appendChild(poster);
     }
     els.libraryGroups.appendChild(section);
   }
 }
+
 function handleLibraryClick(event) {
+  const expand = event.target.closest('[data-library-expand]');
+  if (expand) {
+    const type = expand.dataset.libraryExpand;
+    if (state.libraryExpandedGroups.has(type)) state.libraryExpandedGroups.delete(type);
+    else state.libraryExpandedGroups.add(type);
+    renderLibrary();
+    return;
+  }
   const title = event.target.closest('[data-details-id]');
-  if (!title || event.target.closest('button, a')) return;
+  if (!title || event.target.closest('a')) return;
   openDetails(title.dataset.detailsId);
 }
 
@@ -4789,12 +4969,19 @@ function cachePut(key, value) {
 }
 
 function saveItems() {
-  localStorage.setItem(ITEMS_KEY, JSON.stringify(state.items));
+  safeLocalSet(ITEMS_KEY, state.items);
   scheduleCloudSync();
 }
 
 function saveHistory() {
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history));
+  // History can contain hundreds or thousands of episode/video records.
+  // localStorage is intentionally not used here because browsers normally
+  // cap it at only a few MB per origin. IndexedDB is the durable local cache.
+  saveLargeState(HISTORY_IDB_KEY, state.history).catch(error => {
+    console.error('Could not save history to IndexedDB:', error);
+    setSyncStatus('Local history cache failed', true);
+  });
+  localStorage.removeItem(HISTORY_KEY);
   scheduleCloudSync();
 }
 
@@ -4821,7 +5008,7 @@ function hasMeaningfulLocalState(snapshot = buildCloudState()) {
   );
 }
 
-function persistCloudStateLocally(snapshot) {
+async function persistCloudStateLocally(snapshot) {
   state.items = Array.isArray(snapshot?.items) ? snapshot.items : [];
   state.history = Array.isArray(snapshot?.history) ? snapshot.history : [];
   state.customTypes = Array.isArray(snapshot?.customTypes) ? snapshot.customTypes : [];
@@ -4835,12 +5022,13 @@ function persistCloudStateLocally(snapshot) {
     ? snapshot.streakPrefs
     : {};
 
-  localStorage.setItem(ITEMS_KEY, JSON.stringify(state.items));
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(state.history));
-  localStorage.setItem(CUSTOM_TYPES_KEY, JSON.stringify(state.customTypes));
-  localStorage.setItem(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
-  localStorage.setItem(STICKER_PREFS_KEY, JSON.stringify(state.stickerPrefs));
-  localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
+  safeLocalSet(ITEMS_KEY, state.items);
+  safeLocalSet(CUSTOM_TYPES_KEY, state.customTypes);
+  safeLocalSet(DISCOVER_PREFS_KEY, state.discoverPrefs);
+  safeLocalSet(STICKER_PREFS_KEY, state.stickerPrefs);
+  safeLocalSet(STREAK_PREFS_KEY, state.streakPrefs);
+  await saveLargeState(HISTORY_IDB_KEY, state.history);
+  localStorage.removeItem(HISTORY_KEY);
 }
 
 async function hydrateCloudProfile(userId) {
@@ -4856,7 +5044,7 @@ async function hydrateCloudProfile(userId) {
   if (error) throw error;
 
   if (data?.state) {
-    persistCloudStateLocally(data.state);
+    await persistCloudStateLocally(data.state);
     lastCloudUpdatedAt = data.updated_at || '';
     return;
   }
@@ -4930,7 +5118,7 @@ async function refreshCloudProfile() {
     if (!data?.state || !data.updated_at || data.updated_at === lastCloudUpdatedAt) return;
 
     if (!lastCloudUpdatedAt || new Date(data.updated_at) > new Date(lastCloudUpdatedAt)) {
-      persistCloudStateLocally(data.state);
+      await persistCloudStateLocally(data.state);
       lastCloudUpdatedAt = data.updated_at;
       if (appStarted) renderAll();
       setSyncStatus('Synced');
@@ -4945,6 +5133,105 @@ function clearLocalSyncedState() {
   [ITEMS_KEY, HISTORY_KEY, CUSTOM_TYPES_KEY, DISCOVER_PREFS_KEY, STICKER_PREFS_KEY, STREAK_PREFS_KEY].forEach(key => {
     localStorage.removeItem(key);
   });
+  deleteLargeState(HISTORY_IDB_KEY).catch(() => {});
+}
+
+async function hydrateLargeLocalState() {
+  try {
+    const indexedHistory = await loadLargeState(HISTORY_IDB_KEY);
+    if (Array.isArray(indexedHistory)) {
+      state.history = indexedHistory;
+      // Remove the legacy copy so it can no longer consume localStorage quota.
+      localStorage.removeItem(HISTORY_KEY);
+      return;
+    }
+
+    // One-time migration from builds that stored history in localStorage.
+    const legacyHistory = loadJSON(HISTORY_KEY, []);
+    if (Array.isArray(legacyHistory) && legacyHistory.length) {
+      state.history = legacyHistory;
+      await saveLargeState(HISTORY_IDB_KEY, legacyHistory);
+      localStorage.removeItem(HISTORY_KEY);
+    }
+  } catch (error) {
+    console.error('Could not hydrate IndexedDB history:', error);
+  }
+}
+
+function openStateDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(STATE_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STATE_STORE_NAME)) {
+        db.createObjectStore(STATE_STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function loadLargeState(key) {
+  const db = await openStateDB();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(STATE_STORE_NAME, 'readonly');
+      const request = tx.objectStore(STATE_STORE_NAME).get(key);
+      request.onsuccess = () => resolve(request.result ?? null);
+      request.onerror = () => reject(request.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function saveLargeState(key, value) {
+  const db = await openStateDB();
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STATE_STORE_NAME, 'readwrite');
+      tx.objectStore(STATE_STORE_NAME).put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function deleteLargeState(key) {
+  const db = await openStateDB();
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STATE_STORE_NAME, 'readwrite');
+      tx.objectStore(STATE_STORE_NAME).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function safeLocalSet(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (error) {
+    if (error?.name === 'QuotaExceededError') {
+      console.warn(`localStorage quota exceeded while saving ${key}.`, error);
+      // API cache is disposable; clearing it often frees space left by older builds.
+      try {
+        localStorage.removeItem(CACHE_KEY);
+        if (key !== CACHE_KEY) localStorage.setItem(key, JSON.stringify(value));
+        return true;
+      } catch {}
+    }
+    console.error(`Could not save ${key} to localStorage:`, error);
+    return false;
+  }
 }
 
 function addHistoryRecord(record) {
