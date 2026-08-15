@@ -120,3 +120,11 @@ Choose **Reminder** in Add/Edit, give it a title (for example `Laundry`) and a v
 ## Book edition deduplication
 
 Discover now treats a Google Books result as already tracked when its normalized title and author(s) match a saved book, even when Google Books returns a different volume ID for another edition. The same title/author signature is also used to deduplicate multiple editions inside the Discover feed itself.
+
+## One-time reminders
+
+Reminder repeat options now include **Never**. A one-time reminder uses a specific due date. Completing it logs the occurrence to calendar/history and removes the reminder from Up Next without adding it to Library. Daily and weekly reminders continue to reschedule.
+
+## Reminder visibility
+
+Reminders stay hidden from **Up Next** before the current occurrence is due. They appear on the scheduled date and remain visible as **Overdue** until checked off. Completing a recurring reminder schedules its next occurrence, which stays hidden until that next due date. One-time reminders disappear after completion.

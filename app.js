@@ -197,6 +197,8 @@ const els = {
   workoutBlock: $('#workoutBlock'),
   reminderBlock: $('#reminderBlock'),
   reminderFrequency: $('#reminderFrequency'),
+  reminderDateField: $('#reminderDateField'),
+  reminderDueDate: $('#reminderDueDate'),
   reminderWeekdayField: $('#reminderWeekdayField'),
   reminderWeekday: $('#reminderWeekday'),
   playlistInput: $('#playlistInput'),
@@ -656,11 +658,21 @@ function bindEvents() {
       const record = reminderCompletionRecord(item);
       addHistoryRecord(record);
       item.lastCompletedAt = new Date().toISOString();
-      setItemQueueStatus(item, 'upnext');
+      const oneTime = isOneTimeReminder(item);
+      if (oneTime) {
+        state.items = state.items.filter(existing => existing.id !== item.id);
+      } else {
+        setItemQueueStatus(item, 'upnext');
+      }
       saveItems();
       saveHistory();
       renderAll();
-      renderReminderDetails(item);
+      if (oneTime) {
+        state.openDetailId = null;
+        els.detailModal.close();
+      } else {
+        renderReminderDetails(item);
+      }
       return;
     }
 
@@ -784,8 +796,19 @@ async function renderUpNext() {
   if (changed && els.libraryGroups) renderLibrary();
 
   const view = state.queueView === 'tbr' ? 'tbr' : 'upnext';
+  const today = todayString();
   const items = state.items
-    .filter(item => getQueueStatus(item) === view)
+    .filter(item => {
+      if (getQueueStatus(item) !== view) return false;
+      // Reminders live in Up Next, but stay hidden until their current
+      // scheduled occurrence is actually due. Once due, they remain visible
+      // indefinitely (including overdue) until the user checks them off.
+      if (view === 'upnext' && getSourceType(item) === 'reminder') {
+        const dueDate = getNextReminderDueDate(item);
+        return !dueDate || dueDate <= today;
+      }
+      return true;
+    })
     .sort((a,b) => queueSortKey(a, view).localeCompare(queueSortKey(b, view)));
 
   if (els.queueHeading) els.queueHeading.textContent = view === 'tbr' ? 'TBR' : 'Up Next';
@@ -979,7 +1002,11 @@ async function handleUpNextClick(event) {
       }
       if (getSourceType(item) === 'reminder') {
         item.lastCompletedAt = new Date().toISOString();
-        setItemQueueStatus(item, 'upnext');
+        if (isOneTimeReminder(item)) {
+          state.items = state.items.filter(existing => existing.id !== item.id);
+        } else {
+          setItemQueueStatus(item, 'upnext');
+        }
       }
       saveItems();
       saveHistory();
@@ -1016,17 +1043,32 @@ function reminderCompletionRecord(item) {
   };
 }
 
+function reminderFrequency(item) {
+  const value = item?.reminder?.frequency;
+  if (value === 'daily' || value === 'weekly' || value === 'none') return value;
+  return 'weekly';
+}
+
+function isOneTimeReminder(item) {
+  return getSourceType(item) === 'reminder' && reminderFrequency(item) === 'none';
+}
+
 function getNextReminderDueDate(item) {
   if (getSourceType(item) !== 'reminder') return '';
-  const frequency = item.reminder?.frequency === 'daily' ? 'daily' : 'weekly';
-  const weekday = Math.max(0, Math.min(6, Number(item.reminder?.weekday ?? 6)));
+  const frequency = reminderFrequency(item);
   const scheduleStart = item.reminder?.scheduleStart || localDateString(new Date(item.createdAt || Date.now()));
+
+  if (frequency === 'none') {
+    return item.reminder?.dueDate || scheduleStart || todayString();
+  }
+
+  const weekday = Math.max(0, Math.min(6, Number(item.reminder?.weekday ?? 6)));
   const completed = state.history
     .filter(entry => entry.sourceItemId === item.id && entry.kind === 'reminder-completed')
     .sort((a,b) => String(a.date || '').localeCompare(String(b.date || '')));
 
   if (!completed.length) {
-    if (frequency === 'daily') return scheduleStart <= todayString() ? scheduleStart : scheduleStart;
+    if (frequency === 'daily') return scheduleStart;
     return weekdayOnOrAfter(scheduleStart, weekday);
   }
 
@@ -1059,7 +1101,12 @@ function parseLocalDateString(value) {
 }
 
 function reminderScheduleLabel(item) {
-  if (item.reminder?.frequency === 'daily') return 'Every day';
+  const frequency = reminderFrequency(item);
+  if (frequency === 'none') {
+    const dueDate = getNextReminderDueDate(item);
+    return dueDate ? `Once · ${formatLongDate(dueDate)}` : 'One-time';
+  }
+  if (frequency === 'daily') return 'Every day';
   const weekday = Math.max(0, Math.min(6, Number(item.reminder?.weekday ?? 6)));
   return `Every ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][weekday]}`;
 }
@@ -1592,7 +1639,8 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
       state.loadedPlaylist = null;
       showSelectedSource({ title: item.title, subtitle: item.subtitle, image: item.image }, true);
     } else if (sourceType === 'reminder') {
-      if (els.reminderFrequency) els.reminderFrequency.value = item.reminder?.frequency === 'daily' ? 'daily' : 'weekly';
+      if (els.reminderFrequency) els.reminderFrequency.value = reminderFrequency(item);
+      if (els.reminderDueDate) els.reminderDueDate.value = item.reminder?.dueDate || item.reminder?.scheduleStart || todayString();
       if (els.reminderWeekday) els.reminderWeekday.value = String(Number.isInteger(Number(item.reminder?.weekday)) ? Number(item.reminder.weekday) : 6);
     } else if (item.provider && item.provider !== 'manual' && item.provider !== 'reminder') {
       state.selectedSource = { provider: item.provider, providerId: item.providerId, title: item.title, subtitle: item.subtitle, image: item.image };
@@ -1629,7 +1677,8 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.bookTotalPages.value = '';
   if (els.bookStartDate) els.bookStartDate.value = '';
   if (els.bookEndDate) els.bookEndDate.value = '';
-  if (els.reminderFrequency) els.reminderFrequency.value = 'weekly';
+  if (els.reminderFrequency) els.reminderFrequency.value = 'none';
+  if (els.reminderDueDate) els.reminderDueDate.value = todayString();
   if (els.reminderWeekday) els.reminderWeekday.value = '6';
   els.provider.value = '';
   els.providerId.value = '';
@@ -1731,8 +1780,13 @@ function updateItemFormForType() {
 }
 
 function updateReminderFormFields() {
-  if (!els.reminderWeekdayField || !els.reminderFrequency) return;
-  els.reminderWeekdayField.hidden = els.reminderFrequency.value === 'daily';
+  if (!els.reminderFrequency) return;
+  const frequency = els.reminderFrequency.value;
+  if (els.reminderWeekdayField) els.reminderWeekdayField.hidden = frequency !== 'weekly';
+  if (els.reminderDateField) els.reminderDateField.hidden = frequency !== 'none';
+  if (frequency === 'none' && els.reminderDueDate && !els.reminderDueDate.value) {
+    els.reminderDueDate.value = todayString();
+  }
 }
 
 async function searchCatalogue() {
@@ -2100,6 +2154,10 @@ async function saveItemFromForm(event) {
     showFormMessage('Choose a search result first.', true);
     return;
   }
+  if (sourceType === 'reminder' && els.reminderFrequency?.value === 'none' && !els.reminderDueDate?.value) {
+    showFormMessage('Choose a date for the one-time reminder.', true);
+    return;
+  }
 
   let attachmentFiles = [];
   try {
@@ -2139,10 +2197,17 @@ async function saveItemFromForm(event) {
   };
 
   if (sourceType === 'reminder') {
+    const frequency = ['none','daily','weekly'].includes(els.reminderFrequency?.value)
+      ? els.reminderFrequency.value
+      : 'none';
+    const dueDate = frequency === 'none' ? (els.reminderDueDate?.value || todayString()) : '';
     item.reminder = {
-      frequency: els.reminderFrequency?.value === 'daily' ? 'daily' : 'weekly',
+      frequency,
+      dueDate,
       weekday: Math.max(0, Math.min(6, Number(els.reminderWeekday?.value ?? 6))),
-      scheduleStart: editing?.reminder?.scheduleStart || todayString()
+      scheduleStart: frequency === 'none'
+        ? dueDate
+        : (editing?.reminder?.scheduleStart || todayString())
     };
   }
   if (sourceType === 'tv') {

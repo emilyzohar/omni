@@ -276,11 +276,16 @@
           <label class="field compact-field">
             <span>Repeat</span>
             <select id="reminderFrequency">
-              <option value="weekly">Every week</option>
+              <option value="none" selected>Never</option>
               <option value="daily">Every day</option>
+              <option value="weekly">Every week</option>
             </select>
           </label>
-          <label id="reminderWeekdayField" class="field compact-field">
+          <label id="reminderDateField" class="field compact-field">
+            <span>Date</span>
+            <input id="reminderDueDate" type="date" />
+          </label>
+          <label id="reminderWeekdayField" class="field compact-field" hidden>
             <span>Day</span>
             <select id="reminderWeekday">
               <option value="0">Sunday</option>
@@ -293,7 +298,7 @@
             </select>
           </label>
         </div>
-        <p class="field-hint">Checking the reminder logs it on the calendar under its display type, then automatically schedules the next occurrence.</p>
+        <p class="field-hint">One-time reminders disappear after completion but remain in calendar/history. Daily and weekly reminders automatically schedule their next occurrence.</p>
       </div>
 
       <div id="manualTitleBlock">
