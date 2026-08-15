@@ -6474,6 +6474,7 @@ async function handleDiscoverRateRecommend(key) {
   // Ratings and watched/read history remain intact.
   if (existing?.recommended) {
     existing.recommended = false;
+    if (!isDiscoverCompleted(result)) updateDiscoverLibraryVisibilityAfterUndo(existing);
     existing.updatedAt = new Date().toISOString();
     saveItems();
     renderLibrary();
@@ -6483,6 +6484,7 @@ async function handleDiscoverRateRecommend(key) {
 
   const item = ensureDiscoverItem(result, 'library');
   item.recommended = true;
+  item.discoverHiddenFromLibrary = false;
   item.updatedAt = new Date().toISOString();
   saveItems();
   renderLibrary();
@@ -6509,6 +6511,8 @@ async function toggleDiscoverRecommended(key) {
   if (!result) return;
   const item = ensureDiscoverItem(result, 'library');
   item.recommended = !item.recommended;
+  if (item.recommended) item.discoverHiddenFromLibrary = false;
+  else if (!isDiscoverCompleted(result)) updateDiscoverLibraryVisibilityAfterUndo(item);
   item.updatedAt = new Date().toISOString();
   saveItems();
   renderLibrary();
@@ -6552,6 +6556,7 @@ function addDiscoverToQueue(key, status) {
   const result = state.discoverResults.get(key);
   if (!result) return null;
   const item = ensureDiscoverItem(result, status);
+  item.discoverHiddenFromLibrary = false;
   setItemQueueStatus(item, status);
   item.completedAt = '';
   item.updatedAt = new Date().toISOString();
@@ -6585,6 +6590,8 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
     rating: 0,
     notes: '',
     recommended: false,
+    discoverHiddenFromLibrary: false,
+    discoverCompletionOrigin: false,
     genres: extractItemGenres(sourceType, result, null),
     releaseDate: extractItemReleaseDate(sourceType, result, null),
     attachments: [],
@@ -6613,6 +6620,19 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
   return item;
 }
 
+function shouldHideUndoneDiscoverItem(item) {
+  if (!item?.discoverCompletionOrigin) return false;
+  if (item.recommended) return false;
+  if (getQueueStatus(item) !== 'library') return false;
+  return true;
+}
+
+function updateDiscoverLibraryVisibilityAfterUndo(item) {
+  if (!item) return;
+  item.discoverHiddenFromLibrary = shouldHideUndoneDiscoverItem(item);
+  item.updatedAt = new Date().toISOString();
+}
+
 function isDiscoverCompleted(result) {
   const item = findDiscoverItem(result);
   if (item?.completedAt) return true;
@@ -6627,11 +6647,17 @@ function isDiscoverCompleted(result) {
 async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
   const result = state.discoverResults.get(key);
   if (!result) return;
+  const existingBeforeCompletion = findDiscoverItem(result);
   const item = ensureDiscoverItem(result, 'library');
+  if (!existingBeforeCompletion) item.discoverCompletionOrigin = true;
 
   if (result.sourceType === 'book') {
     const wasComplete = Boolean(item.completedAt);
     await markWholeBookComplete(item);
+    if (wasComplete) updateDiscoverLibraryVisibilityAfterUndo(item);
+    else item.discoverHiddenFromLibrary = false;
+    saveItems();
+    renderLibrary();
     renderDiscoverCardInPlace(key);
     if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
     if (!wasComplete && promptForRating) openDiscoverRatingPrompt(key);
@@ -6644,7 +6670,7 @@ async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
     state.history = state.history.filter(entry => !(
       entry.sourceItemId === item.id && ['movie-watched','item-completed'].includes(entry.kind)
     ));
-    item.updatedAt = new Date().toISOString();
+    updateDiscoverLibraryVisibilityAfterUndo(item);
     saveItems();
     saveHistory();
     renderAll();
@@ -6653,6 +6679,7 @@ async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
     return;
   }
 
+  item.discoverHiddenFromLibrary = false;
   setItemQueueStatus(item, 'library');
   item.completedAt = todayString();
   item.updatedAt = new Date().toISOString();
@@ -6951,7 +6978,9 @@ async function renderDiscoverTVEpisodeDetail(key, seasonNumber, episodeNumber) {
 async function logDiscoverTVEpisode(key, seasonNumber, episodeNumber) {
   const result = state.discoverResults.get(key);
   if (!result) return;
+  const existingBeforeCompletion = findDiscoverItem(result);
   const item = ensureDiscoverItem(result, 'library');
+  if (!existingBeforeCompletion) item.discoverCompletionOrigin = true;
 
   if (isTVEpisodeLogged(item, seasonNumber, episodeNumber)) {
     removeTVEpisodeHistory(item, seasonNumber, episodeNumber);
@@ -6963,6 +6992,8 @@ async function logDiscoverTVEpisode(key, seasonNumber, episodeNumber) {
   }
 
   await syncDiscoverTVProgress(item);
+  if (hasDiscoverTVWatchHistory(item)) item.discoverHiddenFromLibrary = false;
+  else updateDiscoverLibraryVisibilityAfterUndo(item);
   saveItems();
   saveHistory();
   renderAll();
@@ -6976,7 +7007,9 @@ async function logDiscoverTVEpisode(key, seasonNumber, episodeNumber) {
 async function markDiscoverSeasonWatched(key, seasonNumber) {
   const result = state.discoverResults.get(key);
   if (!result) return;
+  const existingBeforeCompletion = findDiscoverItem(result);
   const item = ensureDiscoverItem(result, 'library');
+  if (!existingBeforeCompletion) item.discoverCompletionOrigin = true;
   const season = await getCached(`season:${result.providerId}:${seasonNumber}`, () => TrackerAPI.getTVSeason(result.providerId, seasonNumber, state.settings));
   const aired = (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep));
   const allWatched = aired.length > 0 && aired.every(ep => isTVEpisodeLogged(item, seasonNumber, ep.episode_number));
@@ -6989,6 +7022,8 @@ async function markDiscoverSeasonWatched(key, seasonNumber) {
   }
 
   await syncDiscoverTVProgress(item);
+  if (hasDiscoverTVWatchHistory(item)) item.discoverHiddenFromLibrary = false;
+  else updateDiscoverLibraryVisibilityAfterUndo(item);
   saveItems();
   saveHistory();
   renderAll();
@@ -6998,8 +7033,14 @@ async function markDiscoverSeasonWatched(key, seasonNumber) {
 async function markDiscoverSeriesWatched(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
+  const existingBeforeCompletion = findDiscoverItem(result);
   const item = ensureDiscoverItem(result, 'library');
+  if (!existingBeforeCompletion) item.discoverCompletionOrigin = true;
   await markWholeTVSeriesComplete(item);
+  if (hasDiscoverTVWatchHistory(item)) item.discoverHiddenFromLibrary = false;
+  else updateDiscoverLibraryVisibilityAfterUndo(item);
+  saveItems();
+  renderLibrary();
   await renderDiscoverTVDetail(key);
 }
 
@@ -7769,6 +7810,7 @@ function renderLibrary() {
 
   let filtered = state.items
     .filter(item => getQueueStatus(item) !== 'tbr')
+    .filter(item => !item.discoverHiddenFromLibrary || item.recommended || getQueueStatus(item) !== 'library')
     .filter(item => state.libraryView !== 'recommended' || item.recommended)
     .filter(item => visibleTypes.has(libraryTypeGroupKey(item)));
 
