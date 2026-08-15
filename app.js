@@ -3811,7 +3811,9 @@ function renderWeekTracker() {
     if (!groups.size) {
       body.innerHTML = '<span class="week-empty">Nothing tracked</span>';
     } else {
-      for (const [groupKey, typeEntries] of groups) {
+      const groupedEntries = [...groups.entries()];
+      body.style.minHeight = `${weekStickerCollectionHeight(groupedEntries.length)}px`;
+      for (const [index, [groupKey, typeEntries]] of groupedEntries.entries()) {
         const first = typeEntries[0];
         const label = getCalendarTypeGroupLabel(first);
         const button = document.createElement('button');
@@ -3821,6 +3823,11 @@ function renderWeekTracker() {
         button.dataset.date = date;
         button.setAttribute('aria-label', `${typeEntries.length} ${label} ${typeEntries.length === 1 ? 'entry' : 'entries'} on ${date}`);
         button.title = `${label} · tap for details`;
+
+        const clusterPosition = weekStickerClusterPosition(date, groupKey, index, groupedEntries.length);
+        button.style.setProperty('--cluster-left', `${clusterPosition.left}%`);
+        button.style.setProperty('--cluster-top', `${clusterPosition.top}px`);
+        button.style.setProperty('--cluster-rotate', `${clusterPosition.rotate}deg`);
 
         button.innerHTML = weekStickerPileMarkup(typeEntries, date, groupKey);
         body.appendChild(button);
@@ -3874,6 +3881,30 @@ function weekStickerPilePosition(entry, index, date, groupKey) {
   const top = topBase + ((Math.floor(seed / 7) % 7) - 3);
   const rotate = ((Math.floor(seed / 49) % 13) - 6) + (index % 2 === 0 ? -1 : 1);
   return { left, top, rotate, z: 10 + index };
+}
+
+function weekStickerClusterPosition(date, groupKey, index, total) {
+  const columns = total <= 2 ? 1 : total <= 5 ? 2 : 3;
+  const row = Math.floor(index / columns);
+  const column = index % columns;
+  const seed = stableCalendarHash(`${date}:${groupKey}:cluster:${index}:${total}`);
+  const cellWidth = columns === 1 ? 0 : 88 / columns;
+  const rowOffset = row % 2 === 0 ? 0 : cellWidth * 0.14;
+  const baseLeft = columns === 1 ? 6 : 4 + column * cellWidth + rowOffset;
+  const leftJitter = ((seed % 11) - 5) * (columns === 1 ? 1.2 : 0.9);
+  const left = Math.max(2, Math.min(84, baseLeft + leftJitter));
+
+  const baseTop = 3 + row * 52 + (column % 2 === 0 ? 0 : 10);
+  const topJitter = (Math.floor(seed / 17) % 9) - 4;
+  const top = Math.max(0, baseTop + topJitter);
+  const rotate = ((Math.floor(seed / 71) % 17) - 8) * 0.9;
+  return { left, top, rotate };
+}
+
+function weekStickerCollectionHeight(total) {
+  const columns = total <= 2 ? 1 : total <= 5 ? 2 : 3;
+  const rows = Math.ceil(total / columns);
+  return Math.max(58, rows * 56 + 18);
 }
 
 function stableCalendarHash(value) {

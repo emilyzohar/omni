@@ -4715,17 +4715,16 @@ body.auth-locked > main {
   }
 
   .week-day-events.week-sticker-collection {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    align-content: flex-start;
-    gap: 10px 8px;
-    padding: 10px 0 4px;
+    position: relative;
+    display: block;
+    padding: 6px 0 8px;
+    min-height: 58px;
   }
 
   .week-sticker-cluster {
-    --cluster-shift-y: 0px;
-    --cluster-rotate: 0deg;
+    position: absolute;
+    left: var(--cluster-left, 4%);
+    top: var(--cluster-top, 0px);
     min-height: 0;
     display: inline-flex;
     align-items: flex-start;
@@ -4736,17 +4735,13 @@ body.auth-locked > main {
     background: transparent;
     color: #fff8df;
     cursor: pointer;
-    transform: translateY(var(--cluster-shift-y)) rotate(var(--cluster-rotate));
+    transform: rotate(var(--cluster-rotate, 0deg));
+    transform-origin: center;
     transition: transform .16s ease, filter .16s ease;
   }
 
-  .week-sticker-cluster:nth-child(4n + 1) { --cluster-shift-y: -3px; --cluster-rotate: -3deg; }
-  .week-sticker-cluster:nth-child(4n + 2) { --cluster-shift-y: 2px; --cluster-rotate: 2deg; }
-  .week-sticker-cluster:nth-child(4n + 3) { --cluster-shift-y: -1px; --cluster-rotate: 3deg; }
-  .week-sticker-cluster:nth-child(4n + 4) { --cluster-shift-y: 3px; --cluster-rotate: -2deg; }
-
   .week-sticker-cluster:active {
-    transform: translateY(calc(var(--cluster-shift-y) + 1px)) rotate(var(--cluster-rotate)) scale(.97);
+    transform: translateY(1px) rotate(var(--cluster-rotate, 0deg)) scale(.97);
     filter: brightness(1.03);
   }
 
