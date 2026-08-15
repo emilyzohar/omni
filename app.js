@@ -34,7 +34,7 @@ const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'other']
 const STICKER_COLORS = ['rust', 'red', 'coral', 'orange', 'yellow', 'cream', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'teal', 'green', 'mint', 'brown', 'black', 'white'];
 
 const CLOUD_STATE_VERSION = 2;
-const DEFAULT_DISCOVER_PREFS = { streamingProviderIds: [], streamingProviderNames: [], prioritizeAuthors: true };
+const DEFAULT_DISCOVER_PREFS = { streamingProviderIds: [], streamingProviderNames: [], prioritizeAuthors: true, englishTVOnly: false };
 let currentUser = null;
 let appStarted = false;
 let localOnlyMode = false;
@@ -66,6 +66,7 @@ const state = {
   queueView: 'upnext',
   pendingDiscoverKey: null,
   openDiscoverKey: null,
+  openDiscoverEpisode: null,
   tvDraftProviderId: '',
   tvDraftWatched: new Set(),
   tvDraftInitialWatched: new Set(),
@@ -146,6 +147,7 @@ const els = {
   streamingProviderOptions: $('#streamingProviderOptions'),
   streamingRegionNote: $('#streamingRegionNote'),
   prioritizeAuthors: $('#prioritizeAuthors'),
+  englishTVOnly: $('#englishTVOnly'),
   clearStreamingProviders: $('#clearStreamingProviders'),
   itemModal: $('#itemModal'),
   detailModal: $('#detailModal'),
@@ -591,6 +593,16 @@ function bindEvents() {
       return;
     }
 
+    const discoverEpisodeButton = event.target.closest('[data-discover-tv-episode]');
+    if (discoverEpisodeButton) {
+      await renderDiscoverTVEpisodeDetail(
+        discoverEpisodeButton.dataset.discoverKey,
+        Number(discoverEpisodeButton.dataset.tvSeasonNumber),
+        Number(discoverEpisodeButton.dataset.discoverTvEpisode)
+      );
+      return;
+    }
+
     const discoverSeasonCheck = event.target.closest('[data-discover-mark-season]');
     if (discoverSeasonCheck) {
       await markDiscoverSeasonWatched(discoverSeasonCheck.dataset.discoverKey, Number(discoverSeasonCheck.dataset.discoverMarkSeason));
@@ -612,6 +624,24 @@ function bindEvents() {
     const discoverCompleteFromDetail = event.target.closest('[data-discover-detail-complete]');
     if (discoverCompleteFromDetail) {
       await markDiscoverCompleted(discoverCompleteFromDetail.dataset.discoverDetailComplete);
+      return;
+    }
+
+    const discoverTVRating = event.target.closest('[data-discover-tv-rating]');
+    if (discoverTVRating) {
+      setDiscoverTVPendingRating(discoverTVRating.dataset.discoverKey, Number(discoverTVRating.dataset.discoverTvRating));
+      return;
+    }
+
+    const clearDiscoverTVRating = event.target.closest('[data-clear-discover-tv-rating]');
+    if (clearDiscoverTVRating) {
+      setDiscoverTVPendingRating(clearDiscoverTVRating.dataset.discoverKey, 0);
+      return;
+    }
+
+    const saveDiscoverTVMeta = event.target.closest('[data-save-discover-tv-meta]');
+    if (saveDiscoverTVMeta) {
+      saveDiscoverTVPersonalMetadata(saveDiscoverTVMeta.dataset.discoverKey);
       return;
     }
 
@@ -1097,6 +1127,8 @@ async function applyTVWatchAction(item, action) {
 }
 
 async function toggleSpecificTVEpisode(item, seasonNumber, episodeNumber) {
+  const wasEpisodeDetail = Boolean(els.detailBody?.querySelector('.detail-back-button[data-tv-season]'));
+  const wasSeasonDetail = Boolean(els.detailBody?.querySelector('.detail-back-button[data-tv-series]'));
   const alreadyWatched = isTVEpisodeLogged(item, seasonNumber, episodeNumber);
 
   if (alreadyWatched) {
@@ -1115,10 +1147,63 @@ async function toggleSpecificTVEpisode(item, seasonNumber, episodeNumber) {
   saveItems();
   saveHistory();
   renderAll();
-  if (els.detailModal?.open) await renderTVSeasonDetail(item, seasonNumber);
+  if (els.detailModal?.open) {
+    if (wasEpisodeDetail) await renderTVEpisodeDetail(item, seasonNumber, episodeNumber);
+    else if (wasSeasonDetail) await renderTVSeasonDetail(item, seasonNumber);
+    else await renderTVDetails(item);
+  }
+}
+
+async function getEarlierUnwatchedTVEpisodes(item, seasonNumber) {
+  if (Number(seasonNumber) <= 1) return [];
+  const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
+  const priorSeasons = (details.seasons || [])
+    .filter(info => Number(info.season_number) > 0 && Number(info.season_number) < Number(seasonNumber) && Number(info.episode_count || 0) > 0)
+    .sort((a, b) => a.season_number - b.season_number);
+
+  const missing = [];
+  for (const info of priorSeasons) {
+    const season = await getCached(`season:${item.providerId}:${info.season_number}`, () => TrackerAPI.getTVSeason(item.providerId, info.season_number, state.settings));
+    for (const episode of (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep))) {
+      if (!isTVEpisodeLogged(item, info.season_number, episode.episode_number)) {
+        missing.push({ seasonNumber: info.season_number, episode });
+      }
+    }
+  }
+  return missing;
+}
+
+function addImportedTVEpisode(item, episode, seasonNumber) {
+  if (isTVEpisodeLogged(item, seasonNumber, episode.episode_number)) return;
+  const record = tvHistoryRecord(item, episode, seasonNumber, episode.episode_number);
+  addHistoryRecord({
+    ...record,
+    date: '',
+    showOnCalendar: false,
+    imported: true,
+    importedAt: new Date().toISOString(),
+    notes: ''
+  });
+}
+
+async function maybeMarkEarlierTVSeasonsWatched(item, seasonNumber) {
+  const missing = await getEarlierUnwatchedTVEpisodes(item, seasonNumber);
+  if (!missing.length) return false;
+
+  const highestPrior = Math.max(...missing.map(entry => entry.seasonNumber));
+  const okay = confirm(
+    `You are marking Season ${seasonNumber} watched. Also mark all previously aired episodes through Season ${highestPrior} as watched?`
+  );
+  if (!okay) return false;
+
+  for (const { seasonNumber: priorSeasonNumber, episode } of missing) {
+    addImportedTVEpisode(item, episode, priorSeasonNumber);
+  }
+  return true;
 }
 
 async function markTVSeasonWatched(item, seasonNumber) {
+  const wasSeasonDetail = Boolean(els.detailBody?.querySelector('.detail-back-button[data-tv-series]'));
   const season = await getCached(`season:${item.providerId}:${seasonNumber}`, () => TrackerAPI.getTVSeason(item.providerId, seasonNumber, state.settings));
   const aired = (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep));
   const allWatched = aired.length > 0 && aired.every(ep => isTVEpisodeLogged(item, seasonNumber, ep.episode_number));
@@ -1126,12 +1211,8 @@ async function markTVSeasonWatched(item, seasonNumber) {
   if (allWatched) {
     for (const episode of aired) removeTVEpisodeHistory(item, seasonNumber, episode.episode_number);
   } else {
-    for (const episode of aired) {
-      if (isTVEpisodeLogged(item, seasonNumber, episode.episode_number)) continue;
-      const record = tvHistoryRecord(item, episode, seasonNumber, episode.episode_number);
-      // Marking an entire season is historical/imported state, not an event today.
-      addHistoryRecord({ ...record, date: '', showOnCalendar: false, imported: true, importedAt: new Date().toISOString() });
-    }
+    await maybeMarkEarlierTVSeasonsWatched(item, seasonNumber);
+    for (const episode of aired) addImportedTVEpisode(item, episode, seasonNumber);
   }
 
   await recalculateTVProgress(item);
@@ -1139,7 +1220,10 @@ async function markTVSeasonWatched(item, seasonNumber) {
   saveHistory();
   saveItems();
   renderAll();
-  if (els.detailModal?.open) await renderTVSeasonDetail(item, seasonNumber);
+  if (els.detailModal?.open) {
+    if (wasSeasonDetail) await renderTVSeasonDetail(item, seasonNumber);
+    else await renderTVDetails(item);
+  }
   return aired.length;
 }
 
@@ -1591,6 +1675,22 @@ function handleTVDraftSeasonAction(event) {
   if (!season) return;
   const aired = season.episodes.filter(isEpisodeAvailable);
   const allSelected = aired.length > 0 && aired.every(ep => state.tvDraftWatched.has(tvDraftEpisodeKey(seasonNumber, ep.episode_number)));
+
+  if (!allSelected && seasonNumber > 1) {
+    const earlierMissing = state.tvDraftSeasons
+      .filter(entry => entry.seasonNumber > 0 && entry.seasonNumber < seasonNumber)
+      .flatMap(entry => entry.episodes
+        .filter(isEpisodeAvailable)
+        .map(ep => ({ seasonNumber: entry.seasonNumber, ep })))
+      .filter(({ seasonNumber: priorSeason, ep }) => !state.tvDraftWatched.has(tvDraftEpisodeKey(priorSeason, ep.episode_number)));
+
+    if (earlierMissing.length && confirm(`Also mark all previously aired episodes before Season ${seasonNumber} as watched?`)) {
+      for (const { seasonNumber: priorSeason, ep } of earlierMissing) {
+        state.tvDraftWatched.add(tvDraftEpisodeKey(priorSeason, ep.episode_number));
+      }
+    }
+  }
+
   for (const ep of aired) {
     const key = tvDraftEpisodeKey(seasonNumber, ep.episode_number);
     if (allSelected) state.tvDraftWatched.delete(key);
@@ -1877,43 +1977,48 @@ async function renderTVDetails(item) {
   const season = await getCached(`season:${item.providerId}:${seasonNumber}`, () => TrackerAPI.getTVSeason(item.providerId, seasonNumber, state.settings));
   const next = (season.episodes || []).find(ep => ep.episode_number === episodeNumber);
 
-  const seasons = (details.seasons || [])
-    .filter(season => season.season_number > 0)
-    .map(season => `
-      <div class="season-row">
+  const seasonRows = await Promise.all((details.seasons || [])
+    .filter(info => info.season_number > 0)
+    .map(async info => {
+      const seasonData = await getCached(`season:${item.providerId}:${info.season_number}`, () => TrackerAPI.getTVSeason(item.providerId, info.season_number, state.settings));
+      const aired = (seasonData.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep));
+      const allWatched = aired.length > 0 && aired.every(ep => isTVEpisodeLogged(item, info.season_number, ep.episode_number));
+      return `<div class="season-row${info.season_number === seasonNumber ? ' is-current' : ''}">
         <div>
-          <div class="list-title">Season ${season.season_number}</div>
-          <div class="list-meta">${season.episode_count || 0} episodes${season.air_date ? ` · ${escapeHtml(season.air_date.slice(0,4))}` : ''}</div>
+          <div class="list-title">Season ${info.season_number}</div>
+          <div class="list-meta">${info.episode_count || 0} episodes${info.air_date ? ` · ${escapeHtml(info.air_date.slice(0,4))}` : ''}</div>
         </div>
-        <button class="detail-arrow-button" type="button" data-tv-season="${season.season_number}" data-item-id="${item.id}" aria-label="Open season ${season.season_number}">→</button>
-      </div>`)
-    .join('');
+        <div class="episode-row-actions">
+          <span class="watched-label">${allWatched ? 'WATCHED' : ''}</span>
+          <button class="episode-check-button${allWatched ? ' is-checked' : ''}" type="button" data-tv-mark-season="${info.season_number}" data-item-id="${item.id}" aria-label="${allWatched ? `Clear watched Season ${info.season_number}` : `Mark Season ${info.season_number} watched`}" title="${allWatched ? 'Clear season watched' : 'Mark whole season watched'}">✓</button>
+          <button class="detail-arrow-button" type="button" data-tv-season="${info.season_number}" data-item-id="${item.id}" aria-label="Open season ${info.season_number}">→</button>
+        </div>
+      </div>`;
+    }));
+  const seasons = seasonRows.join('');
 
   const episodes = (season.episodes || []).map(ep => {
-    const isPast = ep.episode_number < episodeNumber;
     const isLogged = isTVEpisodeLogged(item, seasonNumber, ep.episode_number);
     const image = TrackerAPI.tmdbImage(ep.still_path);
     return `<div class="episode-row">
       ${image ? `<img src="${escapeAttr(image)}" alt="" />` : '<div class="episode-image-placeholder"></div>'}
       <div><div class="list-title">E${ep.episode_number} · ${escapeHtml(ep.name || 'Episode')}</div><div class="list-meta">${escapeHtml(shorten(ep.overview || '', 120))}</div></div>
       <div class="episode-row-actions">
-        <span class="watched-label">${isLogged || isPast ? 'WATCHED' : ep.episode_number === episodeNumber ? 'NEXT' : ''}</span>
+        <span class="watched-label">${isLogged ? 'WATCHED' : ep.episode_number === episodeNumber ? 'NEXT' : ''}</span>
         <button class="episode-check-button${isLogged ? ' is-checked' : ''}" type="button" data-check-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" aria-label="${isLogged ? `Mark episode ${ep.episode_number} not watched` : `Mark episode ${ep.episode_number} watched`}" title="${isLogged ? 'Mark not watched' : 'Mark watched'}">✓</button>
         <button class="detail-arrow-button" type="button" data-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" aria-label="Open episode ${ep.episode_number}">→</button>
       </div>
     </div>`;
   }).join('');
 
-  const seasonAired = (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep));
-  const seasonAllWatched = seasonAired.length > 0 && seasonAired.every(ep => isTVEpisodeLogged(item, seasonNumber, ep.episode_number));
   const hasUnwatched = Boolean(item.tvMeta?.hasUnwatched);
   els.detailBody.innerHTML = `
     ${detailHero({ type:'TV', title:details.name || item.title, image:TrackerAPI.tmdbImage(details.poster_path) || item.image, subtitle:[details.first_air_date?.slice(0,4), details.genres?.map(g=>g.name).join(' · ')].filter(Boolean).join(' · '), overview:details.overview || '' })}
     <div class="tv-status-row">${tvStatusBadgeMarkup(item, details)}</div>
     <div class="detail-progress"><strong>${hasUnwatched ? 'Up next' : 'Progress'}</strong>${hasUnwatched && next ? `S${seasonNumber} E${episodeNumber} · ${escapeHtml(next.name || 'Episode')}` : hasUnwatched ? `S${seasonNumber} E${episodeNumber}` : isTerminalSeriesStatus(details.status) ? 'All available episodes watched.' : 'You are caught up. New aired episodes will return to Up Next automatically.'}</div>
     ${tvDetailControls(item)}
-    <section class="detail-section"><h3>Seasons</h3><div class="season-list season-list-rows">${seasons || '—'}</div></section>
-    <section class="detail-section"><div class="detail-section-heading"><h3>Season ${seasonNumber}</h3><button class="quiet-button" type="button" data-tv-mark-season="${seasonNumber}" data-item-id="${item.id}">${seasonAllWatched ? 'Clear season watched' : '✓ Mark season watched'}</button></div><p class="discover-history-note">Whole-season changes are saved without a date and do not create calendar stickers.</p><div class="episode-list">${episodes || 'No episodes found.'}</div></section>
+    <section class="detail-section"><div class="detail-section-heading"><h3>Seasons</h3><span class="discover-history-note compact-note">✓ marks the entire season · → opens its episodes</span></div><div class="season-list season-list-rows">${seasons || '—'}</div></section>
+    <section class="detail-section"><h3>Season ${seasonNumber} episodes</h3><div class="episode-list">${episodes || 'No episodes found.'}</div></section>
   `;
 }
 
@@ -1928,7 +2033,6 @@ async function renderTVSeasonDetail(item, seasonNumber) {
     const nextEpisode = Number(item.progress?.nextEpisode || 1);
     const image = TrackerAPI.tmdbImage(season.poster_path) || TrackerAPI.tmdbImage(series.poster_path) || item.image;
     const episodes = (season.episodes || []).map(ep => {
-      const watched = seasonNumber < nextSeason || (seasonNumber === nextSeason && ep.episode_number < nextEpisode);
       const isNext = seasonNumber === nextSeason && ep.episode_number === nextEpisode;
       const isLogged = isTVEpisodeLogged(item, seasonNumber, ep.episode_number);
       const still = TrackerAPI.tmdbImage(ep.still_path);
@@ -1939,7 +2043,7 @@ async function renderTVSeasonDetail(item, seasonNumber) {
           <div class="list-meta">${escapeHtml(shorten(ep.overview || '', 150))}</div>
         </div>
         <div class="episode-row-actions">
-          <span class="watched-label">${isLogged || watched ? 'WATCHED' : isNext ? 'NEXT' : ''}</span>
+          <span class="watched-label">${isLogged ? 'WATCHED' : isNext ? 'NEXT' : ''}</span>
           <button class="episode-check-button${isLogged ? ' is-checked' : ''}" type="button" data-check-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" aria-label="${isLogged ? `Mark episode ${ep.episode_number} not watched` : `Mark episode ${ep.episode_number} watched`}" title="${isLogged ? 'Mark not watched' : 'Mark watched'}">✓</button>
           <button class="detail-arrow-button" type="button" data-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" aria-label="Open episode ${ep.episode_number}">→</button>
         </div>
@@ -2939,7 +3043,11 @@ async function loadMoreDiscoverFeed() {
     const candidates = await collectDiscoverFeedCandidates(batchNumber);
     const fresh = candidates.filter(result => {
       const key = discoverResultIdentity(result);
-      return key && !state.discoverFeedSeen.has(key) && !findDiscoverItem(result);
+      if (!key || state.discoverFeedSeen.has(key) || findDiscoverItem(result)) return false;
+      if (state.discoverPrefs.englishTVOnly === true && (result.sourceType || '') === 'tv') {
+        return String(result.raw?.original_language || '').toLowerCase() === 'en';
+      }
+      return true;
     });
 
     const batchSize = window.matchMedia('(max-width: 760px)').matches ? 12 : 20;
@@ -3519,7 +3627,13 @@ function filterAlreadyKnown(results, type) {
     if (type === 'tv' && entry.kind === 'episode-watched') blocked.add(String(entry.providerId));
     if (type === 'book' && entry.kind === 'book-finished') blocked.add(String(entry.providerId));
   }
-  return (results || []).filter(result => !blocked.has(String(result.providerId)));
+  return (results || []).filter(result => {
+    if (blocked.has(String(result.providerId))) return false;
+    if (type === 'tv' && state.discoverPrefs.englishTVOnly === true) {
+      return String(result.raw?.original_language || '').toLowerCase() === 'en';
+    }
+    return true;
+  });
 }
 
 function getReadAuthors() {
@@ -3601,6 +3715,7 @@ function dedupeDiscoverResults(results) {
 async function openDiscoverSettings() {
   if (!els.discoverSettingsModal) return;
   els.prioritizeAuthors.checked = state.discoverPrefs.prioritizeAuthors !== false;
+  if (els.englishTVOnly) els.englishTVOnly.checked = state.discoverPrefs.englishTVOnly === true;
   state.discoverProviderDraft = new Map(
     (state.discoverPrefs.streamingProviderIds || []).map((id, index) => [String(id), (state.discoverPrefs.streamingProviderNames || [])[index] || ''])
   );
@@ -3661,7 +3776,8 @@ function saveDiscoverSettings(event) {
   state.discoverPrefs = {
     streamingProviderIds: selectedEntries.map(([id]) => id),
     streamingProviderNames: selectedEntries.map(([, name]) => name),
-    prioritizeAuthors: els.prioritizeAuthors.checked
+    prioritizeAuthors: els.prioritizeAuthors.checked,
+    englishTVOnly: Boolean(els.englishTVOnly?.checked)
   };
   localStorage.setItem(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
   scheduleCloudSync();
@@ -3702,7 +3818,7 @@ function discoverCardMarkup(result, key, fallbackType) {
       ${meta ? `<p class="discover-card-meta">${escapeHtml(meta)}</p>` : ''}
       ${result.subtitle && type === 'book' ? `<p class="discover-card-subtitle">${escapeHtml(result.subtitle)}</p>` : ''}
       <div class="discover-card-actions">
-        <button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" ${completed ? 'disabled' : ''} aria-label="${completed ? 'Already completed' : 'Mark completed'}" title="${completed ? 'Completed' : 'Mark watched / read'}">✓</button>
+        <button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" ${completed && type !== 'tv' ? 'disabled' : ''} aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Already completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Completed' : 'Mark watched / read'}">✓</button>
         <button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>
       </div>
     </div>
@@ -3712,7 +3828,17 @@ function discoverCardMarkup(result, key, fallbackType) {
 async function handleDiscoverClick(event) {
   const complete = event.target.closest('[data-discover-complete]');
   if (complete) {
-    await markDiscoverCompleted(complete.dataset.discoverComplete);
+    const key = complete.dataset.discoverComplete;
+    const result = state.discoverResults.get(key);
+    if (result?.sourceType === 'tv') {
+      await openDiscoverDetail(key);
+      requestAnimationFrame(() => {
+        const picker = els.detailBody?.querySelector('[data-tv-watch-picker]');
+        picker?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      });
+    } else {
+      await markDiscoverCompleted(key);
+    }
     return;
   }
 
@@ -3860,10 +3986,83 @@ async function openDiscoverDetail(key) {
   }
 }
 
+function hasDiscoverTVWatchHistory(item) {
+  if (!item) return false;
+  return Boolean(item.completedAt) || state.history.some(entry =>
+    entry.sourceItemId === item.id && ['episode-watched', 'series-watched'].includes(entry.kind)
+  );
+}
+
+function discoverTVPersonalMetadataMarkup(item, key) {
+  if (!hasDiscoverTVWatchHistory(item)) return '';
+  const rating = Math.max(0, Math.min(5, Number(item.rating || 0)));
+  return `<section class="detail-section discover-personal-meta" data-discover-tv-meta="${escapeAttr(key)}" data-pending-rating="${rating}">
+    <div class="detail-section-heading">
+      <div>
+        <h3>Your rating & notes</h3>
+        <p class="discover-history-note">Saved to this show in your Library.</p>
+      </div>
+    </div>
+    <fieldset class="rating-fieldset discover-rating-fieldset">
+      <legend>Rating <span>optional</span></legend>
+      <div class="star-picker discover-tv-rating-picker" aria-label="Your rating out of five stars">
+        ${[1,2,3,4,5].map(value => `<button type="button" data-discover-tv-rating="${value}" data-discover-key="${escapeAttr(key)}" class="${value <= rating ? 'filled' : ''}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
+        <button class="clear-rating" type="button" data-clear-discover-tv-rating data-discover-key="${escapeAttr(key)}">clear</button>
+      </div>
+    </fieldset>
+    <label class="field">
+      <span>Notes <em>optional</em></span>
+      <textarea class="discover-tv-notes" rows="3" placeholder="Anything you want to remember about this show">${escapeHtml(item.notes || '')}</textarea>
+    </label>
+    <div class="detail-actions compact-actions">
+      <button class="primary-button" type="button" data-save-discover-tv-meta="${escapeAttr(key)}">Save rating & notes</button>
+      <span class="discover-tv-meta-status" aria-live="polite"></span>
+    </div>
+  </section>`;
+}
+
+function setDiscoverTVPendingRating(key, value) {
+  const section = els.detailBody?.querySelector(`[data-discover-tv-meta="${CSS.escape(key)}"]`);
+  if (!section) return;
+  const rating = Math.max(0, Math.min(5, Number(value || 0)));
+  section.dataset.pendingRating = String(rating);
+  section.querySelectorAll('[data-discover-tv-rating]').forEach(button => {
+    button.classList.toggle('filled', Number(button.dataset.discoverTvRating) <= rating);
+  });
+}
+
+function saveDiscoverTVPersonalMetadata(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const item = ensureDiscoverItem(result, 'library');
+  const section = els.detailBody?.querySelector(`[data-discover-tv-meta="${CSS.escape(key)}"]`);
+  if (!section) return;
+  item.rating = Math.max(0, Math.min(5, Number(section.dataset.pendingRating || 0)));
+  item.notes = section.querySelector('.discover-tv-notes')?.value.trim() || '';
+  item.updatedAt = new Date().toISOString();
+
+  for (const entry of state.history) {
+    if (entry.sourceItemId === item.id && entry.kind === 'series-watched') {
+      entry.rating = item.rating;
+      entry.notes = item.notes;
+    }
+  }
+
+  saveItems();
+  saveHistory();
+  const status = section.querySelector('.discover-tv-meta-status');
+  if (status) {
+    status.textContent = 'Saved';
+    setTimeout(() => { if (status.isConnected) status.textContent = ''; }, 1600);
+  }
+  renderLibrary();
+}
+
 async function renderDiscoverTVDetail(key, requestedSeason = null) {
   const result = state.discoverResults.get(key);
   if (!result) return;
   state.openDiscoverKey = key;
+  state.openDiscoverEpisode = null;
   const details = await getCached(`tv:${result.providerId}`, () => TrackerAPI.getTVDetails(result.providerId, state.settings));
   const availability = await getCached(
     `discover:watch:tv:${result.providerId}:${state.settings.tmdbWatchRegion || 'CA'}`,
@@ -3874,19 +4073,25 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
   const seasonNumber = requestedSeason || Number(existing?.progress?.nextSeason || seasons[0]?.season_number || 1);
   const season = await getCached(`season:${result.providerId}:${seasonNumber}`, () => TrackerAPI.getTVSeason(result.providerId, seasonNumber, state.settings));
   const seriesCompleted = isDiscoverCompleted(result);
-  const discoverSeasonAired = (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep));
-  const discoverSeasonAllWatched = Boolean(existing) && discoverSeasonAired.length > 0 && discoverSeasonAired.every(ep => isTVEpisodeLogged(existing, seasonNumber, ep.episode_number));
   const providers = (availability.providers || []).map(provider => provider.name);
   const providerText = providers.length ? providers.slice(0, 4).join(' · ') : 'No streaming provider listed for your region';
 
-  const seasonRows = seasons.map(info => `
-    <button class="season-row discover-season-row${info.season_number === seasonNumber ? ' is-current' : ''}" type="button" data-discover-season="${info.season_number}" data-discover-key="${escapeAttr(key)}">
-      <span><span class="list-title">Season ${info.season_number}</span><span class="list-meta">${info.episode_count || 0} episodes${info.air_date ? ` · ${escapeHtml(info.air_date.slice(0,4))}` : ''}</span></span>
-      <span class="detail-arrow-button visual-arrow">→</span>
-    </button>`).join('');
+  const seasonRows = (await Promise.all(seasons.map(async info => {
+    const seasonData = await getCached(`season:${result.providerId}:${info.season_number}`, () => TrackerAPI.getTVSeason(result.providerId, info.season_number, state.settings));
+    const aired = (seasonData.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep));
+    const allWatched = Boolean(existing) && aired.length > 0 && aired.every(ep => isTVEpisodeLogged(existing, info.season_number, ep.episode_number));
+    return `<div class="season-row discover-season-row${info.season_number === seasonNumber ? ' is-current' : ''}">
+      <div><div class="list-title">Season ${info.season_number}</div><div class="list-meta">${info.episode_count || 0} episodes${info.air_date ? ` · ${escapeHtml(info.air_date.slice(0,4))}` : ''}</div></div>
+      <div class="episode-row-actions">
+        <span class="watched-label">${allWatched ? 'WATCHED' : ''}</span>
+        <button class="episode-check-button${allWatched ? ' is-checked' : ''}" type="button" data-discover-mark-season="${info.season_number}" data-discover-key="${escapeAttr(key)}" aria-label="${allWatched ? `Clear watched Season ${info.season_number}` : `Mark Season ${info.season_number} watched`}" title="${allWatched ? 'Clear season watched' : 'Mark whole season watched'}">✓</button>
+        <button class="detail-arrow-button" type="button" data-discover-season="${info.season_number}" data-discover-key="${escapeAttr(key)}" aria-label="Open Season ${info.season_number}">→</button>
+      </div>
+    </div>`;
+  }))).join('');
 
   const episodeRows = (season.episodes || []).map(ep => {
-    const watched = seriesCompleted || Boolean(existing && isTVEpisodeLogged(existing, seasonNumber, ep.episode_number));
+    const watched = Boolean(existing && isTVEpisodeLogged(existing, seasonNumber, ep.episode_number));
     const still = TrackerAPI.tmdbImage(ep.still_path);
     return `<div class="episode-row discover-episode-row">
       ${still ? `<img src="${escapeAttr(still)}" alt="" />` : '<div class="episode-image-placeholder"></div>'}
@@ -3897,6 +4102,7 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
       <div class="episode-row-actions">
         <span class="watched-label">${watched ? 'WATCHED' : ''}</span>
         <button class="episode-check-button${watched ? ' is-checked' : ''}" type="button" data-discover-check-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-discover-key="${escapeAttr(key)}" aria-label="${watched ? `Mark episode ${ep.episode_number} not watched` : `Mark episode ${ep.episode_number} watched`}" title="${watched ? 'Mark not watched' : 'Mark watched'}">✓</button>
+        <button class="detail-arrow-button" type="button" data-discover-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-discover-key="${escapeAttr(key)}" aria-label="Open episode ${ep.episode_number}">→</button>
       </div>
     </div>`;
   }).join('');
@@ -3913,13 +4119,44 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
       <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
       <button class="secondary-button" type="button" data-discover-mark-all-tv="${escapeAttr(key)}">${seriesCompleted ? '✓ Clear watched series' : '✓ Mark all watched'}</button>
     </div>
+    ${discoverTVPersonalMetadataMarkup(existing, key)}
     <section class="detail-section streaming-detail"><h3>Streaming</h3><p>${escapeHtml(providerText)}</p>${availability.link ? `<a href="${escapeAttr(availability.link)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}</section>
-    <section class="detail-section"><h3>Seasons</h3><div class="season-list season-list-rows">${seasonRows || 'No seasons found.'}</div></section>
+    <section class="detail-section" data-tv-watch-picker>
+      <div class="detail-section-heading"><h3>Seasons</h3><span class="discover-history-note compact-note">✓ marks the whole season · → opens episodes</span></div>
+      <p class="discover-history-note">Watched selections here go to Library history only and never create calendar stickers.</p>
+      <div class="season-list season-list-rows">${seasonRows || 'No seasons found.'}</div>
+    </section>
     <section class="detail-section">
-      <div class="detail-section-heading"><h3>Season ${seasonNumber}</h3><button class="quiet-button" type="button" data-discover-mark-season="${seasonNumber}" data-discover-key="${escapeAttr(key)}">${discoverSeasonAllWatched ? 'Clear season watched' : '✓ Mark season watched'}</button></div>
-      <p class="discover-history-note">Checks here update your Library history only — they do not add calendar stickers.</p>
+      <h3>Season ${seasonNumber} episodes</h3>
       <div class="episode-list">${episodeRows || 'No episodes found.'}</div>
     </section>`;
+}
+
+async function renderDiscoverTVEpisodeDetail(key, seasonNumber, episodeNumber) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  state.openDiscoverKey = key;
+  state.openDiscoverEpisode = { key, seasonNumber, episodeNumber };
+  const [series, episode] = await Promise.all([
+    getCached(`tv:${result.providerId}`, () => TrackerAPI.getTVDetails(result.providerId, state.settings)),
+    getCached(`tv:${result.providerId}:s${seasonNumber}e${episodeNumber}`, () => TrackerAPI.getTVEpisode(result.providerId, seasonNumber, episodeNumber, state.settings))
+  ]);
+  const existing = findDiscoverItem(result);
+  const watched = Boolean(existing && isTVEpisodeLogged(existing, seasonNumber, episodeNumber));
+  const image = TrackerAPI.tmdbImage(episode.still_path) || TrackerAPI.tmdbImage(series.backdrop_path) || result.image;
+
+  els.detailBody.innerHTML = `
+    <button class="detail-back-button" type="button" data-discover-season="${seasonNumber}" data-discover-key="${escapeAttr(key)}">← Season ${seasonNumber}</button>
+    ${detailHero({
+      type: `TV · S${seasonNumber} E${episodeNumber}`,
+      title: episode.name || `Episode ${episodeNumber}`,
+      image,
+      subtitle: [series.name || result.title, episode.air_date || '', episode.runtime ? `${episode.runtime} min` : '', episode.vote_average ? `★ ${Number(episode.vote_average).toFixed(1)}` : ''].filter(Boolean).join(' · '),
+      overview: episode.overview || ''
+    })}
+    <div class="detail-actions">
+      <button class="primary-button${watched ? ' is-complete' : ''}" type="button" data-discover-check-tv-episode="${episodeNumber}" data-tv-season-number="${seasonNumber}" data-discover-key="${escapeAttr(key)}">${watched ? '✓ Mark not watched' : '✓ Mark watched'}</button>
+    </div>`;
 }
 
 async function logDiscoverTVEpisode(key, seasonNumber, episodeNumber) {
@@ -3940,7 +4177,11 @@ async function logDiscoverTVEpisode(key, seasonNumber, episodeNumber) {
   saveItems();
   saveHistory();
   renderAll();
-  await renderDiscoverTVDetail(key, seasonNumber);
+  if (state.openDiscoverEpisode?.key === key && Number(state.openDiscoverEpisode.seasonNumber) === Number(seasonNumber) && Number(state.openDiscoverEpisode.episodeNumber) === Number(episodeNumber)) {
+    await renderDiscoverTVEpisodeDetail(key, seasonNumber, episodeNumber);
+  } else {
+    await renderDiscoverTVDetail(key, seasonNumber);
+  }
 }
 
 async function markDiscoverSeasonWatched(key, seasonNumber) {
@@ -3954,11 +4195,8 @@ async function markDiscoverSeasonWatched(key, seasonNumber) {
   if (allWatched) {
     for (const episode of aired) removeTVEpisodeHistory(item, seasonNumber, episode.episode_number);
   } else {
-    for (const episode of aired) {
-      if (isTVEpisodeLogged(item, seasonNumber, episode.episode_number)) continue;
-      const record = tvHistoryRecord(item, episode, seasonNumber, episode.episode_number);
-      addHistoryRecord({ ...record, date: '', showOnCalendar: false, imported: true });
-    }
+    await maybeMarkEarlierTVSeasonsWatched(item, seasonNumber);
+    for (const episode of aired) addImportedTVEpisode(item, episode, seasonNumber);
   }
 
   await syncDiscoverTVProgress(item);
@@ -4020,6 +4258,8 @@ async function syncDiscoverTVProgress(item) {
   const next = await findNextUnwatchedTVEpisode(item, 0, 0);
   if (next) {
     item.progress = { ...item.progress, nextSeason: next.seasonNumber, nextEpisode: next.episodeNumber };
+    item.completedAt = '';
+    state.history = state.history.filter(entry => !(entry.kind === 'series-watched' && entry.sourceItemId === item.id));
   } else {
     setItemQueueStatus(item, 'library');
     item.completedAt = item.completedAt || todayString();

@@ -37,10 +37,20 @@ Discover now has four views:
 
 All views filter out things already saved/consumed. TBR is a separate queue and is intentionally excluded from the Library display until an item is moved out of TBR.
 
-## Watched-state fixes
+## TV season/episode quick controls
 
-- Marking an entire TV season watched creates undated history only; it does not create calendar entries.
-- TV episode synopses are no longer copied into history Notes.
-- Checked TV episodes are toggleable. Clicking a checked episode marks it not watched and recalculates Up Next.
-- The TV add/edit episode checklist can clear previously watched episodes as well as add them.
-- Season-level watched controls toggle between marking and clearing the season.
+- Season rows now show both a check and an arrow.
+  - Check: toggle the entire aired season as watched without opening it.
+  - Arrow: open that season and its episode list.
+- Episode rows show both a check and an arrow.
+  - Check: toggle that specific episode.
+  - Arrow: open episode details.
+- Marking a later season watched prompts whether earlier aired episodes should also be marked watched.
+- Whole-season and Discover-history imports remain undated and never create calendar entries.
+- On Discover, the TV-card check opens the season/episode picker instead of marking the entire series automatically.
+
+## Discover language + personal TV notes
+
+Discover Settings now includes **Show only English-language TV shows**. When enabled, TV recommendations in New, Popular, For You, and Discover are filtered using TMDB's original-language metadata.
+
+After any episode/season of a TV show has been marked watched from Discover, that show's detail view includes a personal 1–5 star rating and notes field. These are show-level Library metadata and do not get copied into individual episode notes.

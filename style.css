@@ -3213,3 +3213,62 @@ body.auth-locked > main {
     padding-inline: 14px;
   }
 }
+
+/* Season/episode quick actions: checked controls remain toggleable. */
+.episode-check-button.is-checked:not(:disabled),
+.discover-complete-button.is-complete:not(:disabled) {
+  cursor: pointer;
+  opacity: 1;
+}
+.episode-check-button.is-checked:not(:disabled):hover,
+.discover-complete-button.is-complete:not(:disabled):hover {
+  transform: translateY(-1px) scale(1.04);
+}
+.season-row.is-current {
+  background: rgba(21,36,58,.035);
+}
+.compact-note {
+  margin: 0;
+  font-size: .78rem;
+  text-align: right;
+}
+@media (max-width: 620px) {
+  .detail-section-heading .compact-note {
+    max-width: 52%;
+    line-height: 1.25;
+  }
+  .season-row .episode-row-actions {
+    flex-shrink: 0;
+  }
+}
+
+/* Discover: personal show rating + notes */
+.discover-personal-meta {
+  display: grid;
+  gap: 16px;
+}
+
+.discover-rating-fieldset {
+  margin: 0;
+}
+
+.discover-tv-rating-picker {
+  justify-content: flex-start;
+}
+
+.discover-tv-meta-status {
+  align-self: center;
+  min-width: 48px;
+  font-size: 0.9rem;
+  color: var(--muted, #667085);
+}
+
+@media (max-width: 760px) {
+  .discover-personal-meta .detail-actions {
+    align-items: stretch;
+  }
+
+  .discover-personal-meta .primary-button {
+    width: 100%;
+  }
+}
