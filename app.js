@@ -8162,7 +8162,7 @@ function makeLibraryPoster(item) {
   const hasThumbnail = Boolean(String(item.image || '').trim());
   if (!hasThumbnail) poster.classList.add('library-text-card-button');
   const recommendedBadge = item.recommended
-    ? `<span class="library-recommended-badge" aria-label="Recommended">♥ Recommended</span>`
+    ? `<span class="library-recommended-badge" aria-label="Recommended">♥</span>`
     : '';
   poster.innerHTML = hasThumbnail
     ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />
