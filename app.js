@@ -223,6 +223,7 @@ const els = {
   discoverRatingModal: $('#discoverRatingModal'),
   discoverRatingTitle: $('#discoverRatingTitle'),
   discoverRatingPicker: $('#discoverRatingPicker'),
+  discoverRatingRecommendHeart: $('#discoverRatingRecommendHeart'),
   openDiscoverSettings: $('#openDiscoverSettings'),
   discoverSettingsModal: $('#discoverSettingsModal'),
   discoverSettingsForm: $('#discoverSettingsForm'),
@@ -255,6 +256,7 @@ const els = {
   historyEditDelete: $('#historyEditDelete'),
   historyRatingPicker: $('#historyRatingPicker'),
   historyClearRating: $('#historyClearRating'),
+  historyRecommendHeart: $('#historyRecommendHeart'),
   bookProgressModal: $('#bookProgressModal'),
   itemForm: $('#itemForm'),
   itemSourceType: $('#itemSourceType'),
@@ -312,6 +314,7 @@ const els = {
   itemDate: $('#itemDate'),
   itemDateField: $('#itemDateField'),
   itemRecommended: $('#itemRecommended'),
+  itemRecommendHeart: $('#itemRecommendHeart'),
   queueStatusField: $('#queueStatusField'),
   itemQueueStatus: $('#itemQueueStatus'),
   editingId: $('#editingId'),
@@ -651,6 +654,8 @@ function bindEvents() {
   els.historyClearRating?.addEventListener('click', () => setHistoryRating(0));
   els.starPicker?.addEventListener('click', chooseRating);
   els.clearRating?.addEventListener('click', () => setRating(0));
+  els.itemRecommendHeart?.addEventListener('click', toggleItemFormRecommended);
+  els.historyRecommendHeart?.addEventListener('click', toggleHistorySourceRecommended);
   els.itemFiles?.addEventListener('change', addDraftFiles);
   els.addItemLink?.addEventListener('click', addDraftLink);
   els.attachmentEditorList?.addEventListener('click', handleAttachmentEditorClick);
@@ -750,6 +755,22 @@ function bindEvents() {
       return;
     }
 
+    const discoverDirectQueue = event.target.closest('[data-discover-direct-queue]');
+    if (discoverDirectQueue) {
+      const key = discoverDirectQueue.dataset.discoverKey;
+      const result = state.discoverResults.get(key);
+      if (result) {
+        let item = findDiscoverItem(result);
+        const target = discoverDirectQueue.dataset.discoverDirectQueue;
+        if (!item) item = ensureDiscoverItem(result, target);
+        else await moveItemToQueue(item, getQueueStatus(item) === target ? 'library' : target);
+        if (!findDiscoverItem(result)?.updatedAt) saveItems();
+        renderAll();
+        if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
+      }
+      return;
+    }
+
     const libraryRating = event.target.closest('[data-library-rating]');
     if (libraryRating) {
       saveLibraryRating(libraryRating.dataset.itemId, Number(libraryRating.dataset.libraryRating));
@@ -840,6 +861,13 @@ function bindEvents() {
     if (bookCompleteItem) {
       const item = findItem(bookCompleteItem.dataset.bookMarkCompleteItem || state.openDetailId);
       if (item) await markWholeBookComplete(item);
+      return;
+    }
+
+    const bookDnfToggle = event.target.closest('[data-book-toggle-dnf]');
+    if (bookDnfToggle) {
+      const item = findItem(bookDnfToggle.dataset.bookToggleDnf || state.openDetailId);
+      if (item) await toggleBookDNF(item);
       return;
     }
 
@@ -1052,12 +1080,15 @@ async function renderUpNext(options = {}) {
   const skipReconcile = Boolean(options.skipReconcile);
   const view = ['tbr', 'calendar'].includes(state.queueView) ? state.queueView : 'upnext';
 
+  // Every queue tab owns a different layout. Always clear the previous tab's
+  // layout classes before rendering so TBR's poster grid cannot leak into the
+  // Up Next or Calendar views.
+  els.upNextList?.classList.remove('queue-calendar-list', 'tbr-thumbnail-grid');
+
   if (view === 'calendar') {
     await renderQueueCalendar();
     return;
   }
-
-  els.upNextList?.classList.remove('queue-calendar-list');
   const today = todayString();
   const availableItems = state.items.filter(item => {
     if (getQueueStatus(item) !== view) return false;
@@ -1210,6 +1241,8 @@ function setQueueView(view) {
 
 async function renderQueueCalendar() {
   if (!els.upNextList || !els.upNextEmpty) return;
+  els.upNextList.classList.remove('tbr-thumbnail-grid');
+  els.upNextList.classList.add('queue-calendar-list');
   if (els.queueHeading) els.queueHeading.textContent = 'Calendar';
   els.queueTabs?.forEach(tab => {
     const active = tab.dataset.queueTab === 'calendar';
@@ -1225,7 +1258,6 @@ async function renderQueueCalendar() {
   const visible = entries.filter(entry => selectedType === 'all' || queueTypeGroupKey(entry.item) === selectedType);
 
   els.upNextList.innerHTML = '';
-  els.upNextList.classList.add('queue-calendar-list');
   if (!visible.length) {
     els.upNextEmpty.hidden = false;
     els.upNextEmpty.textContent = entries.length ? 'Nothing scheduled for this type.' : 'Nothing upcoming yet. Future reminders, events, TV episodes, and dated items will appear here.';
@@ -1327,9 +1359,9 @@ function queueCardMarkup(item, info) {
 
   let action = '';
   if (isTBR) {
-    action = `<button class="check-button start-button" type="button" data-action="start" data-id="${item.id}" aria-label="Move to Up Next" title="Move to Up Next">→</button>`;
+    action = `<button class="check-button start-button" type="button" data-action="start" data-id="${item.id}" aria-label="Up Next" title="Up Next">→</button>`;
   } else if (sourceType === 'book') {
-    action = `<button class="check-button book-check" type="button" data-action="complete" data-id="${item.id}" aria-label="Update pages" title="Update pages">↗</button>`;
+    action = `<button class="check-button book-check" type="button" data-action="complete" data-id="${item.id}" aria-label="Update pages & dates" title="Update pages & dates">↗</button>`;
   } else if (sourceType === 'reminder') {
     const due = info.dueDate || getNextReminderDueDate(item);
     const canComplete = !due || due <= todayString();
@@ -1920,7 +1952,7 @@ function tvStatusLabels(item, details = null) {
   const labels = [];
 
   if (disposition === 'stopped') labels.push({ label: 'Stopped watching', tone: 'muted' });
-  else if (disposition === 'watch-later') labels.push({ label: 'Watch later', tone: 'later' });
+  else if (disposition === 'watch-later') labels.push({ label: 'TBR', tone: 'later' });
   else if (hasUnwatched) labels.push({ label: 'In progress', tone: 'progress' });
   else if (isTerminalSeriesStatus(status)) labels.push({ label: 'Finished', tone: 'finished' });
   else labels.push({ label: 'Up to date', tone: 'current' });
@@ -1936,17 +1968,8 @@ function tvStatusBadgeMarkup(item, details = null) {
 }
 
 function tvDetailControls(item) {
-  const disposition = getTVWatchDisposition(item);
-  let watchButtons = '';
-  if (disposition === 'following') {
-    watchButtons = `
-      <button class="secondary-button" type="button" data-tv-watch-action="watch-later" data-item-id="${item.id}">Watch later</button>
-      <button class="quiet-button danger-text" type="button" data-tv-watch-action="stop" data-item-id="${item.id}">Move to Library / Stop watching</button>`;
-  } else {
-    watchButtons = `<button class="primary-button" type="button" data-tv-watch-action="resume" data-item-id="${item.id}">Resume watching</button>`;
-  }
   const wholeComplete = hasSeriesBulkCompletion(item);
-  return `<div class="detail-actions tv-watch-actions"><button class="primary-button${wholeComplete ? ' is-complete' : ''}" type="button" data-tv-mark-series-complete="${item.id}">${wholeComplete ? '↶ Undo series complete' : '✓ Mark series complete'}</button>${watchButtons}<button class="secondary-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${item.id}">${item.recommended ? '★ Recommended' : '☆ Recommend'}</button>${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
+  return `<div class="detail-actions tv-watch-actions"><button class="primary-button${wholeComplete ? ' is-complete' : ''}" type="button" data-tv-mark-series-complete="${item.id}">${wholeComplete ? '↶ Undo series complete' : '✓ Mark series complete'}</button>${queueMoveControls(item)}${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
 }
 
 async function applyTVWatchAction(item, action) {
@@ -2045,6 +2068,11 @@ async function markWholeBookComplete(item, options = {}) {
     renderAll();
     if (els.detailModal?.open && state.openDetailId === item.id) await renderBookDetails(item);
     return;
+  }
+
+  if (item.bookDisposition === 'dnf') {
+    item.bookDisposition = '';
+    delete item.bookDNFSnapshot;
   }
 
   let total = Math.max(0, Number(item.progress?.totalPages || 0));
@@ -2185,7 +2213,8 @@ async function markTVSeasonWatched(item, seasonNumber) {
 }
 
 async function moveItemToQueue(item, status) {
-  const next = ['upnext', 'tbr', 'library'].includes(status) ? status : 'library';
+  let next = ['upnext', 'tbr', 'library'].includes(status) ? status : 'library';
+  if (next !== 'library' && getQueueStatus(item) === next) next = 'library';
   if (getSourceType(item) === 'tv') {
     if (next === 'upnext') {
       item.watchDisposition = 'following';
@@ -2218,12 +2247,12 @@ async function moveItemToQueue(item, status) {
 }
 
 function queueMoveControls(item) {
+  if (!item || !['tv','movie','book'].includes(getSourceType(item))) return '';
   const current = getQueueStatus(item);
-  const buttons = [];
-  if (current !== 'upnext') buttons.push(`<button class="secondary-button" type="button" data-move-queue="upnext" data-item-id="${item.id}">Move to Up Next</button>`);
-  if (current !== 'tbr') buttons.push(`<button class="secondary-button" type="button" data-move-queue="tbr" data-item-id="${item.id}">Watch later / TBR</button>`);
-  if (current !== 'library') buttons.push(`<button class="quiet-button" type="button" data-move-queue="library" data-item-id="${item.id}">Move to Library</button>`);
-  return buttons.join('');
+  return `<div class="queue-toggle-buttons" aria-label="Queue placement">
+    <button class="secondary-button queue-toggle-button${current === 'upnext' ? ' is-selected' : ''}" type="button" data-move-queue="upnext" data-item-id="${item.id}" aria-pressed="${current === 'upnext'}">Up Next</button>
+    <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-move-queue="tbr" data-item-id="${item.id}" aria-pressed="${current === 'tbr'}">TBR</button>
+  </div>`;
 }
 
 async function advanceWorkout(item) {
@@ -2316,6 +2345,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     els.itemNote.value = item.notes || '';
     els.itemDate.value = item.date || '';
     if (els.itemRecommended) els.itemRecommended.checked = Boolean(item.recommended);
+    syncItemRecommendHeart();
     els.itemQueueStatus.value = getQueueStatus(item);
     setRating(Number(item.rating || 0));
 
@@ -2389,6 +2419,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.itemModalEyebrow.textContent = 'ADD';
   els.itemModalTitle.textContent = 'Add something';
   if (els.itemRecommended) els.itemRecommended.checked = false;
+  syncItemRecommendHeart();
   els.deleteItem.hidden = true;
   els.searchResults.hidden = true;
   els.searchResults.innerHTML = '';
@@ -3012,6 +3043,9 @@ async function saveItemFromForm(event) {
       if (latest && !latest.endDate) latest.endDate = todayString();
     } else {
       item.completedAt = '';
+      if (editing && getQueueStatus(editing) === 'tbr' && item.progress.currentPage > 0) {
+        setItemQueueStatus(item, 'upnext');
+      }
     }
   }
   if (sourceType === 'youtube') {
@@ -3065,6 +3099,21 @@ function chooseRating(event) {
   const button = event.target.closest('[data-rating]');
   if (!button) return;
   setRating(Number(button.dataset.rating));
+}
+
+function syncItemRecommendHeart() {
+  if (!els.itemRecommendHeart) return;
+  const recommended = Boolean(els.itemRecommended?.checked);
+  els.itemRecommendHeart.textContent = recommended ? '♥' : '♡';
+  els.itemRecommendHeart.classList.toggle('is-recommended', recommended);
+  els.itemRecommendHeart.setAttribute('aria-pressed', String(recommended));
+  els.itemRecommendHeart.setAttribute('aria-label', recommended ? 'Remove from Recommended' : 'Add to Recommended');
+}
+
+function toggleItemFormRecommended() {
+  if (!els.itemRecommended) return;
+  els.itemRecommended.checked = !els.itemRecommended.checked;
+  syncItemRecommendHeart();
 }
 
 function setRating(value) {
@@ -3321,8 +3370,9 @@ async function renderBookDetails(item) {
     : '<p class="detail-meta">No reading dates yet.</p>';
   els.detailBody.innerHTML = `
     ${detailHero({ type:'BOOK', title:info.title || item.title, image, subtitle:(info.authors || []).join(', '), overview:stripHtml(info.description || '') })}
+    <div class="tv-status-row book-status-row">${bookStatusBadgeMarkup(item)}</div>
     <div class="detail-progress"><strong>Reading progress</strong>${total ? `Page ${current} of ${total} · ${Math.min(100, Math.round(current/total*100))}%` : `Page ${current}`}<small>${escapeHtml(bookReadingStatusText(item))}</small></div>
-    <div class="detail-actions"><button class="primary-button${item.completedAt ? ' is-complete' : ''}" type="button" data-book-mark-complete-item="${item.id}">${item.completedAt ? '↶ Mark unread' : '✓ Mark book complete'}</button><button class="secondary-button" type="button" id="detailUpdatePages">Update pages & dates</button>${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>
+    <div class="detail-actions"><button class="primary-button${item.completedAt ? ' is-complete' : ''}" type="button" data-book-mark-complete-item="${item.id}">${item.completedAt ? '↶ Mark unread' : '✓ Mark book complete'}</button><button class="secondary-button${item.bookDisposition === 'dnf' ? ' is-complete' : ''}" type="button" data-book-toggle-dnf="${item.id}">${item.bookDisposition === 'dnf' ? '↶ Resume reading' : 'Mark DNF'}</button>${queueMoveControls(item)}<button class="secondary-button" type="button" id="detailUpdatePages">Update pages & dates</button>${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>
     <section class="detail-section"><h3>Reading dates</h3><div class="book-period-summary-list">${periodMarkup}</div></section>
     <section class="detail-section"><h3>Book info</h3><p>${escapeHtml([info.publisher, info.publishedDate, info.pageCount ? `${info.pageCount} pages` : ''].filter(Boolean).join(' · '))}</p></section>
   `;
@@ -3461,7 +3511,7 @@ function libraryCalendarToggleButton(item) {
 }
 
 function detailEditButton(item) {
-  return `<div class="detail-actions">${queueMoveControls(item)}<button class="secondary-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${item.id}">${item.recommended ? '★ Recommended' : '☆ Recommend'}</button>${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
+  return `<div class="detail-actions">${queueMoveControls(item)}${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
 }
 
 function formatPersonalRating(value) {
@@ -3480,9 +3530,10 @@ function libraryPersonalMetadataMarkup(item) {
     </div>
     <fieldset class="rating-fieldset library-rating-fieldset">
       <legend>Rating <span>optional</span></legend>
-      <div class="star-picker library-detail-rating-picker" aria-label="Your rating out of five stars">
+      <div class="star-picker library-detail-rating-picker rating-with-heart" aria-label="Your rating out of five stars">
         ${[1,2,3,4,5].map(value => `<button type="button" data-library-rating="${value}" data-item-id="${escapeAttr(item.id)}" class="${value <= rating ? 'filled' : ''}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
         <button class="clear-rating" type="button" data-clear-library-rating data-item-id="${escapeAttr(item.id)}">clear</button>
+        <button class="rating-heart-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${escapeAttr(item.id)}" aria-label="${item.recommended ? 'Remove from Recommended' : 'Add to Recommended'}" aria-pressed="${Boolean(item.recommended)}" title="Recommended">${item.recommended ? '♥' : '♡'}</button>
       </div>
     </fieldset>
     <label class="field">
@@ -3870,7 +3921,7 @@ function sanitizeBookReadingPeriods(periods) {
 
 function openBookProgress(item) {
   els.bookProgressId.value = item.id;
-  els.bookProgressTitle.textContent = item.title;
+  els.bookProgressTitle.textContent = `Update ${item.title}`;
   els.progressCurrentPage.value = item.progress?.currentPage || 0;
   els.progressTotalPages.value = item.progress?.totalPages || '';
   const completeButton = els.bookProgressModal?.querySelector('[data-book-mark-complete-progress]');
@@ -3886,7 +3937,7 @@ function renderBookPeriodsEditor(item) {
   if (!els.bookPeriodsList) return;
   els.bookPeriodsList.innerHTML = '';
   const periods = getBookReadingPeriods(item);
-  if (!periods.length) periods.push({ startDate: todayString(), endDate: '' });
+  if (!periods.length) periods.push({ startDate: '', endDate: '' });
   periods.forEach(period => addBookPeriodEditorRow(period));
   updateBookPauseResumeButton();
 }
@@ -3913,7 +3964,7 @@ function handleBookPeriodEditorClick(event) {
   const remove = event.target.closest('[data-remove-book-period]');
   if (!remove) return;
   remove.closest('.book-period-row')?.remove();
-  if (els.bookPeriodsList && !els.bookPeriodsList.children.length) addBookPeriodEditorRow({ startDate: todayString(), endDate: '' });
+  if (els.bookPeriodsList && !els.bookPeriodsList.children.length) addBookPeriodEditorRow({ startDate: '', endDate: '' });
   updateBookPauseResumeButton();
 }
 
@@ -3960,6 +4011,7 @@ function updateBookPauseResumeButton() {
 }
 
 function bookReadingStatusText(item) {
+  if (item?.bookDisposition === 'dnf') return 'Did not finish';
   const periods = getBookReadingPeriods(item);
   if (!periods.length) return 'No reading dates yet';
   const latest = periods.at(-1);
@@ -3995,7 +4047,13 @@ function saveBookProgress(event) {
   item.progress = { ...item.progress, currentPage: current, totalPages: total, readingPeriods: periods };
   item.date = '';
 
+  if (getQueueStatus(item) === 'tbr' && current > 0 && !(total && current >= total)) {
+    setItemQueueStatus(item, 'upnext');
+  }
+
   if (total && current >= total) {
+    item.bookDisposition = '';
+    delete item.bookDNFSnapshot;
     setItemQueueStatus(item, 'library');
     item.completedAt = todayString();
     // Finishing the book closes an active reading period today. The range itself
@@ -4546,7 +4604,33 @@ function openHistoryEdit(id) {
   els.historyEditNote.value = entry.notes || '';
   els.historyEditShowCalendar.checked = entry.showOnCalendar !== false;
   setHistoryRating(Number(entry.rating ?? source?.rating ?? 0));
+  syncHistoryRecommendHeart(source);
   els.historyEditModal.showModal();
+}
+
+function syncHistoryRecommendHeart(source = null) {
+  if (!els.historyRecommendHeart) return;
+  const item = source || (() => {
+    const entry = state.history.find(record => record.id === els.historyEditId?.value);
+    return entry?.sourceItemId ? findItem(entry.sourceItemId) : null;
+  })();
+  const recommended = Boolean(item?.recommended);
+  els.historyRecommendHeart.disabled = !item;
+  els.historyRecommendHeart.textContent = recommended ? '♥' : '♡';
+  els.historyRecommendHeart.classList.toggle('is-recommended', recommended);
+  els.historyRecommendHeart.setAttribute('aria-pressed', String(recommended));
+  els.historyRecommendHeart.setAttribute('aria-label', !item ? 'No Library item to recommend' : recommended ? 'Remove from Recommended' : 'Add to Recommended');
+}
+
+function toggleHistorySourceRecommended() {
+  const entry = state.history.find(record => record.id === els.historyEditId?.value);
+  const item = entry?.sourceItemId ? findItem(entry.sourceItemId) : null;
+  if (!item) return;
+  item.recommended = !item.recommended;
+  item.updatedAt = new Date().toISOString();
+  saveItems();
+  renderLibrary();
+  syncHistoryRecommendHeart(item);
 }
 
 function chooseHistoryRating(event) {
@@ -4783,6 +4867,7 @@ async function runDiscoverSearch(forcedQuery = '') {
   state.discoverFeedItems = [];
   state.discoverFeedSeen = new Set();
   state.discoverResults.clear();
+  els.discoverFeed.classList.remove('is-period-grouped');
   els.discoverFeed.innerHTML = '';
   if (els.discoverStatus) {
     els.discoverStatus.hidden = false;
@@ -4853,7 +4938,7 @@ function setDiscoverMode(mode) {
 function updateDiscoverModeUI() {
   const mode = DISCOVER_MODES.has(state.discoverMode) ? state.discoverMode : 'discover';
   const copy = {
-    new: 'Recently released TV, movies, books, plus upcoming events near your configured home location.',
+    new: 'TV, movies, books, and local events organized by when they arrived or are coming out: this week, next week, last week, and nearby months.',
     popular: 'Popular TV, movies, books, and upcoming local events, with titles on your streaming services moved toward the front.',
     'for-you': 'Recommendations based on what you have watched, finished, rated, and the authors you return to, mixed with upcoming events nearby.',
     discover: 'A shuffled, effectively endless mix of TV, movies, books, and upcoming events. Your tastes influence the ranking, but each session deliberately changes.',
@@ -5337,7 +5422,8 @@ async function loadMoreDiscoverFeed() {
         state.discoverFeedSeen.add(discoverResultIdentity(result));
         state.discoverFeedItems.push(result);
       }
-      appendDiscoverFeedItems(ranked);
+      if (state.discoverMode === 'new' && !state.discoverSearchQuery) renderDiscoverFeedItems();
+      else appendDiscoverFeedItems(ranked);
       if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = discoverEndlessLabel();
     }
 
@@ -5478,10 +5564,13 @@ async function annotateLatestTVEpisodeDates(results) {
     try {
       const details = await getCached(`tv:${result.providerId}`, () => TrackerAPI.getTVDetails(result.providerId, state.settings));
       const latestEpisodeDate = details.last_episode_to_air?.air_date || details.last_air_date || result.raw?.first_air_date || '';
-      return { ...result, latestEpisodeDate, _discoverLatestDate: latestEpisodeDate };
+      const nextEpisodeDate = details.next_episode_to_air?.air_date || '';
+      const today = todayString();
+      const newReleaseDate = nextEpisodeDate && nextEpisodeDate >= today ? nextEpisodeDate : latestEpisodeDate;
+      return { ...result, latestEpisodeDate, nextEpisodeDate, newReleaseDate, _discoverLatestDate: newReleaseDate || latestEpisodeDate };
     } catch {
       const fallback = result.raw?.first_air_date || '';
-      return { ...result, latestEpisodeDate: fallback, _discoverLatestDate: fallback };
+      return { ...result, latestEpisodeDate: fallback, nextEpisodeDate: '', newReleaseDate: fallback, _discoverLatestDate: fallback };
     }
   }));
 }
@@ -5489,7 +5578,8 @@ async function annotateLatestTVEpisodeDates(results) {
 async function collectNewDiscoverCandidates(batchNumber) {
   const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
   const today = todayString();
-  const recentTVStart = addDaysToDateString(today, -120);
+  const newWindowStart = addDaysToDateString(today, -62);
+  const newWindowEnd = addDaysToDateString(today, 62);
   const tvPage = Math.min(500, batchNumber);
   const moviePage = Math.min(500, batchNumber);
   const bookStart = (batchNumber - 1) * DISCOVER_BOOK_BATCH_SIZE;
@@ -5497,16 +5587,16 @@ async function collectNewDiscoverCandidates(batchNumber) {
     // "New" TV means a show with a recently aired episode, not a show whose
     // first season happened to premiere recently.
     TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings, discoverTMDBOptions('tv', {
-      sortBy: 'popularity.desc', minVotes: 5, afterDate: recentTVStart, beforeDate: today, dateField: 'air'
+      sortBy: 'popularity.desc', minVotes: 5, afterDate: newWindowStart, beforeDate: newWindowEnd, dateField: 'air'
     })),
-    TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, discoverTMDBOptions('movie', { sortBy: 'primary_release_date.desc', minVotes: 10, beforeDate: today })),
+    TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, discoverTMDBOptions('movie', { sortBy: 'primary_release_date.desc', minVotes: 10, afterDate: newWindowStart, beforeDate: newWindowEnd, dateField: 'release' })),
     TrackerAPI.getBookFeed(bookStart, state.settings, discoverBookOptions({ query: 'subject:fiction', orderBy: 'newest', maxResults: DISCOVER_BOOK_BATCH_SIZE }))
   ];
   if (selectedProviders.length) {
     tasks.push(TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings, discoverTMDBOptions('tv', {
-      sortBy: 'popularity.desc', minVotes: 3, afterDate: recentTVStart, beforeDate: today, dateField: 'air', providerIds: selectedProviders
+      sortBy: 'popularity.desc', minVotes: 3, afterDate: newWindowStart, beforeDate: newWindowEnd, dateField: 'air', providerIds: selectedProviders
     })));
-    tasks.push(TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, discoverTMDBOptions('movie', { sortBy: 'primary_release_date.desc', minVotes: 5, beforeDate: today, providerIds: selectedProviders })));
+    tasks.push(TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, discoverTMDBOptions('movie', { sortBy: 'primary_release_date.desc', minVotes: 5, afterDate: newWindowStart, beforeDate: newWindowEnd, dateField: 'release', providerIds: selectedProviders })));
   }
   const settled = await Promise.allSettled(tasks);
   const candidates = [];
@@ -5794,11 +5884,7 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
       score += Math.log1p(popularity) * 1.8;
     }
     if (mode === 'new') {
-      const rawDate = result.sourceType === 'book'
-        ? result.publishedDate
-        : result.sourceType === 'tv'
-          ? (result.latestEpisodeDate || result._discoverLatestDate || result.raw?.first_air_date || '')
-          : (result.raw?.release_date || '');
+      const rawDate = discoverNewDate(result);
       const time = Date.parse(rawDate || '');
       if (Number.isFinite(time)) {
         const ageDays = Math.max(0, (Date.now() - time) / 86400000);
@@ -5924,8 +6010,84 @@ function discoverResultIdentity(result) {
   return `${result.sourceType || 'book'}:${result.providerId}`;
 }
 
+function discoverNewDate(result) {
+  if (!result) return '';
+  if (result.sourceType === 'event') return result.eventDate || '';
+  if (result.sourceType === 'book') return result.publishedDate || result.raw?.volumeInfo?.publishedDate || '';
+  if (result.sourceType === 'tv') return result.newReleaseDate || result.nextEpisodeDate || result.latestEpisodeDate || result._discoverLatestDate || result.raw?.first_air_date || '';
+  if (result.sourceType === 'movie') return result.raw?.release_date || result.releaseDate || '';
+  return '';
+}
+
+function mondayWeekStartString(dateString) {
+  const date = parseLocalDateString(dateString);
+  const day = date.getDay();
+  const delta = day === 0 ? -6 : 1 - day;
+  return localDateString(addDays(date, delta));
+}
+
+function monthKey(dateString) {
+  return String(dateString || '').slice(0, 7);
+}
+
+function discoverNewPeriod(result) {
+  const date = discoverNewDate(result);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { key: 'undated', label: 'More new releases', order: 100, date };
+  const today = todayString();
+  const thisWeek = mondayWeekStartString(today);
+  const nextWeek = addDaysToDateString(thisWeek, 7);
+  const afterNextWeek = addDaysToDateString(thisWeek, 14);
+  const lastWeek = addDaysToDateString(thisWeek, -7);
+  const currentMonth = monthKey(today);
+  const dateMonth = monthKey(date);
+  const todayDate = parseLocalDateString(today);
+  const nextMonthDate = new Date(todayDate.getFullYear(), todayDate.getMonth() + 1, 1, 12);
+  const prevMonthDate = new Date(todayDate.getFullYear(), todayDate.getMonth() - 1, 1, 12);
+  const nextMonth = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth()+1).padStart(2,'0')}`;
+  const prevMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth()+1).padStart(2,'0')}`;
+
+  if (date >= nextWeek && date < afterNextWeek) return { key: 'next-week', label: 'Coming next week', order: 20, date };
+  if (date >= thisWeek && date < nextWeek) return { key: 'this-week', label: 'This week', order: 10, date };
+  if (date >= lastWeek && date < thisWeek) return { key: 'last-week', label: 'Last week', order: 30, date };
+  if (date > today && dateMonth === currentMonth) return { key: 'later-this-month', label: 'Later this month', order: 40, date };
+  if (date > today && dateMonth === nextMonth) return { key: 'next-month', label: 'Next month', order: 60, date };
+  if (date > today) return { key: 'coming-later', label: 'Coming later', order: 80, date };
+  if (date < lastWeek && dateMonth === currentMonth) return { key: 'earlier-this-month', label: 'Earlier this month', order: 50, date };
+  if (dateMonth === prevMonth) return { key: 'last-month', label: 'Last month', order: 70, date };
+  return { key: 'earlier', label: 'Earlier', order: 90, date };
+}
+
+function renderDiscoverNewGroupedItems() {
+  if (!els.discoverFeed) return;
+  els.discoverFeed.classList.add('is-period-grouped');
+  const groups = new Map();
+  for (const result of state.discoverFeedItems) {
+    const period = discoverNewPeriod(result);
+    if (!groups.has(period.key)) groups.set(period.key, { ...period, items: [] });
+    groups.get(period.key).items.push(result);
+  }
+  const ordered = [...groups.values()].sort((a,b) => a.order - b.order);
+  els.discoverFeed.innerHTML = ordered.map(group => {
+    const upcoming = ['next-week','later-this-month','next-month','coming-later'].includes(group.key);
+    group.items.sort((a,b) => {
+      const ad = discoverNewDate(a), bd = discoverNewDate(b);
+      return upcoming ? String(ad).localeCompare(String(bd)) : String(bd).localeCompare(String(ad));
+    });
+    const cards = group.items.map(result => {
+      const key = rememberDiscoverResult(result, result.sourceType);
+      return discoverCardMarkup(result, key, result.sourceType);
+    }).join('');
+    return `<section class="discover-new-period-group"><div class="discover-new-period-heading"><h2>${escapeHtml(group.label)}</h2></div><div class="discover-new-period-grid">${cards}</div></section>`;
+  }).join('');
+}
+
 function renderDiscoverFeedItems() {
   if (!els.discoverFeed) return;
+  if (state.discoverMode === 'new' && !state.discoverSearchQuery) {
+    renderDiscoverNewGroupedItems();
+    return;
+  }
+  els.discoverFeed.classList.remove('is-period-grouped');
   els.discoverFeed.innerHTML = '';
   for (const result of state.discoverFeedItems) {
     const key = rememberDiscoverResult(result, result.sourceType);
@@ -6460,10 +6622,11 @@ function discoverCardMarkup(result, key, fallbackType) {
   const type = result.sourceType || fallbackType;
   const item = findDiscoverItem(result);
   const completed = isDiscoverCompleted(result);
-  const year = type === 'book'
-    ? String(result.publishedDate || '').slice(0, 4)
-    : type === 'tv' && state.discoverMode === 'new' && result.latestEpisodeDate
-      ? `Latest episode ${formatLongDate(result.latestEpisodeDate)}`
+  const newDate = state.discoverMode === 'new' ? discoverNewDate(result) : '';
+  const year = newDate
+    ? formatLongDate(newDate)
+    : type === 'book'
+      ? String(result.publishedDate || '').slice(0, 4)
       : String(result.subtitle || '').slice(0, 4);
   const rating = result.rating ? `★ ${Number(result.rating).toFixed(1)}` : '';
   const providers = (result.streamingProviderNames || result.preferredProviderNames || []).slice(0, 2);
@@ -6487,7 +6650,7 @@ function discoverCardMarkup(result, key, fallbackType) {
       ${result.subtitle && type === 'book' ? `<p class="discover-card-subtitle">${escapeHtml(result.subtitle)}</p>` : ''}
       <div class="discover-card-actions${type === 'event' ? ' no-complete' : ''}">
         ${type === 'event' ? '' : `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo watched / read' : 'Mark watched / read'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>`}
-        <button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>
+        ${['tv','movie','book'].includes(type) ? `<button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>` : ''}
       </div>
     </div>
   </article>`;
@@ -6570,6 +6733,12 @@ async function toggleDiscoverRecommended(key) {
   saveItems();
   renderLibrary();
   renderDiscoverCardInPlace(key);
+  if (els.discoverRatingRecommendHeart && state.pendingDiscoverRatingKey === key) {
+    els.discoverRatingRecommendHeart.textContent = item.recommended ? '♥' : '♡';
+    els.discoverRatingRecommendHeart.classList.toggle('is-recommended', Boolean(item.recommended));
+    els.discoverRatingRecommendHeart.setAttribute('aria-pressed', String(Boolean(item.recommended)));
+    els.discoverRatingRecommendHeart.setAttribute('aria-label', item.recommended ? 'Remove from Recommended' : 'Add to Recommended');
+  }
   if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
 }
 
@@ -6739,6 +6908,14 @@ function openDiscoverRatingPrompt(key, { allowTV = false } = {}) {
   els.discoverRatingPicker?.querySelectorAll('[data-discover-rating-choice]').forEach(button => {
     button.classList.toggle('filled', Number(button.dataset.discoverRatingChoice) <= rating);
   });
+  if (els.discoverRatingRecommendHeart) {
+    els.discoverRatingRecommendHeart.dataset.discoverRecommend = key;
+    const recommended = Boolean(existing?.recommended);
+    els.discoverRatingRecommendHeart.textContent = recommended ? '♥' : '♡';
+    els.discoverRatingRecommendHeart.classList.toggle('is-recommended', recommended);
+    els.discoverRatingRecommendHeart.setAttribute('aria-pressed', String(recommended));
+    els.discoverRatingRecommendHeart.setAttribute('aria-label', recommended ? 'Remove from Recommended' : 'Add to Recommended');
+  }
   els.discoverRatingModal.showModal();
 }
 
@@ -6805,9 +6982,10 @@ function discoverTVPersonalMetadataMarkup(item, key) {
     </div>
     <fieldset class="rating-fieldset discover-rating-fieldset">
       <legend>Rating <span>optional</span></legend>
-      <div class="star-picker discover-tv-rating-picker" aria-label="Your rating out of five stars">
+      <div class="star-picker discover-tv-rating-picker rating-with-heart" aria-label="Your rating out of five stars">
         ${[1,2,3,4,5].map(value => `<button type="button" data-discover-tv-rating="${value}" data-discover-key="${escapeAttr(key)}" class="${value <= rating ? 'filled' : ''}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
         <button class="clear-rating" type="button" data-clear-discover-tv-rating data-discover-key="${escapeAttr(key)}">clear</button>
+        <button class="rating-heart-button${item?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}" aria-label="${item?.recommended ? 'Remove from Recommended' : 'Add to Recommended'}" aria-pressed="${Boolean(item?.recommended)}" title="Recommended">${item?.recommended ? '♥' : '♡'}</button>
       </div>
     </fieldset>
     <label class="field">
@@ -6903,6 +7081,16 @@ function saveDiscoverTVPersonalMetadata(key) {
   }
 }
 
+function discoverQueueButtonsMarkup(result, key) {
+  if (!result || !['tv','movie','book'].includes(result.sourceType)) return '';
+  const item = findDiscoverItem(result);
+  const current = item ? getQueueStatus(item) : 'library';
+  return `<div class="queue-toggle-buttons" aria-label="Queue placement">
+    <button class="secondary-button queue-toggle-button${current === 'upnext' ? ' is-selected' : ''}" type="button" data-discover-direct-queue="upnext" data-discover-key="${escapeAttr(key)}" aria-pressed="${current === 'upnext'}">Up Next</button>
+    <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-discover-direct-queue="tbr" data-discover-key="${escapeAttr(key)}" aria-pressed="${current === 'tbr'}">TBR</button>
+  </div>`;
+}
+
 async function renderDiscoverTVDetail(key, requestedSeason = null) {
   const result = state.discoverResults.get(key);
   if (!result) return;
@@ -6961,8 +7149,7 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
       overview:details.overview || result.description || ''
     })}
     <div class="discover-detail-actions">
-      <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
-      <button class="secondary-button${existing?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}">${existing?.recommended ? '★ Recommended' : '☆ Recommend'}</button>
+      ${discoverQueueButtonsMarkup(result, key)}
       <button class="secondary-button${seriesCompleted ? ' is-complete' : ''}" type="button" data-discover-mark-all-tv="${escapeAttr(key)}">${seriesCompleted ? '↶ Undo series complete' : '✓ Mark series complete'}</button>
     </div>
     ${discoverTVPersonalMetadataMarkup(existing, key)}
@@ -7099,8 +7286,7 @@ async function renderDiscoverMovieDetail(key) {
       overview:details.overview || result.description || ''
     })}
     <div class="discover-detail-actions">
-      <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
-      <button class="secondary-button${findDiscoverItem(result)?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}">${findDiscoverItem(result)?.recommended ? '★ Recommended' : '☆ Recommend'}</button>
+      ${discoverQueueButtonsMarkup(result, key)}
       <button class="secondary-button${completed ? ' is-complete' : ''}" type="button" data-discover-detail-complete="${escapeAttr(key)}">${completed ? '↶ Mark not watched' : '✓ Mark watched'}</button>
     </div>
     ${discoverTVPersonalMetadataMarkup(findDiscoverItem(result), key)}
@@ -7124,11 +7310,7 @@ async function renderDiscoverEventDetail(key) {
   const info = [(event.classifications || []).join(' · '), priceText].filter(Boolean).join(' · ');
   els.detailBody.innerHTML = `
     ${detailHero({ type:'EVENT', title:event.title || result.title, image:event.image || result.image, subtitle:dateLine, overview:event.description || result.description || '' })}
-    <div class="detail-actions">
-      <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">${item && getQueueStatus(item) === 'tbr' ? 'In TBR' : item && getQueueStatus(item) === 'upnext' ? 'In Up Next' : '+ Up Next / TBR'}</button>
-      <button class="secondary-button${item?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}">${item?.recommended ? '★ Recommended' : '☆ Recommend'}</button>
-      ${event.ticketUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(event.ticketUrl)}" target="_blank" rel="noopener">Tickets on Ticketmaster ↗</a>` : ''}
-    </div>
+    ${event.ticketUrl ? `<div class="detail-actions"><a class="secondary-button detail-link-button" href="${escapeAttr(event.ticketUrl)}" target="_blank" rel="noopener">Tickets on Ticketmaster ↗</a></div>` : ''}
     <section class="detail-section"><h3>Event details</h3>${info ? `<p>${escapeHtml(info)}</p>` : ''}${event.address ? `<p class="detail-meta">${escapeHtml(event.address)}</p>` : ''}</section>
   `;
 }
@@ -7163,8 +7345,7 @@ async function renderDiscoverBookDetail(key) {
       overview:info.description || result.description || ''
     })}
     <div class="discover-detail-actions">
-      <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">+ Up Next / TBR</button>
-      <button class="secondary-button${existing?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}">${existing?.recommended ? '★ Recommended' : '☆ Recommend'}</button>
+      ${discoverQueueButtonsMarkup(result, key)}
       <button class="secondary-button${completed ? ' is-complete' : ''}" type="button" data-discover-detail-complete="${escapeAttr(key)}">${completed ? '↶ Mark unread' : '✓ Mark read'}</button>
     </div>
     ${discoverTVPersonalMetadataMarkup(existing, key)}
@@ -7642,20 +7823,31 @@ function setLibraryView(view) {
 function itemLibraryDate(item) {
   const datedHistory = state.history
     .filter(entry => entry.sourceItemId === item.id && entry.date)
-    .map(entry => entry.date)
-    .sort()
-    .at(-1);
+    .map(entry => String(entry.date).slice(0, 10))
+    .filter(Boolean);
 
-  // "Recent" means the latest meaningful activity on the Library item, not
-  // only when it was originally watched/read. Rating an older movie today should
-  // therefore move it to the front instead of being pinned to its old completedAt.
-  return [
-    item.updatedAt,
-    datedHistory,
-    item.completedAt,
-    item.date,
-    item.createdAt
-  ].filter(Boolean).sort().at(-1) || '';
+  const sourceType = getSourceType(item);
+  const consumedDates = [...datedHistory];
+
+  // Books may have reading periods even when their completion/history record is
+  // intentionally hidden from the calendar. Use the actual reading dates for
+  // Library recency, not the date the book was saved or later edited.
+  if (sourceType === 'book') {
+    for (const period of getBookReadingPeriods(item)) {
+      if (period.endDate) consumedDates.push(period.endDate);
+      else if (period.startDate && Number(item.progress?.currentPage || 0) > 0) consumedDates.push(period.startDate);
+    }
+  }
+
+  if (item.completedAt) consumedDates.push(String(item.completedAt).slice(0, 10));
+
+  // For manually dated/logged items, item.date is itself the consumed/logged date.
+  // Do not use it for untouched catalogue items merely because they have metadata.
+  if (!['tv', 'movie', 'book', 'music'].includes(sourceType) && item.date) {
+    consumedDates.push(String(item.date).slice(0, 10));
+  }
+
+  return consumedDates.filter(Boolean).sort().at(-1) || '';
 }
 
 function normalizeLibraryPrefs(value) {
@@ -7788,6 +7980,73 @@ function tvLibraryStatusLabel(key) {
   })[key] || key;
 }
 
+function bookLibraryStatusKey(item) {
+  if (item?.bookDisposition === 'dnf') return 'dnf';
+  const current = Math.max(0, Number(item?.progress?.currentPage || 0));
+  const total = Math.max(0, Number(item?.progress?.totalPages || 0));
+  if (item?.completedAt || (total > 0 && current >= total)) return 'finished';
+  if (current > 0 || getBookReadingPeriods(item).length) return 'in-progress';
+  return 'not-started';
+}
+
+function bookLibraryStatusLabel(key) {
+  return ({
+    'in-progress': 'In progress',
+    finished: 'Finished',
+    dnf: 'DNF',
+    'not-started': 'Not started'
+  })[key] || key;
+}
+
+function bookStatusBadgeMarkup(item) {
+  const key = bookLibraryStatusKey(item);
+  const tone = key === 'in-progress' ? 'progress'
+    : key === 'finished' ? 'finished'
+      : key === 'dnf' ? 'muted'
+        : 'later';
+  return `<span class="tv-status-badge tv-status-${tone}">${escapeHtml(bookLibraryStatusLabel(key))}</span>`;
+}
+
+async function toggleBookDNF(item) {
+  if (!item || getSourceType(item) !== 'book') return;
+
+  if (item.bookDisposition === 'dnf') {
+    item.bookDisposition = '';
+    const previous = item.bookDNFSnapshot?.queueStatus;
+    delete item.bookDNFSnapshot;
+    const fallback = Number(item.progress?.currentPage || 0) > 0 ? 'upnext' : 'library';
+    setItemQueueStatus(item, ['upnext','tbr','library'].includes(previous) ? previous : fallback);
+  } else {
+    const previousQueueStatus = getQueueStatus(item);
+
+    // If the book had been bulk-marked finished, DNF should represent the
+    // pre-completion reading state rather than a 100%-read book.
+    if (item.completedAt) {
+      const snapshot = item.bookCompletionSnapshot || null;
+      if (snapshot) {
+        item.progress = {
+          ...item.progress,
+          currentPage: Number(snapshot.currentPage || 0),
+          readingPeriods: sanitizeBookReadingPeriods(snapshot.readingPeriods || [])
+        };
+      }
+      item.completedAt = '';
+      delete item.bookCompletionSnapshot;
+      state.history = state.history.filter(entry => !(entry.sourceItemId === item.id && entry.kind === 'book-finished'));
+    }
+
+    item.bookDNFSnapshot = { queueStatus: previousQueueStatus };
+    item.bookDisposition = 'dnf';
+    setItemQueueStatus(item, 'library');
+  }
+
+  item.updatedAt = new Date().toISOString();
+  saveItems();
+  saveHistory();
+  renderAll();
+  if (els.detailModal?.open && state.openDetailId === item.id) await renderBookDetails(item);
+}
+
 function tvLibraryProgressScore(item) {
   let watchedEpisodes = 0;
   for (const entry of state.history) {
@@ -7916,6 +8175,61 @@ function renderLibrary() {
         }
       } else {
         const previewGrid = section.querySelector('.tv-library-preview');
+        for (const item of items) previewGrid.appendChild(makeLibraryPoster(item));
+      }
+
+      els.libraryGroups.appendChild(section);
+      continue;
+    }
+
+    if (slugifyType(groupKey).replace(/s$/, '') === 'book') {
+      const rootExpansionKey = 'book:root';
+      const rootExpanded = state.libraryExpandedGroups.has(rootExpansionKey);
+      const section = document.createElement('section');
+      section.className = `library-group library-shelf library-book-shelf${rootExpanded ? ' is-expanded' : ' is-collapsed'}`;
+      section.dataset.libraryGroup = groupKey;
+      section.innerHTML = `
+        <div class="library-group-heading-row">
+          <div class="library-group-title-wrap">
+            <h2 class="library-group-title">${escapeHtml(groupLabel)}</h2>
+            <span class="library-group-count">${items.length}</span>
+          </div>
+          <div class="library-shelf-controls">
+            ${rootExpanded ? '' : '<button class="library-carousel-button" type="button" data-library-carousel="prev" aria-label="Scroll Books left">‹</button><button class="library-carousel-button" type="button" data-library-carousel="next" aria-label="Scroll Books right">›</button>'}
+            <button class="library-expand-button" type="button" data-library-expand="${rootExpansionKey}">${rootExpanded ? 'Collapse' : 'View all'}</button>
+          </div>
+        </div>
+        ${rootExpanded
+          ? '<div class="tv-library-status-groups book-library-status-groups"></div>'
+          : '<div class="library-poster-grid book-library-preview"></div>'}`;
+
+      if (rootExpanded) {
+        const statusHost = section.querySelector('.book-library-status-groups');
+        for (const statusKey of ['in-progress', 'finished', 'dnf', 'not-started']) {
+          const statusItems = items.filter(item => bookLibraryStatusKey(item) === statusKey).sort(compare);
+          if (!statusItems.length) continue;
+          const expansionKey = `book:${statusKey}`;
+          const expanded = state.libraryExpandedGroups.has(expansionKey);
+          const statusSection = document.createElement('section');
+          statusSection.className = `tv-library-status-group book-library-status-group${expanded ? ' is-expanded' : ''}`;
+          statusSection.innerHTML = `
+            <div class="tv-library-status-heading">
+              <div>
+                <h3 class="tv-library-status-title">${escapeHtml(bookLibraryStatusLabel(statusKey))}</h3>
+                <span class="library-group-count">${statusItems.length}</span>
+              </div>
+              <div class="library-shelf-controls">
+                ${expanded ? '' : '<button class="library-carousel-button" type="button" data-library-carousel="prev" aria-label="Scroll left">‹</button><button class="library-carousel-button" type="button" data-library-carousel="next" aria-label="Scroll right">›</button>'}
+                <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(expansionKey)}">${expanded ? 'Carousel' : 'View all'}</button>
+              </div>
+            </div>
+            <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
+          const grid = statusSection.querySelector('.library-poster-grid');
+          for (const item of statusItems) grid.appendChild(makeLibraryPoster(item));
+          statusHost.appendChild(statusSection);
+        }
+      } else {
+        const previewGrid = section.querySelector('.book-library-preview');
         for (const item of items) previewGrid.appendChild(makeLibraryPoster(item));
       }
 

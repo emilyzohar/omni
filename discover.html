@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=library-calendar-textcard-2" />
+  <link rel="stylesheet" href="style.css?v=queue-heart-new-groups-1" />
 </head>
 <body class="discover-page auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -358,6 +358,7 @@
           <button type="button" data-rating="4" aria-label="4 stars">★</button>
           <button type="button" data-rating="5" aria-label="5 stars">★</button>
           <button id="clearRating" class="clear-rating" type="button">clear</button>
+          <button id="itemRecommendHeart" class="rating-heart-button" type="button" aria-label="Add to Recommended" aria-pressed="false" title="Recommended">♡</button>
         </div>
         <input id="itemRating" type="hidden" value="0" />
       </fieldset>
@@ -387,10 +388,7 @@
         <div id="linkEditorList" class="attachment-editor-list"></div>
       </section>
 
-      <label class="checkbox-field preference-checkbox item-recommended-field">
-        <input id="itemRecommended" type="checkbox" />
-        <span>Add to Recommended folder</span>
-      </label>
+      <input id="itemRecommended" type="checkbox" hidden />
 
       <label class="field">
         <span>Date <em>optional</em></span>
@@ -446,6 +444,7 @@
       <button type="button" data-discover-rating-choice="3" aria-label="3 stars">★</button>
       <button type="button" data-discover-rating-choice="4" aria-label="4 stars">★</button>
       <button type="button" data-discover-rating-choice="5" aria-label="5 stars">★</button>
+      <button id="discoverRatingRecommendHeart" class="rating-heart-button" type="button" aria-label="Add to Recommended" aria-pressed="false" title="Recommended">♡</button>
     </div>
     <div class="modal-actions end-only">
       <button class="quiet-button" type="button" data-discover-rating-skip>Not now</button>
@@ -493,6 +492,7 @@
           <button type="button" data-history-rating="4" aria-label="4 stars">★</button>
           <button type="button" data-history-rating="5" aria-label="5 stars">★</button>
           <button id="historyClearRating" type="button" class="clear-rating">clear</button>
+          <button id="historyRecommendHeart" class="rating-heart-button" type="button" aria-label="Add source item to Recommended" aria-pressed="false" title="Recommended">♡</button>
         </div>
         <input id="historyEditRating" type="hidden" value="0" />
       </fieldset>
@@ -535,7 +535,7 @@
     <button class="modal-x" type="button" data-close="bookProgressModal" aria-label="Close">×</button>
     <div class="modal-heading">
       <p class="modal-eyebrow">BOOK PROGRESS</p>
-      <h2 id="bookProgressTitle">Update pages</h2>
+      <h2 id="bookProgressTitle">Update pages &amp; dates</h2>
     </div>
     <form id="bookProgressForm" class="book-progress-form">
       <input id="bookProgressId" type="hidden" />
@@ -548,6 +548,19 @@
         <span>Total pages</span>
         <input id="progressTotalPages" type="number" min="1" step="1" />
       </label>
+      <section class="book-period-editor" aria-label="Reading dates">
+        <div class="book-period-editor-heading">
+          <div>
+            <strong>Reading dates</strong>
+            <small>Use separate periods if you pause and resume later.</small>
+          </div>
+          <div class="book-period-editor-actions">
+            <button id="bookPauseResume" class="quiet-button" type="button">Pause today</button>
+            <button id="bookAddPeriod" class="secondary-button" type="button">+ Add period</button>
+          </div>
+        </div>
+        <div id="bookPeriodsList" class="book-period-list"></div>
+      </section>
       <div class="modal-actions end-only">
         <div class="actions-right">
           <button class="quiet-button" type="button" data-close="bookProgressModal">Cancel</button>
@@ -557,6 +570,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=book-discover-filter-1"></script>
+  <script type="module" src="app.js?v=queue-heart-new-groups-1"></script>
 </body>
 </html>
