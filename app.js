@@ -2752,27 +2752,46 @@ function renderMonthTracker() {
     const [y,m] = entry.date.split('-').map(Number);
     return y === year && m - 1 === month;
   });
-  const categories = [...new Set(dated.map(entry => entry.type))];
-  const displayCategories = categories.length ? categories : ['workout', 'tv', 'book', 'movie'];
+  const groupsByKey = new Map();
+  for (const entry of dated) {
+    const key = getCalendarTypeGroupKey(entry);
+    if (!groupsByKey.has(key)) {
+      groupsByKey.set(key, {
+        key,
+        label: getCalendarTypeGroupLabel(entry),
+        representativeType: entry.type,
+        representativeEntry: entry
+      });
+    }
+  }
+  const displayGroups = groupsByKey.size
+    ? [...groupsByKey.values()]
+    : ['workout', 'tv', 'book', 'movie'].map(type => ({
+        key: slugifyType(getTypeLabel(type)),
+        label: getTypeLabel(type),
+        representativeType: type,
+        representativeEntry: { type, typeLabel: getTypeLabel(type) }
+      }));
 
   els.trackerGrid.appendChild(cell('tracker-cell tracker-corner', ''));
   for (let day=1; day<=days; day++) els.trackerGrid.appendChild(cell('tracker-cell tracker-day', String(day)));
 
-  for (const type of displayCategories) {
-    els.trackerGrid.appendChild(cell('tracker-cell tracker-category', getTypeLabel(type).toLowerCase()));
+  for (const group of displayGroups) {
+    els.trackerGrid.appendChild(cell('tracker-cell tracker-category', group.label.toLowerCase()));
     for (let day=1; day<=days; day++) {
       const container = cell('tracker-cell', '');
       const date = `${yearText}-${monthText}-${String(day).padStart(2, '0')}`;
-      const matches = dated.filter(entry => entry.type === type && entry.date === date);
+      const matches = dated.filter(entry => getCalendarTypeGroupKey(entry) === group.key && entry.date === date);
 
       if (matches.length) {
+        const first = matches[0];
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'sticker-button sticker-group-button';
-        button.dataset.type = type;
+        button.dataset.groupKey = group.key;
         button.dataset.date = date;
-        button.title = matches.length === 1 ? matches[0].title : `${matches.length} ${getTypeLabel(type)} entries`;
-        button.innerHTML = `${calendarStickerMarkup(type, matches[0])}${matches.length > 1 ? `<span class="sticker-count">${matches.length}</span>` : ''}`;
+        button.title = matches.length === 1 ? first.title : `${matches.length} ${group.label} entries`;
+        button.innerHTML = `${calendarStickerMarkup(first.type, first)}${matches.length > 1 ? `<span class="sticker-count">${matches.length}</span>` : ''}`;
         container.appendChild(button);
       }
       els.trackerGrid.appendChild(container);
@@ -2799,8 +2818,9 @@ function renderWeekTracker() {
     const groups = new Map();
 
     for (const entry of matches) {
-      if (!groups.has(entry.type)) groups.set(entry.type, []);
-      groups.get(entry.type).push(entry);
+      const key = getCalendarTypeGroupKey(entry);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(entry);
     }
 
     const section = document.createElement('section');
@@ -2819,12 +2839,13 @@ function renderWeekTracker() {
     if (!groups.size) {
       body.innerHTML = '<span class="week-empty">Nothing tracked</span>';
     } else {
-      for (const [type, typeEntries] of groups) {
+      for (const [groupKey, typeEntries] of groups) {
         const first = typeEntries[0];
+        const label = getCalendarTypeGroupLabel(first);
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'week-entry sticker-group-button';
-        button.dataset.type = type;
+        button.dataset.groupKey = groupKey;
         button.dataset.date = date;
 
         const summary = typeEntries.length === 1
@@ -2832,9 +2853,9 @@ function renderWeekTracker() {
           : `${typeEntries[0].title}${typeEntries.length > 1 ? ` +${typeEntries.length - 1} more` : ''}`;
 
         button.innerHTML = `
-          <span class="week-entry-sticker">${calendarStickerMarkup(type, first)}</span>
+          <span class="week-entry-sticker">${calendarStickerMarkup(first.type, first)}</span>
           <span class="week-entry-copy">
-            <strong>${escapeHtml(first.typeLabel || getTypeLabel(type))}</strong>
+            <strong>${escapeHtml(label)}</strong>
             <small>${escapeHtml(shorten(summary, 62))}</small>
           </span>
           ${typeEntries.length > 1 ? `<span class="week-entry-count">${typeEntries.length}</span>` : '<span class="week-entry-arrow">→</span>'}`;
@@ -2930,15 +2951,23 @@ function cleanStickerLabel(value) {
   return String(value ?? '').replace(/\s+/g, '').slice(0, 3).toUpperCase();
 }
 
-function handleTrackerClick(event) {
-  const button = event.target.closest('.sticker-group-button[data-date][data-type]');
-  if (!button) return;
-  openCalendarGroup(button.dataset.type, button.dataset.date);
+function getCalendarTypeGroupLabel(entry) {
+  return cleanTypeLabel(entry?.typeLabel || getTypeLabel(entry?.type)) || 'Other';
 }
 
-function openCalendarGroup(type, date) {
+function getCalendarTypeGroupKey(entry) {
+  return slugifyType(getCalendarTypeGroupLabel(entry));
+}
+
+function handleTrackerClick(event) {
+  const button = event.target.closest('.sticker-group-button[data-date][data-group-key]');
+  if (!button) return;
+  openCalendarGroup(button.dataset.groupKey, button.dataset.date);
+}
+
+function openCalendarGroup(groupKey, date) {
   const entries = getCalendarEntries()
-    .filter(entry => entry.type === type && entry.date === date)
+    .filter(entry => getCalendarTypeGroupKey(entry) === groupKey && entry.date === date)
     .sort((a,b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
   if (!entries.length) return;
 
@@ -2967,7 +2996,7 @@ function openCalendarGroup(type, date) {
 
   els.detailBody.innerHTML = `
     <div class="calendar-group-heading">
-      <p class="detail-type">${escapeHtml(getTypeLabel(type))}</p>
+      <p class="detail-type">${escapeHtml(getCalendarTypeGroupLabel(entries[0]))}</p>
       <h2>${escapeHtml(formattedDate)}</h2>
       <p class="detail-meta">${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} · every past entry can be edited</p>
     </div>
