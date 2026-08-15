@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=library-type-multiselect-1" />
+  <link rel="stylesheet" href="style.css?v=ticketmaster-calendar-1" />
 </head>
 <body class="discover-page auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -101,6 +101,7 @@
                 <option value="tv">TV</option>
                 <option value="movie">Movies</option>
                 <option value="book">Books</option>
+                <option value="event">Events</option>
               </select>
             </label>
             <label class="discover-type-filter">
@@ -116,7 +117,7 @@
 
         <section class="discover-feed-section" aria-label="Discovery feed">
           <div class="discover-feed-intro">
-            <p id="discoverFeedIntroText">TV, movies, and books mixed together. Your streaming services, watched/read history, ratings, and familiar authors are weighted toward the top — with enough randomness that each visit changes.</p>
+            <p id="discoverFeedIntroText">TV, movies, books, and nearby events mixed together. Your streaming services, watched/read history, ratings, and familiar authors are weighted toward the top — with enough randomness that each visit changes.</p>
           </div>
           <div id="discoverFeed" class="discover-feed-grid"></div>
           <div id="discoverFeedSentinel" class="discover-feed-sentinel" aria-hidden="true">
@@ -125,7 +126,7 @@
           <p id="discoverFeedMessage" class="discover-feed-message">Keep scrolling — more will load automatically.</p>
         </section>
 
-        <p id="watchProviderAttribution" class="watch-provider-attribution">Streaming availability data by JustWatch via TMDB.</p>
+        <p id="watchProviderAttribution" class="watch-provider-attribution">Streaming availability data by JustWatch via TMDB. Event data by Ticketmaster.</p>
       </div>
     </section>
 
@@ -155,6 +156,23 @@
           <p class="provider-loading">Loading services…</p>
         </div>
         <p id="streamingRegionNote" class="settings-note"></p>
+      </section>
+
+      <section class="settings-section">
+        <div>
+          <h3>Local events</h3>
+          <p class="settings-note">Ticketmaster events in Discover use this location. Saved events also appear in your upcoming Calendar tab.</p>
+        </div>
+        <div class="two-column-fields">
+          <label class="field compact-field">
+            <span>City</span>
+            <input id="eventCity" type="text" autocomplete="address-level2" placeholder="Toronto" />
+          </label>
+          <label class="field compact-field">
+            <span>Country code</span>
+            <input id="eventCountry" type="text" maxlength="2" autocomplete="country" placeholder="CA" />
+          </label>
+        </div>
       </section>
 
       <label class="checkbox-field preference-checkbox">
@@ -200,6 +218,7 @@
           <option value="movie">Movie</option>
           <option value="book">Book</option>
           <option value="music">Music</option>
+          <option value="event">Event</option>
           <option value="youtube">YouTube</option>
           <option value="other">Other</option>
         </select>
@@ -454,6 +473,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=library-type-multiselect-1"></script>
+  <script type="module" src="app.js?v=streaming-inline-details-1"></script>
 </body>
 </html>

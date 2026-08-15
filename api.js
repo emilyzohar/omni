@@ -4,6 +4,7 @@ export const TrackerAPI = (() => {
   const GOOGLE_BOOKS_ROOT = 'https://www.googleapis.com/books/v1';
   const YOUTUBE_ROOT = 'https://www.googleapis.com/youtube/v3';
   const ITUNES_ROOT = 'https://itunes.apple.com';
+  const TICKETMASTER_ROOT = 'https://app.ticketmaster.com/discovery/v2';
 
   function required(value, label) {
     if (!value) throw new Error(`${label} is missing from .env.`);
@@ -526,11 +527,112 @@ export const TrackerAPI = (() => {
     return video;
   }
 
+
+  function ticketmasterDateTime(value = new Date()) {
+    const date = value instanceof Date ? value : new Date(value);
+    return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
+  }
+
+  function ticketmasterImage(images = []) {
+    if (!Array.isArray(images) || !images.length) return '';
+    const ranked = [...images].sort((a, b) => {
+      const ar = a.ratio === '16_9' ? 0 : a.ratio === '3_2' ? 1 : 2;
+      const br = b.ratio === '16_9' ? 0 : b.ratio === '3_2' ? 1 : 2;
+      if (ar !== br) return ar - br;
+      return Number(b.width || 0) - Number(a.width || 0);
+    });
+    return ranked[0]?.url || '';
+  }
+
+  function mapTicketmasterEvent(event) {
+    const venue = event?._embedded?.venues?.[0] || {};
+    const classification = event?.classifications?.[0] || {};
+    const localDate = event?.dates?.start?.localDate || '';
+    const localTime = event?.dates?.start?.localTime || '';
+    const city = venue?.city?.name || '';
+    const region = venue?.state?.stateCode || venue?.state?.name || venue?.country?.countryCode || '';
+    const venueName = venue?.name || '';
+    const segment = classification?.segment?.name || '';
+    const genre = classification?.genre?.name || '';
+    const subGenre = classification?.subGenre?.name || '';
+    const price = event?.priceRanges?.[0] || {};
+    return {
+      sourceType: 'event',
+      provider: 'ticketmaster',
+      providerId: String(event?.id || ''),
+      title: event?.name || 'Untitled event',
+      subtitle: [localDate, venueName, city].filter(Boolean).join(' · '),
+      image: ticketmasterImage(event?.images || []),
+      description: event?.info || event?.pleaseNote || '',
+      eventDate: localDate,
+      eventTime: localTime,
+      startDateTime: event?.dates?.start?.dateTime || '',
+      timezone: event?.dates?.timezone || venue?.timezone || '',
+      venueName,
+      city,
+      region,
+      countryCode: venue?.country?.countryCode || '',
+      address: [venue?.address?.line1, city, region].filter(Boolean).join(', '),
+      ticketUrl: event?.url || '',
+      salesStart: event?.sales?.public?.startDateTime || '',
+      salesEnd: event?.sales?.public?.endDateTime || '',
+      status: event?.dates?.status?.code || '',
+      classifications: [segment, genre, subGenre].filter(value => value && value !== 'Undefined'),
+      priceRange: Number.isFinite(Number(price?.min)) || Number.isFinite(Number(price?.max)) ? {
+        min: Number(price?.min || 0),
+        max: Number(price?.max || 0),
+        currency: price?.currency || ''
+      } : null,
+      raw: event
+    };
+  }
+
+  function ticketmasterLocationParams(settings, options = {}) {
+    const city = String(options.city ?? settings.homeCity ?? '').trim();
+    const countryCode = String(options.countryCode ?? settings.homeCountry ?? settings.tmdbWatchRegion ?? 'CA').trim().toUpperCase();
+    const geoPoint = String(options.geoPoint || '').trim();
+    const params = {};
+    if (geoPoint) params.geoPoint = geoPoint;
+    else if (city) params.city = city;
+    if (countryCode) params.countryCode = countryCode;
+    return params;
+  }
+
+  async function searchTicketmasterEvents(query, settings, options = {}) {
+    const key = required(settings.ticketmasterKey, 'Ticketmaster API key');
+    const params = new URLSearchParams({
+      apikey: key,
+      size: String(Math.min(50, Math.max(1, Number(options.size || 20)))),
+      page: String(Math.max(0, Number(options.page || 0))),
+      sort: options.sort || 'date,asc',
+      startDateTime: options.startDateTime || ticketmasterDateTime()
+    });
+    const keyword = String(query || '').trim();
+    if (keyword) params.set('keyword', keyword);
+    for (const [name, value] of Object.entries(ticketmasterLocationParams(settings, options))) params.set(name, value);
+    if (options.classificationName) params.set('classificationName', options.classificationName);
+    if (options.radius) params.set('radius', String(options.radius));
+    if (options.unit) params.set('unit', String(options.unit));
+    const data = await fetchJson(`${TICKETMASTER_ROOT}/events.json?${params.toString()}`);
+    return (data?._embedded?.events || []).map(mapTicketmasterEvent);
+  }
+
+  async function getUpcomingEvents(settings, options = {}) {
+    return searchTicketmasterEvents('', settings, options);
+  }
+
+  async function getTicketmasterEvent(id, settings) {
+    const key = required(settings.ticketmasterKey, 'Ticketmaster API key');
+    const data = await fetchJson(`${TICKETMASTER_ROOT}/events/${encodeURIComponent(id)}.json?apikey=${encodeURIComponent(key)}`);
+    return mapTicketmasterEvent(data);
+  }
+
   async function searchCatalogue(query, type, settings) {
     if (!query.trim()) return [];
     if (type === 'tv' || type === 'movie') return searchTMDB(query, type, settings);
     if (type === 'book') return searchBooks(query, settings);
     if (type === 'music') return searchMusic(query, settings);
+    if (type === 'event') return searchTicketmasterEvents(query, settings);
     return [];
   }
 
@@ -549,6 +651,9 @@ export const TrackerAPI = (() => {
     parsePlaylistId,
     getPlaylist,
     getYouTubeVideo,
+    searchTicketmasterEvents,
+    getUpcomingEvents,
+    getTicketmasterEvent,
     getTrending,
     getTMDBDiscover,
     getTMDBGenres,

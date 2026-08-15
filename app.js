@@ -23,6 +23,7 @@ const TYPE_LABELS = {
   book: 'Books',
   movie: 'Movies',
   music: 'Music',
+  event: 'Events',
   workout: 'Workouts',
   other: 'Other'
 };
@@ -31,14 +32,15 @@ const SOURCE_ITEM_LABELS = {
   tv: 'TV',
   movie: 'Movie',
   book: 'Book',
-  music: 'Music'
+  music: 'Music',
+  event: 'Event'
 };
 
-const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'other']);
+const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'event', 'other']);
 const STICKER_COLORS = ['rust', 'red', 'coral', 'orange', 'yellow', 'cream', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'teal', 'green', 'mint', 'brown', 'black', 'white'];
 
 const CLOUD_STATE_VERSION = 2;
-const DEFAULT_DISCOVER_PREFS = { streamingProviderIds: [], streamingProviderNames: [], prioritizeAuthors: true, englishTVOnly: false, contentType: 'all', genre: 'all' };
+const DEFAULT_DISCOVER_PREFS = { streamingProviderIds: [], streamingProviderNames: [], prioritizeAuthors: true, englishTVOnly: false, contentType: 'all', genre: 'all', eventCity: API_CONFIG.homeCity || '', eventCountry: API_CONFIG.homeCountry || API_CONFIG.tmdbWatchRegion || 'CA' };
 const DEFAULT_LIBRARY_PREFS = { defaultTypeKeys: null };
 let currentUser = null;
 let appStarted = false;
@@ -178,6 +180,8 @@ const els = {
   prioritizeAuthors: $('#prioritizeAuthors'),
   englishTVOnly: $('#englishTVOnly'),
   clearStreamingProviders: $('#clearStreamingProviders'),
+  eventCity: $('#eventCity'),
+  eventCountry: $('#eventCountry'),
   itemModal: $('#itemModal'),
   detailModal: $('#detailModal'),
   detailBody: $('#detailBody'),
@@ -832,7 +836,12 @@ async function renderUpNext() {
   const changed = await reconcileTVQueueStates();
   if (changed && els.libraryGroups) renderLibrary();
 
-  const view = state.queueView === 'tbr' ? 'tbr' : 'upnext';
+  const view = ['tbr', 'calendar'].includes(state.queueView) ? state.queueView : 'upnext';
+  if (view === 'calendar') {
+    await renderQueueCalendar();
+    return;
+  }
+  els.upNextList?.classList.remove('queue-calendar-list');
   const today = todayString();
   const availableItems = state.items.filter(item => {
     if (getQueueStatus(item) !== view) return false;
@@ -877,7 +886,7 @@ async function renderUpNext() {
       if (isStreamingItem(item)) {
         try {
           const availability = await getItemStreamingAvailability(item);
-          streaming = streamingAvailabilityLabel(availability, 3);
+          streaming = streamingAvailabilityLabel(availability, 3, '');
         } catch {}
       }
       card.innerHTML = queueCardMarkup(item, {
@@ -899,7 +908,7 @@ async function renderUpNext() {
         getUpNextInfo(item),
         isStreamingItem(item) ? getItemStreamingAvailability(item).catch(() => null) : Promise.resolve(null)
       ]);
-      if (availability) info.streaming = streamingAvailabilityLabel(availability, 3);
+      if (availability) info.streaming = streamingAvailabilityLabel(availability, 3, '');
       card.classList.remove('queue-loading');
       card.innerHTML = queueCardMarkup(item, info);
     } catch (error) {
@@ -914,8 +923,117 @@ async function renderUpNext() {
 }
 
 function setQueueView(view) {
-  state.queueView = view === 'tbr' ? 'tbr' : 'upnext';
+  state.queueView = ['tbr', 'calendar'].includes(view) ? view : 'upnext';
   renderUpNext();
+}
+
+async function renderQueueCalendar() {
+  if (!els.upNextList || !els.upNextEmpty) return;
+  if (els.queueHeading) els.queueHeading.textContent = 'Calendar';
+  els.queueTabs?.forEach(tab => {
+    const active = tab.dataset.queueTab === 'calendar';
+    tab.classList.toggle('is-active', active);
+    tab.setAttribute('aria-selected', String(active));
+  });
+
+  els.upNextList.innerHTML = '<p class="queue-calendar-loading">Loading upcoming dates…</p>';
+  els.upNextEmpty.hidden = true;
+  const entries = await buildQueueCalendarEntries();
+  refreshQueueTypeFilter(entries.map(entry => entry.item));
+  const selectedType = state.queueTypeFilter || 'all';
+  const visible = entries.filter(entry => selectedType === 'all' || queueTypeGroupKey(entry.item) === selectedType);
+
+  els.upNextList.innerHTML = '';
+  els.upNextList.classList.add('queue-calendar-list');
+  if (!visible.length) {
+    els.upNextEmpty.hidden = false;
+    els.upNextEmpty.textContent = entries.length ? 'Nothing scheduled for this type.' : 'Nothing upcoming yet. Future reminders, events, TV episodes, and dated items will appear here.';
+    return;
+  }
+
+  els.upNextEmpty.hidden = true;
+  let currentDate = '';
+  let group = null;
+  for (const entry of visible) {
+    if (entry.date !== currentDate) {
+      currentDate = entry.date;
+      group = document.createElement('section');
+      group.className = 'queue-calendar-day';
+      group.innerHTML = `<div class="queue-calendar-date"><span>${escapeHtml(formatQueueCalendarWeekday(entry.date))}</span><strong>${escapeHtml(formatQueueCalendarDate(entry.date))}</strong></div><div class="queue-calendar-day-items"></div>`;
+      els.upNextList.appendChild(group);
+    }
+    group.querySelector('.queue-calendar-day-items')?.insertAdjacentHTML('beforeend', queueCalendarEntryMarkup(entry));
+  }
+}
+
+async function buildQueueCalendarEntries() {
+  const today = todayString();
+  const horizon = addDaysToDateString(today, 120);
+  const entries = [];
+  const add = (item, date, title, meta, image = '', kind = '') => {
+    if (!item || !date || date < today) return;
+    entries.push({ item, date, title: title || item.title, meta: meta || '', image: image || item.image || '', kind });
+  };
+
+  for (const item of state.items) {
+    const sourceType = getSourceType(item);
+    if (sourceType === 'reminder') {
+      let due = getNextReminderDueDate(item);
+      if (!due || due < today) continue;
+      const frequency = reminderFrequency(item);
+      const maxOccurrences = frequency === 'none' ? 1 : 12;
+      for (let count = 0; count < maxOccurrences && due && due <= horizon; count += 1) {
+        add(item, due, item.title, reminderScheduleLabel(item), item.image, 'reminder');
+        if (frequency === 'daily') due = addDaysToDateString(due, 1);
+        else if (frequency === 'weekly') due = addDaysToDateString(due, 7);
+        else break;
+      }
+      continue;
+    }
+
+    if (sourceType === 'event') {
+      const date = item.date || item.eventMeta?.eventDate || '';
+      add(item, date, item.title, [formatEventClock(item.eventMeta?.eventTime || ''), item.eventMeta?.venueName || '', item.eventMeta?.city || '', getQueueStatus(item) === 'tbr' ? 'TBR' : ''].filter(Boolean).join(' · '), item.image, 'event');
+      continue;
+    }
+
+    if (item.date && item.date >= today) {
+      add(item, item.date, item.title, [getItemTypeLabel(item), getQueueStatus(item) === 'tbr' ? 'TBR' : ''].filter(Boolean).join(' · '), item.image, 'dated');
+    } else if (['movie'].includes(sourceType) && item.releaseDate && item.releaseDate >= today && getQueueStatus(item) !== 'library') {
+      add(item, item.releaseDate, item.title, `${getItemTypeLabel(item)} release${getQueueStatus(item) === 'tbr' ? ' · TBR' : ''}`, item.image, 'release');
+    }
+  }
+
+  const followedTV = state.items.filter(item => getSourceType(item) === 'tv' && item.providerId && item.watchDisposition !== 'watch-later' && item.watchDisposition !== 'stopped');
+  const tvSettled = await Promise.allSettled(followedTV.map(async item => {
+    const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
+    return { item, episode: details?.next_episode_to_air || null };
+  }));
+  for (const result of tvSettled) {
+    if (result.status !== 'fulfilled' || !result.value.episode?.air_date) continue;
+    const { item, episode } = result.value;
+    add(item, episode.air_date, item.title, `S${episode.season_number} E${episode.episode_number}${episode.name ? ` · ${episode.name}` : ''}`, TrackerAPI.tmdbImage(episode.still_path) || item.image, 'tv-episode');
+  }
+
+  return entries.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+}
+
+function queueCalendarEntryMarkup(entry) {
+  const label = getItemTypeLabel(entry.item);
+  const art = entry.image ? `<img src="${escapeAttr(entry.image)}" alt="" />` : `<div class="queue-calendar-thumb placeholder">${escapeHtml(label?.[0] || '•')}</div>`;
+  return `<article class="queue-calendar-entry">
+    ${art}
+    <div class="queue-calendar-entry-copy"><strong>${escapeHtml(entry.title)}</strong><span>${escapeHtml([label, entry.meta].filter(Boolean).join(' · '))}</span></div>
+    <button class="upnext-arrow" type="button" data-action="details" data-id="${escapeAttr(entry.item.id)}" aria-label="Open details">→</button>
+  </article>`;
+}
+
+function formatQueueCalendarWeekday(dateString) {
+  return new Intl.DateTimeFormat('en-CA', { weekday: 'short' }).format(parseLocalDateString(dateString));
+}
+
+function formatQueueCalendarDate(dateString) {
+  return new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric' }).format(parseLocalDateString(dateString));
 }
 
 function queueCardMarkup(item, info) {
@@ -946,8 +1064,7 @@ function queueCardMarkup(item, info) {
       <div>
         <p class="upnext-title">${escapeHtml(info.title || item.title)}</p>
         <p class="upnext-meta">${escapeHtml(info.meta || progressFallback(item))}</p>
-        ${info.streaming ? `<p class="upnext-streaming">${escapeHtml(info.streaming)}</p>` : ''}
-        <p class="upnext-category">${escapeHtml(getItemTypeLabel(item))}${isTBR ? ' · TBR' : ''}</p>
+        <p class="upnext-category">${escapeHtml([getItemTypeLabel(item), isTBR ? 'TBR' : '', info.streaming || ''].filter(Boolean).join(' · '))}</p>
         ${info.error ? `<div class="queue-error">${escapeHtml(info.error)}</div>` : ''}
       </div>
       <button class="upnext-arrow" type="button" data-action="details" data-id="${item.id}" aria-label="Open details">→</button>
@@ -975,12 +1092,19 @@ function streamingProviderNames(availability) {
   return [...new Set((availability?.providers || []).map(provider => provider?.name).filter(Boolean))];
 }
 
-function streamingAvailabilityLabel(availability, maxProviders = 3, prefix = '') {
+function streamingAvailabilityLabel(availability, maxProviders = 3, prefix = 'Available on ') {
   const names = streamingProviderNames(availability);
   if (!names.length) return '';
   const shown = names.slice(0, maxProviders);
   const extra = names.length - shown.length;
   return `${prefix}${shown.join(' · ')}${extra > 0 ? ` +${extra}` : ''}`;
+}
+
+function streamingDetailMarkup(availability) {
+  const names = streamingProviderNames(availability);
+  const region = (state.settings.tmdbWatchRegion || 'CA').toUpperCase();
+  const providerText = names.length ? names.join(' · ') : `No streaming provider listed for ${region}`;
+  return `<section class="detail-section streaming-detail"><h3>Streaming</h3><p>${escapeHtml(providerText)}</p>${availability?.link ? `<a href="${escapeAttr(availability.link)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}</section>`;
 }
 
 function tbrMeta(item) {
@@ -989,6 +1113,7 @@ function tbrMeta(item) {
   if (sourceType === 'book') return [item.subtitle, 'To be read'].filter(Boolean).join(' · ');
   if (sourceType === 'youtube') return [item.subtitle, 'Playlist'].filter(Boolean).join(' · ');
   if (sourceType === 'reminder') return reminderScheduleLabel(item);
+  if (sourceType === 'event') return eventQueueMeta(item);
   return item.subtitle || 'Saved for later';
 }
 
@@ -1029,6 +1154,15 @@ async function getUpNextInfo(item) {
       meta: `${reminderScheduleLabel(item)} · ${reminderDueLabel(dueDate)}`,
       image: item.image,
       dueDate
+    };
+  }
+
+  if (getSourceType(item) === 'event') {
+    return {
+      title: item.title,
+      meta: eventQueueMeta(item),
+      image: item.image,
+      dueDate: item.date || item.eventMeta?.eventDate || ''
     };
   }
 
@@ -1103,7 +1237,28 @@ async function handleUpNextClick(event) {
 
 function queueSortKey(item, view = 'upnext') {
   if (view === 'upnext' && getSourceType(item) === 'reminder') return `0:${getNextReminderDueDate(item) || '9999-12-31'}:${item.createdAt || ''}`;
+  if (getSourceType(item) === 'event') return `0:${item.date || item.eventMeta?.eventDate || '9999-12-31'}:${item.createdAt || ''}`;
   return `1:${item.createdAt || ''}`;
+}
+
+function eventQueueMeta(item) {
+  const date = item?.date || item?.eventMeta?.eventDate || '';
+  const time = formatEventClock(item?.eventMeta?.eventTime || '');
+  const venue = item?.eventMeta?.venueName || '';
+  const city = item?.eventMeta?.city || '';
+  return [date ? formatLongDate(date) : '', time, venue, city].filter(Boolean).join(' · ') || item?.subtitle || 'Upcoming event';
+}
+
+function formatEventClock(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return raw;
+  const hour = Number(match[1]);
+  const minute = match[2];
+  const suffix = hour >= 12 ? 'PM' : 'AM';
+  const displayHour = hour % 12 || 12;
+  return `${displayHour}:${minute} ${suffix}`;
 }
 
 function reminderCompletionRecord(item) {
@@ -1600,6 +1755,7 @@ async function moveItemToQueue(item, status) {
     else if (sourceType === 'movie') await renderMovieDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
     else if (sourceType === 'reminder') renderReminderDetails(item);
+    else if (sourceType === 'event') await renderEventDetails(item);
     else renderManualDetails(item);
   }
 }
@@ -1806,7 +1962,7 @@ function clearSourceSelectionForTypeChange() {
 
 function updateItemFormForType() {
   const sourceType = els.itemSourceType.value;
-  const isCatalogue = ['tv', 'book', 'movie', 'music'].includes(sourceType);
+  const isCatalogue = ['tv', 'book', 'movie', 'music', 'event'].includes(sourceType);
   const isYouTube = sourceType === 'youtube';
   const isReminder = sourceType === 'reminder';
   const isManual = sourceType === 'other';
@@ -1857,7 +2013,8 @@ function updateItemFormForType() {
     tv: 'Search TV shows',
     movie: 'Search movies',
     book: 'Search books',
-    music: 'Search albums'
+    music: 'Search albums',
+    event: 'Search concerts, sports, theatre, events'
   };
   els.catalogueQuery.placeholder = placeholders[sourceType] || 'Search title';
 }
@@ -1880,7 +2037,13 @@ async function searchCatalogue() {
   els.catalogueSearchButton.disabled = true;
 
   try {
-    const results = await TrackerAPI.searchCatalogue(query, type, state.settings);
+    const results = type === 'event'
+      ? await TrackerAPI.searchTicketmasterEvents(query, state.settings, {
+          city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
+          countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA',
+          size: 30
+        })
+      : await TrackerAPI.searchCatalogue(query, type, state.settings);
     renderSearchResults(results);
     showFormMessage('', false);
   } catch (error) {
@@ -1927,6 +2090,9 @@ function selectCatalogueResult(result) {
 
   if (els.itemSourceType.value === 'book' && result.pageCount && !els.bookTotalPages.value) {
     els.bookTotalPages.value = result.pageCount;
+  }
+  if (els.itemSourceType.value === 'event' && result.eventDate && els.itemDate) {
+    els.itemDate.value = result.eventDate;
   }
   if (els.itemSourceType.value === 'tv' && result.providerId) {
     prepareTVWatchSetup(result.providerId).catch(error => {
@@ -2232,8 +2398,8 @@ async function saveItemFromForm(event) {
     showFormMessage('Load a YouTube playlist first.', true);
     return;
   }
-  const expectedProvider = sourceType === 'book' ? 'googleBooks' : sourceType === 'music' ? 'itunes' : 'tmdb';
-  if (['tv','book','movie','music'].includes(sourceType) && (!providerId || provider !== expectedProvider)) {
+  const expectedProvider = sourceType === 'book' ? 'googleBooks' : sourceType === 'music' ? 'itunes' : sourceType === 'event' ? 'ticketmaster' : 'tmdb';
+  if (['tv','book','movie','music','event'].includes(sourceType) && (!providerId || provider !== expectedProvider)) {
     showFormMessage('Choose a search result first.', true);
     return;
   }
@@ -2267,7 +2433,7 @@ async function saveItemFromForm(event) {
     releaseDate: extractItemReleaseDate(sourceType, state.selectedSource, editing),
     attachments: attachmentFiles,
     links: state.attachmentDraft.links.map(link => ({ ...link })),
-    date: sourceType === 'reminder' ? '' : (els.itemDate.value || ''),
+    date: sourceType === 'reminder' ? '' : (sourceType === 'event' ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
     queueStatus: sourceType === 'reminder' ? 'upnext' : (els.itemQueueStatus.value || 'library'),
     active: sourceType === 'reminder' || (els.itemQueueStatus.value || 'library') === 'upnext',
     createdAt: editing?.createdAt || new Date().toISOString(),
@@ -2276,6 +2442,23 @@ async function saveItemFromForm(event) {
     ...(sourceType === 'tv' ? {
       watchDisposition: editing?.watchDisposition || ((els.itemQueueStatus.value || 'library') === 'tbr' ? 'watch-later' : 'following'),
       tvMeta: { ...(editing?.tvMeta || {}) }
+    } : {}),
+    ...(sourceType === 'event' ? {
+      eventMeta: {
+        ...(editing?.eventMeta || {}),
+        eventDate: state.selectedSource?.eventDate || editing?.eventMeta?.eventDate || els.itemDate.value || '',
+        eventTime: state.selectedSource?.eventTime || editing?.eventMeta?.eventTime || '',
+        startDateTime: state.selectedSource?.startDateTime || editing?.eventMeta?.startDateTime || '',
+        timezone: state.selectedSource?.timezone || editing?.eventMeta?.timezone || '',
+        venueName: state.selectedSource?.venueName || editing?.eventMeta?.venueName || '',
+        city: state.selectedSource?.city || editing?.eventMeta?.city || '',
+        region: state.selectedSource?.region || editing?.eventMeta?.region || '',
+        address: state.selectedSource?.address || editing?.eventMeta?.address || '',
+        ticketUrl: state.selectedSource?.ticketUrl || editing?.eventMeta?.ticketUrl || '',
+        status: state.selectedSource?.status || editing?.eventMeta?.status || '',
+        classifications: state.selectedSource?.classifications || editing?.eventMeta?.classifications || [],
+        priceRange: state.selectedSource?.priceRange || editing?.eventMeta?.priceRange || null
+      }
     } : {})
   };
 
@@ -2388,6 +2571,7 @@ async function openDetails(id) {
     else if (sourceType === 'movie') await renderMovieDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
     else if (sourceType === 'reminder') renderReminderDetails(item);
+    else if (sourceType === 'event') await renderEventDetails(item);
     else renderManualDetails(item);
     appendLibraryPersonalMetadata(item);
     appendItemResources(item);
@@ -2399,7 +2583,10 @@ async function openDetails(id) {
 }
 
 async function renderTVDetails(item) {
-  const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
+  const [details, availability] = await Promise.all([
+    getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings)),
+    getItemStreamingAvailability(item).catch(() => ({ providers: [], link: '' }))
+  ]);
   const detailGenres = (details.genres || []).map(genre => genre.name).filter(Boolean);
   const metadataChanged = (detailGenres.length && JSON.stringify(item.genres || []) !== JSON.stringify(detailGenres)) || (details.first_air_date && item.releaseDate !== details.first_air_date);
   if (detailGenres.length) item.genres = detailGenres;
@@ -2451,6 +2638,7 @@ async function renderTVDetails(item) {
     <div class="tv-status-row">${tvStatusBadgeMarkup(item, details)}</div>
     <div class="detail-progress"><strong>${hasUnwatched ? 'Up next' : 'Progress'}</strong>${hasUnwatched && next ? `S${seasonNumber} E${episodeNumber} · ${escapeHtml(next.name || 'Episode')}` : hasUnwatched ? `S${seasonNumber} E${episodeNumber}` : isTerminalSeriesStatus(details.status) ? 'All available episodes watched.' : 'You are caught up. New aired episodes will return to Up Next automatically.'}</div>
     ${tvDetailControls(item)}
+    ${streamingDetailMarkup(availability)}
     <section class="detail-section"><div class="detail-section-heading"><h3>Seasons</h3><span class="discover-history-note compact-note">✓ marks the entire season · → opens its episodes</span></div><div class="season-list season-list-rows">${seasons || '—'}</div></section>
     <section class="detail-section"><h3>Season ${seasonNumber} episodes</h3><div class="episode-list">${episodes || 'No episodes found.'}</div></section>
   `;
@@ -2617,7 +2805,10 @@ async function renderBookDetails(item) {
 }
 
 async function renderMovieDetails(item) {
-  const details = await getCached(`movie:${item.providerId}`, () => TrackerAPI.getMovieDetails(item.providerId, state.settings));
+  const [details, availability] = await Promise.all([
+    getCached(`movie:${item.providerId}`, () => TrackerAPI.getMovieDetails(item.providerId, state.settings)),
+    getItemStreamingAvailability(item).catch(() => ({ providers: [], link: '' }))
+  ]);
   const detailGenres = (details.genres || []).map(genre => genre.name).filter(Boolean);
   if (detailGenres.length) item.genres = detailGenres;
   if (details.release_date) item.releaseDate = details.release_date;
@@ -2625,7 +2816,68 @@ async function renderMovieDetails(item) {
   els.detailBody.innerHTML = `
     ${detailHero({ type:'MOVIE', title:details.title || item.title, image:TrackerAPI.tmdbImage(details.poster_path) || item.image, subtitle:[details.release_date?.slice(0,4), details.runtime ? `${details.runtime} min` : '', details.genres?.map(g=>g.name).join(' · ')].filter(Boolean).join(' · '), overview:details.overview || '' })}
     ${detailEditButton(item)}
+    ${streamingDetailMarkup(availability)}
   `;
+}
+
+
+async function renderEventDetails(item) {
+  let event = null;
+  if (item.providerId) {
+    event = await getCached(`ticketmaster:event:${item.providerId}`, () => TrackerAPI.getTicketmasterEvent(item.providerId, state.settings));
+  }
+  event = event || {
+    title: item.title,
+    image: item.image,
+    eventDate: item.date || item.eventMeta?.eventDate || '',
+    eventTime: item.eventMeta?.eventTime || '',
+    venueName: item.eventMeta?.venueName || '',
+    city: item.eventMeta?.city || '',
+    region: item.eventMeta?.region || '',
+    address: item.eventMeta?.address || '',
+    ticketUrl: item.eventMeta?.ticketUrl || '',
+    description: item.notes || '',
+    classifications: item.eventMeta?.classifications || [],
+    priceRange: item.eventMeta?.priceRange || null,
+    status: item.eventMeta?.status || ''
+  };
+
+  item.date = event.eventDate || item.date || '';
+  item.eventMeta = {
+    ...(item.eventMeta || {}),
+    eventDate: event.eventDate || item.date || '',
+    eventTime: event.eventTime || '',
+    startDateTime: event.startDateTime || '',
+    timezone: event.timezone || '',
+    venueName: event.venueName || '',
+    city: event.city || '',
+    region: event.region || '',
+    address: event.address || '',
+    ticketUrl: event.ticketUrl || '',
+    status: event.status || '',
+    classifications: event.classifications || [],
+    priceRange: event.priceRange || null
+  };
+  if (event.image) item.image = event.image;
+  if (event.subtitle) item.subtitle = event.subtitle;
+  saveItems();
+
+  const dateLine = [event.eventDate ? formatLongDate(event.eventDate) : '', formatEventClock(event.eventTime), event.venueName, [event.city, event.region].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+  const price = event.priceRange;
+  const priceText = price && (price.min || price.max)
+    ? `${price.currency || ''} ${Number(price.min || price.max).toLocaleString()}${price.max && Number(price.max) !== Number(price.min) ? `–${Number(price.max).toLocaleString()}` : ''}`.trim()
+    : '';
+  const classifications = (event.classifications || []).filter(Boolean).join(' · ');
+  const info = [classifications, priceText, event.status && event.status !== 'onsale' ? event.status.replace(/_/g, ' ') : ''].filter(Boolean).join(' · ');
+
+  els.detailBody.innerHTML = `
+    ${detailHero({ type:'EVENT', title:event.title || item.title, image:event.image || item.image, subtitle:dateLine, overview:event.description || item.notes || '' })}
+    ${detailEditButton(item)}
+    <section class="detail-section event-detail-section"><h3>Event details</h3>
+      ${info ? `<p>${escapeHtml(info)}</p>` : ''}
+      ${event.address ? `<p class="detail-meta">${escapeHtml(event.address)}</p>` : ''}
+      ${event.ticketUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(event.ticketUrl)}" target="_blank" rel="noopener">Tickets on Ticketmaster ↗</a>` : ''}
+    </section>`;
 }
 
 async function renderMusicDetails(item) {
@@ -3805,6 +4057,11 @@ function discoverResultMatchesGenre(result) {
     const resultKeywordIds = new Set((result._tmdbKeywordIds || []).map(String));
     return keywordIds.size ? [...keywordIds].some(id => resultKeywordIds.has(id)) : false;
   }
+  if (result.sourceType === 'event') {
+    const haystack = [result.title, ...(result.classifications || [])].join(' ').toLowerCase();
+    const terms = [...(genre.tmdb || []), ...(genre.keywords || []), ...(genre.book || [])].map(value => String(value).toLowerCase());
+    return terms.some(term => haystack.includes(term));
+  }
   if (result.sourceType === 'book') {
     // If this result came back from a Google Books subject query for the selected
     // genre, trust Google's match. volumeInfo.categories is optional and is often
@@ -3822,7 +4079,7 @@ function discoverResultMatchesGenre(result) {
 
 async function discoverSearchResultMatchesGenre(result) {
   const genre = selectedDiscoverGenre();
-  if (!genre || result.sourceType === 'book') return discoverResultMatchesGenre(result);
+  if (!genre || result.sourceType === 'book' || result.sourceType === 'event') return discoverResultMatchesGenre(result);
   if (result.sourceType !== 'tv' && result.sourceType !== 'movie') return true;
   const officialIds = discoverTMDBGenreIds(result.sourceType);
   if (officialIds.length) return discoverResultMatchesGenre(result);
@@ -3873,8 +4130,13 @@ async function runDiscoverSearch(forcedQuery = '') {
 
   try {
     const selectedType = state.discoverPrefs.contentType || 'all';
-    const types = selectedType === 'all' ? ['tv', 'movie', 'book'] : [selectedType];
+    const types = selectedType === 'all' ? ['tv', 'movie', 'book', 'event'] : [selectedType];
     const settled = await Promise.allSettled(types.map(type => {
+      if (type === 'event') return TrackerAPI.searchTicketmasterEvents(query, state.settings, {
+        city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
+        countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA',
+        size: 30
+      });
       if (type !== 'book') return TrackerAPI.searchCatalogue(query, type, state.settings);
       const genre = selectedDiscoverGenre();
       if (!genre?.book?.length) return TrackerAPI.searchCatalogue(query, type, state.settings);
@@ -3929,10 +4191,10 @@ function setDiscoverMode(mode) {
 function updateDiscoverModeUI() {
   const mode = DISCOVER_MODES.has(state.discoverMode) ? state.discoverMode : 'discover';
   const copy = {
-    new: 'Recently released and newly published TV, movies, and books. Your streaming services are still prioritized where availability is known.',
-    popular: 'What is popular now across TV, movies, and books, with titles on your streaming services moved toward the front.',
-    'for-you': 'Recommendations based on what you have watched, finished, rated, and the authors you return to.',
-    discover: 'A shuffled, effectively endless mix of TV, movies, and books. Your tastes influence the ranking, but each session deliberately changes.'
+    new: 'Recently released TV, movies, books, plus upcoming events near your configured home location.',
+    popular: 'Popular TV, movies, books, and upcoming local events, with titles on your streaming services moved toward the front.',
+    'for-you': 'Recommendations based on what you have watched, finished, rated, and the authors you return to, mixed with upcoming events nearby.',
+    discover: 'A shuffled, effectively endless mix of TV, movies, books, and upcoming events. Your tastes influence the ranking, but each session deliberately changes.'
   };
   els.discoverModeTabs?.forEach(tab => {
     const active = tab.dataset.discoverMode === mode;
@@ -4100,10 +4362,35 @@ async function loadMoreDiscoverFeed() {
 }
 
 async function collectDiscoverFeedCandidates(batchNumber) {
-  if (state.discoverMode === 'new') return collectNewDiscoverCandidates(batchNumber);
-  if (state.discoverMode === 'popular') return collectPopularDiscoverCandidates(batchNumber);
-  if (state.discoverMode === 'for-you') return collectForYouDiscoverCandidates(batchNumber);
-  return collectShuffledDiscoverCandidates(batchNumber);
+  const contentType = state.discoverPrefs.contentType || 'all';
+  const eventPage = Math.max(0, batchNumber - 1);
+  const eventCity = state.discoverPrefs.eventCity || state.settings.homeCity || '';
+  const eventCountry = state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA';
+  const eventCacheKey = `discover:ticketmaster:${String(eventCity).toLowerCase()}:${String(eventCountry).toUpperCase()}:${eventPage}`;
+
+  if (contentType === 'event') {
+    if (!state.settings.ticketmasterKey) return [];
+    try {
+      return filterAlreadyKnown(await getCached(eventCacheKey, () => TrackerAPI.getUpcomingEvents(state.settings, { page: eventPage, size: 24, city: eventCity, countryCode: eventCountry })), 'event')
+        .map(result => ({ ...result, sourceType: 'event', _discoverSource: 'ticketmaster', _discoverBoost: 8 }));
+    } catch {
+      return [];
+    }
+  }
+
+  let candidates;
+  if (state.discoverMode === 'new') candidates = await collectNewDiscoverCandidates(batchNumber);
+  else if (state.discoverMode === 'popular') candidates = await collectPopularDiscoverCandidates(batchNumber);
+  else if (state.discoverMode === 'for-you') candidates = await collectForYouDiscoverCandidates(batchNumber);
+  else candidates = await collectShuffledDiscoverCandidates(batchNumber);
+
+  if (state.settings.ticketmasterKey) {
+    try {
+      const events = filterAlreadyKnown(await getCached(eventCacheKey, () => TrackerAPI.getUpcomingEvents(state.settings, { page: eventPage, size: 20, city: eventCity, countryCode: eventCountry })), 'event');
+      candidates.push(...events.map(result => ({ ...result, sourceType: 'event', _discoverSource: 'ticketmaster', _discoverBoost: state.discoverMode === 'discover' ? 5 : 3 })));
+    } catch {}
+  }
+  return dedupeDiscoverCandidatesByBoost(candidates);
 }
 
 async function collectShuffledDiscoverCandidates(batchNumber) {
@@ -4333,7 +4620,7 @@ function discoverLoadingLabel(hasItems) {
 }
 
 function discoverEndlessLabel() {
-  if (state.discoverMode === 'discover') return 'Keep scrolling — the mix keeps changing as more loads.';
+  if (state.discoverMode === 'discover') return 'Keep scrolling — TV, movies, books, and events keep changing as more loads.';
   if (state.discoverMode === 'for-you') return 'Keep scrolling — more recommendations will load automatically.';
   if (state.discoverMode === 'new') return 'Keep scrolling — more recent releases will load automatically.';
   return 'Keep scrolling — more popular picks will load automatically.';
@@ -4794,6 +5081,8 @@ async function openDiscoverSettings() {
   if (!els.discoverSettingsModal) return;
   els.prioritizeAuthors.checked = state.discoverPrefs.prioritizeAuthors !== false;
   if (els.englishTVOnly) els.englishTVOnly.checked = state.discoverPrefs.englishTVOnly === true;
+  if (els.eventCity) els.eventCity.value = state.discoverPrefs.eventCity || state.settings.homeCity || '';
+  if (els.eventCountry) els.eventCountry.value = (state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA').toUpperCase();
   state.discoverProviderDraft = new Map(
     (state.discoverPrefs.streamingProviderIds || []).map((id, index) => [String(id), (state.discoverPrefs.streamingProviderNames || [])[index] || ''])
   );
@@ -4852,11 +5141,16 @@ function saveDiscoverSettings(event) {
   event.preventDefault();
   const selectedEntries = [...state.discoverProviderDraft.entries()];
   state.discoverPrefs = {
+    ...DEFAULT_DISCOVER_PREFS,
+    ...state.discoverPrefs,
     streamingProviderIds: selectedEntries.map(([id]) => id),
     streamingProviderNames: selectedEntries.map(([, name]) => name),
     prioritizeAuthors: els.prioritizeAuthors.checked,
     englishTVOnly: Boolean(els.englishTVOnly?.checked),
-    contentType: state.discoverPrefs.contentType || 'all'
+    contentType: state.discoverPrefs.contentType || 'all',
+    genre: state.discoverPrefs.genre || 'all',
+    eventCity: String(els.eventCity?.value || '').trim(),
+    eventCountry: String(els.eventCountry?.value || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA').trim().toUpperCase()
   };
   localStorage.setItem(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
   scheduleCloudSync();
@@ -4881,7 +5175,9 @@ function discoverCardMarkup(result, key, fallbackType) {
   const rating = result.rating ? `★ ${Number(result.rating).toFixed(1)}` : '';
   const providers = (result.streamingProviderNames || result.preferredProviderNames || []).slice(0, 2);
   const streaming = providers.length ? providers.join(' + ') : (['tv','movie'].includes(type) ? 'Streaming varies' : '');
-  const meta = [year, rating, streaming].filter(Boolean).join(' · ');
+  const meta = type === 'event'
+    ? [result.eventDate ? formatLongDate(result.eventDate) : '', formatEventClock(result.eventTime || ''), result.venueName || '', result.city || ''].filter(Boolean).join(' · ')
+    : [year, rating, streaming].filter(Boolean).join(' · ');
   const queueStatus = item ? getQueueStatus(item) : '';
   const plusLabel = queueStatus === 'upnext' ? '+ Queue' : queueStatus === 'tbr' ? '+ TBR' : '+ Add';
 
@@ -4897,7 +5193,7 @@ function discoverCardMarkup(result, key, fallbackType) {
       ${meta ? `<p class="discover-card-meta">${escapeHtml(meta)}</p>` : ''}
       ${result.subtitle && type === 'book' ? `<p class="discover-card-subtitle">${escapeHtml(result.subtitle)}</p>` : ''}
       <div class="discover-card-actions">
-        <button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" ${completed && type !== 'tv' ? 'disabled' : ''} aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Already completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Completed' : 'Mark watched / read'}">✓</button>
+        ${type === 'event' ? '' : `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" ${completed && type !== 'tv' ? 'disabled' : ''} aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Already completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Completed' : 'Mark watched / read'}">✓</button>`}
         <button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>
       </div>
     </div>
@@ -4983,7 +5279,7 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
     type: sourceType,
     typeLabel: SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType),
     title: result.title || 'Untitled',
-    provider: result.provider || (sourceType === 'book' ? 'googleBooks' : 'tmdb'),
+    provider: result.provider || (sourceType === 'book' ? 'googleBooks' : sourceType === 'event' ? 'ticketmaster' : 'tmdb'),
     providerId: String(result.providerId || ''),
     image: result.image || '',
     subtitle: result.subtitle || '',
@@ -4994,7 +5290,7 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
     releaseDate: extractItemReleaseDate(sourceType, result, null),
     attachments: [],
     links: [],
-    date: '',
+    date: sourceType === 'event' ? (result.eventDate || '') : '',
     queueStatus,
     active: queueStatus === 'upnext',
     createdAt: new Date().toISOString(),
@@ -5004,6 +5300,15 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
 
   if (sourceType === 'tv') item.progress = { nextSeason: 1, nextEpisode: 1 };
   if (sourceType === 'book') item.progress = { currentPage: 0, totalPages: Number(result.pageCount || 0) };
+  if (sourceType === 'event') {
+    item.eventMeta = {
+      eventDate: result.eventDate || '', eventTime: result.eventTime || '', startDateTime: result.startDateTime || '', timezone: result.timezone || '',
+      venueName: result.venueName || '', city: result.city || '', region: result.region || '', address: result.address || '',
+      ticketUrl: result.ticketUrl || '', status: result.status || '', classifications: result.classifications || [], priceRange: result.priceRange || null
+    };
+    item.genres = [...(result.classifications || [])];
+    item.releaseDate = result.eventDate || '';
+  }
   state.items.push(item);
   saveItems();
   return item;
@@ -5065,6 +5370,7 @@ async function openDiscoverDetail(key) {
     if (result.sourceType === 'tv') await renderDiscoverTVDetail(key);
     else if (result.sourceType === 'movie') await renderDiscoverMovieDetail(key);
     else if (result.sourceType === 'book') await renderDiscoverBookDetail(key);
+    else if (result.sourceType === 'event') await renderDiscoverEventDetail(key);
   } catch (error) {
     els.detailBody.innerHTML = `<div class="api-error">${escapeHtml(error.message)}</div>`;
   }
@@ -5379,6 +5685,30 @@ async function renderDiscoverMovieDetail(key) {
     ${discoverTVPersonalMetadataMarkup(findDiscoverItem(result), key)}
     <section class="detail-section streaming-detail"><h3>Streaming</h3><p>${escapeHtml(providerText)}</p>${availability.link ? `<a href="${escapeAttr(availability.link)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}</section>
     ${details.genres?.length ? `<section class="detail-section"><h3>Genres</h3><p>${escapeHtml(details.genres.map(genre => genre.name).join(' · '))}</p></section>` : ''}`;
+}
+
+
+async function renderDiscoverEventDetail(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const event = result.providerId
+    ? await getCached(`ticketmaster:event:${result.providerId}`, () => TrackerAPI.getTicketmasterEvent(result.providerId, state.settings))
+    : result;
+  const item = findDiscoverItem(result);
+  const dateLine = [event.eventDate ? formatLongDate(event.eventDate) : '', formatEventClock(event.eventTime || ''), event.venueName || '', [event.city, event.region].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+  const price = event.priceRange;
+  const priceText = price && (price.min || price.max)
+    ? `${price.currency || ''} ${Number(price.min || price.max).toLocaleString()}${price.max && Number(price.max) !== Number(price.min) ? `–${Number(price.max).toLocaleString()}` : ''}`.trim()
+    : '';
+  const info = [(event.classifications || []).join(' · '), priceText].filter(Boolean).join(' · ');
+  els.detailBody.innerHTML = `
+    ${detailHero({ type:'EVENT', title:event.title || result.title, image:event.image || result.image, subtitle:dateLine, overview:event.description || result.description || '' })}
+    <div class="detail-actions">
+      <button class="primary-button" type="button" data-discover-detail-add="${escapeAttr(key)}">${item ? (getQueueStatus(item) === 'tbr' ? 'In TBR' : 'In Up Next') : '+ Up Next / TBR'}</button>
+      ${event.ticketUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(event.ticketUrl)}" target="_blank" rel="noopener">Tickets on Ticketmaster ↗</a>` : ''}
+    </div>
+    <section class="detail-section"><h3>Event details</h3>${info ? `<p>${escapeHtml(info)}</p>` : ''}${event.address ? `<p class="detail-meta">${escapeHtml(event.address)}</p>` : ''}</section>
+  `;
 }
 
 async function renderDiscoverBookDetail(key) {
@@ -5816,6 +6146,10 @@ function extractItemGenres(sourceType, source, editing) {
     const genre = source?.raw?.primaryGenreName || source?.description || editing?.genres?.[0] || '';
     return genre ? [String(genre)] : [];
   }
+  if (sourceType === 'event') {
+    const classifications = source?.classifications || editing?.eventMeta?.classifications || editing?.genres || [];
+    return [...new Set(classifications.map(value => String(value || '').trim()).filter(Boolean))];
+  }
   return [...(editing?.genres || [])];
 }
 
@@ -5824,6 +6158,7 @@ function extractItemReleaseDate(sourceType, source, editing) {
   if (sourceType === 'tv') return source?.raw?.first_air_date || editing?.releaseDate || '';
   if (sourceType === 'movie') return source?.raw?.release_date || editing?.releaseDate || '';
   if (sourceType === 'music') return source?.raw?.releaseDate || editing?.releaseDate || '';
+  if (sourceType === 'event') return source?.eventDate || source?.raw?.dates?.start?.localDate || editing?.date || editing?.releaseDate || '';
   return editing?.releaseDate || '';
 }
 
@@ -6000,7 +6335,6 @@ function renderLibrary() {
     return;
   }
 
-  const streamingPosterJobs = [];
 
   for (const groupKey of order) {
     const items = grouped.get(groupKey);
@@ -6029,47 +6363,15 @@ function renderLibrary() {
       poster.setAttribute('aria-label', `Open ${item.title}`);
       poster.title = [item.title, item.rating ? `${item.rating}/5` : '', item.genres?.[0] || ''].filter(Boolean).join(' · ');
       const personalRating = Math.max(0, Math.min(5, Number(item.rating || 0)));
-      const streamable = isStreamingItem(item);
       poster.innerHTML = `${item.image
         ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />`
         : `<span class="library-poster-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`}
-        ${streamable ? '<span class="library-streaming-badge" data-library-streaming hidden></span>' : ''}
         ${personalRating > 0 ? `<span class="library-rating-badge" aria-label="Your rating ${personalRating} out of 5">★ ${escapeHtml(formatPersonalRating(personalRating))}</span>` : ''}`;
       grid.appendChild(poster);
-      if (streamable && (expanded || itemIndex < 14)) {
-        streamingPosterJobs.push({ item, badge: poster.querySelector('[data-library-streaming]') });
-      }
     }
     els.libraryGroups.appendChild(section);
   }
 
-  hydrateLibraryStreamingBadges(streamingPosterJobs);
-}
-
-async function hydrateLibraryStreamingBadges(jobs) {
-  if (!jobs?.length) return;
-  let nextIndex = 0;
-  const workerCount = Math.min(5, jobs.length);
-
-  async function worker() {
-    while (nextIndex < jobs.length) {
-      const job = jobs[nextIndex++];
-      if (!job?.badge?.isConnected) continue;
-      try {
-        const availability = await getItemStreamingAvailability(job.item);
-        if (!job.badge.isConnected) continue;
-        const names = streamingProviderNames(availability);
-        if (!names.length) continue;
-        const shown = names.slice(0, 2);
-        const extra = names.length - shown.length;
-        job.badge.textContent = `${shown.join(' · ')}${extra > 0 ? ` +${extra}` : ''}`;
-        job.badge.title = `${names.join(' · ')}`;
-        job.badge.hidden = true;
-      } catch {}
-    }
-  }
-
-  await Promise.all(Array.from({ length: workerCount }, worker));
 }
 
 function handleLibraryClick(event) {
@@ -6099,6 +6401,7 @@ function libraryProgressText(item) {
     const total = item.progress?.totalPages || 0;
     return total ? `${current} / ${total} pages` : `${current} pages`;
   }
+  if (sourceType === 'event') return eventQueueMeta(item);
   if (item.date) return item.date;
   return item.subtitle || '';
 }
@@ -6110,14 +6413,15 @@ function getSourceType(item) {
   if (!item) return 'other';
   if (item.sourceType) return item.sourceType;
   if (item.provider === 'youtube' || item.type === 'workout') return 'youtube';
-  if (['tv', 'movie', 'book', 'music'].includes(item.type)) return item.type;
+  if (item.provider === 'ticketmaster') return 'event';
+  if (['tv', 'movie', 'book', 'music', 'event'].includes(item.type)) return item.type;
   return 'other';
 }
 
 function getQueueStatus(item) {
   if (!item) return 'library';
   if (['upnext', 'tbr', 'library'].includes(item.queueStatus)) return item.queueStatus;
-  if (item.active !== false && ['tv', 'youtube', 'book', 'reminder'].includes(getSourceType(item))) return 'upnext';
+  if (item.active !== false && ['tv', 'youtube', 'book', 'reminder', 'event'].includes(getSourceType(item))) return 'upnext';
   return 'library';
 }
 
@@ -6518,6 +6822,7 @@ function progressFallback(item) {
   if (sourceType === 'tv') return `S${item.progress?.nextSeason || 1} E${item.progress?.nextEpisode || 1}`;
   if (sourceType === 'youtube') return `Video ${(item.progress?.currentIndex || 0) + 1}`;
   if (sourceType === 'book') return `Page ${item.progress?.currentPage || 0}`;
+  if (sourceType === 'event') return eventQueueMeta(item);
   return '';
 }
 

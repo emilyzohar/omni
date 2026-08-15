@@ -11,6 +11,9 @@ Create secrets matching the names in `.env.example`. At minimum for the core tra
 - `EXPO_PUBLIC_TMDB_READ_ACCESS_TOKEN`
 - `EXPO_PUBLIC_GOOGLE_BOOKS_API_KEY`
 - `EXPO_PUBLIC_YOUTUBE_API_KEY`
+- `EXPO_PUBLIC_TICKETMASTER_API_KEY`
+- `EXPO_PUBLIC_HOME_CITY` (optional initial event city)
+- `EXPO_PUBLIC_HOME_COUNTRY` (optional, e.g. `CA`)
 - `EXPO_PUBLIC_ITUNES_COUNTRY`
 - `EXPO_PUBLIC_TMDB_WATCH_REGION`
 - `EXPO_PUBLIC_SUPABASE_URL`

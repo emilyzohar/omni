@@ -140,3 +140,18 @@ Library now defaults to Movie, TV, and Book sections only. The Library Types con
 
 ### Streaming availability on saved cards
 TV and movie cards in Up Next, TBR, and Library now show TMDB watch-provider availability for the configured watch region. Up Next/TBR use a compact “Available on …” line. Library posters show a compact provider badge; collapsed shelves hydrate the visible first row and expanded shelves hydrate all posters. Availability uses the existing one-hour API cache.
+
+### Streaming availability placement
+- Up Next: TV/movie services are shown inline with the type metadata, e.g. `TV · Netflix`.
+- TBR: services are inline after the TBR marker, e.g. `TV · TBR · Crave`.
+- Library shelves: no streaming badge is shown on posters.
+- TV/movie details: opening a tracked item shows a Streaming section using the configured TMDB watch region. Discover TV/movie detail continues to show streaming availability as well.
+
+
+## Ticketmaster + upcoming Calendar
+
+- Ticketmaster Discovery API is now a real content source. **Event** is available in Add/Edit search, event details include date/time, venue, classifications, price range when returned, and a Ticketmaster ticket link.
+- Discover now mixes upcoming Ticketmaster events with TV, movies, and books. The Type filter includes **Events**, search includes Ticketmaster, and Discover Settings includes an event city/country.
+- Up Next now has a **Calendar** tab. It shows future one-time/recurring reminder occurrences, saved Ticketmaster events, followed TV shows' next scheduled episode, and other future-dated/release items in chronological groups.
+- Saved Ticketmaster events use the existing item/profile JSON and therefore require no Supabase schema change.
+- Configure `EXPO_PUBLIC_TICKETMASTER_API_KEY`; optional `EXPO_PUBLIC_HOME_CITY` / `EXPO_PUBLIC_HOME_COUNTRY` provide the initial event location.
