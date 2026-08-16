@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=discover-three-modes-1';
-import { API_CONFIG } from './config.js?v=music-ticketmaster-live-1';
+import { TrackerAPI } from './api.js?v=lastfm-music-discovery-1';
+import { API_CONFIG } from './config.js?v=lastfm-music-discovery-1';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -1071,7 +1071,7 @@ function bindEvents() {
 
     const discoverAllCheck = event.target.closest('[data-discover-mark-all-tv]');
     if (discoverAllCheck) {
-      await markDiscoverSeriesWatched(discoverAllCheck.dataset.discoverKey);
+      await markDiscoverSeriesWatched(discoverAllCheck.dataset.discoverKey, discoverAllCheck);
       return;
     }
 
@@ -5879,6 +5879,133 @@ async function collectDiscoverFeedCandidates(batchNumber) {
   return dedupeDiscoverCandidatesByBoost(candidates);
 }
 
+function musicRecommendationSeedScore(item) {
+  if (!item) return 0;
+  const rating = Math.max(0, Number(item.rating || 0));
+  const recommended = item.recommended ? 7 : 0;
+  const consumed = item.completedAt || item.date ? 2 : 0;
+  const updated = Date.parse(item.updatedAt || item.createdAt || '') || 0;
+  const recency = updated ? Math.max(0, 2.5 - (Date.now() - updated) / (1000 * 60 * 60 * 24 * 180)) : 0;
+  return recommended + rating * 1.6 + consumed + recency;
+}
+
+function savedMusicSongSeeds() {
+  return state.items
+    .filter(item => getSourceType(item) === 'song' && item.title)
+    .map(item => ({
+      item,
+      artistName: String(item.artistName || item.raw?.artistName || item.subtitle || '').split(' · ')[0].trim(),
+      trackName: item.title,
+      score: musicRecommendationSeedScore(item)
+    }))
+    .filter(seed => seed.artistName && seed.trackName)
+    .sort((a,b) => b.score - a.score);
+}
+
+function rotatedSlice(values, batchNumber, count) {
+  if (!values?.length || count <= 0) return [];
+  const start = ((Math.max(1, batchNumber) - 1) * count) % values.length;
+  return Array.from({ length: Math.min(count, values.length) }, (_, index) => values[(start + index) % values.length]);
+}
+
+async function itunesAlbumsForArtistName(artistName) {
+  const key = normalizeArtistName(artistName);
+  const albums = await getCached(`itunes:lastfm:albums:${key}`, () => TrackerAPI.searchMusic(artistName, state.settings));
+  return (albums || []).filter(album => normalizeArtistName(album.artistName || album.subtitle) === key);
+}
+
+async function resolveLastFmArtistCandidate(lastfmArtist) {
+  const artistName = String(lastfmArtist?.name || '').trim();
+  if (!artistName) return null;
+  const normalized = normalizeArtistName(artistName);
+  try {
+    const albums = await itunesAlbumsForArtistName(artistName);
+    const firstAlbum = albums[0];
+    const artistId = String(firstAlbum?.artistId || firstAlbum?.raw?.artistId || '');
+    if (artistId) {
+      return {
+        sourceType: 'artist',
+        provider: 'itunes',
+        providerId: artistId,
+        artistId,
+        artistName,
+        title: artistName,
+        subtitle: firstAlbum?.raw?.primaryGenreName || firstAlbum?.description || 'Artist',
+        description: firstAlbum?.raw?.primaryGenreName || '',
+        image: firstAlbum?.image || '',
+        raw: {
+          artistId,
+          artistName,
+          primaryGenreName: firstAlbum?.raw?.primaryGenreName || '',
+          lastfmMbid: lastfmArtist?.mbid || '',
+          lastfmMatch: Number(lastfmArtist?.match || 0)
+        }
+      };
+    }
+  } catch {}
+
+  try {
+    const artists = await getCached(`itunes:lastfm:artist:${normalized}`, () => TrackerAPI.searchArtists(artistName, state.settings));
+    const exact = (artists || []).find(artist => normalizeArtistName(artist.title) === normalized);
+    return exact || null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveLastFmTrackCandidate(lastfmTrack) {
+  const trackName = String(lastfmTrack?.name || '').trim();
+  const artistName = String(lastfmTrack?.artistName || '').trim();
+  if (!trackName || !artistName) return null;
+  const trackKey = normalizeArtistName(trackName);
+  const artistKey = normalizeArtistName(artistName);
+  const cacheKey = `itunes:lastfm:track:${artistKey}:${trackKey}`;
+  try {
+    const songs = await getCached(cacheKey, () => TrackerAPI.searchSongs(`${trackName} ${artistName}`, state.settings));
+    return (songs || []).find(song =>
+      normalizeArtistName(song.title) === trackKey &&
+      normalizeArtistName(song.artistName || song.subtitle) === artistKey
+    ) || (songs || []).find(song =>
+      normalizeArtistName(song.artistName || song.subtitle) === artistKey &&
+      normalizeArtistName(song.title).includes(trackKey)
+    ) || null;
+  } catch {
+    return null;
+  }
+}
+
+async function collectLastFmResolvedArtists(lastfmArtists, limit = 6) {
+  const known = knownMusicArtistNameSet();
+  const unique = [];
+  const seen = new Set();
+  for (const artist of lastfmArtists || []) {
+    const key = normalizeArtistName(artist?.name);
+    if (!key || known.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(artist);
+    if (unique.length >= limit) break;
+  }
+  const settled = await Promise.allSettled(unique.map(resolveLastFmArtistCandidate));
+  return settled.filter(result => result.status === 'fulfilled' && result.value).map(result => result.value);
+}
+
+async function collectLastFmResolvedTracks(lastfmTracks, limit = 7) {
+  const known = new Set(state.items
+    .filter(item => getSourceType(item) === 'song')
+    .map(item => `${normalizeArtistName(item.artistName || item.raw?.artistName || item.subtitle)}::${normalizeArtistName(item.title)}`));
+  const unique = [];
+  const seen = new Set();
+  for (const track of lastfmTracks || []) {
+    const key = `${normalizeArtistName(track?.artistName)}::${normalizeArtistName(track?.name)}`;
+    if (!key || key === '::' || known.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(track);
+    if (unique.length >= limit) break;
+  }
+  const settled = await Promise.allSettled(unique.map(resolveLastFmTrackCandidate));
+  return settled.filter(result => result.status === 'fulfilled' && result.value).map(result => result.value);
+}
+
 async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
   const personalized = mode === 'for-you';
   const includeArtists = mode !== 'new';
@@ -5902,121 +6029,199 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
     candidates.push({ ...album, ...extra, sourceType: 'music', _discoverSource: source, _discoverBoost: boost, _discoverExploration: exploration });
   };
 
-  // Strong personalized layer: music by artists explicitly saved or implied by
-  // saved albums/songs. This is intentionally only one part of the pool.
-  if (personalized) {
-    const tasteNames = [...new Map([
-      ...explicitArtists.map(item => item.title),
-      ...inferredNames
-    ].map(name => [normalizeArtistName(name), name])).values()].filter(Boolean);
-    if (tasteNames.length) {
-      const start = ((Math.max(1, batchNumber) - 1) * 2) % tasteNames.length;
-      const artistSeeds = [tasteNames[start]].filter(Boolean);
-      for (const artistName of [...new Set(artistSeeds)]) {
-        try {
-          const [artists, albums, songs] = await Promise.all([
-            getCached(`itunes:artist-search:${normalizeArtistName(artistName)}`, () => TrackerAPI.searchArtists(artistName, state.settings)),
-            getCached(`itunes:albums:${normalizeArtistName(artistName)}`, () => TrackerAPI.searchMusic(artistName, state.settings)),
-            getCached(`itunes:songs:${normalizeArtistName(artistName)}`, () => TrackerAPI.searchSongs(artistName, state.settings))
-          ]);
-          if (includeArtists) {
-            const exactArtist = (artists || []).find(result => normalizeArtistName(result.title) === normalizeArtistName(artistName));
-            if (exactArtist) addArtist(exactArtist, 'music-taste', 11, false, { recommendationReason: `Because you like ${artistName}` });
-          }
-          for (const album of (albums || []).filter(album => normalizeArtistName(album.artistName || album.subtitle) === normalizeArtistName(artistName)).slice(0, 6)) {
-            addAlbum(album, 'liked-artist-album', 9, false, { recommendationReason: `Album by ${artistName}` });
-          }
-          for (const song of (songs || []).filter(song => normalizeArtistName(song.artistName || song.subtitle) === normalizeArtistName(artistName)).slice(0, 10)) {
-            addSong(song, 'liked-artist-song', 10, false, { recommendationReason: `Song by ${artistName}` });
-          }
-        } catch {}
-      }
+  const tasteNames = [...new Map([
+    ...explicitArtists
+      .sort((a,b) => musicRecommendationSeedScore(b) - musicRecommendationSeedScore(a))
+      .map(item => item.title),
+    ...inferredNames
+  ].map(name => [normalizeArtistName(name), name])).values()].filter(Boolean);
+
+  // Keep a small amount of familiar material in For You, but it is no longer
+  // the recommendation engine. Most new artists/tracks below come from Last.fm.
+  if (personalized && tasteNames.length) {
+    const familiarArtist = rotatedSlice(tasteNames, batchNumber, 1)[0];
+    if (familiarArtist) {
+      try {
+        const [albums, songs] = await Promise.all([
+          getCached(`itunes:familiar:albums:${normalizeArtistName(familiarArtist)}`, () => TrackerAPI.searchMusic(familiarArtist, state.settings)),
+          getCached(`itunes:familiar:songs:${normalizeArtistName(familiarArtist)}`, () => TrackerAPI.searchSongs(familiarArtist, state.settings))
+        ]);
+        (albums || []).filter(album => normalizeArtistName(album.artistName || album.subtitle) === normalizeArtistName(familiarArtist)).slice(0, 3)
+          .forEach(album => addAlbum(album, 'familiar-artist-album', 7.5, false, { recommendationReason: `Album by ${familiarArtist}` }));
+        (songs || []).filter(song => normalizeArtistName(song.artistName || song.subtitle) === normalizeArtistName(familiarArtist)).slice(0, 4)
+          .forEach(song => addSong(song, 'familiar-artist-song', 7.5, false, { recommendationReason: `Song by ${familiarArtist}` }));
+      } catch {}
     }
   }
 
-  // Broad catalogue layer. Every batch deliberately searches genres beyond the
-  // names already in the Library, so music discovery remains large even for a
-  // small or repetitive music history.
-  const broadTerms = rotatingMusicDiscoveryTerms(batchNumber, mode === 'for-you' ? 1 : 2, personalized);
-  for (const term of broadTerms) {
-    try {
-      const [albums, songs] = await Promise.all([
-        getCached(`itunes:discover:albums:${term}`, () => TrackerAPI.searchMusic(term, state.settings)),
-        getCached(`itunes:discover:songs:${term}`, () => TrackerAPI.searchSongs(term, state.settings))
-      ]);
-      const broadBoost = mode === 'popular' ? 5 : mode === 'new' ? 3 : 4;
-      if (includeArtists) {
-        const artistSources = [...(songs || []), ...(albums || [])];
-        const seenBroadArtists = new Set();
-        for (const source of artistSources) {
-          const artistId = String(source.artistId || source.raw?.artistId || '');
-          const artistName = String(source.artistName || source.subtitle || '').trim();
-          if (!artistId || !artistName || seenBroadArtists.has(artistId)) continue;
-          seenBroadArtists.add(artistId);
-          addArtist({
-            sourceType: 'artist',
-            provider: 'itunes',
-            providerId: artistId,
-            artistId,
-            artistName,
-            title: artistName,
-            subtitle: source.raw?.primaryGenreName || source.description || 'Artist',
-            description: source.raw?.primaryGenreName || '',
-            image: source.image || '',
-            raw: { artistId, artistName, primaryGenreName: source.raw?.primaryGenreName || '' }
-          }, mode === 'popular' ? 'music-popular' : 'music-explore', broadBoost + 1.5, mode === 'for-you', {
-            recommendationReason: mode === 'for-you' ? `Explore ${term}` : ''
-          });
-          if (seenBroadArtists.size >= 12) break;
-        }
+  const hasLastFm = Boolean(state.settings.lastfmApiKey);
+
+  if (hasLastFm && personalized) {
+    // 1) Direct listening-data similarity from several artist seeds.
+    const artistSeeds = rotatedSlice(tasteNames, batchNumber, Math.min(2, tasteNames.length));
+    if (artistSeeds.length) {
+      const similarSettled = await Promise.allSettled(artistSeeds.map(seed =>
+        getCached(`lastfm:similar-artists:${normalizeArtistName(seed)}`, () => TrackerAPI.getLastFmSimilarArtists(seed, state.settings, 30))
+      ));
+      const similarArtists = [];
+      for (const result of similarSettled) {
+        if (result.status === 'fulfilled') similarArtists.push(...(result.value || []));
       }
-      (albums || []).slice(0, 12).forEach((album, index) => addAlbum(
-        album,
-        mode === 'popular' ? 'music-popular' : mode === 'new' ? 'music-new' : 'music-explore',
-        broadBoost + Math.max(0, 2 - index * .12),
-        mode === 'for-you',
-        { recommendationReason: mode === 'for-you' ? `Explore ${term}` : '' }
-      ));
-      (songs || []).slice(0, 18).forEach((song, index) => addSong(
-        song,
-        mode === 'popular' ? 'music-popular' : mode === 'new' ? 'music-new' : 'music-explore',
-        broadBoost + Math.max(0, 2 - index * .08),
-        mode === 'for-you',
-        { recommendationReason: mode === 'for-you' ? `Explore ${term}` : '' }
-      ));
+      similarArtists.sort((a,b) => Number(b.match || 0) - Number(a.match || 0));
+      const resolvedArtists = await collectLastFmResolvedArtists(similarArtists, 7);
+      for (let index = 0; index < resolvedArtists.length; index += 1) {
+        const artist = resolvedArtists[index];
+        const seedLabel = artistSeeds.length === 1 ? artistSeeds[0] : 'artists you like';
+        addArtist(artist, 'lastfm-similar-artist', 11 - index * .35, false, { recommendationReason: `Similar to ${seedLabel}` });
+        try {
+          const albums = await itunesAlbumsForArtistName(artist.title);
+          (albums || []).slice(0, 1).forEach(album => addAlbum(album, 'lastfm-similar-artist-album', 7.2 - index * .15, true, { recommendationReason: `Album by related artist ${artist.title}` }));
+        } catch {}
+      }
+    }
+
+    // 2) Track-to-track similarity. A highly rated/recommended saved song is a
+    // much stronger song seed than a generic text genre search.
+    const songSeeds = savedMusicSongSeeds();
+    const songSeed = rotatedSlice(songSeeds.slice(0, Math.max(8, Math.min(20, songSeeds.length))), batchNumber, 1)[0];
+    if (songSeed) {
+      try {
+        const similarTracks = await getCached(
+          `lastfm:similar-tracks:${normalizeArtistName(songSeed.artistName)}:${normalizeArtistName(songSeed.trackName)}`,
+          () => TrackerAPI.getLastFmSimilarTracks(songSeed.artistName, songSeed.trackName, state.settings, 30)
+        );
+        const resolvedTracks = await collectLastFmResolvedTracks(similarTracks, 8);
+        resolvedTracks.forEach((song, index) => addSong(
+          song,
+          'lastfm-similar-track',
+          11 - index * .3,
+          false,
+          { recommendationReason: `Similar to ${songSeed.trackName}` }
+        ));
+      } catch {}
+    }
+
+    // 3) Tag discovery widens the pool beyond direct neighbours. It uses the
+    // user's genres when available, then rotates through broader music tags.
+    const discoveryTag = rotatingMusicDiscoveryTerms(batchNumber, 1, true)[0];
+    if (discoveryTag) {
+      try {
+        const tagPage = 1 + ((Math.max(1, batchNumber) - 1) % 3);
+        const [tagArtists, tagTracks] = await Promise.all([
+          getCached(`lastfm:tag-artists:${discoveryTag}:${tagPage}`, () => TrackerAPI.getLastFmTopArtistsByTag(discoveryTag, state.settings, 24, tagPage)),
+          getCached(`lastfm:tag-tracks:${discoveryTag}:${tagPage}`, () => TrackerAPI.getLastFmTopTracksByTag(discoveryTag, state.settings, 24, tagPage))
+        ]);
+        const [resolvedTagArtists, resolvedTagTracks] = await Promise.all([
+          includeArtists ? collectLastFmResolvedArtists(tagArtists, 4) : [],
+          collectLastFmResolvedTracks(tagTracks, 5)
+        ]);
+        resolvedTagArtists.forEach((artist, index) => addArtist(
+          artist,
+          'lastfm-tag-artist',
+          6.5 - index * .2,
+          true,
+          { recommendationReason: `Explore ${discoveryTag}` }
+        ));
+        resolvedTagTracks.forEach((song, index) => addSong(
+          song,
+          'lastfm-tag-track',
+          6.3 - index * .18,
+          true,
+          { recommendationReason: `Explore ${discoveryTag}` }
+        ));
+      } catch {}
+    }
+  } else if (hasLastFm && mode === 'popular') {
+    // Popular music should be genuinely broad/global rather than personalized.
+    try {
+      const page = 1 + ((Math.max(1, batchNumber) - 1) % 4);
+      const [topArtists, topTracks] = await Promise.all([
+        getCached(`lastfm:chart-artists:${page}`, () => TrackerAPI.getLastFmChartTopArtists(state.settings, 30, page)),
+        getCached(`lastfm:chart-tracks:${page}`, () => TrackerAPI.getLastFmChartTopTracks(state.settings, 30, page))
+      ]);
+      const [resolvedArtists, resolvedTracks] = await Promise.all([
+        includeArtists ? collectLastFmResolvedArtists(topArtists, 8) : [],
+        collectLastFmResolvedTracks(topTracks, 10)
+      ]);
+      resolvedArtists.forEach((artist, index) => addArtist(artist, 'lastfm-popular-artist', 7.5 - index * .18, false, { recommendationReason: 'Popular on Last.fm' }));
+      resolvedTracks.forEach((song, index) => addSong(song, 'lastfm-popular-track', 7.5 - index * .15, false, { recommendationReason: 'Popular on Last.fm' }));
+      for (const [index, artist] of resolvedArtists.slice(0, 5).entries()) {
+        try {
+          const albums = await itunesAlbumsForArtistName(artist.title);
+          if (albums?.[0]) addAlbum(albums[0], 'lastfm-popular-album', 6.8 - index * .16, false, { recommendationReason: `Popular artist · ${artist.title}` });
+        } catch {}
+      }
     } catch {}
   }
 
-  // Ticketmaster contributes related performers when available, but it is an
-  // additional signal rather than the only way new artists enter the feed.
-  if (personalized && state.settings.ticketmasterKey) {
+  // The free iTunes Search API remains the fallback and the release-date source
+  // for New. With Last.fm configured, For You/Popular no longer depend on these
+  // loose genre text searches for artist/track recommendations.
+  if (!hasLastFm || mode === 'new') {
+    const broadTerms = rotatingMusicDiscoveryTerms(batchNumber, mode === 'for-you' ? 1 : 2, personalized);
+    for (const term of broadTerms) {
+      try {
+        const [albums, songs] = await Promise.all([
+          getCached(`itunes:discover:albums:${term}`, () => TrackerAPI.searchMusic(term, state.settings)),
+          getCached(`itunes:discover:songs:${term}`, () => TrackerAPI.searchSongs(term, state.settings))
+        ]);
+        const broadBoost = mode === 'popular' ? 5 : mode === 'new' ? 3 : 4;
+        if (includeArtists) {
+          const artistSources = [...(songs || []), ...(albums || [])];
+          const seenBroadArtists = new Set();
+          for (const source of artistSources) {
+            const artistId = String(source.artistId || source.raw?.artistId || '');
+            const artistName = String(source.artistName || source.subtitle || '').trim();
+            if (!artistId || !artistName || seenBroadArtists.has(artistId)) continue;
+            seenBroadArtists.add(artistId);
+            addArtist({
+              sourceType: 'artist',
+              provider: 'itunes',
+              providerId: artistId,
+              artistId,
+              artistName,
+              title: artistName,
+              subtitle: source.raw?.primaryGenreName || source.description || 'Artist',
+              description: source.raw?.primaryGenreName || '',
+              image: source.image || '',
+              raw: { artistId, artistName, primaryGenreName: source.raw?.primaryGenreName || '' }
+            }, mode === 'popular' ? 'music-popular' : 'music-explore', broadBoost + 1.5, mode === 'for-you', {
+              recommendationReason: mode === 'for-you' ? `Explore ${term}` : ''
+            });
+            if (seenBroadArtists.size >= 12) break;
+          }
+        }
+        (albums || []).slice(0, 12).forEach((album, index) => addAlbum(
+          album,
+          mode === 'popular' ? 'music-popular' : mode === 'new' ? 'music-new' : 'music-explore',
+          broadBoost + Math.max(0, 2 - index * .12),
+          mode === 'for-you',
+          { recommendationReason: mode === 'for-you' ? `Explore ${term}` : '' }
+        ));
+        (songs || []).slice(0, 18).forEach((song, index) => addSong(
+          song,
+          mode === 'popular' ? 'music-popular' : mode === 'new' ? 'music-new' : 'music-explore',
+          broadBoost + Math.max(0, 2 - index * .08),
+          mode === 'for-you',
+          { recommendationReason: mode === 'for-you' ? `Explore ${term}` : '' }
+        ));
+      } catch {}
+    }
+  }
+
+  // Last.fm is the primary related-artist engine now. Ticketmaster still drives
+  // concerts elsewhere, so no extra Ticketmaster -> artist text-resolution calls
+  // are needed here when Last.fm is configured.
+  if (!hasLastFm && personalized && state.settings.ticketmasterKey) {
     try {
-      const relatedAttractions = await getRelatedMusicAttractions(batchNumber, 6);
-      const relatedResolved = [];
+      const relatedAttractions = await getRelatedMusicAttractions(batchNumber, 5);
       for (const attraction of relatedAttractions.slice(0, 3)) {
         try {
-          const found = await getCached(`itunes:related-artist:${normalizeArtistName(attraction.title)}`, () => TrackerAPI.searchArtists(attraction.title, state.settings));
-          const exact = (found || []).find(result => normalizeArtistName(result.title) === normalizeArtistName(attraction.title));
-          if (!exact) continue;
-          const artistCandidate = {
-            ...exact,
-            image: exact.image || attraction.image || '',
+          const artist = await resolveLastFmArtistCandidate({ name: attraction.title });
+          if (artist) addArtist(artist, 'ticketmaster-related-artist', 7.5, true, {
+            image: artist.image || attraction.image || '',
             recommendationReason: attraction.relatedGenre && attraction.relatedGenre !== 'Music' ? `Related ${attraction.relatedGenre} artist` : 'Related artist'
-          };
-          addArtist(artistCandidate, 'related-artist', 8, false);
-          relatedResolved.push(artistCandidate);
-        } catch {}
-      }
-      for (const artist of relatedResolved.slice(0, 1)) {
-        try {
-          const [songs, albums] = await Promise.all([
-            getCached(`itunes:related-songs:${normalizeArtistName(artist.title)}`, () => TrackerAPI.searchSongs(artist.title, state.settings)),
-            getCached(`itunes:related-albums:${normalizeArtistName(artist.title)}`, () => TrackerAPI.searchMusic(artist.title, state.settings))
-          ]);
-          (songs || []).filter(song => normalizeArtistName(song.artistName || song.subtitle) === normalizeArtistName(artist.title)).slice(0, 6)
-            .forEach(song => addSong(song, 'related-artist-song', 7, false, { recommendationReason: `Song by related artist ${artist.title}` }));
-          (albums || []).filter(album => normalizeArtistName(album.artistName || album.subtitle) === normalizeArtistName(artist.title)).slice(0, 4)
-            .forEach(album => addAlbum(album, 'related-artist-album', 6.5, false, { recommendationReason: `Album by related artist ${artist.title}` }));
+          });
         } catch {}
       }
     } catch {}
@@ -7690,18 +7895,25 @@ async function handleDiscoverRatingChoice(event) {
     event.preventDefault();
     event.stopPropagation();
     const key = state.pendingDiscoverRatingKey;
-    const trackTV = Boolean(state.pendingDiscoverRatingTrackTV);
     const rating = Number(state.pendingDiscoverRatingValue || 0);
     if (key && rating > 0) persistDiscoverRating(key, rating);
-    state.pendingDiscoverRatingKey = null;
-    state.pendingDiscoverRatingTrackTV = false;
-    state.pendingDiscoverRatingValue = 0;
+
+    // Continue is deliberately just a save-and-close action. In older builds TV
+    // recommendations immediately opened episode tracking after this dialog,
+    // which made Continue feel as though the popup had not actually closed.
     els.discoverRatingModal?.close();
-    if (trackTV && key) openDiscoverTVTrackingAfterRating(key);
   }
 }
 
 async function handleDiscoverQuickMetaClick(event) {
+  const seriesComplete = event.target.closest('[data-discover-mark-all-tv]');
+  if (seriesComplete) {
+    event.preventDefault();
+    event.stopPropagation();
+    await markDiscoverSeriesWatched(seriesComplete.dataset.discoverKey, seriesComplete);
+    return;
+  }
+
   const libraryAdd = event.target.closest('[data-discover-library-add]');
   if (libraryAdd) {
     event.preventDefault();
@@ -8048,12 +8260,34 @@ async function markDiscoverSeasonWatched(key, seasonNumber) {
   await renderDiscoverTVDetail(key, seasonNumber);
 }
 
-async function markDiscoverSeriesWatched(key) {
+async function markDiscoverSeriesWatched(key, triggerButton = null) {
   const result = state.discoverResults.get(key);
-  if (!result) return;
+  if (!result || result.sourceType !== 'tv') return;
   const item = ensureDiscoverItem(result, 'library');
-  await markWholeTVSeriesComplete(item);
-  await renderDiscoverTVDetail(key);
+  const undoing = hasSeriesBulkCompletion(item);
+
+  if (triggerButton) {
+    triggerButton.disabled = true;
+    triggerButton.setAttribute('aria-busy', 'true');
+    triggerButton.textContent = undoing ? 'Undoing series…' : 'Marking series…';
+  }
+
+  try {
+    // Reuse the provenance-aware bulk completion routine so undo removes only
+    // episodes added by this bulk action and preserves episodes checked manually.
+    await markWholeTVSeriesComplete(item);
+    renderDiscoverCardInPlace(key);
+    if (els.detailModal?.open && state.openDiscoverKey === key) {
+      await renderDiscoverTVDetail(key);
+    }
+  } catch (error) {
+    console.error('Could not update Discover series completion:', error);
+    if (triggerButton?.isConnected) {
+      triggerButton.disabled = false;
+      triggerButton.removeAttribute('aria-busy');
+      triggerButton.textContent = undoing ? '↶ Undo series complete' : '✓ Mark series complete';
+    }
+  }
 }
 
 async function syncDiscoverTVProgress(item) {

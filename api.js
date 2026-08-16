@@ -4,6 +4,7 @@ export const TrackerAPI = (() => {
   const GOOGLE_BOOKS_ROOT = 'https://www.googleapis.com/books/v1';
   const YOUTUBE_ROOT = 'https://www.googleapis.com/youtube/v3';
   const ITUNES_ROOT = 'https://itunes.apple.com';
+  const LASTFM_ROOT = 'https://ws.audioscrobbler.com/2.0/';
   const TICKETMASTER_ROOT = 'https://app.ticketmaster.com/discovery/v2';
 
   function required(value, label) {
@@ -205,6 +206,99 @@ export const TrackerAPI = (() => {
       releaseDate: String(result.releaseDate || '').slice(0, 10),
       raw: result
     }));
+  }
+
+
+  async function fetchLastFm(method, params, settings) {
+    const key = required(settings.lastfmApiKey, 'Last.fm API key');
+    const query = new URLSearchParams({
+      method,
+      api_key: key,
+      format: 'json'
+    });
+    for (const [name, value] of Object.entries(params || {})) {
+      if (value === undefined || value === null || value === '') continue;
+      query.set(name, String(value));
+    }
+    const data = await fetchJson(`${LASTFM_ROOT}?${query.toString()}`);
+    if (data?.error) throw new Error(data.message || `Last.fm error ${data.error}`);
+    return data;
+  }
+
+  function mapLastFmArtist(artist) {
+    if (!artist?.name) return null;
+    return {
+      name: artist.name,
+      mbid: artist.mbid || '',
+      match: Number(artist.match || 0),
+      url: artist.url || ''
+    };
+  }
+
+  function mapLastFmTrack(track) {
+    if (!track?.name) return null;
+    const artistName = typeof track.artist === 'string' ? track.artist : track.artist?.name || '';
+    if (!artistName) return null;
+    return {
+      name: track.name,
+      artistName,
+      mbid: track.mbid || '',
+      match: Number(track.match || 0),
+      url: track.url || ''
+    };
+  }
+
+  async function getLastFmSimilarArtists(artistName, settings, limit = 24) {
+    const data = await fetchLastFm('artist.getsimilar', {
+      artist: artistName,
+      limit: Math.max(1, Math.min(50, Number(limit || 24))),
+      autocorrect: 1
+    }, settings);
+    return (data?.similarartists?.artist || []).map(mapLastFmArtist).filter(Boolean);
+  }
+
+  async function getLastFmSimilarTracks(artistName, trackName, settings, limit = 24) {
+    const data = await fetchLastFm('track.getsimilar', {
+      artist: artistName,
+      track: trackName,
+      limit: Math.max(1, Math.min(50, Number(limit || 24))),
+      autocorrect: 1
+    }, settings);
+    return (data?.similartracks?.track || []).map(mapLastFmTrack).filter(Boolean);
+  }
+
+  async function getLastFmTopArtistsByTag(tag, settings, limit = 24, page = 1) {
+    const data = await fetchLastFm('tag.gettopartists', {
+      tag,
+      limit: Math.max(1, Math.min(50, Number(limit || 24))),
+      page: Math.max(1, Number(page || 1))
+    }, settings);
+    return (data?.topartists?.artist || []).map(mapLastFmArtist).filter(Boolean);
+  }
+
+  async function getLastFmTopTracksByTag(tag, settings, limit = 24, page = 1) {
+    const data = await fetchLastFm('tag.gettoptracks', {
+      tag,
+      limit: Math.max(1, Math.min(50, Number(limit || 24))),
+      page: Math.max(1, Number(page || 1))
+    }, settings);
+    return (data?.tracks?.track || data?.toptracks?.track || []).map(mapLastFmTrack).filter(Boolean);
+  }
+
+  async function getLastFmChartTopArtists(settings, limit = 30, page = 1) {
+    const data = await fetchLastFm('chart.gettopartists', {
+      limit: Math.max(1, Math.min(50, Number(limit || 30))),
+      page: Math.max(1, Number(page || 1))
+    }, settings);
+    return (data?.artists?.artist || []).map(mapLastFmArtist).filter(Boolean);
+  }
+
+  async function getLastFmChartTopTracks(settings, limit = 30, page = 1) {
+    const data = await fetchLastFm('chart.gettoptracks', {
+      limit: Math.max(1, Math.min(50, Number(limit || 30))),
+      page: Math.max(1, Number(page || 1))
+    }, settings);
+    return (data?.tracks?.track || []).map(mapLastFmTrack).filter(Boolean);
   }
 
   async function getMusicDetails(id, settings) {
@@ -787,6 +881,12 @@ export const TrackerAPI = (() => {
     searchMusic,
     searchArtists,
     searchSongs,
+    getLastFmSimilarArtists,
+    getLastFmSimilarTracks,
+    getLastFmTopArtistsByTag,
+    getLastFmTopTracksByTag,
+    getLastFmChartTopArtists,
+    getLastFmChartTopTracks,
     getMusicDetails,
     getArtistDetails,
     getSongDetails,

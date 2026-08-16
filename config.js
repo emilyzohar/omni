@@ -6,6 +6,7 @@ export const API_CONFIG = {
   itunesCountry: (import.meta.env.EXPO_PUBLIC_ITUNES_COUNTRY || 'CA').toUpperCase(),
   tmdbWatchRegion: (import.meta.env.EXPO_PUBLIC_TMDB_WATCH_REGION || 'CA').toUpperCase(),
   ticketmasterKey: import.meta.env.EXPO_PUBLIC_TICKETMASTER_API_KEY || '',
+  lastfmApiKey: import.meta.env.EXPO_PUBLIC_LASTFM_API_KEY || '',
   homeCity: import.meta.env.EXPO_PUBLIC_HOME_CITY || '',
   homeCountry: import.meta.env.EXPO_PUBLIC_HOME_COUNTRY || '',
   homeLat: import.meta.env.EXPO_PUBLIC_HOME_LAT || '',

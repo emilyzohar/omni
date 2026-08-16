@@ -23,3 +23,16 @@ Live events
 - New: future events appear only inside the selected Upcoming horizon.
 - Popular: nearby events are included without taste boosts.
 - Automatic Calendar behavior elsewhere in the tracker remains selective: saved artists and specifically followed live interests only.
+
+DISCOVER COMPLETION / RATING FIX
+- Discover TV "Mark series complete" is handled directly by the detail panel, with immediate busy-state feedback and a reliable detail/card refresh.
+- Bulk undo still removes only episodes added by the bulk action and preserves manually watched episodes.
+- Quick-rating Continue now only saves the selected rating (if any) and closes the rating dialog. It no longer opens TV episode tracking afterward.
+
+LAST.FM MUSIC DISCOVERY
+- Add EXPO_PUBLIC_LASTFM_API_KEY to the environment.
+- For You now uses artist.getSimilar and track.getSimilar plus tag discovery.
+- Popular music now uses Last.fm chart artists/tracks instead of personal taste.
+- iTunes remains the metadata/artwork/ID resolver and New-release source.
+- Ticketmaster remains the concert/event source.
+- The Last.fm shared secret is not used.

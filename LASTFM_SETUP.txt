@@ -1,0 +1,35 @@
+LAST.FM MUSIC DISCOVERY SETUP
+
+Add this to the same environment configuration used for the other API keys:
+
+EXPO_PUBLIC_LASTFM_API_KEY=YOUR_LASTFM_API_KEY
+
+The app reads it internally as:
+lastfmApiKey
+
+You do NOT need to add the Last.fm shared secret for this integration.
+The tracker only uses read-only methods that require an API key and no user authentication:
+- artist.getSimilar
+- track.getSimilar
+- tag.getTopArtists
+- tag.getTopTracks
+- chart.getTopArtists
+- chart.getTopTracks
+
+WHAT IT DOES
+
+For You:
+- Uses saved/high-signal artists as seeds for Last.fm similar artists.
+- Uses saved songs as seeds for Last.fm similar tracks.
+- Adds tag/genre exploration so the feed reaches beyond artists already logged.
+- Resolves Last.fm recommendations through iTunes so existing artwork, IDs, album/song details, and Library behavior continue to work.
+
+Popular:
+- Uses Last.fm global top artists and tracks.
+- Resolves them through iTunes.
+- Also surfaces albums from those popular artists.
+
+New:
+- Continues using dated iTunes catalogue results because Last.fm similarity/chart results are not a release-date feed.
+
+Ticketmaster remains responsible for concert/event discovery and Calendar behavior.
