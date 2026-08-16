@@ -887,15 +887,56 @@ export const TrackerAPI = (() => {
     return mapTicketmasterEvent(data);
   }
 
-  async function searchCatalogue(query, type, settings) {
+  async function searchTicketmasterCatalogue(query, settings, options = {}) {
+    const now = new Date();
+    const pastStart = new Date(now);
+    pastStart.setUTCFullYear(pastStart.getUTCFullYear() - 1);
+    const futureEnd = new Date(now);
+    futureEnd.setUTCFullYear(futureEnd.getUTCFullYear() + 2);
+
+    const common = {
+      ...options,
+      size: Math.min(25, Math.max(1, Number(options.size || 25)))
+    };
+
+    // Explicit Add searches should find both historical and upcoming events.
+    // Keep these as separate requests so a large future tour cannot push recent
+    // past shows out of Ticketmaster's first result page.
+    const [upcoming, recentPast] = await Promise.all([
+      searchTicketmasterEvents(query, settings, {
+        ...common,
+        page: 0,
+        sort: 'date,asc',
+        startDateTime: ticketmasterDateTime(now),
+        endDateTime: ticketmasterDateTime(futureEnd)
+      }),
+      searchTicketmasterEvents(query, settings, {
+        ...common,
+        page: 0,
+        sort: 'date,desc',
+        startDateTime: ticketmasterDateTime(pastStart),
+        endDateTime: ticketmasterDateTime(now)
+      })
+    ]);
+
+    const seen = new Set();
+    return [...upcoming, ...recentPast].filter(event => {
+      const key = String(event?.providerId || '').trim() || `${event?.title || ''}:${event?.eventDate || ''}:${event?.venueName || ''}`;
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  async function searchCatalogue(query, type, settings, options = {}) {
     if (!query.trim()) return [];
     if (type === 'tv' || type === 'movie') return searchTMDB(query, type, settings);
     if (type === 'book') return searchBooks(query, settings);
     if (type === 'music') return searchMusic(query, settings);
     if (type === 'artist') return searchArtists(query, settings);
     if (type === 'song') return searchSongs(query, settings);
-    if (type === 'concert') return searchTicketmasterEvents(query, settings, { classificationName: 'Music' });
-    if (type === 'event') return searchTicketmasterEvents(query, settings);
+    if (type === 'concert') return searchTicketmasterCatalogue(query, settings, { ...options, classificationName: 'Music' });
+    if (type === 'event') return searchTicketmasterCatalogue(query, settings, options);
     return [];
   }
 

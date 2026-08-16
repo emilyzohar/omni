@@ -1,4 +1,4 @@
-import { TrackerAPI } from './api.js?v=music-manual-dates-grouping-1';
+import { TrackerAPI } from './api.js?v=concert-search-past-1';
 import { API_CONFIG } from './config.js?v=music-manual-dates-grouping-1';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
@@ -3009,7 +3009,7 @@ function updateItemFormForType() {
     music: 'Search albums (optional)',
     artist: 'Search artists',
     song: 'Search songs',
-    concert: 'Search concerts',
+    concert: 'Search concerts — past or upcoming',
     event: 'Search events'
   };
   els.catalogueQuery.placeholder = placeholders[sourceType] || 'Search title';
@@ -3035,7 +3035,11 @@ async function searchCatalogue() {
   els.catalogueSearchButton.disabled = true;
 
   try {
-    const results = await TrackerAPI.searchCatalogue(query, type, state.settings);
+    const liveSearch = ['concert', 'event'].includes(type);
+    const results = await TrackerAPI.searchCatalogue(query, type, state.settings, liveSearch ? {
+      city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
+      countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA'
+    } : {});
     renderSearchResults(results);
     showFormMessage('', false);
   } catch (error) {
@@ -3048,7 +3052,12 @@ async function searchCatalogue() {
 function renderSearchResults(results) {
   els.searchResults.innerHTML = '';
   if (!results.length) {
-    els.searchResults.innerHTML = '<div class="search-result-meta" style="padding:14px">No results.</div>';
+    const sourceType = els.itemSourceType.value;
+    const city = state.discoverPrefs.eventCity || state.settings.homeCity || '';
+    const liveMessage = ['concert', 'event'].includes(sourceType)
+      ? `No Ticketmaster results${city ? ` in ${city}` : ''} from the past year or upcoming dates.`
+      : 'No results.';
+    els.searchResults.innerHTML = `<div class="search-result-meta" style="padding:14px">${escapeHtml(liveMessage)}</div>`;
     els.searchResults.hidden = false;
     return;
   }
@@ -3062,7 +3071,10 @@ function renderSearchResults(results) {
       ${result.image ? `<img src="${escapeAttr(result.image)}" alt="" />` : '<div class="search-result-placeholder"></div>'}
       <div>
         <div class="search-result-title">${escapeHtml(result.title)}</div>
-        <div class="search-result-meta">${escapeHtml(result.subtitle || '')}</div>
+        <div class="search-result-meta">${escapeHtml([
+          result.eventDate && result.eventDate < todayString() ? 'Past' : '',
+          result.subtitle || ''
+        ].filter(Boolean).join(' · '))}</div>
       </div>`;
     button.addEventListener('click', () => selectCatalogueResult(result));
     els.searchResults.appendChild(button);
