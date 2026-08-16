@@ -36,3 +36,20 @@ LAST.FM MUSIC DISCOVERY
 - iTunes remains the metadata/artwork/ID resolver and New-release source.
 - Ticketmaster remains the concert/event source.
 - The Last.fm shared secret is not used.
+
+Concert Calendar classification fix
+- Automatically surfaced Ticketmaster concerts in the Up Next calendar remain discovery/upcoming entries only and cannot leak into the tracked Calendar.
+- Tracked Calendar now admits a concert only when it has an explicit calendar marker from the + Calendar action.
+- Explicitly added concerts retain sourceType=concert for Ticketmaster behavior, but are stored as type=music with subcategory=Concert and typeLabel=Music.
+- Existing saved concert items are migrated to Music > Concert; older explicit + Calendar items using discoverCalendarOnly are recognized as explicit calendar additions.
+
+Music taxonomy + live-event calendar workflow
+- Unified tracked music taxonomy: Music parent with Album / Artist / Song / Concert subcategories.
+- Existing saved Album/Artist/Song/Concert items migrate to type=music with the appropriate subcategory while preserving sourceType for API behavior.
+- Track/Add form now labels sources as Music · Album / Artist / Song / Concert and locks the corresponding true subcategory.
+- Event (legacy) renamed to Event and made functional through Ticketmaster catalogue search.
+- Music · Concert search uses Ticketmaster restricted to Music classification.
+- Discover + Calendar for Event/Concert now schedules the item in Up Next → Calendar only.
+- Scheduled live-event rows show a reversible check: unchecked = not on tracked Calendar; checked = included on tracked Calendar; check again removes it.
+- Removing from Up Next Calendar does not silently remove an already tracked event.
+- Auto Ticketmaster concerts remain Up Next-calendar-only unless explicitly saved/scheduled and checked.

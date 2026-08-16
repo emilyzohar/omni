@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=lastfm-lazy-metadata-1';
-import { API_CONFIG } from './config.js?v=lastfm-lazy-metadata-1';
+import { TrackerAPI } from './api.js?v=music-subcategories-live-queue-1';
+import { API_CONFIG } from './config.js?v=music-subcategories-live-queue-1';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -22,10 +22,7 @@ const TYPE_LABELS = {
   tv: 'TV',
   book: 'Books',
   movie: 'Movies',
-  music: 'Albums',
-  artist: 'Artists',
-  song: 'Songs',
-  concert: 'Concerts',
+  music: 'Music',
   event: 'Events',
   workout: 'Workouts',
   other: 'Other'
@@ -565,7 +562,69 @@ function setSyncStatus(message, isError = false) {
   els.syncStatus.classList.toggle('is-error', Boolean(isError));
 }
 
+const MUSIC_SUBCATEGORY_BY_SOURCE = Object.freeze({
+  music: 'Album',
+  artist: 'Artist',
+  song: 'Song',
+  concert: 'Concert'
+});
+
+function musicSubcategoryForSourceType(sourceType) {
+  return MUSIC_SUBCATEGORY_BY_SOURCE[sourceType] || '';
+}
+
+function normalizeMusicFamilyItem(item) {
+  if (!item) return false;
+  const sourceType = getSourceType(item);
+  const subcategory = musicSubcategoryForSourceType(sourceType);
+  if (!subcategory) return false;
+  let changed = false;
+  if (item.type !== 'music') { item.type = 'music'; changed = true; }
+  if (item.typeLabel !== 'Music') { item.typeLabel = 'Music'; changed = true; }
+  if (cleanTypeLabel(item.subcategory || '') !== subcategory) { item.subcategory = subcategory; changed = true; }
+  return changed;
+}
+
+function migrateSavedMusicClassification() {
+  let itemsChanged = false;
+  let historyChanged = false;
+  for (const item of state.items) {
+    if (normalizeMusicFamilyItem(item)) itemsChanged = true;
+    const sourceType = getSourceType(item);
+    if (!['event', 'concert'].includes(sourceType)) continue;
+
+    // Older Discover + Calendar entries went straight onto the tracked Calendar.
+    // They now become scheduled Up Next calendar entries and wait for the explicit check.
+    if (item.discoverCalendarOnly === true && item.queueCalendarScheduled !== true) {
+      item.queueCalendarScheduled = true;
+      item.calendarTracked = false;
+      item.calendarExplicit = false;
+      item.calendarHidden = true;
+      itemsChanged = true;
+    }
+  }
+
+  for (const entry of state.history) {
+    const source = entry.sourceItemId ? state.items.find(item => item.id === entry.sourceItemId) : null;
+    let sourceType = source ? getSourceType(source) : '';
+    if (!sourceType && ['artist', 'song', 'concert'].includes(entry.type)) sourceType = entry.type;
+    if (!sourceType && entry.type === 'music') {
+      const current = cleanTypeLabel(entry.subcategory || '');
+      sourceType = current === 'Artist' ? 'artist' : current === 'Song' ? 'song' : current === 'Concert' ? 'concert' : 'music';
+    }
+    const subcategory = musicSubcategoryForSourceType(sourceType);
+    if (!subcategory) continue;
+    if (entry.type !== 'music') { entry.type = 'music'; historyChanged = true; }
+    if (entry.typeLabel !== 'Music') { entry.typeLabel = 'Music'; historyChanged = true; }
+    if (cleanTypeLabel(entry.subcategory || '') !== subcategory) { entry.subcategory = subcategory; historyChanged = true; }
+  }
+
+  if (itemsChanged) saveItems();
+  if (historyChanged) saveHistory();
+}
+
 function init() {
+  migrateSavedMusicClassification();
   const now = new Date();
   if (els.monthPicker) {
     els.monthPicker.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -822,11 +881,12 @@ function bindEvents() {
         if (!item) {
           item = ensureDiscoverItem(result, 'library');
           item.discoverCalendarOnly = true;
-          item.calendarHidden = false;
-        } else {
-          item.calendarHidden = !Boolean(item.calendarHidden);
-          if (!item.date) item.date = result.eventDate || item.eventMeta?.eventDate || '';
         }
+        const scheduling = item.queueCalendarScheduled !== true;
+        item.queueCalendarScheduled = scheduling;
+        if (!item.date) item.date = result.eventDate || item.eventMeta?.eventDate || '';
+        if (scheduling && item.calendarTracked !== true) item.calendarHidden = true;
+        normalizeMusicFamilyItem(item);
         item.updatedAt = new Date().toISOString();
         saveItems();
         renderAll();
@@ -883,7 +943,15 @@ function bindEvents() {
     if (calendarVisibility) {
       const item = findItem(calendarVisibility.dataset.toggleLibraryCalendar);
       if (item) {
-        item.calendarHidden = !Boolean(item.calendarHidden);
+        const sourceType = getSourceType(item);
+        if (['event', 'concert'].includes(sourceType) && item.queueCalendarScheduled === true) {
+          const tracked = !(item.calendarTracked === true && !item.calendarHidden);
+          item.calendarTracked = tracked;
+          item.calendarExplicit = tracked;
+          item.calendarHidden = !tracked;
+        } else {
+          item.calendarHidden = !Boolean(item.calendarHidden);
+        }
         item.updatedAt = new Date().toISOString();
         saveItems();
         renderAll();
@@ -1632,9 +1700,12 @@ async function buildQueueCalendarEntries() {
     }
 
     if (sourceType === 'event' || sourceType === 'concert') {
-      if (item.calendarHidden) continue;
+      // Scheduled live events may be hidden from the tracked Calendar while still
+      // belonging to Up Next → Calendar. The check on that row controls tracking.
+      if (item.calendarHidden && item.queueCalendarScheduled !== true) continue;
       const date = item.date || item.eventMeta?.eventDate || '';
-      add(item, date, item.title, [formatEventClock(item.eventMeta?.eventTime || ''), item.eventMeta?.venueName || '', item.eventMeta?.city || '', getQueueStatus(item) === 'tbr' ? 'TBR' : ''].filter(Boolean).join(' · '), item.image, 'event');
+      const tracked = item.calendarTracked === true && !item.calendarHidden;
+      add(item, date, item.title, [formatEventClock(item.eventMeta?.eventTime || ''), item.eventMeta?.venueName || '', item.eventMeta?.city || '', tracked ? 'Tracked' : '', getQueueStatus(item) === 'tbr' ? 'TBR' : ''].filter(Boolean).join(' · '), item.image, sourceType === 'concert' ? 'concert' : 'event');
       continue;
     }
 
@@ -1663,14 +1734,20 @@ async function buildQueueCalendarEntries() {
         : await getNearbyTicketmasterConcerts({ includeInferred: false, startDate: today, endDate: horizon, artistLimit: 14 });
       const followedEvents = await getFollowedTicketmasterEvents({ startDate: today, endDate: horizon, termLimit: 12 });
       const liveEvents = dedupeTicketmasterEvents([...autoConcerts, ...followedEvents]);
+      const savedScheduledLiveIds = new Set(state.items
+        .filter(item => ['event', 'concert'].includes(getSourceType(item)) && item.queueCalendarScheduled === true)
+        .map(item => String(item.providerId || ''))
+        .filter(Boolean));
       for (const liveEvent of liveEvents) {
+        if (savedScheduledLiveIds.has(String(liveEvent.providerId || ''))) continue;
         const isConcert = liveEvent.sourceType === 'concert';
         const artistItem = isConcert ? explicitLikedArtistItems().find(item => normalizeArtistName(item.title) === normalizeArtistName(liveEvent.artistName)) : null;
         const pseudoItem = {
           id: `live:${liveEvent.providerId}`,
           sourceType: isConcert ? 'concert' : 'event',
-          type: isConcert ? 'concert' : 'event',
-          typeLabel: isConcert ? 'Concert' : 'Event',
+          type: isConcert ? 'music' : 'event',
+          typeLabel: isConcert ? 'Music' : 'Event',
+          subcategory: isConcert ? 'Concert' : '',
           title: liveEvent.title,
           image: artistItem?.image || liveEvent.image || '',
           provider: 'ticketmaster',
@@ -1694,14 +1771,21 @@ async function buildQueueCalendarEntries() {
 
 function queueCalendarEntryMarkup(entry) {
   const label = getItemTypeLabel(entry.item);
+  const subcategory = cleanTypeLabel(entry.item?.subcategory || '');
   const art = entry.image ? `<img src="${escapeAttr(entry.image)}" alt="" />` : `<div class="queue-calendar-thumb placeholder">${escapeHtml(label?.[0] || '•')}</div>`;
-  const action = entry.url
+  const openAction = entry.url
     ? `<a class="upnext-arrow" href="${escapeAttr(entry.url)}" target="_blank" rel="noopener" aria-label="Open event">→</a>`
     : `<button class="upnext-arrow" type="button" data-action="details" data-id="${escapeAttr(entry.item.id)}" aria-label="Open details">→</button>`;
+  const sourceType = getSourceType(entry.item);
+  const canToggleTracked = ['event', 'concert'].includes(sourceType) && entry.item?.queueCalendarScheduled === true && !String(entry.item?.id || '').startsWith('live:');
+  const tracked = canToggleTracked && entry.item.calendarTracked === true && !entry.item.calendarHidden;
+  const trackAction = canToggleTracked
+    ? `<button class="check-button queue-calendar-track-check${tracked ? ' is-complete' : ''}" type="button" data-action="track-calendar" data-id="${escapeAttr(entry.item.id)}" aria-label="${tracked ? 'Remove from tracked calendar' : 'Add to tracked calendar'}" title="${tracked ? 'Remove from tracked calendar' : 'Add to tracked calendar'}">✓</button>`
+    : '';
   return `<article class="queue-calendar-entry${entry.kind === 'concert' ? ' queue-calendar-concert' : ''}">
     ${art}
-    <div class="queue-calendar-entry-copy"><strong>${escapeHtml(entry.title)}</strong><span>${escapeHtml([label, entry.meta].filter(Boolean).join(' · '))}</span></div>
-    ${action}
+    <div class="queue-calendar-entry-copy"><strong>${escapeHtml(entry.title)}</strong><span>${escapeHtml([label, subcategory, entry.meta].filter(Boolean).join(' · '))}</span></div>
+    <div class="queue-calendar-entry-actions">${trackAction}${openAction}</div>
   </article>`;
 }
 
@@ -1790,7 +1874,7 @@ function tbrMeta(item) {
   if (sourceType === 'book') return [item.subtitle, 'To be read'].filter(Boolean).join(' · ');
   if (sourceType === 'youtube') return [item.subtitle, 'Playlist'].filter(Boolean).join(' · ');
   if (sourceType === 'reminder') return reminderScheduleLabel(item);
-  if (sourceType === 'event') return eventQueueMeta(item);
+  if (['event', 'concert'].includes(sourceType)) return eventQueueMeta(item);
   return item.subtitle || 'Saved for later';
 }
 
@@ -1837,7 +1921,7 @@ async function getUpNextInfo(item) {
     };
   }
 
-  if (getSourceType(item) === 'event') {
+  if (['event', 'concert'].includes(getSourceType(item))) {
     return {
       title: item.title,
       meta: eventQueueMeta(item),
@@ -1867,6 +1951,21 @@ async function handleUpNextClick(event) {
 
   if (button.dataset.action === 'details') {
     openDetails(item.id);
+    return;
+  }
+
+  if (button.dataset.action === 'track-calendar') {
+    const sourceType = getSourceType(item);
+    if (['event', 'concert'].includes(sourceType) && item.queueCalendarScheduled === true) {
+      const tracked = !(item.calendarTracked === true && !item.calendarHidden);
+      item.calendarTracked = tracked;
+      item.calendarExplicit = tracked;
+      item.calendarHidden = !tracked;
+      item.updatedAt = new Date().toISOString();
+      normalizeMusicFamilyItem(item);
+      saveItems();
+      renderAll();
+    }
     return;
   }
 
@@ -1917,7 +2016,7 @@ async function handleUpNextClick(event) {
 
 function queueSortKey(item, view = 'upnext') {
   if (view === 'upnext' && getSourceType(item) === 'reminder') return `0:${getNextReminderDueDate(item) || '9999-12-31'}:${item.createdAt || ''}`;
-  if (getSourceType(item) === 'event') return `0:${item.date || item.eventMeta?.eventDate || '9999-12-31'}:${item.createdAt || ''}`;
+  if (['event', 'concert'].includes(getSourceType(item))) return `0:${item.date || item.eventMeta?.eventDate || '9999-12-31'}:${item.createdAt || ''}`;
   return `1:${item.createdAt || ''}`;
 }
 
@@ -2607,7 +2706,7 @@ async function moveItemToQueue(item, status) {
     else if (sourceType === 'artist') await renderArtistDetails(item);
     else if (sourceType === 'song') await renderSongDetails(item);
     else if (sourceType === 'reminder') renderReminderDetails(item);
-    else if (sourceType === 'event') await renderEventDetails(item);
+    else if (['event', 'concert'].includes(sourceType)) await renderEventDetails(item);
     else renderManualDetails(item);
   }
 }
@@ -2829,7 +2928,7 @@ function clearSourceSelectionForTypeChange() {
 
 function updateItemFormForType() {
   const sourceType = els.itemSourceType.value;
-  const isCatalogue = ['tv', 'book', 'movie', 'music', 'artist', 'song'].includes(sourceType);
+  const isCatalogue = ['tv', 'book', 'movie', 'music', 'artist', 'song', 'concert', 'event'].includes(sourceType);
   const isYouTube = sourceType === 'youtube';
   const isReminder = sourceType === 'reminder';
   const isManual = sourceType === 'other';
@@ -2845,7 +2944,20 @@ function updateItemFormForType() {
   if (sourceType === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
     els.bookStartDate.value = todayString();
   }
-  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || ['music','artist','song'].includes(sourceType);
+  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || ['music','artist','song','concert'].includes(sourceType);
+
+  const fixedMusicSubcategory = musicSubcategoryForSourceType(sourceType);
+  if (els.itemSubcategory) {
+    if (fixedMusicSubcategory) {
+      els.itemSubcategory.value = fixedMusicSubcategory;
+      els.itemSubcategory.readOnly = true;
+      els.itemSubcategory.placeholder = fixedMusicSubcategory;
+    } else {
+      els.itemSubcategory.readOnly = false;
+      if (!els.editingId.value) els.itemSubcategory.value = '';
+      els.itemSubcategory.placeholder = 'e.g. Documentary, Lecture, Gym';
+    }
+  }
 
   if (isYouTube) {
     els.displayTypeLabel.textContent = 'Display as';
@@ -2882,7 +2994,9 @@ function updateItemFormForType() {
     book: 'Search books',
     music: 'Search albums',
     artist: 'Search artists',
-    song: 'Search songs'
+    song: 'Search songs',
+    concert: 'Search concerts',
+    event: 'Search events'
   };
   els.catalogueQuery.placeholder = placeholders[sourceType] || 'Search title';
 }
@@ -3230,6 +3344,13 @@ async function saveItemFromForm(event) {
 
   let type = sourceType;
   let typeLabel = SOURCE_ITEM_LABELS[sourceType] || '';
+  let fixedSubcategory = '';
+
+  if (musicSubcategoryForSourceType(sourceType)) {
+    type = 'music';
+    typeLabel = 'Music';
+    fixedSubcategory = musicSubcategoryForSourceType(sourceType);
+  }
 
   if (sourceType === 'youtube') {
     typeLabel = cleanTypeLabel(els.itemDisplayType.value) || 'Workout';
@@ -3290,8 +3411,18 @@ async function saveItemFromForm(event) {
     showFormMessage('Load a YouTube playlist first.', true);
     return;
   }
-  const expectedProvider = sourceType === 'book' ? 'googleBooks' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'event' ? 'ticketmaster' : 'tmdb';
-  if (['tv','book','movie','music','artist','song','event'].includes(sourceType) && (!providerId || provider !== expectedProvider)) {
+  const validProvider = sourceType === 'book'
+    ? provider === 'googleBooks'
+    : sourceType === 'music'
+      ? provider === 'itunes'
+      : ['artist', 'song'].includes(sourceType)
+        ? ['itunes', 'lastfm'].includes(provider)
+        : ['event', 'concert'].includes(sourceType)
+          ? provider === 'ticketmaster'
+          : ['tv', 'movie'].includes(sourceType)
+            ? provider === 'tmdb'
+            : true;
+  if (['tv','book','movie','music','artist','song','event','concert'].includes(sourceType) && (!providerId || !validProvider)) {
     showFormMessage('Choose a search result first.', true);
     return;
   }
@@ -3317,7 +3448,7 @@ async function saveItemFromForm(event) {
     sourceType,
     type,
     typeLabel,
-    subcategory: cleanTypeLabel(els.itemSubcategory?.value || ''),
+    subcategory: fixedSubcategory || cleanTypeLabel(els.itemSubcategory?.value || ''),
     title,
     provider,
     providerId,
@@ -3330,9 +3461,9 @@ async function saveItemFromForm(event) {
     releaseDate: extractItemReleaseDate(sourceType, state.selectedSource, editing),
     attachments: attachmentFiles,
     links: state.attachmentDraft.links.map(link => ({ ...link })),
-    date: sourceType === 'reminder' ? '' : (['music','artist','song'].includes(sourceType) ? '' : (sourceType === 'event' ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || ''))),
-    queueStatus: sourceType === 'reminder' ? 'upnext' : (['music','artist','song'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library')),
-    active: sourceType === 'reminder' || (!['music','artist','song'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
+    date: sourceType === 'reminder' ? '' : (['music','artist','song'].includes(sourceType) ? '' : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || ''))),
+    queueStatus: sourceType === 'reminder' ? 'upnext' : (['music','artist','song','concert'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library')),
+    active: sourceType === 'reminder' || (!['music','artist','song','concert'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
     createdAt: editing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     completedAt: editing?.completedAt || '',
@@ -3341,7 +3472,7 @@ async function saveItemFromForm(event) {
       watchDisposition: editing?.watchDisposition || ((els.itemQueueStatus.value || 'library') === 'tbr' ? 'watch-later' : 'following'),
       tvMeta: { ...(editing?.tvMeta || {}) }
     } : {}),
-    ...(sourceType === 'event' ? {
+    ...(['event', 'concert'].includes(sourceType) ? {
       eventMeta: {
         ...(editing?.eventMeta || {}),
         eventDate: state.selectedSource?.eventDate || editing?.eventMeta?.eventDate || els.itemDate.value || '',
@@ -3508,7 +3639,7 @@ async function openDetails(id) {
     else if (sourceType === 'artist') await renderArtistDetails(item);
     else if (sourceType === 'song') await renderSongDetails(item);
     else if (sourceType === 'reminder') renderReminderDetails(item);
-    else if (sourceType === 'event') await renderEventDetails(item);
+    else if (['event', 'concert'].includes(sourceType)) await renderEventDetails(item);
     else renderManualDetails(item);
     appendLibraryPersonalMetadata(item);
     appendItemResources(item);
@@ -3809,7 +3940,7 @@ async function renderEventDetails(item) {
   const info = [classifications, priceText, event.status && event.status !== 'onsale' ? event.status.replace(/_/g, ' ') : ''].filter(Boolean).join(' · ');
 
   els.detailBody.innerHTML = `
-    ${detailHero({ type:'EVENT', title:event.title || item.title, image:event.image || item.image, subtitle:dateLine, overview:event.description || item.notes || '' })}
+    ${detailHero({ type:getSourceType(item) === 'concert' ? 'CONCERT' : 'EVENT', title:event.title || item.title, image:event.image || item.image, subtitle:dateLine, overview:event.description || item.notes || '' })}
     ${detailEditButton(item)}
     <section class="detail-section event-detail-section"><h3>Event details</h3>
       ${info ? `<p>${escapeHtml(info)}</p>` : ''}
@@ -3892,6 +4023,10 @@ function itemHasCalendarAssociations(item) {
 
 function libraryCalendarToggleButton(item) {
   if (!itemHasCalendarAssociations(item)) return '';
+  const sourceType = getSourceType(item);
+  // A scheduled live event must use the Up Next Calendar check for its first
+  // tracked-calendar inclusion; do not provide a bypass in its detail panel.
+  if (['event', 'concert'].includes(sourceType) && item.queueCalendarScheduled === true && item.calendarTracked !== true) return '';
   const hidden = Boolean(item.calendarHidden);
   return `<button class="quiet-button library-calendar-toggle${hidden ? ' is-hidden' : ''}" type="button" data-toggle-library-calendar="${escapeAttr(item.id)}">${hidden ? 'Show on calendar' : 'Remove from calendar'}</button>`;
 }
@@ -4478,7 +4613,14 @@ function saveBookProgress(event) {
 // ---------------------------
 function getCalendarEntries() {
   const savedItems = state.items
-    .filter(item => item.date && getSourceType(item) !== 'book' && !item.calendarHidden)
+    .filter(item => {
+      const sourceType = getSourceType(item);
+      if (!item.date || sourceType === 'book' || item.calendarHidden) return false;
+      // + Calendar schedules a live event in Up Next first. The tracked Calendar
+      // only receives it after the explicit check in that Up Next calendar row.
+      if (['event', 'concert'].includes(sourceType) && item.queueCalendarScheduled === true && item.calendarTracked !== true) return false;
+      return true;
+    })
     .map(item => ({
       id: `item:${item.id}`,
       sourceItemId: item.id,
@@ -7981,8 +8123,9 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
   item = {
     id: makeId(),
     sourceType,
-    type: sourceType,
-    typeLabel: SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType),
+    type: musicSubcategoryForSourceType(sourceType) ? 'music' : sourceType,
+    typeLabel: musicSubcategoryForSourceType(sourceType) ? 'Music' : (SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType)),
+    subcategory: musicSubcategoryForSourceType(sourceType),
     title: result.title || 'Untitled',
     provider: result.provider || (sourceType === 'book' ? 'googleBooks' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'concert' ? 'ticketmaster' : sourceType === 'event' ? 'ticketmaster' : 'tmdb'),
     providerId: String(result.providerId || ''),
@@ -8670,8 +8813,8 @@ async function renderDiscoverSongDetail(key) {
 
 function discoverEventCalendarActionMarkup(result, key) {
   const item = findDiscoverItem(result);
-  const visible = Boolean(item && !item.calendarHidden && (item.date || item.eventMeta?.eventDate));
-  return `<button class="secondary-button${visible ? ' is-selected' : ''}" type="button" data-discover-event-calendar="${escapeAttr(key)}">${visible ? 'Remove from Calendar' : '+ Calendar'}</button>`;
+  const scheduled = Boolean(item?.queueCalendarScheduled);
+  return `<button class="secondary-button${scheduled ? ' is-selected' : ''}" type="button" data-discover-event-calendar="${escapeAttr(key)}">${scheduled ? 'Remove from Up Next Calendar' : '+ Calendar'}</button>`;
 }
 
 function ticketmasterFollowTermForEvent(event) {
@@ -9202,7 +9345,7 @@ function extractItemGenres(sourceType, source, editing) {
     const genre = source?.raw?.primaryGenreName || source?.description || editing?.genres?.[0] || '';
     return genre ? [String(genre)] : [];
   }
-  if (sourceType === 'event') {
+  if (['event', 'concert'].includes(sourceType)) {
     const classifications = source?.classifications || editing?.eventMeta?.classifications || editing?.genres || [];
     return [...new Set(classifications.map(value => String(value || '').trim()).filter(Boolean))];
   }
@@ -9215,7 +9358,7 @@ function extractItemReleaseDate(sourceType, source, editing) {
   if (sourceType === 'movie') return source?.raw?.release_date || editing?.releaseDate || '';
   if (sourceType === 'music' || sourceType === 'song') return source?.releaseDate || source?.raw?.releaseDate || editing?.releaseDate || '';
   if (sourceType === 'artist') return editing?.releaseDate || '';
-  if (sourceType === 'event') return source?.eventDate || source?.raw?.dates?.start?.localDate || editing?.date || editing?.releaseDate || '';
+  if (['event', 'concert'].includes(sourceType)) return source?.eventDate || source?.raw?.dates?.start?.localDate || editing?.date || editing?.releaseDate || '';
   return editing?.releaseDate || '';
 }
 
@@ -9271,7 +9414,7 @@ function normalizeLibraryPrefs(value) {
 
 function isCoreLibraryGroupKey(key) {
   const normalized = slugifyType(key).replace(/s$/, '');
-  return ['tv','movie','book','album','artist','song'].includes(normalized);
+  return ['tv','movie','book','music'].includes(normalized);
 }
 
 function libraryAvailableTypeGroups() {
@@ -9283,14 +9426,14 @@ function libraryAvailableTypeGroups() {
 
   // Keep the three core content types available even before the user has saved
   // something in each category.
-  [['tv', 'TV'], ['movie', 'Movie'], ['book', 'Book']].forEach(([key, label]) => {
+  [['tv', 'TV'], ['movie', 'Movie'], ['book', 'Book'], ['music', 'Music']].forEach(([key, label]) => {
     if (!groups.has(key) && ![...groups.keys()].some(existing => slugifyType(existing).replace(/s$/, '') === key)) {
       groups.set(key, label);
     }
   });
 
   return [...groups.entries()].sort(([aKey,aLabel],[bKey,bLabel]) => {
-    const preferred = ['tv','movie','movies','book','books'];
+    const preferred = ['tv','movie','movies','book','books','music'];
     const ai = preferred.indexOf(aKey);
     const bi = preferred.indexOf(bKey);
     if (ai !== -1 || bi !== -1) {
@@ -9313,7 +9456,7 @@ function ensureLibraryVisibleTypes() {
     state.libraryVisibleTypes = new Set(libraryDefaultTypeKeys());
   } else if (!Array.isArray(normalizeLibraryPrefs(state.libraryPrefs).defaultTypeKeys)) {
     // When the user has not explicitly customized Library defaults, newly available
-    // core media types (Album / Artist / Song) should become visible automatically.
+    // core media types (including the unified Music category) should become visible automatically.
     for (const [key] of libraryAvailableTypeGroups()) {
       if (isCoreLibraryGroupKey(key)) state.libraryVisibleTypes.add(key);
     }
@@ -9492,7 +9635,7 @@ function makeLibraryPoster(item) {
   const hasThumbnail = Boolean(String(item.image || '').trim());
   if (!hasThumbnail) poster.classList.add('library-text-card-button');
   const recommendedBadge = item.recommended
-    ? `<span class="library-recommended-badge" aria-label="Recommended">♥ Recommended</span>`
+    ? `<span class="library-recommended-badge" aria-label="Recommended">♥</span>`
     : '';
   poster.innerHTML = hasThumbnail
     ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />
@@ -9534,7 +9677,7 @@ function renderLibrary() {
           return Number(undatedRecentOrder.get(a.id) || 0) - Number(undatedRecentOrder.get(b.id) || 0);
         };
 
-  const preferredLabels = ['TV','Movie','Book','Album','Artist','Song','Workout','Other'];
+  const preferredLabels = ['TV','Movie','Book','Music','Workout','Other'];
   const preferredOrder = preferredLabels.map(label => slugifyType(label));
   const grouped = new Map();
   for (const item of filtered) {
@@ -9730,7 +9873,7 @@ function libraryProgressText(item) {
     const total = item.progress?.totalPages || 0;
     return total ? `${current} / ${total} pages` : `${current} pages`;
   }
-  if (sourceType === 'event') return eventQueueMeta(item);
+  if (['event', 'concert'].includes(sourceType)) return eventQueueMeta(item);
   if (item.date) return item.date;
   return item.subtitle || '';
 }
@@ -10153,7 +10296,7 @@ function progressFallback(item) {
   if (sourceType === 'tv') return `S${item.progress?.nextSeason || 1} E${item.progress?.nextEpisode || 1}`;
   if (sourceType === 'youtube') return `Video ${(item.progress?.currentIndex || 0) + 1}`;
   if (sourceType === 'book') return `Page ${item.progress?.currentPage || 0}`;
-  if (sourceType === 'event') return eventQueueMeta(item);
+  if (['event', 'concert'].includes(sourceType)) return eventQueueMeta(item);
   return '';
 }
 

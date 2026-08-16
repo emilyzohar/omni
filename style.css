@@ -5669,3 +5669,20 @@ body.auth-locked > main {
     font-size: .72rem;
   }
 }
+
+/* Up Next live-event tracking toggle */
+.queue-calendar-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.queue-calendar-track-check {
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  font-size: 1.05rem;
+}
+.queue-calendar-track-check.is-complete {
+  background: var(--maroon);
+  color: var(--cream);
+}

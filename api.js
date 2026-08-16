@@ -894,6 +894,7 @@ export const TrackerAPI = (() => {
     if (type === 'music') return searchMusic(query, settings);
     if (type === 'artist') return searchArtists(query, settings);
     if (type === 'song') return searchSongs(query, settings);
+    if (type === 'concert') return searchTicketmasterEvents(query, settings, { classificationName: 'Music' });
     if (type === 'event') return searchTicketmasterEvents(query, settings);
     return [];
   }
