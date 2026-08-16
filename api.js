@@ -721,6 +721,38 @@ export const TrackerAPI = (() => {
     return (data?._embedded?.events || []).map(mapTicketmasterEvent);
   }
 
+  async function searchTicketmasterAttractions(query, settings, options = {}) {
+    const key = required(settings.ticketmasterKey, 'Ticketmaster API key');
+    const params = new URLSearchParams({
+      apikey: key,
+      size: String(Math.min(50, Math.max(1, Number(options.size || 20)))),
+      page: String(Math.max(0, Number(options.page || 0))),
+      sort: options.sort || 'relevance,desc'
+    });
+    const keyword = String(query || '').trim();
+    if (keyword) params.set('keyword', keyword);
+    const classificationNames = Array.isArray(options.classificationNames)
+      ? options.classificationNames
+      : (options.classificationName ? [options.classificationName] : []);
+    for (const classificationName of classificationNames.map(value => String(value || '').trim()).filter(Boolean)) {
+      params.append('classificationName', classificationName);
+    }
+    if (options.preferredCountry) params.set('preferredCountry', String(options.preferredCountry).toLowerCase());
+    const data = await fetchTicketmasterJson(`${TICKETMASTER_ROOT}/attractions.json?${params.toString()}`);
+    return (data?._embedded?.attractions || []).map(attraction => {
+      const classification = attraction?.classifications?.find(entry => entry?.primary) || attraction?.classifications?.[0] || {};
+      return {
+        provider: 'ticketmaster',
+        providerId: String(attraction?.id || ''),
+        title: attraction?.name || 'Unknown artist',
+        image: ticketmasterImage(attraction?.images || []),
+        classifications: [classification?.segment?.name, classification?.genre?.name, classification?.subGenre?.name]
+          .filter(value => value && value !== 'Undefined'),
+        raw: attraction
+      };
+    });
+  }
+
   async function getUpcomingEvents(settings, options = {}) {
     return searchTicketmasterEvents('', settings, options);
   }
@@ -762,6 +794,7 @@ export const TrackerAPI = (() => {
     getPlaylist,
     getYouTubeVideo,
     searchTicketmasterEvents,
+    searchTicketmasterAttractions,
     getUpcomingEvents,
     getTicketmasterEvent,
     getTrending,

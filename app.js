@@ -1,4 +1,4 @@
-import { TrackerAPI } from './api.js?v=music-ticketmaster-live-1';
+import { TrackerAPI } from './api.js?v=related-music-1';
 import { API_CONFIG } from './config.js?v=music-ticketmaster-live-1';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
@@ -1388,6 +1388,105 @@ function inferredMusicArtistNames() {
     names.push(name);
   }
   return [...new Map(names.map(name => [normalizeArtistName(name), name])).values()];
+}
+
+function ticketmasterMusicGenreLabel(value) {
+  const raw = String(value || '').trim();
+  const key = raw.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim();
+  if (!key || key === 'music') return '';
+  if (/hip hop|hiphop|rap/.test(key)) return 'Hip-Hop/Rap';
+  if (/r and b|rhythm and blues|soul/.test(key)) return 'R&B';
+  if (/electronic|dance|edm|house|techno/.test(key)) return 'Dance/Electronic';
+  if (/alternative/.test(key)) return 'Alternative';
+  if (/rock/.test(key)) return 'Rock';
+  if (/pop/.test(key)) return 'Pop';
+  if (/country/.test(key)) return 'Country';
+  if (/jazz/.test(key)) return 'Jazz';
+  if (/blues/.test(key)) return 'Blues';
+  if (/metal/.test(key)) return 'Metal';
+  if (/folk|singer songwriter|americana|bluegrass/.test(key)) return 'Folk';
+  if (/reggae|ska/.test(key)) return 'Reggae';
+  if (/latin|salsa|bachata|regional mexican|urbano/.test(key)) return 'Latin';
+  if (/classical|opera/.test(key)) return 'Classical';
+  if (/punk/.test(key)) return 'Rock';
+  return raw;
+}
+
+function musicTasteGenreNames() {
+  const scores = new Map();
+  for (const item of state.items) {
+    const sourceType = getSourceType(item);
+    if (!['music','artist','song'].includes(sourceType)) continue;
+    const genres = [...(item.genres || [])];
+    if (!genres.length && sourceType === 'artist' && item.subtitle) genres.push(item.subtitle);
+    for (const genreValue of genres) {
+      const genre = ticketmasterMusicGenreLabel(genreValue);
+      if (!genre) continue;
+      const weight = 1 + (item.recommended ? 1.25 : 0) + Math.max(0, Number(item.rating || 0)) / 5;
+      scores.set(genre, (scores.get(genre) || 0) + weight);
+    }
+  }
+  return [...scores.entries()].sort((a,b) => b[1] - a[1]).map(([genre]) => genre).slice(0, 8);
+}
+
+function knownMusicArtistNameSet() {
+  return new Set([
+    ...explicitLikedArtistItems().map(item => item.title),
+    ...inferredMusicArtistNames()
+  ].map(normalizeArtistName).filter(Boolean));
+}
+
+async function getRelatedMusicAttractions(batchNumber = 1, limit = 8) {
+  if (!state.settings.ticketmasterKey) return [];
+  const genres = musicTasteGenreNames();
+  const genre = genres.length ? genres[(Math.max(1, batchNumber) - 1) % genres.length] : 'Music';
+  const countryCode = state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA';
+  const page = Math.max(0, (Math.max(1, batchNumber) - 1) % 5);
+  const cacheKey = `ticketmaster:related-attractions:${genre.toLowerCase()}:${countryCode}:${page}`;
+  const results = await getCached(cacheKey, () => TrackerAPI.searchTicketmasterAttractions('', state.settings, {
+    classificationName: genre,
+    preferredCountry: countryCode,
+    page,
+    size: Math.max(12, Math.min(30, limit * 3)),
+    sort: 'random'
+  }));
+  const known = knownMusicArtistNameSet();
+  return (results || [])
+    .filter(result => result.title && !known.has(normalizeArtistName(result.title)))
+    .filter(result => genre === 'Music' || (result.classifications || []).some(value => String(value).toLowerCase().includes(genre.toLowerCase())))
+    .slice(0, limit)
+    .map(result => ({ ...result, relatedGenre: genre }));
+}
+
+async function getRelatedTicketmasterConcerts(batchNumber = 1, limit = 12) {
+  if (!state.settings.ticketmasterKey) return [];
+  const genres = musicTasteGenreNames();
+  const genre = genres.length ? genres[(Math.max(1, batchNumber) - 1) % genres.length] : 'Music';
+  const city = state.discoverPrefs.eventCity || state.settings.homeCity || '';
+  const countryCode = state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA';
+  const page = Math.max(0, (Math.max(1, batchNumber) - 1) % 4);
+  const cacheKey = `ticketmaster:related-concerts:${genre.toLowerCase()}:${city}:${countryCode}:${page}`;
+  const events = await getCached(cacheKey, () => TrackerAPI.searchTicketmasterEvents('', state.settings, {
+    city,
+    countryCode,
+    page,
+    size: Math.max(16, Math.min(40, limit * 2)),
+    classificationName: genre,
+    sort: 'date,asc'
+  }));
+  const known = knownMusicArtistNameSet();
+  const mapped = (events || []).map(event => {
+    const lineup = [...new Set(event.attractions || [])];
+    const newArtist = lineup.find(name => !known.has(normalizeArtistName(name))) || lineup[0] || event.title || '';
+    return {
+      ...ticketmasterConcertFromEvent(event, newArtist, false),
+      relatedGenre: genre,
+      recommendationReason: genres.length ? `Related to your ${genre} taste` : 'Nearby music you might like',
+      _discoverSource: 'related-concert'
+    };
+  });
+  const novel = mapped.filter(event => !(event.lineup || []).some(name => known.has(normalizeArtistName(name))));
+  return dedupeTicketmasterEvents([...novel, ...mapped]).slice(0, limit);
 }
 
 function ticketmasterEventMatchesArtist(event, artistName) {
@@ -5716,8 +5815,14 @@ async function collectDiscoverFeedCandidates(batchNumber) {
   const contentType = state.discoverPrefs.contentType || 'all';
 
   if (contentType === 'concert') {
-    const concerts = await getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 14 });
-    return concerts.map(result => ({ ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-liked', _discoverBoost: result.likedArtist ? 14 : 8 }));
+    const [likedConcerts, relatedConcerts] = await Promise.all([
+      getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 14 }),
+      getRelatedTicketmasterConcerts(batchNumber, 14)
+    ]);
+    return dedupeTicketmasterEvents([
+      ...likedConcerts.map(result => ({ ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-liked', _discoverBoost: result.likedArtist ? 14 : 9 })),
+      ...relatedConcerts.map(result => ({ ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-related', _discoverBoost: 7 }))
+    ]);
   }
 
   if (contentType === 'event') {
@@ -5748,8 +5853,12 @@ async function collectDiscoverFeedCandidates(batchNumber) {
   // enters the user's Calendar unless explicitly followed or saved.
   if (state.settings.ticketmasterKey && batchNumber <= 4) {
     try {
-      const concerts = await getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 10 });
-      candidates.push(...concerts.map(result => ({ ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-liked', _discoverBoost: result.likedArtist ? 12 : 7 })));
+      const [concerts, relatedConcerts] = await Promise.all([
+        getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 10 }),
+        getRelatedTicketmasterConcerts(batchNumber, 8)
+      ]);
+      candidates.push(...concerts.map(result => ({ ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-liked', _discoverBoost: result.likedArtist ? 12 : 8 })));
+      candidates.push(...relatedConcerts.map(result => ({ ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-related', _discoverBoost: 6 })));
 
       const generalEvents = await fetchTicketmasterEventsForPreferences('', { page: Math.max(0, batchNumber - 1), size: 8 });
       candidates.push(...generalEvents.map(result => ({ ...result, sourceType: 'event', _discoverSource: 'ticketmaster-live', _discoverBoost: 2 + ticketmasterPreferenceBoost(result) })));
@@ -5826,6 +5935,50 @@ async function collectMusicDiscoverCandidates(batchNumber) {
         }
       } catch {}
     }
+  }
+
+  // Broaden beyond artists the user already named. Ticketmaster attraction
+  // classifications provide a free related-artist pool by the genres represented
+  // in saved artists/albums/songs. Resolve those names back to iTunes so they can
+  // be saved as normal Artist items, then surface songs by the related artists.
+  if (state.settings.ticketmasterKey) {
+    try {
+      const relatedAttractions = await getRelatedMusicAttractions(batchNumber, 6);
+      const relatedResolved = [];
+      for (const attraction of relatedAttractions.slice(0, 4)) {
+        try {
+          const found = await getCached(`itunes:related-artist:${normalizeArtistName(attraction.title)}`, () => TrackerAPI.searchArtists(attraction.title, state.settings));
+          const exact = (found || []).find(result => normalizeArtistName(result.title) === normalizeArtistName(attraction.title));
+          if (!exact || knownArtistIds.has(String(exact.providerId))) continue;
+          const artistCandidate = {
+            ...exact,
+            image: exact.image || attraction.image || '',
+            sourceType: 'artist',
+            recommendationReason: attraction.relatedGenre && attraction.relatedGenre !== 'Music' ? `Related ${attraction.relatedGenre} artist` : 'Related artist',
+            _discoverSource: 'related-artist',
+            _discoverBoost: 6
+          };
+          candidates.push(artistCandidate);
+          relatedResolved.push(artistCandidate);
+        } catch {}
+      }
+      for (const artist of relatedResolved.slice(0, 2)) {
+        try {
+          const songs = await getCached(`itunes:related-songs:${normalizeArtistName(artist.title)}`, () => TrackerAPI.searchSongs(artist.title, state.settings));
+          const matching = (songs || []).filter(song => normalizeArtistName(song.artistName || song.subtitle) === normalizeArtistName(artist.title));
+          for (const song of matching.slice(0, 3)) {
+            if (knownSongIds.has(String(song.providerId))) continue;
+            candidates.push({
+              ...song,
+              sourceType: 'song',
+              recommendationReason: `Song by related artist ${artist.title}`,
+              _discoverSource: 'related-artist-song',
+              _discoverBoost: 5
+            });
+          }
+        } catch {}
+      }
+    } catch {}
   }
 
   return dedupeDiscoverCandidatesByBoost(candidates);

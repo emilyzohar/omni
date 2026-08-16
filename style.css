@@ -5622,3 +5622,29 @@ body.auth-locked > main {
   background: rgba(114, 0, 20, .08);
   border-color: rgba(114, 0, 20, .28);
 }
+
+/* =========================================================
+   Compact Discover cards on desktop
+   Keep sparse event/music sections from stretching cards to fill the row.
+   Mobile intentionally remains the existing two-column layout.
+   ========================================================= */
+@media (min-width: 761px) {
+  .discover-feed-grid:not(.is-period-grouped) {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 180px)) !important;
+    justify-content: start;
+    align-items: start;
+    column-gap: 16px;
+  }
+
+  .discover-new-period-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 180px)) !important;
+    justify-content: start;
+    align-items: start;
+  }
+
+  .discover-feed-grid .discover-card,
+  .discover-new-period-grid .discover-card {
+    width: 100%;
+    max-width: 180px;
+  }
+}
