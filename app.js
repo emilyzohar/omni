@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=music-subcategories-live-queue-1';
-import { API_CONFIG } from './config.js?v=music-subcategories-live-queue-1';
+import { TrackerAPI } from './api.js?v=music-manual-dates-grouping-1';
+import { API_CONFIG } from './config.js?v=music-manual-dates-grouping-1';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -32,7 +32,7 @@ const SOURCE_ITEM_LABELS = {
   tv: 'TV',
   movie: 'Movie',
   book: 'Book',
-  music: 'Album',
+  music: 'Music',
   artist: 'Artist',
   song: 'Song',
   concert: 'Concert',
@@ -563,7 +563,6 @@ function setSyncStatus(message, isError = false) {
 }
 
 const MUSIC_SUBCATEGORY_BY_SOURCE = Object.freeze({
-  music: 'Album',
   artist: 'Artist',
   song: 'Song',
   concert: 'Concert'
@@ -573,15 +572,29 @@ function musicSubcategoryForSourceType(sourceType) {
   return MUSIC_SUBCATEGORY_BY_SOURCE[sourceType] || '';
 }
 
+function inferredMusicSubcategory(item) {
+  if (!item) return '';
+  const sourceType = getSourceType(item);
+  const fixed = musicSubcategoryForSourceType(sourceType);
+  if (fixed) return fixed;
+  if (sourceType !== 'music') return '';
+  const existing = cleanTypeLabel(item.subcategory || '');
+  if (existing) return existing;
+  // iTunes `music` results in this app are album results. Manual Music items are
+  // allowed to remain uncategorized (or use any user-entered subcategory).
+  if (item.provider === 'itunes' && item.providerId) return 'Album';
+  return '';
+}
+
 function normalizeMusicFamilyItem(item) {
   if (!item) return false;
   const sourceType = getSourceType(item);
-  const subcategory = musicSubcategoryForSourceType(sourceType);
-  if (!subcategory) return false;
+  if (!['music', 'artist', 'song', 'concert'].includes(sourceType)) return false;
+  const subcategory = inferredMusicSubcategory(item);
   let changed = false;
   if (item.type !== 'music') { item.type = 'music'; changed = true; }
   if (item.typeLabel !== 'Music') { item.typeLabel = 'Music'; changed = true; }
-  if (cleanTypeLabel(item.subcategory || '') !== subcategory) { item.subcategory = subcategory; changed = true; }
+  if (subcategory && cleanTypeLabel(item.subcategory || '') !== subcategory) { item.subcategory = subcategory; changed = true; }
   return changed;
 }
 
@@ -612,11 +625,12 @@ function migrateSavedMusicClassification() {
       const current = cleanTypeLabel(entry.subcategory || '');
       sourceType = current === 'Artist' ? 'artist' : current === 'Song' ? 'song' : current === 'Concert' ? 'concert' : 'music';
     }
-    const subcategory = musicSubcategoryForSourceType(sourceType);
-    if (!subcategory) continue;
+    if (!['music', 'artist', 'song', 'concert'].includes(sourceType)) continue;
+    const currentSubcategory = cleanTypeLabel(entry.subcategory || '');
+    const subcategory = source ? inferredMusicSubcategory(source) : (musicSubcategoryForSourceType(sourceType) || currentSubcategory);
     if (entry.type !== 'music') { entry.type = 'music'; historyChanged = true; }
     if (entry.typeLabel !== 'Music') { entry.typeLabel = 'Music'; historyChanged = true; }
-    if (cleanTypeLabel(entry.subcategory || '') !== subcategory) { entry.subcategory = subcategory; historyChanged = true; }
+    if (subcategory && currentSubcategory !== subcategory) { entry.subcategory = subcategory; historyChanged = true; }
   }
 
   if (itemsChanged) saveItems();
@@ -2940,13 +2954,13 @@ function updateItemFormForType() {
   els.manualTitleBlock.hidden = false;
   els.tvProgressFields.hidden = sourceType !== 'tv';
   els.bookProgressFields.hidden = sourceType !== 'book';
-  if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder || ['music','artist','song'].includes(sourceType);
+  if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder;
   if (sourceType === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
     els.bookStartDate.value = todayString();
   }
   if (els.queueStatusField) els.queueStatusField.hidden = isReminder || ['music','artist','song','concert'].includes(sourceType);
 
-  const fixedMusicSubcategory = musicSubcategoryForSourceType(sourceType);
+  const fixedMusicSubcategory = musicSubcategoryForSourceType(sourceType) || (sourceType === 'music' && (state.selectedSource?.provider === 'itunes' || els.provider?.value === 'itunes') ? 'Album' : '');
   if (els.itemSubcategory) {
     if (fixedMusicSubcategory) {
       els.itemSubcategory.value = fixedMusicSubcategory;
@@ -2992,7 +3006,7 @@ function updateItemFormForType() {
     tv: 'Search TV shows',
     movie: 'Search movies',
     book: 'Search books',
-    music: 'Search albums',
+    music: 'Search albums (optional)',
     artist: 'Search artists',
     song: 'Search songs',
     concert: 'Search concerts',
@@ -3069,8 +3083,13 @@ function selectCatalogueResult(result) {
   if (els.itemSourceType.value === 'book' && result.pageCount && !els.bookTotalPages.value) {
     els.bookTotalPages.value = result.pageCount;
   }
-  if (els.itemSourceType.value === 'event' && result.eventDate && els.itemDate) {
+  if (['event', 'concert'].includes(els.itemSourceType.value) && result.eventDate && els.itemDate) {
     els.itemDate.value = result.eventDate;
+  }
+  if (els.itemSourceType.value === 'music' && result.provider === 'itunes' && els.itemSubcategory) {
+    els.itemSubcategory.value = 'Album';
+    els.itemSubcategory.readOnly = true;
+    els.itemSubcategory.placeholder = 'Album';
   }
   if (els.itemSourceType.value === 'tv' && result.providerId) {
     prepareTVWatchSetup(result.providerId).catch(error => {
@@ -3346,10 +3365,13 @@ async function saveItemFromForm(event) {
   let typeLabel = SOURCE_ITEM_LABELS[sourceType] || '';
   let fixedSubcategory = '';
 
-  if (musicSubcategoryForSourceType(sourceType)) {
+  if (['music', 'artist', 'song', 'concert'].includes(sourceType)) {
     type = 'music';
     typeLabel = 'Music';
     fixedSubcategory = musicSubcategoryForSourceType(sourceType);
+    if (sourceType === 'music' && (state.selectedSource?.provider === 'itunes' || (editing?.provider === 'itunes' && editing?.providerId))) {
+      fixedSubcategory = 'Album';
+    }
   }
 
   if (sourceType === 'youtube') {
@@ -3403,6 +3425,14 @@ async function saveItemFromForm(event) {
     }
   }
 
+  // Music and Concert can be entered manually. Search is optional for these
+  // types; selecting a catalogue result simply enriches metadata.
+  if (['music', 'concert'].includes(sourceType) && !providerId) {
+    provider = 'manual';
+    image = editing?.image || image || '';
+    subtitle = editing?.subtitle || subtitle || '';
+  }
+
   if (!title) {
     showFormMessage('Add a title.', true);
     return;
@@ -3414,16 +3444,19 @@ async function saveItemFromForm(event) {
   const validProvider = sourceType === 'book'
     ? provider === 'googleBooks'
     : sourceType === 'music'
-      ? provider === 'itunes'
+      ? ['itunes', 'manual'].includes(provider)
       : ['artist', 'song'].includes(sourceType)
         ? ['itunes', 'lastfm'].includes(provider)
-        : ['event', 'concert'].includes(sourceType)
-          ? provider === 'ticketmaster'
-          : ['tv', 'movie'].includes(sourceType)
-            ? provider === 'tmdb'
-            : true;
-  if (['tv','book','movie','music','artist','song','event','concert'].includes(sourceType) && (!providerId || !validProvider)) {
-    showFormMessage('Choose a search result first.', true);
+        : sourceType === 'concert'
+          ? ['ticketmaster', 'manual'].includes(provider)
+          : sourceType === 'event'
+            ? provider === 'ticketmaster'
+            : ['tv', 'movie'].includes(sourceType)
+              ? provider === 'tmdb'
+              : true;
+  const requiresCatalogueSelection = ['tv','book','movie','artist','song','event'].includes(sourceType);
+  if ((requiresCatalogueSelection && !providerId) || !validProvider) {
+    showFormMessage(['music', 'concert'].includes(sourceType) ? 'Search for a result or enter the item manually.' : 'Choose a search result first.', true);
     return;
   }
   if (sourceType === 'reminder' && !els.reminderDueDate?.value) {
@@ -3461,7 +3494,7 @@ async function saveItemFromForm(event) {
     releaseDate: extractItemReleaseDate(sourceType, state.selectedSource, editing),
     attachments: attachmentFiles,
     links: state.attachmentDraft.links.map(link => ({ ...link })),
-    date: sourceType === 'reminder' ? '' : (['music','artist','song'].includes(sourceType) ? '' : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || ''))),
+    date: sourceType === 'reminder' ? '' : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
     queueStatus: sourceType === 'reminder' ? 'upnext' : (['music','artist','song','concert'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library')),
     active: sourceType === 'reminder' || (!['music','artist','song','concert'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
     createdAt: editing?.createdAt || new Date().toISOString(),
@@ -8120,12 +8153,14 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
   if (item) return item;
 
   const sourceType = result.sourceType;
+  const isMusicFamily = ['music', 'artist', 'song', 'concert'].includes(sourceType);
+  const discoverMusicSubcategory = sourceType === 'music' ? 'Album' : musicSubcategoryForSourceType(sourceType);
   item = {
     id: makeId(),
     sourceType,
-    type: musicSubcategoryForSourceType(sourceType) ? 'music' : sourceType,
-    typeLabel: musicSubcategoryForSourceType(sourceType) ? 'Music' : (SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType)),
-    subcategory: musicSubcategoryForSourceType(sourceType),
+    type: isMusicFamily ? 'music' : sourceType,
+    typeLabel: isMusicFamily ? 'Music' : (SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType)),
+    subcategory: discoverMusicSubcategory,
     title: result.title || 'Untitled',
     provider: result.provider || (sourceType === 'book' ? 'googleBooks' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'concert' ? 'ticketmaster' : sourceType === 'event' ? 'ticketmaster' : 'tmdb'),
     providerId: String(result.providerId || ''),
@@ -9635,7 +9670,7 @@ function makeLibraryPoster(item) {
   const hasThumbnail = Boolean(String(item.image || '').trim());
   if (!hasThumbnail) poster.classList.add('library-text-card-button');
   const recommendedBadge = item.recommended
-    ? `<span class="library-recommended-badge" aria-label="Recommended">♥</span>`
+    ? `<span class="library-recommended-badge" aria-label="Recommended" title="Recommended">♥</span>`
     : '';
   poster.innerHTML = hasThumbnail
     ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />
@@ -9815,6 +9850,7 @@ function renderLibrary() {
     }
 
     const expanded = state.libraryExpandedGroups.has(groupKey);
+    const hasSubcategories = items.some(item => cleanTypeLabel(item.subcategory || ''));
     const section = document.createElement('section');
     section.className = `library-group library-shelf${expanded ? ' is-expanded' : ''}`;
     section.dataset.libraryGroup = groupKey;
@@ -9829,9 +9865,47 @@ function renderLibrary() {
           <button class="library-expand-button" type="button" data-library-expand="${escapeAttr(groupKey)}">${expanded ? 'Carousel' : `View all`}</button>
         </div>
       </div>
-      <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
-    const grid = section.querySelector('.library-poster-grid');
-    for (const item of items) grid.appendChild(makeLibraryPoster(item));
+      ${expanded && hasSubcategories ? '<div class="tv-library-status-groups library-subcategory-groups"></div>' : `<div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`}`;
+
+    if (expanded && hasSubcategories) {
+      const host = section.querySelector('.library-subcategory-groups');
+      const bySubcategory = new Map();
+      for (const item of items) {
+        const label = cleanTypeLabel(item.subcategory || '') || 'General';
+        if (!bySubcategory.has(label)) bySubcategory.set(label, []);
+        bySubcategory.get(label).push(item);
+      }
+      const preferredMusic = ['Album', 'Artist', 'Song', 'Concert', 'General'];
+      const labels = [...bySubcategory.keys()].sort((a, b) => {
+        if (groupLabel === 'Music') {
+          const ai = preferredMusic.indexOf(a);
+          const bi = preferredMusic.indexOf(b);
+          if (ai >= 0 || bi >= 0) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi) || a.localeCompare(b);
+        }
+        if (a === 'General') return 1;
+        if (b === 'General') return -1;
+        return a.localeCompare(b);
+      });
+      for (const label of labels) {
+        const subItems = bySubcategory.get(label).sort(compare);
+        const subSection = document.createElement('section');
+        subSection.className = 'tv-library-status-group library-subcategory-group is-expanded';
+        subSection.innerHTML = `
+          <div class="tv-library-status-heading library-subcategory-heading">
+            <div>
+              <h3 class="tv-library-status-title">${escapeHtml(label)}</h3>
+              <span class="library-group-count">${subItems.length}</span>
+            </div>
+          </div>
+          <div class="library-poster-grid is-expanded"></div>`;
+        const grid = subSection.querySelector('.library-poster-grid');
+        for (const item of subItems) grid.appendChild(makeLibraryPoster(item));
+        host.appendChild(subSection);
+      }
+    } else {
+      const grid = section.querySelector('.library-poster-grid');
+      for (const item of items) grid.appendChild(makeLibraryPoster(item));
+    }
     els.libraryGroups.appendChild(section);
   }
 }
