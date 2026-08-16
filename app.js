@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-library-detail-actions-activity-edit-1';
-import { API_CONFIG } from './config.js?v=omni-library-detail-actions-activity-edit-1';
+import { TrackerAPI } from './api.js?v=omni-calendar-row-groups-1';
+import { API_CONFIG } from './config.js?v=omni-calendar-row-groups-1';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -244,6 +244,9 @@ const els = {
   streakSettingsForm: $('#streakSettingsForm'),
   streakSettingsRows: $('#streakSettingsRows'),
   resetStreakSettings: $('#resetStreakSettings'),
+  calendarRowSettingsForm: $('#calendarRowSettingsForm'),
+  calendarRowSettingsRows: $('#calendarRowSettingsRows'),
+  resetCalendarRowSettings: $('#resetCalendarRowSettings'),
   monthPicker: $('#monthPicker'),
   monthLabel: $('#monthLabel'),
   previousMonth: $('#previousMonth'),
@@ -872,6 +875,8 @@ function bindEvents() {
   els.streakSettingsForm?.addEventListener('submit', saveStreakSettings);
   els.streakSettingsRows?.addEventListener('change', previewStreakSettings);
   els.resetStreakSettings?.addEventListener('click', resetStreakSettings);
+  els.calendarRowSettingsForm?.addEventListener('submit', saveCalendarRowSettings);
+  els.resetCalendarRowSettings?.addEventListener('click', resetCalendarRowSettings);
   els.itemSourceType?.addEventListener('change', () => {
     clearSourceSelectionForTypeChange();
     configureItemSubtype(true);
@@ -1173,7 +1178,7 @@ function bindEvents() {
     const libraryRating = event.target.closest('[data-library-rating]');
     if (libraryRating) {
       const item = findItem(libraryRating.dataset.itemId);
-      const selected = Number(libraryRating.dataset.libraryRating);
+      const selected = ratingFromStarPointer(event, libraryRating, 'data-library-rating');
       saveLibraryRating(libraryRating.dataset.itemId, toggledStarRating(item?.rating, selected));
       return;
     }
@@ -1234,7 +1239,7 @@ function bindEvents() {
     const youtubeVideoCheck = event.target.closest('[data-check-youtube-video]');
     if (youtubeVideoCheck) {
       const item = findItem(youtubeVideoCheck.dataset.itemId || state.openDetailId);
-      if (item) await logSpecificYouTubeVideo(item, youtubeVideoCheck.dataset.checkYoutubeVideo);
+      if (item) await toggleSpecificYouTubeVideo(item, youtubeVideoCheck.dataset.checkYoutubeVideo);
       return;
     }
 
@@ -1423,7 +1428,7 @@ function bindEvents() {
     if (discoverTVRating) {
       const key = discoverTVRating.dataset.discoverKey;
       const section = els.detailBody?.querySelector(`[data-discover-tv-meta="${CSS.escape(key)}"]`);
-      const selected = Number(discoverTVRating.dataset.discoverTvRating);
+      const selected = ratingFromStarPointer(event, discoverTVRating, 'data-discover-tv-rating');
       const rating = toggledStarRating(section?.dataset.pendingRating, selected);
       setDiscoverTVPendingRating(key, rating);
       persistDiscoverRating(key, rating);
@@ -2179,7 +2184,7 @@ async function getUpNextInfo(item) {
     const remaining = await countRemainingAvailableTVEpisodes(item);
     return {
       title: item.title,
-      meta: `S${episode.season_number} E${episode.episode_number} · ${episode.name || 'Episode'}${remaining ? ` · + ${remaining} −` : ''}`,
+      meta: `S${episode.season_number} E${episode.episode_number} · ${episode.name || 'Episode'}${remaining ? ` · + ${remaining}` : ''}`,
       image: TrackerAPI.tmdbImage(episode.still_path) || item.image
     };
   }
@@ -3352,12 +3357,34 @@ function isYouTubeVideoLogged(item, videoId) {
   );
 }
 
-async function logSpecificYouTubeVideo(item, videoId) {
-  if (isYouTubeVideoLogged(item, videoId)) return;
-
+async function toggleSpecificYouTubeVideo(item, videoId) {
   const playlist = await getPlaylistCached(item.providerId);
   const index = playlist.items.findIndex(video => video.videoId === videoId);
   if (index < 0) throw new Error('Could not find that video in the playlist.');
+
+  if (isYouTubeVideoLogged(item, videoId)) {
+    const wasCompleted = Boolean(item.completedAt);
+    state.history = state.history.filter(entry => !(
+      entry.kind === 'youtube-completed' &&
+      entry.sourceItemId === item.id &&
+      entry.videoId === videoId
+    ));
+
+    let nextIndex = 0;
+    while (nextIndex < playlist.items.length && isYouTubeVideoLogged(item, playlist.items[nextIndex].videoId)) nextIndex += 1;
+    item.progress = { ...item.progress, currentIndex: nextIndex };
+
+    if (nextIndex < playlist.items.length) {
+      item.completedAt = '';
+      if (wasCompleted && getQueueStatus(item) === 'library') setItemQueueStatus(item, 'upnext');
+    }
+
+    saveItems();
+    saveHistory();
+    renderAll();
+    await renderWorkoutDetails(item);
+    return;
+  }
 
   const currentIndex = Math.max(0, Number(item.progress?.currentIndex || 0));
   let record;
@@ -4487,16 +4514,54 @@ async function deleteEditingItem() {
   renderAll();
 }
 
+function normalizeStarRating(value) {
+  const clamped = Math.max(0, Math.min(5, Number(value || 0)));
+  return Math.round(clamped * 2) / 2;
+}
+
 function toggledStarRating(currentValue, selectedValue) {
-  const current = Math.max(0, Math.min(5, Number(currentValue || 0)));
-  const selected = Math.max(0, Math.min(5, Number(selectedValue || 0)));
+  const current = normalizeStarRating(currentValue);
+  const selected = normalizeStarRating(selectedValue);
   return current === selected ? 0 : selected;
+}
+
+function ratingFromStarPointer(event, button, dataAttribute) {
+  const wholeStar = normalizeStarRating(button?.getAttribute(dataAttribute));
+  if (!button || !wholeStar) return wholeStar;
+  // Keyboard activation has no useful pointer position, so it selects the full star.
+  if (event?.detail === 0 || !Number.isFinite(Number(event?.clientX)) || Number(event.clientX) <= 0) return wholeStar;
+  const rect = button.getBoundingClientRect();
+  if (!rect.width) return wholeStar;
+  return Number(event.clientX) < rect.left + rect.width / 2 ? Math.max(0.5, wholeStar - 0.5) : wholeStar;
+}
+
+function setStarButtonFill(button, starValue, ratingValue) {
+  const star = Number(starValue || 0);
+  const rating = normalizeStarRating(ratingValue);
+  const filled = rating >= star;
+  const halfFilled = !filled && rating >= star - 0.5;
+  button.classList.toggle('filled', filled);
+  button.classList.toggle('half-filled', halfFilled);
+}
+
+function syncStarPicker(root, selector, dataAttribute, ratingValue) {
+  root?.querySelectorAll(selector).forEach(button => {
+    setStarButtonFill(button, button.getAttribute(dataAttribute), ratingValue);
+  });
+}
+
+function starFillClass(starValue, ratingValue) {
+  const star = Number(starValue || 0);
+  const rating = normalizeStarRating(ratingValue);
+  if (rating >= star) return 'filled';
+  if (rating >= star - 0.5) return 'half-filled';
+  return '';
 }
 
 function chooseRating(event) {
   const button = event.target.closest('[data-rating]');
   if (!button) return;
-  const selected = Number(button.dataset.rating);
+  const selected = ratingFromStarPointer(event, button, 'data-rating');
   setRating(toggledStarRating(els.itemRating?.value, selected));
 }
 
@@ -4516,8 +4581,9 @@ function toggleItemFormRecommended() {
 }
 
 function setRating(value) {
-  els.itemRating.value = String(value);
-  $$('#starPicker [data-rating]').forEach(button => button.classList.toggle('filled', Number(button.dataset.rating) <= value));
+  const rating = normalizeStarRating(value);
+  els.itemRating.value = String(rating);
+  syncStarPicker(els.starPicker, '[data-rating]', 'data-rating', rating);
 }
 
 let actionFeedbackTimer = null;
@@ -4731,7 +4797,7 @@ async function renderWorkoutDetails(item) {
       <div><div class="list-title">${escapeHtml(video.title)}</div><div class="list-meta">${escapeHtml(video.channelTitle || '')}${Number.isFinite(video.position) ? ` · ${video.position + 1} of ${playlist.items.length}` : ''}</div></div>
       <div class="episode-row-actions">
         <span class="watched-label">${isLogged || i < index ? 'DONE' : i === index ? 'NEXT' : ''}</span>
-        <button class="episode-check-button${isLogged ? ' is-checked' : ''}" type="button" data-check-youtube-video="${escapeAttr(video.videoId)}" data-item-id="${item.id}" ${isLogged ? 'disabled' : ''} aria-label="${isLogged ? 'Video logged' : `Mark ${escapeAttr(video.title)} complete`}">✓</button>
+        <button class="episode-check-button${isLogged ? ' is-checked' : ''}" type="button" data-check-youtube-video="${escapeAttr(video.videoId)}" data-item-id="${item.id}" aria-pressed="${isLogged}" aria-label="${isLogged ? `Mark ${escapeAttr(video.title)} not watched` : `Mark ${escapeAttr(video.title)} watched`}">✓</button>
         <button class="detail-arrow-button" type="button" data-youtube-video="${escapeAttr(video.videoId)}" data-item-id="${item.id}" aria-label="Open ${escapeAttr(video.title)}">→</button>
       </div>
     </div>`;
@@ -4768,7 +4834,7 @@ async function renderYouTubeVideoDetail(item, videoId) {
       <button class="detail-back-button" type="button" data-youtube-playlist="true" data-item-id="${item.id}">← Playlist</button>
       ${libraryDetailHero({ type:`${getItemTypeLabel(item).toUpperCase()} · YOUTUBE VIDEO`, title:snippet.title || 'Video', image, subtitle:meta, overview:snippet.description || '' })}
       <div class="detail-actions library-detail-actions">
-        <button class="primary-button" type="button" data-check-youtube-video="${escapeAttr(videoId)}" data-item-id="${item.id}" ${isYouTubeVideoLogged(item, videoId) ? 'disabled' : ''}>${isYouTubeVideoLogged(item, videoId) ? '✓ Logged' : '✓ Mark complete'}</button>
+        <button class="primary-button" type="button" data-check-youtube-video="${escapeAttr(videoId)}" data-item-id="${item.id}" aria-pressed="${isYouTubeVideoLogged(item, videoId)}">${isYouTubeVideoLogged(item, videoId) ? '✓ Mark not watched' : '✓ Mark watched'}</button>
         <a class="secondary-button detail-link-button" href="https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}" target="_blank" rel="noopener">Open on YouTube ↗</a>
         ${libraryDetailActionContents(item)}
       </div>
@@ -5057,13 +5123,13 @@ function renderManualDetails(item) {
 function detailHero({ type, title, image, subtitle, overview, collapseOverview = false, availabilityLink = '' }) {
   const overviewText = overview ? escapeHtml(shorten(overview, 900)) : '';
   const disclosure = collapseOverview
-    ? `<div class="detail-disclosure-row">
-        <details class="detail-synopsis-details">
+    ? ((overviewText || availabilityLink) ? `<div class="detail-disclosure-row">
+        ${overviewText ? `<details class="detail-synopsis-details">
           <summary>Synopsis</summary>
-          <div class="detail-synopsis-content">${overviewText ? `<p class="detail-overview">${overviewText}</p>` : ''}</div>
-        </details>
+          <div class="detail-synopsis-content"><p class="detail-overview">${overviewText}</p></div>
+        </details>` : ''}
         ${availabilityLink ? `<a class="detail-availability-link" href="${escapeAttr(availabilityLink)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}
-      </div>`
+      </div>` : '')
     : (overviewText ? `<p class="detail-overview">${overviewText}</p>` : '');
   return `<div class="detail-hero">
     ${image ? `<img class="detail-poster" src="${escapeAttr(image)}" alt="" />` : '<div class="detail-poster"></div>'}
@@ -5208,7 +5274,7 @@ function libraryPersonalMetadataMarkup(item) {
   return `<div class="library-personal-meta" data-library-personal-meta="${escapeAttr(item.id)}" data-pending-rating="${rating}">
     <div class="library-personal-meta-row">
       <div class="star-picker library-detail-rating-picker rating-with-heart" aria-label="Your rating out of five stars">
-        ${[1,2,3,4,5].map(value => `<button type="button" data-library-rating="${value}" data-item-id="${escapeAttr(item.id)}" class="${value <= rating ? 'filled' : ''}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
+        ${[1,2,3,4,5].map(value => `<button type="button" data-library-rating="${value}" data-item-id="${escapeAttr(item.id)}" class="${starFillClass(value, rating)}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
         <button class="clear-rating" type="button" data-clear-library-rating data-item-id="${escapeAttr(item.id)}">clear</button>
         <button class="rating-heart-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${escapeAttr(item.id)}" aria-label="${item.recommended ? 'Remove from Recommended' : 'Add to Recommended'}" aria-pressed="${Boolean(item.recommended)}" title="Recommended">${item.recommended ? '♥' : '♡'}</button>
       </div>
@@ -5236,11 +5302,9 @@ function appendLibraryPersonalMetadata(item) {
 function setLibraryPendingRating(itemId, value) {
   const section = els.detailBody?.querySelector(`[data-library-personal-meta="${CSS.escape(itemId)}"]`);
   if (!section) return;
-  const rating = Math.max(0, Math.min(5, Number(value || 0)));
+  const rating = normalizeStarRating(value);
   section.dataset.pendingRating = String(rating);
-  section.querySelectorAll('[data-library-rating]').forEach(button => {
-    button.classList.toggle('filled', Number(button.dataset.libraryRating) <= rating);
-  });
+  syncStarPicker(section, '[data-library-rating]', 'data-library-rating', rating);
 }
 
 function saveLibraryRating(itemId, value) {
@@ -5248,7 +5312,7 @@ function saveLibraryRating(itemId, value) {
   const section = els.detailBody?.querySelector(`[data-library-personal-meta="${CSS.escape(itemId)}"]`);
   if (!item || !section) return;
 
-  const rating = Math.max(0, Math.min(5, Number(value || 0)));
+  const rating = normalizeStarRating(value);
   setLibraryPendingRating(itemId, rating);
   item.rating = rating;
   item.updatedAt = new Date().toISOString();
@@ -5973,12 +6037,22 @@ function renderMonthTracker() {
   }
   const displayGroups = groupsByKey.size
     ? [...groupsByKey.values()]
-    : ['workout', 'tv', 'book', 'movie'].map(type => ({
-        key: slugifyType(getTypeLabel(type)),
-        label: getCalendarCategoryLabel(type, getTypeLabel(type)),
-        representativeType: type,
-        representativeEntry: { type, typeLabel: getTypeLabel(type) }
-      }));
+    : (() => {
+        const defaults = new Map();
+        ['workout', 'tv', 'book', 'movie'].forEach(type => {
+          const entry = { type, typeLabel: getTypeLabel(type) };
+          const key = getCalendarTypeGroupKey(entry);
+          if (!defaults.has(key)) {
+            defaults.set(key, {
+              key,
+              label: getCalendarTypeGroupLabel(entry),
+              representativeType: type,
+              representativeEntry: entry
+            });
+          }
+        });
+        return [...defaults.values()];
+      })();
 
   const today = todayString();
   const isCurrentMonth = today.startsWith(`${yearText}-${monthText}-`);
@@ -6011,11 +6085,13 @@ function renderMonthTracker() {
         const first = eventMatches[0];
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'sticker-button sticker-group-button';
+        button.className = 'sticker-button sticker-group-button month-sticker-group-button';
         button.dataset.groupKey = group.key;
         button.dataset.date = date;
         button.title = eventMatches.length === 1 ? first.title : `${eventMatches.length} ${group.label} entries`;
-        button.innerHTML = `${calendarStickerMarkup(first.type, first)}${eventMatches.length > 1 ? `<span class="sticker-count">${eventMatches.length}</span>` : ''}`;
+        button.innerHTML = eventMatches.length === 1
+          ? calendarStickerMarkup(first.type, first)
+          : monthStickerPileMarkup(eventMatches, date, group.key);
         container.appendChild(button);
       }
       els.trackerGrid.appendChild(container);
@@ -6124,6 +6200,24 @@ function addDays(date, days) {
   return value;
 }
 
+
+function monthStickerPileMarkup(entries = [], date = '', groupKey = '') {
+  const visibleEntries = (entries || []).slice(0, 7);
+  return `<span class="month-sticker-pile" aria-hidden="true">${visibleEntries.map((entry, index) => {
+    const position = monthStickerPilePosition(entry, index, date, groupKey);
+    return `<span class="month-sticker-pile-item" style="--month-pile-x:${position.x}px; --month-pile-y:${position.y}px; --month-pile-rotate:${position.rotate}deg; --month-pile-z:${position.z};">${calendarStickerMarkup(entry.type, entry)}</span>`;
+  }).join('')}</span>`;
+}
+
+function monthStickerPilePosition(entry, index, date, groupKey) {
+  const seed = stableCalendarHash(`${date}:${groupKey}:${entry?.id || entry?.sourceItemId || entry?.title || entry?.type || 'entry'}:${index}:month`);
+  const xBase = [-8, 4, -2, 8, -10, 1, 10][index] ?? 0;
+  const yBase = [2, -3, 6, 4, -5, -7, 0][index] ?? 0;
+  const x = xBase + ((seed % 5) - 2);
+  const y = yBase + ((Math.floor(seed / 5) % 5) - 2);
+  const rotate = ((Math.floor(seed / 25) % 17) - 8);
+  return { x, y, rotate, z: 10 + index };
+}
 
 function weekStickerPileMarkup(entries = [], date = '', groupKey = '') {
   const visibleEntries = (entries || []).slice(0, 6);
@@ -6262,14 +6356,33 @@ function getCalendarCategoryLabel(type, fallbackLabel = '') {
   return custom || cleanTypeLabel(fallbackLabel || getTypeLabel(type)) || 'Other';
 }
 
+function defaultCalendarRowName(type, fallbackLabel = '') {
+  if (type === 'tv' || type === 'movie') return 'TV + Movies';
+  return getCalendarCategoryLabel(type, fallbackLabel);
+}
+
+function getCalendarRowName(type, fallbackLabel = '') {
+  const saved = state.stickerPrefs?.[type] || {};
+  const custom = cleanTypeLabel(saved.calendarRow || '');
+  return custom || defaultCalendarRowName(type, fallbackLabel);
+}
+
 function getCalendarTypeGroupLabel(entry) {
-  return getCalendarCategoryLabel(entry?.type, entry?.typeLabel || getTypeLabel(entry?.type));
+  return getCalendarRowName(entry?.type, entry?.typeLabel || getTypeLabel(entry?.type));
 }
 
 function getCalendarTypeGroupKey(entry) {
-  // Keep the category's internal identity stable when its Calendar display name changes.
-  // This prevents renaming "TV" to "Shows" from changing grouping behavior or merging it
-  // with a different type that happens to use the same display name.
+  const rowName = getCalendarRowName(entry?.type, entry?.typeLabel || getTypeLabel(entry?.type));
+  return `row-${slugifyType(rowName || 'Other')}`;
+}
+
+// Streaks intentionally keep their original type-level grouping. Calendar-row
+// choices should only change the visual tracker, not merge independent streaks.
+function getStreakTypeGroupLabel(entry) {
+  return getCalendarCategoryLabel(entry?.type, entry?.typeLabel || getTypeLabel(entry?.type));
+}
+
+function getStreakTypeGroupKey(entry) {
   const baseLabel = cleanTypeLabel(entry?.typeLabel || getTypeLabel(entry?.type)) || String(entry?.type || 'other');
   return slugifyType(baseLabel);
 }
@@ -6389,18 +6502,14 @@ function toggleHistorySourceRecommended() {
 function chooseHistoryRating(event) {
   const button = event.target.closest('[data-history-rating]');
   if (!button) return;
-  const selected = Number(button.dataset.historyRating);
+  const selected = ratingFromStarPointer(event, button, 'data-history-rating');
   setHistoryRating(toggledStarRating(els.historyEditRating?.value, selected));
 }
 
 function setHistoryRating(value) {
-  const rating = Math.max(0, Math.min(5, Number(value || 0)));
+  const rating = normalizeStarRating(value);
   if (els.historyEditRating) els.historyEditRating.value = String(rating);
-  if (els.historyRatingPicker) {
-    els.historyRatingPicker.querySelectorAll('[data-history-rating]').forEach(button => {
-      button.classList.toggle('filled', Number(button.dataset.historyRating) <= rating);
-    });
-  }
+  syncStarPicker(els.historyRatingPicker, '[data-history-rating]', 'data-history-rating', rating);
 }
 
 function saveHistoryEdit(event) {
@@ -9268,9 +9377,7 @@ function openRestaurantQuickAdd(key) {
   state.pendingRestaurantQuickRating = rating;
   if (els.restaurantQuickAddTitle) els.restaurantQuickAddTitle.textContent = result.title || 'Restaurant';
   if (els.restaurantQuickAddDate) els.restaurantQuickAddDate.value = '';
-  els.restaurantQuickAddRatingPicker?.querySelectorAll('[data-restaurant-quick-rating]').forEach(button => {
-    button.classList.toggle('filled', Number(button.dataset.restaurantQuickRating) <= rating);
-  });
+  syncStarPicker(els.restaurantQuickAddRatingPicker, '[data-restaurant-quick-rating]', 'data-restaurant-quick-rating', rating);
   showDialogAtTop(els.restaurantQuickAddModal);
 }
 
@@ -9333,18 +9440,16 @@ async function handleRestaurantQuickAddChoice(event) {
   const ratingButton = event.target.closest('[data-restaurant-quick-rating]');
   if (ratingButton) {
     event.preventDefault();
-    const selected = Number(ratingButton.dataset.restaurantQuickRating || 0);
+    const selected = ratingFromStarPointer(event, ratingButton, 'data-restaurant-quick-rating');
     state.pendingRestaurantQuickRating = toggledStarRating(state.pendingRestaurantQuickRating, selected);
-    els.restaurantQuickAddRatingPicker?.querySelectorAll('[data-restaurant-quick-rating]').forEach(button => {
-      button.classList.toggle('filled', Number(button.dataset.restaurantQuickRating) <= state.pendingRestaurantQuickRating);
-    });
+    syncStarPicker(els.restaurantQuickAddRatingPicker, '[data-restaurant-quick-rating]', 'data-restaurant-quick-rating', state.pendingRestaurantQuickRating);
     return;
   }
   const clearRating = event.target.closest('[data-restaurant-quick-rating-clear]');
   if (clearRating) {
     event.preventDefault();
     state.pendingRestaurantQuickRating = 0;
-    els.restaurantQuickAddRatingPicker?.querySelectorAll('[data-restaurant-quick-rating]').forEach(button => button.classList.remove('filled'));
+    syncStarPicker(els.restaurantQuickAddRatingPicker, '[data-restaurant-quick-rating]', 'data-restaurant-quick-rating', 0);
     return;
   }
   const action = event.target.closest('[data-restaurant-quick-action]');
@@ -9819,9 +9924,7 @@ function openDiscoverRatingPrompt(key, { allowTV = false, completionIntent = fal
   state.pendingDiscoverDateValue = existing?.date || '';
   state.pendingDiscoverRecommendedValue = recommendIntent == null ? Boolean(existing?.recommended) : Boolean(recommendIntent);
   if (els.discoverRatingDate) els.discoverRatingDate.value = state.pendingDiscoverDateValue;
-  els.discoverRatingPicker?.querySelectorAll('[data-discover-rating-choice]').forEach(button => {
-    button.classList.toggle('filled', Number(button.dataset.discoverRatingChoice) <= rating);
-  });
+  syncStarPicker(els.discoverRatingPicker, '[data-discover-rating-choice]', 'data-discover-rating-choice', rating);
   if (els.discoverRatingRecommendHeart) {
     const recommended = state.pendingDiscoverRecommendedValue;
     els.discoverRatingRecommendHeart.dataset.discoverRecommend = key;
@@ -9927,12 +10030,10 @@ async function handleDiscoverRatingChoice(event) {
   if (choice && state.pendingDiscoverRatingKey) {
     event.preventDefault();
     event.stopPropagation();
-    const selected = Number(choice.dataset.discoverRatingChoice);
+    const selected = ratingFromStarPointer(event, choice, 'data-discover-rating-choice');
     const rating = toggledStarRating(state.pendingDiscoverRatingValue, selected);
     state.pendingDiscoverRatingValue = rating;
-    els.discoverRatingPicker?.querySelectorAll('[data-discover-rating-choice]').forEach(button => {
-      button.classList.toggle('filled', Number(button.dataset.discoverRatingChoice) <= rating);
-    });
+    syncStarPicker(els.discoverRatingPicker, '[data-discover-rating-choice]', 'data-discover-rating-choice', rating);
     return;
   }
   if (event.target.closest('[data-discover-rating-continue]')) {
@@ -10019,7 +10120,7 @@ async function handleDiscoverQuickMetaClick(event) {
     event.stopPropagation();
     const key = ratingButton.dataset.discoverKey;
     const section = els.detailBody?.querySelector(`[data-discover-tv-meta="${CSS.escape(key)}"]`);
-    const selected = Number(ratingButton.dataset.discoverTvRating);
+    const selected = ratingFromStarPointer(event, ratingButton, 'data-discover-tv-rating');
     const rating = toggledStarRating(section?.dataset.pendingRating, selected);
     setDiscoverTVPendingRating(key, rating);
     persistDiscoverRating(key, rating);
@@ -10091,7 +10192,7 @@ function discoverTVPersonalMetadataMarkup(item, key) {
     <fieldset class="rating-fieldset discover-rating-fieldset">
       <legend>Rating <span>optional</span></legend>
       <div class="star-picker discover-tv-rating-picker rating-with-heart" aria-label="Your rating out of five stars">
-        ${[1,2,3,4,5].map(value => `<button type="button" data-discover-tv-rating="${value}" data-discover-key="${escapeAttr(key)}" class="${value <= rating ? 'filled' : ''}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
+        ${[1,2,3,4,5].map(value => `<button type="button" data-discover-tv-rating="${value}" data-discover-key="${escapeAttr(key)}" class="${starFillClass(value, rating)}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
         <button class="clear-rating" type="button" data-clear-discover-tv-rating data-discover-key="${escapeAttr(key)}">clear</button>
         <button class="rating-heart-button${item?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}" aria-label="${item?.recommended ? 'Remove from Recommended' : 'Add to Recommended'}" aria-pressed="${Boolean(item?.recommended)}" title="Recommended">${item?.recommended ? '♥' : '♡'}</button>
       </div>
@@ -10110,16 +10211,14 @@ function discoverTVPersonalMetadataMarkup(item, key) {
 function setDiscoverTVPendingRating(key, value) {
   const section = els.detailBody?.querySelector(`[data-discover-tv-meta="${CSS.escape(key)}"]`);
   if (!section) return;
-  const rating = Math.max(0, Math.min(5, Number(value || 0)));
+  const rating = normalizeStarRating(value);
   section.dataset.pendingRating = String(rating);
-  section.querySelectorAll('[data-discover-tv-rating]').forEach(button => {
-    button.classList.toggle('filled', Number(button.dataset.discoverTvRating) <= rating);
-  });
+  syncStarPicker(section, '[data-discover-tv-rating]', 'data-discover-tv-rating', rating);
 }
 
 function persistDiscoverRating(key, value) {
   const result = state.discoverResults.get(key);
-  const rating = Math.max(0, Math.min(5, Number(value || 0)));
+  const rating = normalizeStarRating(value);
   let item = result ? findDiscoverItem(result) : null;
 
   // Clearing an unsaved zero should not create a new Library item.
@@ -10631,7 +10730,7 @@ async function renderDiscoverBookDetail(key) {
 function setTrackSettingsTab(tabName = 'stickers') {
   const modal = els.stickerSettingsModal;
   if (!modal) return;
-  const active = tabName === 'streaks' ? 'streaks' : 'stickers';
+  const active = ['stickers', 'rows', 'streaks'].includes(tabName) ? tabName : 'stickers';
   modal.querySelectorAll('[data-track-settings-tab]').forEach(tab => {
     const selected = tab.dataset.trackSettingsTab === active;
     tab.classList.toggle('is-active', selected);
@@ -10641,6 +10740,7 @@ function setTrackSettingsTab(tabName = 'stickers') {
     panel.hidden = panel.dataset.trackSettingsPanel !== active;
   });
   if (active === 'streaks') renderStreakSettingsRows();
+  else if (active === 'rows') renderCalendarRowSettingsRows();
   else renderStickerSettingsRows();
   resetDialogScrollPosition(modal);
 }
@@ -10783,6 +10883,61 @@ function resetStickerSettings() {
   renderTracker();
 }
 
+function renderCalendarRowSettingsRows() {
+  if (!els.calendarRowSettingsRows) return;
+  const types = getRecognizedTypes();
+  const rowNames = [...new Set(types.map(({ type, label }) => getCalendarRowName(type, label)))].sort((a, b) => a.localeCompare(b));
+  const datalistId = 'calendarRowNameSuggestions';
+  els.calendarRowSettingsRows.innerHTML = `
+    <datalist id="${datalistId}">${rowNames.map(name => `<option value="${escapeAttr(name)}"></option>`).join('')}</datalist>
+    ${types.map(({ type, label }) => {
+      const rowName = getCalendarRowName(type, label);
+      return `<label class="calendar-row-setting" data-calendar-row-type="${escapeAttr(type)}">
+        <span class="calendar-row-setting-type">${escapeHtml(label)}</span>
+        <input data-calendar-row-field="name" type="text" maxlength="30" list="${datalistId}" value="${escapeAttr(rowName)}" aria-label="Calendar row for ${escapeAttr(label)}" />
+      </label>`;
+    }).join('')}`;
+}
+
+function saveCalendarRowSettings(event) {
+  event.preventDefault();
+  const next = { ...state.stickerPrefs };
+  els.calendarRowSettingsRows?.querySelectorAll('[data-calendar-row-type]').forEach(row => {
+    const type = row.dataset.calendarRowType;
+    const input = row.querySelector('[data-calendar-row-field="name"]');
+    if (!type || !input) return;
+    const entered = cleanTypeLabel(input.value || '');
+    const fallback = defaultCalendarRowName(type, getTypeLabel(type));
+    const existing = { ...(next[type] || {}) };
+    if (entered && entered !== fallback) existing.calendarRow = entered;
+    else delete existing.calendarRow;
+    next[type] = existing;
+  });
+  state.stickerPrefs = next;
+  localStorage.setItem(STICKER_PREFS_KEY, JSON.stringify(state.stickerPrefs));
+  scheduleCloudSync();
+  els.stickerSettingsModal?.close();
+  renderTracker();
+  renderTrackStreakSummary();
+}
+
+function resetCalendarRowSettings() {
+  if (!confirm('Reset calendar rows to their defaults?')) return;
+  const next = { ...state.stickerPrefs };
+  Object.keys(next).forEach(key => {
+    if (key.includes('::subcategory::')) return;
+    if (!next[key] || typeof next[key] !== 'object') return;
+    const copy = { ...next[key] };
+    delete copy.calendarRow;
+    next[key] = copy;
+  });
+  state.stickerPrefs = next;
+  localStorage.setItem(STICKER_PREFS_KEY, JSON.stringify(state.stickerPrefs));
+  scheduleCloudSync();
+  renderCalendarRowSettingsRows();
+  renderTracker();
+}
+
 function getRecognizedTypes() {
   const types = new Map();
   Object.keys(TYPE_LABELS).forEach(type => types.set(type, getTypeLabel(type)));
@@ -10837,8 +10992,8 @@ function getRecognizedStreakGroups() {
   // type label (for example a YouTube item and a manual item both called
   // "Workout").
   for (const entry of getCalendarEntries()) {
-    const label = getCalendarTypeGroupLabel(entry);
-    const key = getCalendarTypeGroupKey(entry);
+    const label = getStreakTypeGroupLabel(entry);
+    const key = getStreakTypeGroupKey(entry);
     if (!groups.has(key)) {
       groups.set(key, {
         key,
@@ -10896,7 +11051,7 @@ function getTypeActivityDates(typeOrGroupKey) {
   const group = resolveStreakGroup(typeOrGroupKey);
   return new Set(
     getCalendarEntries()
-      .filter(entry => getCalendarTypeGroupKey(entry) === group.key && entry.date && entry.showOnCalendar !== false)
+      .filter(entry => getStreakTypeGroupKey(entry) === group.key && entry.date && entry.showOnCalendar !== false)
       .map(entry => entry.date)
   );
 }
@@ -10977,7 +11132,7 @@ function renderTrackStreakSummary() {
 
   els.trackStreakSummary.innerHTML = active.map(group => {
     const representative = group.representativeEntry
-      || getCalendarEntries().find(entry => getCalendarTypeGroupKey(entry) === group.key)
+      || getCalendarEntries().find(entry => getStreakTypeGroupKey(entry) === group.key)
       || { type: group.representativeType, typeLabel: group.label };
     return `
       <div class="track-streak-card">

@@ -8244,3 +8244,108 @@ dialog.modal:not([open]) {
     line-height: 1.45;
   }
 }
+
+/* Half-star ratings: click/tap the left half of a star for .5. */
+.star-picker button.half-filled:not(.clear-rating) {
+  color: transparent;
+  background: linear-gradient(90deg, #c59315 0 50%, #c9c4b3 50% 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+
+/* =========================================================
+   Calendar row groups + month sticker piles
+   ========================================================= */
+.month-sticker-group-button {
+  width: 42px;
+  height: 32px;
+  padding: 0;
+  overflow: visible;
+}
+.month-sticker-pile {
+  position: relative;
+  display: block;
+  width: 34px;
+  height: 28px;
+}
+.month-sticker-pile-item {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: var(--month-pile-z, 1);
+  display: block;
+  transform: translate(calc(-50% + var(--month-pile-x, 0px)), calc(-50% + var(--month-pile-y, 0px))) rotate(var(--month-pile-rotate, 0deg));
+  transform-origin: center;
+}
+.month-sticker-pile-item .sticker {
+  transform: none;
+  filter: drop-shadow(0 1px 2px rgba(21,36,58,.18));
+}
+.month-sticker-group-button:hover .month-sticker-pile-item .sticker {
+  transform: none;
+}
+
+.calendar-row-settings-form {
+  display: grid;
+  gap: 12px;
+}
+.calendar-row-settings-hint {
+  margin: 0;
+  color: rgba(21,36,58,.62);
+  font-size: .78rem;
+}
+.calendar-row-settings-rows {
+  display: grid;
+  gap: 8px;
+  max-height: 56vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.calendar-row-setting {
+  display: grid;
+  grid-template-columns: minmax(110px, .65fr) minmax(180px, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid rgba(21,36,58,.1);
+  border-radius: 10px;
+  background: rgba(255,255,255,.42);
+}
+.calendar-row-setting-type {
+  min-width: 0;
+  font-weight: 700;
+  font-size: .82rem;
+}
+.calendar-row-setting input {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 620px) {
+  .sticker-settings-modal .calendar-row-settings-form {
+    display: flex !important;
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    flex-direction: column !important;
+  }
+  .sticker-settings-modal .calendar-row-settings-rows {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow-y: scroll !important;
+    overflow-x: hidden !important;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+  .calendar-row-setting {
+    grid-template-columns: minmax(82px, .55fr) minmax(0, 1fr);
+    gap: 9px;
+    padding: 8px;
+  }
+  .calendar-row-setting-type { font-size: .76rem; }
+  .calendar-row-settings-hint { font-size: .72rem; }
+}
