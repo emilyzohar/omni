@@ -211,6 +211,8 @@ export const TrackerAPI = (() => {
 
   async function fetchLastFm(method, params, settings) {
     const key = required(settings.lastfmApiKey, 'Last.fm API key');
+    const safeParams = { ...(params || {}) };
+    console.log('[Last.fm API] request', { method, params: safeParams });
     const query = new URLSearchParams({
       method,
       api_key: key,
@@ -220,9 +222,18 @@ export const TrackerAPI = (() => {
       if (value === undefined || value === null || value === '') continue;
       query.set(name, String(value));
     }
-    const data = await fetchJson(`${LASTFM_ROOT}?${query.toString()}`);
-    if (data?.error) throw new Error(data.message || `Last.fm error ${data.error}`);
-    return data;
+    try {
+      const data = await fetchJson(`${LASTFM_ROOT}?${query.toString()}`);
+      if (data?.error) {
+        console.warn('[Last.fm API] API error', { method, code: data.error, message: data.message || '' });
+        throw new Error(data.message || `Last.fm error ${data.error}`);
+      }
+      console.log('[Last.fm API] success', { method });
+      return data;
+    } catch (error) {
+      console.warn('[Last.fm API] request failed', { method, message: error?.message || String(error) });
+      throw error;
+    }
   }
 
   function mapLastFmArtist(artist) {
@@ -254,7 +265,9 @@ export const TrackerAPI = (() => {
       limit: Math.max(1, Math.min(50, Number(limit || 24))),
       autocorrect: 1
     }, settings);
-    return (data?.similarartists?.artist || []).map(mapLastFmArtist).filter(Boolean);
+    const results = (data?.similarartists?.artist || []).map(mapLastFmArtist).filter(Boolean);
+    console.log('[Last.fm API] artist.getSimilar results', { artist: artistName, count: results.length });
+    return results;
   }
 
   async function getLastFmSimilarTracks(artistName, trackName, settings, limit = 24) {
@@ -264,7 +277,9 @@ export const TrackerAPI = (() => {
       limit: Math.max(1, Math.min(50, Number(limit || 24))),
       autocorrect: 1
     }, settings);
-    return (data?.similartracks?.track || []).map(mapLastFmTrack).filter(Boolean);
+    const results = (data?.similartracks?.track || []).map(mapLastFmTrack).filter(Boolean);
+    console.log('[Last.fm API] track.getSimilar results', { artist: artistName, track: trackName, count: results.length });
+    return results;
   }
 
   async function getLastFmTopArtistsByTag(tag, settings, limit = 24, page = 1) {
@@ -273,7 +288,9 @@ export const TrackerAPI = (() => {
       limit: Math.max(1, Math.min(50, Number(limit || 24))),
       page: Math.max(1, Number(page || 1))
     }, settings);
-    return (data?.topartists?.artist || []).map(mapLastFmArtist).filter(Boolean);
+    const results = (data?.topartists?.artist || []).map(mapLastFmArtist).filter(Boolean);
+    console.log('[Last.fm API] tag.getTopArtists results', { tag, page, count: results.length });
+    return results;
   }
 
   async function getLastFmTopTracksByTag(tag, settings, limit = 24, page = 1) {
@@ -282,7 +299,9 @@ export const TrackerAPI = (() => {
       limit: Math.max(1, Math.min(50, Number(limit || 24))),
       page: Math.max(1, Number(page || 1))
     }, settings);
-    return (data?.tracks?.track || data?.toptracks?.track || []).map(mapLastFmTrack).filter(Boolean);
+    const results = (data?.tracks?.track || data?.toptracks?.track || []).map(mapLastFmTrack).filter(Boolean);
+    console.log('[Last.fm API] tag.getTopTracks results', { tag, page, count: results.length });
+    return results;
   }
 
   async function getLastFmChartTopArtists(settings, limit = 30, page = 1) {
@@ -290,7 +309,9 @@ export const TrackerAPI = (() => {
       limit: Math.max(1, Math.min(50, Number(limit || 30))),
       page: Math.max(1, Number(page || 1))
     }, settings);
-    return (data?.artists?.artist || []).map(mapLastFmArtist).filter(Boolean);
+    const results = (data?.artists?.artist || []).map(mapLastFmArtist).filter(Boolean);
+    console.log('[Last.fm API] chart.getTopArtists results', { page, count: results.length });
+    return results;
   }
 
   async function getLastFmChartTopTracks(settings, limit = 30, page = 1) {
@@ -298,7 +319,9 @@ export const TrackerAPI = (() => {
       limit: Math.max(1, Math.min(50, Number(limit || 30))),
       page: Math.max(1, Number(page || 1))
     }, settings);
-    return (data?.tracks?.track || []).map(mapLastFmTrack).filter(Boolean);
+    const results = (data?.tracks?.track || []).map(mapLastFmTrack).filter(Boolean);
+    console.log('[Last.fm API] chart.getTopTracks results', { page, count: results.length });
+    return results;
   }
 
   async function getMusicDetails(id, settings) {
