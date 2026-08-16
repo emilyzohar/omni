@@ -2149,7 +2149,7 @@ async function getUpNextInfo(item) {
     const remaining = await countRemainingAvailableTVEpisodes(item);
     return {
       title: item.title,
-      meta: `S${episode.season_number} E${episode.episode_number} · ${episode.name || 'Episode'}${remaining ? ` · + ${remaining} −` : ''}`,
+      meta: `S${episode.season_number} E${episode.episode_number} · ${episode.name || 'Episode'}${remaining ? ` · + ${remaining}` : ''}`,
       image: TrackerAPI.tmdbImage(episode.still_path) || item.image
     };
   }
@@ -9291,10 +9291,17 @@ async function handleDiscoverQueueChoice(event) {
     const item = addDiscoverToQueue(key, status);
     const verified = findDiscoverItem(result);
     if (!item || !verified) throw new Error('Discover item was not saved.');
-    const visibility = discoverLibraryVisibility(verified);
+    const visibility = result.sourceType === 'book' && status !== 'tbr'
+      ? revealSavedDiscoverItemInLibrary(verified)
+      : discoverLibraryVisibility(verified);
     discoverBookSaveDebug('queue save verified', result, { target: status, savedItemId: verified.id, visibility });
     if (result.sourceType === 'book') {
-      showActionFeedback(status === 'tbr' ? 'Added to TBR' : visibility.visible ? 'Added to Library' : 'Saved · hidden by Library filter');
+      console.log(`[Discover][Book Save] VERIFIED SAVED: ${verified.title} | itemId=${verified.id} | queue=${getQueueStatus(verified)} | visibility=${visibility.reason}`);
+      showActionFeedback(status === 'tbr'
+        ? `Added to TBR · ${verified.title}`
+        : visibility.reason === 'search-filter'
+          ? 'Added to Library · hidden by search'
+          : `Added to Library · ${verified.title}`);
     }
   } catch (error) {
     console.error('[Discover] Could not add item to queue', { key, status, result, error });
@@ -9335,6 +9342,20 @@ function discoverBookSaveDebug(label, result, extra = {}) {
     itemCount: state.items.length,
     ...extra
   });
+}
+
+function revealSavedDiscoverItemInLibrary(item) {
+  if (!item) return { visible: false, reason: 'missing-item' };
+  const groupKey = libraryTypeGroupKey(item);
+  const selected = ensureLibraryVisibleTypes();
+  if (!selected.has(groupKey)) selected.add(groupKey);
+  if (state.libraryView === 'recommended' && !item.recommended) {
+    state.libraryView = 'all';
+  }
+  refreshTypeFilter();
+  renderLibraryViewToggle();
+  renderLibrary();
+  return discoverLibraryVisibility(item);
 }
 
 function discoverLibraryVisibility(item) {
@@ -9597,7 +9618,8 @@ async function commitDiscoverQuickAddOnContinue(key) {
     rating: verified.rating,
     date: verified.date || '',
     completedAt: verified.completedAt || '',
-    visibility
+    visibility,
+    visibilityReason: visibility.reason
   });
   renderDiscoverCardInPlace(key);
 }
@@ -9645,8 +9667,16 @@ async function handleDiscoverRatingChoice(event) {
       const verified = findDiscoverItem(result);
       if (!verified) throw new Error('Discover item was not saved.');
       if (result.sourceType === 'book') {
-        const visibility = discoverLibraryVisibility(verified);
-        showActionFeedback(visibility.visible ? 'Added to Library' : visibility.reason === 'tbr-only' ? 'Added to TBR' : 'Saved · hidden by Library filter');
+        const visibility = revealSavedDiscoverItemInLibrary(verified);
+        const feedback = visibility.visible
+          ? `Added to Library · ${verified.title}`
+          : visibility.reason === 'tbr-only'
+            ? `Added to TBR · ${verified.title}`
+            : visibility.reason === 'search-filter'
+              ? `Added to Library · hidden by search`
+              : `Added to Library · ${verified.title}`;
+        console.log(`[Discover][Book Save] VERIFIED SAVED: ${verified.title} | itemId=${verified.id} | queue=${getQueueStatus(verified)} | visibility=${visibility.reason}`);
+        showActionFeedback(feedback);
       }
     } catch (error) {
       console.error('[Discover] Continue failed', { key, result, pendingState: {

@@ -7340,3 +7340,71 @@ dialog.modal:not([open]) {
     min-height: 32px !important;
   }
 }
+
+
+/* =========================================================
+   OMNI — MOBILE LIBRARY TABS BESIDE TYPES
+   ========================================================= */
+.library-folder-tabs-mobile { display: none; }
+
+@media (max-width: 760px) {
+  /* Keep the title clean; the compact folder toggle sits beside Types. */
+  .library-title-block > .library-folder-tabs {
+    display: none !important;
+  }
+
+  /* More breathing room after Search, without loosening the lower rows. */
+  .library-controls {
+    gap: 18px !important;
+  }
+
+  .library-filter-row {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    grid-template-areas:
+      "types tabs"
+      "settings sort" !important;
+    column-gap: 8px !important;
+    row-gap: 10px !important;
+    align-items: end !important;
+  }
+
+  .library-filter-row .library-type-filter-control { grid-area: types; }
+  .library-filter-row .library-settings-button { grid-area: settings; }
+  .library-filter-row .library-sort-control { grid-area: sort; }
+
+  .library-folder-tabs-mobile {
+    grid-area: tabs;
+    display: inline-flex !important;
+    align-self: end;
+    justify-self: end;
+    width: auto !important;
+    min-height: 36px !important;
+    padding: 2px !important;
+    gap: 2px !important;
+  }
+
+  .library-folder-tabs-mobile .library-folder-tab {
+    min-height: 32px !important;
+    padding: 5px 8px !important;
+    font-size: .64rem !important;
+    line-height: 1 !important;
+    letter-spacing: 0 !important;
+    white-space: nowrap;
+  }
+
+  /* Pull TYPES down toward the filter itself. */
+  .library-filter-row .library-type-filter-control > span {
+    margin: 0 0 2px 8px !important;
+  }
+
+  .library-filter-row .library-sort-control > span {
+    margin-bottom: 5px !important;
+  }
+}
+
+@media (max-width: 390px) {
+  .library-folder-tabs-mobile .library-folder-tab {
+    padding-inline: 7px !important;
+    font-size: .61rem !important;
+  }
+}
