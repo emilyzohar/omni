@@ -20,3 +20,7 @@ Expected console behavior:
 - [Discover][Music] Last.fm track candidates mapped directly ... iTunesRequests: 0
 - No wall of iTunes 429 requests while simply loading Artist/Song Discover.
 - One/few iTunes requests only after opening a specific Artist/Song detail.
+
+BUILD FIX
+- Quoted the debug object's `note` value so Vite/Rollup parses app.js correctly.
+- Updated the missing-key warning to reflect that this project supports EXPO_PUBLIC_ via Vite envPrefix.

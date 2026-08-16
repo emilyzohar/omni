@@ -157,10 +157,10 @@ console.log('[Config] API availability', {
   ticketmasterConfigured: Boolean(API_CONFIG.ticketmasterKey),
   tmdbConfigured: Boolean(API_CONFIG.tmdbToken),
   googleBooksConfigured: Boolean(API_CONFIG.googleBooksKey),
-  note: API keys are intentionally not logged
+  note: 'API keys are intentionally not logged'
 });
 if (!API_CONFIG.lastfmApiKey) {
-  console.warn('[Config][Last.fm] API key not exposed to this build. Set VITE_LASTFM_API_KEY (recommended for Vite) or EXPO_PUBLIC_LASTFM_API_KEY if your Vite envPrefix exposes EXPO_PUBLIC_, then restart/rebuild the app.');
+  console.warn('[Config][Last.fm] API key not exposed to this build. Set EXPO_PUBLIC_LASTFM_API_KEY (supported by this project’s Vite envPrefix) or VITE_LASTFM_API_KEY, then restart/rebuild the app.');
 }
 
 
