@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=music-subcategories-live-queue-1" />
+  <link rel="stylesheet" href="style.css?v=discover-multiselect-2" />
 </head>
 <body class="discover-page auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -78,7 +78,7 @@
         <form id="discoverSearchForm" class="discover-search-form" role="search">
           <label class="discover-search-field">
             <span class="sr-only">Search Discover</span>
-            <input id="discoverSearchInput" type="search" autocomplete="off" placeholder="Search TV, movies, books, music, concerts, or live events…" />
+            <input id="discoverSearchInput" type="search" autocomplete="off" placeholder="Search TV, movies, books, music, concerts, restaurants, or live events…" />
           </label>
           <button class="primary-button discover-search-button" type="submit">Search</button>
           <button id="clearDiscoverSearch" class="quiet-button discover-search-clear" type="button" hidden>Clear</button>
@@ -91,20 +91,23 @@
             <button class="discover-mode-tab" type="button" role="tab" data-discover-mode="popular" aria-selected="false">Popular</button>
           </div>
           <div class="discover-filter-group">
-            <label class="discover-type-filter">
-              <span>Type</span>
-              <select id="discoverTypeFilter">
-                <option value="all">Everything</option>
-                <option value="tv">TV</option>
-                <option value="movie">Movies</option>
-                <option value="book">Books</option>
-                <option value="music">Albums</option>
-                <option value="artist">Artists</option>
-                <option value="song">Songs</option>
-                <option value="concert">Concerts</option>
-                <option value="event">Live Events</option>
-              </select>
-            </label>
+            <details id="discoverTypeFilter" class="discover-multi-filter">
+              <summary>
+                <span>Categories</span>
+                <strong id="discoverTypeFilterSummary">TV + Movies</strong>
+              </summary>
+              <div id="discoverTypeFilterOptions" class="discover-multi-filter-panel" aria-label="Discover categories">
+                <label><input type="checkbox" value="tv" checked /> <span>TV</span></label>
+                <label><input type="checkbox" value="movie" checked /> <span>Movies</span></label>
+                <label><input type="checkbox" value="book" /> <span>Books</span></label>
+                <label><input type="checkbox" value="music" /> <span>Albums</span></label>
+                <label><input type="checkbox" value="artist" /> <span>Artists</span></label>
+                <label><input type="checkbox" value="song" /> <span>Songs</span></label>
+                <label><input type="checkbox" value="concert" /> <span>Concerts</span></label>
+                <label><input type="checkbox" value="restaurant" /> <span>Restaurants</span></label>
+                <label><input type="checkbox" value="event" /> <span>Live Events</span></label>
+              </div>
+            </details>
             <label class="discover-type-filter">
               <span>Genre</span>
               <select id="discoverGenreFilter">
@@ -127,7 +130,7 @@
 
         <section id="discoverFeedSection" class="discover-feed-section" aria-label="Discovery feed">
           <div class="discover-feed-intro">
-            <p id="discoverFeedIntroText">Personalized recommendations across TV, movies, books, music, concerts, and nearby live events, with some broader discoveries mixed in.</p>
+            <p id="discoverFeedIntroText">Personalized recommendations across the categories you select. TV and Movies are on by default.</p>
           </div>
           <div id="discoverFeed" class="discover-feed-grid"></div>
           <div id="discoverFeedSentinel" class="discover-feed-sentinel" aria-hidden="true">
@@ -265,10 +268,13 @@
           <option value="tv">TV</option>
           <option value="movie">Movie</option>
           <option value="book">Book</option>
-          <option value="music">Music · Album</option>
+          <option value="music">Music</option>
           <option value="artist">Music · Artist</option>
           <option value="song">Music · Song</option>
           <option value="concert">Music · Concert</option>
+          <option value="food">Food</option>
+          <option value="restaurant">Food · Restaurant</option>
+          <option value="recipe">Food · Recipe</option>
           <option value="event">Event</option>
           <option value="youtube">YouTube</option>
           <option value="other">Other</option>
@@ -438,7 +444,11 @@
       <p class="modal-eyebrow">RATE &amp; RECOMMEND</p>
       <h2 id="discoverRatingTitle">Rate this</h2>
     </div>
-    <p class="discover-rating-note">Add a rating if you want, then continue.</p>
+    <p class="discover-rating-note">Add a rating and/or date if you want, then continue.</p>
+    <label class="field discover-rating-date-field">
+      <span>Date <em>optional</em></span>
+      <input id="discoverRatingDate" type="date" />
+    </label>
     <div id="discoverRatingPicker" class="star-picker discover-rating-picker" aria-label="Rating out of five stars">
       <button type="button" data-discover-rating-choice="1" aria-label="1 star">★</button>
       <button type="button" data-discover-rating-choice="2" aria-label="2 stars">★</button>
@@ -571,6 +581,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=concert-search-past-1"></script>
+  <script type="module" src="app.js?v=discover-multiselect-2"></script>
 </body>
 </html>

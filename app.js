@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=concert-search-past-1';
-import { API_CONFIG } from './config.js?v=music-manual-dates-grouping-1';
+import { TrackerAPI } from './api.js?v=discover-multiselect-2';
+import { API_CONFIG } from './config.js?v=discover-multiselect-2';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -23,6 +23,7 @@ const TYPE_LABELS = {
   book: 'Books',
   movie: 'Movies',
   music: 'Music',
+  food: 'Food',
   event: 'Events',
   workout: 'Workouts',
   other: 'Other'
@@ -36,10 +37,13 @@ const SOURCE_ITEM_LABELS = {
   artist: 'Artist',
   song: 'Song',
   concert: 'Concert',
-  event: 'Event'
+  event: 'Event',
+  food: 'Food',
+  restaurant: 'Restaurant',
+  recipe: 'Recipe'
 };
 
-const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'other']);
+const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'food', 'restaurant', 'recipe', 'other']);
 const STICKER_COLORS = ['rust', 'red', 'coral', 'orange', 'yellow', 'cream', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'teal', 'green', 'mint', 'brown', 'black', 'white'];
 
 const CLOUD_STATE_VERSION = 2;
@@ -69,7 +73,7 @@ const DEFAULT_DISCOVER_PREFS = {
   streamingProviderNames: [],
   prioritizeAuthors: true,
   englishTVOnly: false,
-  contentType: 'all',
+  contentTypes: ['tv', 'movie'],
   genre: 'all',
   eventCity: API_CONFIG.homeCity || '',
   eventCountry: API_CONFIG.homeCountry || API_CONFIG.tmdbWatchRegion || 'CA',
@@ -81,6 +85,38 @@ const DEFAULT_DISCOVER_PREFS = {
   eventAutoLikedArtistCalendar: true,
   upcomingHorizonDays: 30
 };
+const DISCOVER_CONTENT_TYPES = ['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'restaurant', 'event'];
+const DISCOVER_CONTENT_TYPE_LABELS = {
+  tv: 'TV', movie: 'Movies', book: 'Books', music: 'Albums', artist: 'Artists', song: 'Songs',
+  concert: 'Concerts', restaurant: 'Restaurants', event: 'Live Events'
+};
+function normalizedDiscoverContentTypes(prefs = state?.discoverPrefs || DEFAULT_DISCOVER_PREFS) {
+  let values = Array.isArray(prefs?.contentTypes) ? prefs.contentTypes : null;
+  if (!values) {
+    const legacy = String(prefs?.contentType || '').trim();
+    values = legacy && legacy !== 'all' ? [legacy] : ['tv', 'movie'];
+  }
+  const valid = [...new Set(values.map(value => String(value || '').trim()).filter(value => DISCOVER_CONTENT_TYPES.includes(value)))];
+  return valid.length ? valid : ['tv', 'movie'];
+}
+function discoverTypeSelected(type) {
+  return normalizedDiscoverContentTypes().includes(type);
+}
+function discoverSelectionLabel(types = normalizedDiscoverContentTypes()) {
+  const selected = [...types];
+  if (selected.length === 2 && selected.includes('tv') && selected.includes('movie')) return 'TV + Movies';
+  if (selected.length === DISCOVER_CONTENT_TYPES.length) return 'Everything';
+  if (selected.length <= 3) return selected.map(type => DISCOVER_CONTENT_TYPE_LABELS[type] || type).join(' + ');
+  return `${selected.length} categories`;
+}
+function syncDiscoverTypeFilterUI() {
+  const selected = new Set(normalizedDiscoverContentTypes());
+  els.discoverTypeFilterOptions?.querySelectorAll('input[type="checkbox"][value]').forEach(input => {
+    input.checked = selected.has(input.value);
+  });
+  if (els.discoverTypeFilterSummary) els.discoverTypeFilterSummary.textContent = discoverSelectionLabel([...selected]);
+}
+
 const DEFAULT_LIBRARY_PREFS = { defaultTypeKeys: null };
 let currentUser = null;
 let appStarted = false;
@@ -119,6 +155,7 @@ const state = {
   pendingDiscoverRatingKey: null,
   pendingDiscoverRatingTrackTV: false,
   pendingDiscoverRatingValue: 0,
+  pendingDiscoverDateValue: '',
   tvDraftProviderId: '',
   tvDraftWatched: new Set(),
   tvDraftInitialWatched: new Set(),
@@ -145,13 +182,15 @@ const state = {
   discoverKeywordCatalog: {},
   libraryView: 'all',
   libraryVisibleTypes: null,
-  libraryExpandedGroups: new Set()
+  libraryExpandedGroups: new Set(),
+  librarySearchQuery: ''
 };
 
 console.log('[Config] API availability', {
   lastFmConfigured: Boolean(API_CONFIG.lastfmApiKey),
   lastFmEnvName: API_CONFIG.lastfmApiKeySource || 'missing',
   ticketmasterConfigured: Boolean(API_CONFIG.ticketmasterKey),
+  googlePlacesConfigured: Boolean(API_CONFIG.googlePlacesKey),
   tmdbConfigured: Boolean(API_CONFIG.tmdbToken),
   googleBooksConfigured: Boolean(API_CONFIG.googleBooksKey),
   note: 'API keys are intentionally not logged'
@@ -184,6 +223,7 @@ const els = {
   queueTypeFilter: $('#queueTypeFilter'),
   openAddModal: $('#openAddModal'),
   openLibraryAdd: $('#openLibraryAdd'),
+  openTrackAdd: $('#openTrackAdd'),
   openStickerSettings: $('#openStickerSettings'),
   stickerSettingsModal: $('#stickerSettingsModal'),
   stickerSettingsForm: $('#stickerSettingsForm'),
@@ -206,6 +246,7 @@ const els = {
   typeFilterSummary: $('#typeFilterSummary'),
   typeFilterOptions: $('#typeFilterOptions'),
   librarySort: $('#librarySort'),
+  librarySearch: $('#librarySearch'),
   openLibrarySettings: $('#openLibrarySettings'),
   librarySettingsModal: $('#librarySettingsModal'),
   librarySettingsForm: $('#librarySettingsForm'),
@@ -229,6 +270,8 @@ const els = {
   discoverCalendarNext: $('#discoverCalendarNext'),
   discoverModeTabs: $$('.discover-mode-tab[data-discover-mode]'),
   discoverTypeFilter: $('#discoverTypeFilter'),
+  discoverTypeFilterOptions: $('#discoverTypeFilterOptions'),
+  discoverTypeFilterSummary: $('#discoverTypeFilterSummary'),
   discoverGenreFilter: $('#discoverGenreFilter'),
   discoverUpcomingWindowField: $('#discoverUpcomingWindowField'),
   discoverUpcomingWindow: $('#discoverUpcomingWindow'),
@@ -247,6 +290,7 @@ const els = {
   discoverRatingTitle: $('#discoverRatingTitle'),
   discoverRatingPicker: $('#discoverRatingPicker'),
   discoverRatingRecommendHeart: $('#discoverRatingRecommendHeart'),
+  discoverRatingDate: $('#discoverRatingDate'),
   openDiscoverSettings: $('#openDiscoverSettings'),
   discoverSettingsModal: $('#discoverSettingsModal'),
   discoverSettingsForm: $('#discoverSettingsForm'),
@@ -598,6 +642,44 @@ function normalizeMusicFamilyItem(item) {
   return changed;
 }
 
+const FOOD_SUBCATEGORY_BY_SOURCE = Object.freeze({
+  restaurant: 'Restaurant',
+  recipe: 'Recipe'
+});
+
+function foodSubcategoryForSourceType(sourceType) {
+  return FOOD_SUBCATEGORY_BY_SOURCE[sourceType] || '';
+}
+
+function normalizeFoodFamilyItem(item) {
+  if (!item) return false;
+  const sourceType = getSourceType(item);
+  if (!['food','restaurant','recipe'].includes(sourceType)) return false;
+  const subcategory = foodSubcategoryForSourceType(sourceType) || cleanTypeLabel(item.subcategory || '');
+  let changed = false;
+  if (item.type !== 'food') { item.type = 'food'; changed = true; }
+  if (item.typeLabel !== 'Food') { item.typeLabel = 'Food'; changed = true; }
+  if (subcategory && cleanTypeLabel(item.subcategory || '') !== subcategory) { item.subcategory = subcategory; changed = true; }
+  return changed;
+}
+
+function migrateSavedFoodClassification() {
+  let itemsChanged = false;
+  let historyChanged = false;
+  for (const item of state.items) if (normalizeFoodFamilyItem(item)) itemsChanged = true;
+  for (const entry of state.history) {
+    const source = entry.sourceItemId ? state.items.find(item => item.id === entry.sourceItemId) : null;
+    const sourceType = source ? getSourceType(source) : entry.sourceType || '';
+    if (!['food','restaurant','recipe'].includes(sourceType)) continue;
+    const subcategory = source ? (foodSubcategoryForSourceType(sourceType) || source.subcategory || '') : (foodSubcategoryForSourceType(sourceType) || entry.subcategory || '');
+    if (entry.type !== 'food') { entry.type = 'food'; historyChanged = true; }
+    if (entry.typeLabel !== 'Food') { entry.typeLabel = 'Food'; historyChanged = true; }
+    if (subcategory && cleanTypeLabel(entry.subcategory || '') !== cleanTypeLabel(subcategory)) { entry.subcategory = cleanTypeLabel(subcategory); historyChanged = true; }
+  }
+  if (itemsChanged) saveItems();
+  if (historyChanged) saveHistory();
+}
+
 function migrateSavedMusicClassification() {
   let itemsChanged = false;
   let historyChanged = false;
@@ -613,6 +695,7 @@ function migrateSavedMusicClassification() {
       item.calendarTracked = false;
       item.calendarExplicit = false;
       item.calendarHidden = true;
+      item.calendarQueueOnly = true;
       itemsChanged = true;
     }
   }
@@ -639,6 +722,7 @@ function migrateSavedMusicClassification() {
 
 function init() {
   migrateSavedMusicClassification();
+  migrateSavedFoodClassification();
   const now = new Date();
   if (els.monthPicker) {
     els.monthPicker.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -720,6 +804,7 @@ function bindEvents() {
     renderUpNext();
   });
   els.openLibraryAdd?.addEventListener('click', () => openItemModal());
+  els.openTrackAdd?.addEventListener('click', () => openItemModal('', 'library'));
   els.openStickerSettings?.addEventListener('click', openStickerSettings);
   els.stickerSettingsForm?.addEventListener('submit', saveStickerSettings);
   els.stickerSettingsRows?.addEventListener('input', previewStickerSettings);
@@ -779,6 +864,7 @@ function bindEvents() {
   });
   els.typeFilterOptions?.addEventListener('change', handleLibraryTypeFilterChange);
   els.librarySort?.addEventListener('change', renderLibrary);
+  els.librarySearch?.addEventListener('input', () => { state.librarySearchQuery = els.librarySearch.value || ''; renderLibrary(); });
   els.openLibrarySettings?.addEventListener('click', openLibrarySettings);
   els.librarySettingsForm?.addEventListener('submit', saveLibrarySettings);
   els.resetLibraryDefaults?.addEventListener('click', resetLibrarySettingsDraft);
@@ -792,10 +878,19 @@ function bindEvents() {
   els.discoverCalendarNext?.addEventListener('click', () => shiftDiscoverCalendarMonth(1));
   els.discoverCalendarGrid?.addEventListener('click', handleDiscoverCalendarClick);
   els.discoverModeTabs?.forEach(tab => tab.addEventListener('click', () => setDiscoverMode(tab.dataset.discoverMode)));
-  els.discoverTypeFilter?.addEventListener('change', async () => {
-    state.discoverPrefs = { ...DEFAULT_DISCOVER_PREFS, ...state.discoverPrefs, contentType: els.discoverTypeFilter.value || 'all' };
+  els.discoverTypeFilterOptions?.addEventListener('change', async event => {
+    const changed = event.target.closest('input[type="checkbox"][value]');
+    if (!changed) return;
+    let selected = [...els.discoverTypeFilterOptions.querySelectorAll('input[type="checkbox"][value]:checked')].map(input => input.value);
+    if (!selected.length) {
+      changed.checked = true;
+      selected = [changed.value];
+    }
+    state.discoverPrefs = { ...DEFAULT_DISCOVER_PREFS, ...state.discoverPrefs, contentTypes: selected };
+    delete state.discoverPrefs.contentType;
     safeLocalSet(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
     scheduleCloudSync();
+    syncDiscoverTypeFilterUI();
     await refreshDiscoverForFilters();
   });
   els.discoverGenreFilter?.addEventListener('change', async () => {
@@ -839,7 +934,7 @@ function bindEvents() {
   els.discoverQueueModal?.addEventListener('click', handleDiscoverQueueChoice);
   els.discoverRatingModal?.addEventListener('click', handleDiscoverRatingChoice);
   els.detailBody?.addEventListener('click', handleDiscoverQuickMetaClick);
-  els.discoverRatingModal?.addEventListener('close', () => { state.pendingDiscoverRatingKey = null; state.pendingDiscoverRatingTrackTV = false; state.pendingDiscoverRatingValue = 0; });
+  els.discoverRatingModal?.addEventListener('close', () => { state.pendingDiscoverRatingKey = null; state.pendingDiscoverRatingTrackTV = false; state.pendingDiscoverRatingValue = 0; state.pendingDiscoverDateValue = ''; if (els.discoverRatingDate) els.discoverRatingDate.value = ''; });
   els.bookProgressForm?.addEventListener('submit', saveBookProgress);
   els.bookAddPeriod?.addEventListener('click', () => addBookPeriodEditorRow({ startDate: todayString(), endDate: '' }));
   els.bookPauseResume?.addEventListener('click', toggleBookPauseResume);
@@ -850,6 +945,19 @@ function bindEvents() {
   document.addEventListener('click', async event => {
     const close = event.target.closest('[data-close]');
     if (close) document.getElementById(close.dataset.close)?.close();
+
+    const restaurantSuggestion = event.target.closest('[data-restaurant-suggestion]');
+    if (restaurantSuggestion) {
+      try {
+        const result = JSON.parse(restaurantSuggestion.dataset.restaurantSuggestion || '{}');
+        els.detailModal?.close();
+        openItemModal('', 'library');
+        if (els.itemSourceType) els.itemSourceType.value = 'restaurant';
+        updateItemFormForType();
+        selectCatalogueResult(result);
+      } catch {}
+      return;
+    }
 
     const recommendToggle = event.target.closest('[data-toggle-recommended]');
     if (recommendToggle) {
@@ -895,13 +1003,20 @@ function bindEvents() {
         if (!item) {
           item = ensureDiscoverItem(result, 'library');
           item.discoverCalendarOnly = true;
+          item.calendarQueueOnly = true;
         }
         const scheduling = item.queueCalendarScheduled !== true;
         item.queueCalendarScheduled = scheduling;
         if (!item.date) item.date = result.eventDate || item.eventMeta?.eventDate || '';
-        if (scheduling && item.calendarTracked !== true) item.calendarHidden = true;
+        if (scheduling && item.calendarTracked !== true) {
+          item.calendarHidden = true;
+          item.calendarQueueOnly = true;
+        }
         normalizeMusicFamilyItem(item);
         item.updatedAt = new Date().toISOString();
+        if (!scheduling && item.calendarQueueOnly === true && item.calendarTracked !== true) {
+          state.items = state.items.filter(existing => existing.id !== item.id);
+        }
         saveItems();
         renderAll();
         if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
@@ -1892,6 +2007,21 @@ function tbrMeta(item) {
   return item.subtitle || 'Saved for later';
 }
 
+async function countRemainingAvailableTVEpisodes(item) {
+  if (!item?.providerId) return 0;
+  const show = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
+  const seasons = (show.seasons || []).filter(season => Number(season.season_number) > 0 && Number(season.episode_count) > 0);
+  let remaining = 0;
+  for (const info of seasons) {
+    const season = await getCached(`season:${item.providerId}:${info.season_number}`, () => TrackerAPI.getTVSeason(item.providerId, info.season_number, state.settings));
+    for (const episode of (season.episodes || [])) {
+      if (Number(episode.episode_number) <= 0 || !isEpisodeAvailable(episode)) continue;
+      if (!isTVEpisodeConsumed(item, info.season_number, episode.episode_number)) remaining += 1;
+    }
+  }
+  return remaining;
+}
+
 async function getUpNextInfo(item) {
   if (getSourceType(item) === 'tv') {
     const checkedAt = Date.parse(item.tvMeta?.checkedAt || '');
@@ -1901,9 +2031,10 @@ async function getUpNextInfo(item) {
     const episode = await getCached(`tv:${item.providerId}:s${item.progress?.nextSeason || 1}e${item.progress?.nextEpisode || 1}`, () =>
       TrackerAPI.getTVEpisode(item.providerId, item.progress?.nextSeason || 1, item.progress?.nextEpisode || 1, state.settings)
     );
+    const remaining = await countRemainingAvailableTVEpisodes(item);
     return {
       title: item.title,
-      meta: `S${episode.season_number} E${episode.episode_number} · ${episode.name || 'Episode'}`,
+      meta: `S${episode.season_number} E${episode.episode_number} · ${episode.name || 'Episode'}${remaining ? ` · ${remaining} episode${remaining === 1 ? '' : 's'} remaining` : ''}`,
       image: TrackerAPI.tmdbImage(episode.still_path) || item.image
     };
   }
@@ -1975,6 +2106,7 @@ async function handleUpNextClick(event) {
       item.calendarTracked = tracked;
       item.calendarExplicit = tracked;
       item.calendarHidden = !tracked;
+      if (tracked) { item.calendarQueueOnly = false; item.discoverCalendarOnly = false; }
       item.updatedAt = new Date().toISOString();
       normalizeMusicFamilyItem(item);
       saveItems();
@@ -2721,6 +2853,7 @@ async function moveItemToQueue(item, status) {
     else if (sourceType === 'song') await renderSongDetails(item);
     else if (sourceType === 'reminder') renderReminderDetails(item);
     else if (['event', 'concert'].includes(sourceType)) await renderEventDetails(item);
+    else if (sourceType === 'restaurant') await renderRestaurantDetails(item);
     else renderManualDetails(item);
   }
 }
@@ -2942,10 +3075,11 @@ function clearSourceSelectionForTypeChange() {
 
 function updateItemFormForType() {
   const sourceType = els.itemSourceType.value;
-  const isCatalogue = ['tv', 'book', 'movie', 'music', 'artist', 'song', 'concert', 'event'].includes(sourceType);
+  const isCatalogue = ['tv', 'book', 'movie', 'music', 'artist', 'song', 'concert', 'event', 'restaurant'].includes(sourceType);
   const isYouTube = sourceType === 'youtube';
   const isReminder = sourceType === 'reminder';
   const isManual = sourceType === 'other';
+  const isFoodManual = ['food','recipe'].includes(sourceType);
 
   els.catalogueSearchBlock.hidden = !isCatalogue;
   els.workoutBlock.hidden = !isYouTube;
@@ -2958,9 +3092,9 @@ function updateItemFormForType() {
   if (sourceType === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
     els.bookStartDate.value = todayString();
   }
-  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || ['music','artist','song','concert'].includes(sourceType);
+  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || ['music','artist','song','concert','food','restaurant','recipe'].includes(sourceType);
 
-  const fixedMusicSubcategory = musicSubcategoryForSourceType(sourceType) || (sourceType === 'music' && (state.selectedSource?.provider === 'itunes' || els.provider?.value === 'itunes') ? 'Album' : '');
+  const fixedMusicSubcategory = musicSubcategoryForSourceType(sourceType) || foodSubcategoryForSourceType(sourceType) || (sourceType === 'music' && (state.selectedSource?.provider === 'itunes' || els.provider?.value === 'itunes') ? 'Album' : '');
   if (els.itemSubcategory) {
     if (fixedMusicSubcategory) {
       els.itemSubcategory.value = fixedMusicSubcategory;
@@ -2991,7 +3125,7 @@ function updateItemFormForType() {
   if (!els.editingId.value) {
     state.selectedSource = null;
     state.loadedPlaylist = null;
-    els.provider.value = isYouTube ? 'youtube' : isReminder ? 'reminder' : isManual ? 'manual' : '';
+    els.provider.value = isYouTube ? 'youtube' : isReminder ? 'reminder' : (isManual || isFoodManual) ? 'manual' : '';
     els.providerId.value = '';
     els.providerImage.value = '';
     els.providerSubtitle.value = '';
@@ -3010,9 +3144,26 @@ function updateItemFormForType() {
     artist: 'Search artists',
     song: 'Search songs',
     concert: 'Search concerts — past or upcoming',
-    event: 'Search events'
+    event: 'Search events',
+    restaurant: 'Search restaurants'
   };
   els.catalogueQuery.placeholder = placeholders[sourceType] || 'Search title';
+
+  if (els.manualTitle) {
+    els.manualTitle.placeholder = sourceType === 'recipe'
+      ? 'Recipe name'
+      : sourceType === 'restaurant'
+        ? 'Name this restaurant in your tracker'
+        : 'Title';
+  }
+  if (els.itemNote) {
+    els.itemNote.placeholder = sourceType === 'restaurant'
+      ? 'What you ordered, who you went with, or anything to remember'
+      : sourceType === 'recipe'
+        ? 'What you changed, how it turned out, or anything to remember'
+        : 'Anything you want to remember';
+  }
+  if (els.itemLinkLabel) els.itemLinkLabel.placeholder = sourceType === 'recipe' ? 'Recipe source (optional)' : 'Link label (optional)';
 }
 
 function updateReminderFormFields() {
@@ -3036,9 +3187,11 @@ async function searchCatalogue() {
 
   try {
     const liveSearch = ['concert', 'event'].includes(type);
-    const results = await TrackerAPI.searchCatalogue(query, type, state.settings, liveSearch ? {
+    const restaurantSearch = type === 'restaurant';
+    const results = await TrackerAPI.searchCatalogue(query, type, state.settings, (liveSearch || restaurantSearch) ? {
       city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
-      countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA'
+      countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA',
+      region: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA',
     } : {});
     renderSearchResults(results);
     showFormMessage('', false);
@@ -3054,9 +3207,13 @@ function renderSearchResults(results) {
   if (!results.length) {
     const sourceType = els.itemSourceType.value;
     const city = state.discoverPrefs.eventCity || state.settings.homeCity || '';
-    const liveMessage = ['concert', 'event'].includes(sourceType)
-      ? `No Ticketmaster results${city ? ` in ${city}` : ''} from the past year or upcoming dates.`
-      : 'No results.';
+    const liveMessage = sourceType === 'concert'
+      ? `No upcoming Ticketmaster concert results${city ? ` in ${city}` : ''}. You can always add a past concert manually.`
+      : sourceType === 'event'
+        ? `No Ticketmaster results${city ? ` in ${city}` : ''}.`
+        : sourceType === 'restaurant'
+          ? `No restaurant results${city ? ` near ${city}` : ''}.`
+          : 'No results.';
     els.searchResults.innerHTML = `<div class="search-result-meta" style="padding:14px">${escapeHtml(liveMessage)}</div>`;
     els.searchResults.hidden = false;
     return;
@@ -3079,16 +3236,32 @@ function renderSearchResults(results) {
     button.addEventListener('click', () => selectCatalogueResult(result));
     els.searchResults.appendChild(button);
   });
+  if (els.itemSourceType.value === 'restaurant') {
+    const attribution = document.createElement('div');
+    attribution.className = 'gmp-attribution';
+    attribution.setAttribute('translate', 'no');
+    attribution.textContent = 'Google Maps';
+    els.searchResults.appendChild(attribution);
+  }
   els.searchResults.hidden = false;
 }
 
 function selectCatalogueResult(result) {
   state.selectedSource = result;
-  els.manualTitle.value = result.title || '';
+  const selectingRestaurant = els.itemSourceType.value === 'restaurant' && result.provider === 'googlePlaces';
+  // Google Maps content is transient. Persist only the Place ID; the restaurant
+  // label saved in Catch All comes from what the user typed into the search/title field.
+  if (selectingRestaurant) {
+    const userLabel = String(els.catalogueQuery?.value || '').trim();
+    els.manualTitle.value = userLabel;
+    els.manualTitle.placeholder = 'Name this restaurant in your tracker';
+  } else {
+    els.manualTitle.value = result.title || '';
+  }
   els.provider.value = result.provider;
   els.providerId.value = result.providerId;
-  els.providerImage.value = result.image || '';
-  els.providerSubtitle.value = result.subtitle || '';
+  els.providerImage.value = selectingRestaurant ? '' : (result.image || '');
+  els.providerSubtitle.value = selectingRestaurant ? '' : (result.subtitle || '');
   els.searchResults.hidden = true;
   showSelectedSource(result);
 
@@ -3334,9 +3507,10 @@ async function persistTVDraftWatchHistory(item) {
 
 function showSelectedSource(source, playlist = false) {
   const target = playlist ? els.playlistPreview : els.selectedSource;
+  const isGooglePlace = source.provider === 'googlePlaces';
   target.innerHTML = `
     ${source.image ? `<img src="${escapeAttr(source.image)}" alt="" />` : '<div style="width:64px;height:84px;background:rgba(21,36,58,.08);border-radius:5px"></div>'}
-    <div><strong>${escapeHtml(source.title || 'Selected')}</strong><span>${escapeHtml(source.subtitle || '')}</span></div>`;
+    <div><strong>${escapeHtml(source.title || 'Selected')}</strong><span>${escapeHtml(source.subtitle || '')}</span>${isGooglePlace ? '<small class="gmp-attribution" translate="no">Google Maps</small>' : ''}</div>`;
   target.hidden = false;
 }
 
@@ -3385,6 +3559,11 @@ async function saveItemFromForm(event) {
       fixedSubcategory = 'Album';
     }
   }
+  if (['food','restaurant','recipe'].includes(sourceType)) {
+    type = 'food';
+    typeLabel = 'Food';
+    fixedSubcategory = foodSubcategoryForSourceType(sourceType);
+  }
 
   if (sourceType === 'youtube') {
     typeLabel = cleanTypeLabel(els.itemDisplayType.value) || 'Workout';
@@ -3410,6 +3589,11 @@ async function saveItemFromForm(event) {
     providerId = '';
     image = '';
     subtitle = '';
+  } else if (['food','recipe'].includes(sourceType)) {
+    provider = 'manual';
+    providerId = editing?.providerId || '';
+    image = editing?.image || '';
+    subtitle = editing?.subtitle || '';
   } else if (sourceType === 'other') {
     typeLabel = cleanTypeLabel(els.itemDisplayType.value);
     if (!typeLabel) {
@@ -3461,14 +3645,16 @@ async function saveItemFromForm(event) {
         ? ['itunes', 'lastfm'].includes(provider)
         : sourceType === 'concert'
           ? ['ticketmaster', 'manual'].includes(provider)
+          : sourceType === 'restaurant'
+            ? provider === 'googlePlaces'
           : sourceType === 'event'
             ? provider === 'ticketmaster'
             : ['tv', 'movie'].includes(sourceType)
               ? provider === 'tmdb'
               : true;
-  const requiresCatalogueSelection = ['tv','book','movie','artist','song','event'].includes(sourceType);
+  const requiresCatalogueSelection = ['tv','book','movie','artist','song','event','restaurant'].includes(sourceType);
   if ((requiresCatalogueSelection && !providerId) || !validProvider) {
-    showFormMessage(['music', 'concert'].includes(sourceType) ? 'Search for a result or enter the item manually.' : 'Choose a search result first.', true);
+    showFormMessage(['music', 'concert','food','recipe'].includes(sourceType) ? 'Search for a result or enter the item manually.' : 'Choose a search result first.', true);
     return;
   }
   if (sourceType === 'reminder' && !els.reminderDueDate?.value) {
@@ -3507,8 +3693,8 @@ async function saveItemFromForm(event) {
     attachments: attachmentFiles,
     links: state.attachmentDraft.links.map(link => ({ ...link })),
     date: sourceType === 'reminder' ? '' : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
-    queueStatus: sourceType === 'reminder' ? 'upnext' : (['music','artist','song','concert'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library')),
-    active: sourceType === 'reminder' || (!['music','artist','song','concert'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
+    queueStatus: sourceType === 'reminder' ? 'upnext' : (['music','artist','song','concert','food','restaurant','recipe'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library')),
+    active: sourceType === 'reminder' || (!['music','artist','song','concert','food','restaurant','recipe'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
     createdAt: editing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     completedAt: editing?.completedAt || '',
@@ -3533,7 +3719,8 @@ async function saveItemFromForm(event) {
         classifications: state.selectedSource?.classifications || editing?.eventMeta?.classifications || [],
         priceRange: state.selectedSource?.priceRange || editing?.eventMeta?.priceRange || null
       }
-    } : {})
+    } : {}),
+
   };
 
   if (sourceType === 'reminder') {
@@ -3590,10 +3777,104 @@ async function saveItemFromForm(event) {
     if (state.loadedPlaylist && editing?.providerId !== state.loadedPlaylist.providerId) item.progress.currentIndex = 0;
   }
 
+  // Food history is event-like: the Library keeps the place/recipe while each
+  // dated restaurant visit or recipe attempt becomes its own tracked record.
+  const foodHistoryDate = ['restaurant', 'recipe'].includes(sourceType) ? (els.itemDate?.value || '') : '';
+  if (['restaurant', 'recipe'].includes(sourceType)) item.date = '';
+
+  // A Google Place is one Library restaurant. Re-adding the same Place ID logs a
+  // new visit/order instead of creating a duplicate restaurant card.
+  const existingRestaurant = !editing && sourceType === 'restaurant' && providerId
+    ? state.items.find(existing =>
+        getSourceType(existing) === 'restaurant' &&
+        existing.provider === 'googlePlaces' &&
+        String(existing.providerId || '') === String(providerId)
+      )
+    : null;
+
+  if (existingRestaurant) {
+    const formRating = Number(els.itemRating.value || 0);
+    const formNotes = els.itemNote.value.trim();
+    if (formRating > 0) existingRestaurant.rating = formRating;
+    if (els.itemRecommended?.checked) existingRestaurant.recommended = true;
+    if (formNotes && !String(existingRestaurant.notes || '').trim()) existingRestaurant.notes = formNotes;
+    existingRestaurant.updatedAt = new Date().toISOString();
+    existingRestaurant.attachments = [
+      ...(existingRestaurant.attachments || []),
+      ...attachmentFiles.filter(file => !(existingRestaurant.attachments || []).some(saved => saved.id === file.id))
+    ];
+    existingRestaurant.links = [
+      ...(existingRestaurant.links || []),
+      ...state.attachmentDraft.links.filter(link => !(existingRestaurant.links || []).some(saved => saved.url === link.url))
+    ];
+
+    if (foodHistoryDate) {
+      const duplicateVisit = state.history.some(entry =>
+        entry.sourceItemId === existingRestaurant.id &&
+        entry.kind === 'restaurant-visit' &&
+        entry.date === foodHistoryDate &&
+        String(entry.notes || '') === formNotes
+      );
+      if (!duplicateVisit) {
+        addHistoryRecord({
+          sourceItemId: existingRestaurant.id,
+          sourceType: 'restaurant',
+          type: 'food',
+          typeLabel: 'Food',
+          subcategory: 'Restaurant',
+          date: foodHistoryDate,
+          showOnCalendar: true,
+          kind: 'restaurant-visit',
+          title: existingRestaurant.title,
+          subtitle: 'Restaurant visit',
+          notes: formNotes,
+          rating: formRating,
+          image: '',
+          provider: 'googlePlaces',
+          providerId: existingRestaurant.providerId
+        });
+        saveHistory();
+      }
+    }
+
+    saveItems();
+    await deleteRemovedDraftAttachments();
+    els.itemModal.close();
+    renderAll();
+    return;
+  }
+
   if (editing) {
     state.items = state.items.map(existing => existing.id === item.id ? item : existing);
   } else {
     state.items.push(item);
+  }
+
+  if (foodHistoryDate && ['restaurant', 'recipe'].includes(sourceType)) {
+    const historyKind = sourceType === 'restaurant' ? 'restaurant-visit' : 'recipe-tried';
+    const duplicate = state.history.some(entry =>
+      entry.sourceItemId === item.id && entry.kind === historyKind && entry.date === foodHistoryDate && entry.notes === item.notes
+    );
+    if (!duplicate) {
+      addHistoryRecord({
+        sourceItemId: item.id,
+        sourceType,
+        type: 'food',
+        typeLabel: 'Food',
+        subcategory: foodSubcategoryForSourceType(sourceType),
+        date: foodHistoryDate,
+        showOnCalendar: true,
+        kind: historyKind,
+        title: item.title,
+        subtitle: sourceType === 'restaurant' ? 'Restaurant visit' : 'Recipe tried',
+        notes: item.notes || '',
+        rating: Number(item.rating || 0),
+        image: item.image || '',
+        provider: item.provider,
+        providerId: item.providerId
+      });
+      saveHistory();
+    }
   }
 
   if (sourceType === 'book' && item.completedAt && !state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'book-finished')) {
@@ -3685,6 +3966,7 @@ async function openDetails(id) {
     else if (sourceType === 'song') await renderSongDetails(item);
     else if (sourceType === 'reminder') renderReminderDetails(item);
     else if (['event', 'concert'].includes(sourceType)) await renderEventDetails(item);
+    else if (sourceType === 'restaurant') await renderRestaurantDetails(item);
     else renderManualDetails(item);
     appendLibraryPersonalMetadata(item);
     appendItemResources(item);
@@ -3937,7 +4219,7 @@ async function renderMovieDetails(item) {
 
 async function renderEventDetails(item) {
   let event = null;
-  if (item.providerId) {
+  if (item.provider === 'ticketmaster' && item.providerId) {
     event = await getCached(`ticketmaster:event:${item.providerId}`, () => TrackerAPI.getTicketmasterEvent(item.providerId, state.settings));
   }
   event = event || {
@@ -3967,7 +4249,7 @@ async function renderEventDetails(item) {
     city: event.city || '',
     region: event.region || '',
     address: event.address || '',
-    ticketUrl: event.ticketUrl || '',
+    ticketUrl: event.ticketUrl || item.eventMeta?.ticketUrl || '',
     status: event.status || '',
     classifications: event.classifications || [],
     priceRange: event.priceRange || null
@@ -3990,7 +4272,7 @@ async function renderEventDetails(item) {
     <section class="detail-section event-detail-section"><h3>Event details</h3>
       ${info ? `<p>${escapeHtml(info)}</p>` : ''}
       ${event.address ? `<p class="detail-meta">${escapeHtml(event.address)}</p>` : ''}
-      ${event.ticketUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(event.ticketUrl)}" target="_blank" rel="noopener">Tickets on Ticketmaster ↗</a>` : ''}
+      ${event.ticketUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(event.ticketUrl)}" target="_blank" rel="noopener">Tickets / event page ↗</a>` : ''}
     </section>`;
 }
 
@@ -4039,6 +4321,50 @@ function renderReminderDetails(item) {
       <button class="primary-button" type="button" data-reminder-complete="${escapeAttr(item.id)}" ${dueNow ? '' : 'disabled'}>✓ ${dueNow ? 'Mark complete' : 'Not due yet'}</button>
       ${detailEditButton(item).replace('<div class="detail-actions">','').replace('</div>','')}
     </div>`;
+}
+
+async function renderRestaurantDetails(item) {
+  let live = null;
+  if (item.provider === 'googlePlaces' && item.providerId && state.settings.googlePlacesKey) {
+    try { live = await TrackerAPI.getRestaurantDetails(item.providerId, state.settings); }
+    catch (error) { console.warn('Google Places details unavailable:', error?.message || error); }
+  }
+  const visits = state.history
+    .filter(entry => entry.sourceItemId === item.id && entry.kind === 'restaurant-visit')
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  const googleRating = Number(live?.rating || 0);
+  const ratingText = googleRating ? `Google ${googleRating.toFixed(1)}★${live?.userRatingCount ? ` · ${Number(live.userRatingCount).toLocaleString()} reviews` : ''}` : '';
+
+  let suggestions = [];
+  if (state.settings.googlePlacesKey) {
+    const seed = live?.primaryTypeDisplayName || live?.primaryType || (item.title ? `restaurants like ${item.title}` : 'restaurants');
+    try {
+      const nearby = await TrackerAPI.searchRestaurants(seed, state.settings, {
+        city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
+        region: state.discoverPrefs.eventCountry || state.settings.homeCountry || 'CA',
+        maxResultCount: 10
+      });
+      const savedIds = new Set(state.items.filter(saved => getSourceType(saved) === 'restaurant').map(saved => String(saved.providerId || '')));
+      suggestions = (nearby || []).filter(result => String(result.providerId || '') !== String(item.providerId || '') && !savedIds.has(String(result.providerId || ''))).slice(0, 6);
+    } catch (error) {
+      console.warn('Restaurant recommendations unavailable:', error?.message || error);
+    }
+  }
+
+  const visitsMarkup = visits.length
+    ? visits.map(entry => `<article class="restaurant-history-row"><div><strong>${escapeHtml(formatLongDate(entry.date))}</strong>${entry.notes ? `<p>${escapeHtml(entry.notes)}</p>` : ''}</div>${Number(entry.rating || 0) ? `<span>${formatPersonalRating(entry.rating)}★</span>` : ''}</article>`).join('')
+    : '<p class="detail-meta">No dated visits or orders logged yet. Edit this restaurant and add a date + notes to record one.</p>';
+  const suggestionsMarkup = suggestions.length
+    ? `<div class="restaurant-suggestion-grid">${suggestions.map(result => `<button class="restaurant-suggestion-card" type="button" data-restaurant-suggestion="${escapeAttr(JSON.stringify(result))}"><strong>${escapeHtml(result.title)}</strong><span>${escapeHtml([result.rating ? `${Number(result.rating).toFixed(1)}★` : '', result.primaryTypeDisplayName || '', result.formattedAddress || result.subtitle || ''].filter(Boolean).join(' · '))}</span></button>`).join('')}</div><div class="gmp-attribution" translate="no">Google Maps</div>`
+    : '<p class="detail-meta">No additional nearby recommendations returned yet.</p>';
+
+  els.detailBody.innerHTML = `
+    ${detailHero({ type:'RESTAURANT', title:item.title, image:item.image || '', subtitle:[ratingText, live?.formattedAddress || ''].filter(Boolean).join(' · '), overview:item.notes || '' })}
+    ${live ? '<div class="gmp-attribution detail-gmp-attribution" translate="no">Google Maps</div>' : ''}
+    ${detailEditButton(item)}
+    <section class="detail-section restaurant-history-section"><h3>Order / visit history</h3>${visitsMarkup}</section>
+    <section class="detail-section"><h3>Try somewhere similar</h3>${suggestionsMarkup}</section>
+    ${(live?.googleMapsUrl || live?.websiteUrl) ? `<section class="detail-section restaurant-links">${live.googleMapsUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(live.googleMapsUrl)}" target="_blank" rel="noopener">Open in Google Maps ↗</a>` : ''}${live.websiteUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(live.websiteUrl)}" target="_blank" rel="noopener">Website ↗</a>` : ''}</section>` : ''}`;
 }
 
 function renderManualDetails(item) {
@@ -5457,12 +5783,16 @@ async function runDiscoverSearch(forcedQuery = '') {
   if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = 'Search results';
 
   try {
-    const selectedType = state.discoverPrefs.contentType || 'all';
-    const types = selectedType === 'all' ? ['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event'] : [selectedType];
+    const types = normalizedDiscoverContentTypes();
     const settled = await Promise.allSettled(types.map(type => {
-      if (type === 'concert') return getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 14 }).then(events => {
-        const q = normalizeArtistName(query);
-        return events.filter(event => normalizeArtistName([event.artistName, event.title, event.venueName, event.city].filter(Boolean).join(' ')).includes(q));
+      if (type === 'concert') return TrackerAPI.searchCatalogue(query, 'concert', state.settings, {
+        city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
+        countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA'
+      });
+      if (type === 'restaurant') return TrackerAPI.searchCatalogue(query, 'restaurant', state.settings, {
+        city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
+        region: state.discoverPrefs.eventCountry || state.settings.homeCountry || 'CA',
+        maxResultCount: 20
       });
       if (type === 'event') return fetchTicketmasterEventsForPreferences(query, { size: 40, skipPrioritySearch: true });
       if (type !== 'book') return TrackerAPI.searchCatalogue(query, type, state.settings);
@@ -5476,7 +5806,7 @@ async function runDiscoverSearch(forcedQuery = '') {
       const entry = settled[index];
       if (entry.status !== 'fulfilled') continue;
       const sourceType = types[index];
-      const availableResults = sourceType === 'concert' ? (entry.value || []) : filterAlreadyKnown(entry.value || [], sourceType);
+      const availableResults = filterAlreadyKnown(entry.value || [], sourceType);
       for (const result of availableResults) {
         const normalized = { ...result, sourceType, categories: result.raw?.volumeInfo?.categories || result.categories || [] };
         if (state.discoverPrefs.englishTVOnly === true && sourceType === 'tv' && String(normalized.raw?.original_language || '').toLowerCase() !== 'en') continue;
@@ -5525,7 +5855,7 @@ function normalizedUpcomingHorizonDays() {
 function updateDiscoverModeUI() {
   const mode = DISCOVER_MODES.has(state.discoverMode) ? state.discoverMode : 'for-you';
   const copy = {
-    'for-you': 'Personalized recommendations across TV, movies, books, albums, artists, songs, concerts, and live events. Most results follow your taste, with some broader discoveries mixed in.',
+    'for-you': `Personalized recommendations across ${discoverSelectionLabel(normalizedDiscoverContentTypes())}. Most results follow your taste, with some broader discoveries mixed in.`,
     new: 'Chronological releases and events: this week, last week, upcoming, then an endless stream of recently released things from newest to oldest.',
     popular: 'What is broadly popular or trending now across your enabled content types. Your location and availability settings filter results, but your taste does not determine the ranking.'
   };
@@ -5535,7 +5865,7 @@ function updateDiscoverModeUI() {
     tab.setAttribute('aria-selected', String(active));
   });
   if (els.discoverFeedIntroText) els.discoverFeedIntroText.textContent = copy[mode];
-  if (els.discoverTypeFilter) els.discoverTypeFilter.value = state.discoverPrefs.contentType || 'all';
+  syncDiscoverTypeFilterUI();
   if (els.discoverGenreFilter) els.discoverGenreFilter.value = state.discoverPrefs.genre || 'all';
   if (els.discoverUpcomingWindow) els.discoverUpcomingWindow.value = String(normalizedUpcomingHorizonDays());
   if (els.discoverUpcomingWindowField) els.discoverUpcomingWindowField.hidden = mode !== 'new';
@@ -5635,9 +5965,10 @@ async function renderDiscoverCalendar(force = false) {
     renderDiscoverCalendarGrid(entries);
     if (els.discoverStatus) els.discoverStatus.hidden = true;
     if (els.discoverCalendarMessage) {
-      const selectedType = state.discoverPrefs.contentType || 'all';
-      if (['book','music','artist','song'].includes(selectedType)) {
-        els.discoverCalendarMessage.textContent = selectedType === 'book' ? 'Books are not shown here because Google Books publication metadata is not a dependable calendar of forthcoming releases.' : 'Albums, artists, and songs do not use the release calendar here.';
+      const selectedTypes = normalizedDiscoverContentTypes();
+      const calendarCapable = selectedTypes.some(type => ['tv','movie','concert','event'].includes(type));
+      if (!calendarCapable) {
+        els.discoverCalendarMessage.textContent = 'The selected Discover categories do not use this release calendar.';
       } else if (!entries.length) {
         els.discoverCalendarMessage.textContent = 'Nothing matching your current type, genre, and location was found for this month.';
       } else {
@@ -5666,13 +5997,13 @@ async function renderDiscoverCalendar(force = false) {
 
 async function collectDiscoverCalendarEntries() {
   const { startDate, endDate } = discoverCalendarBounds();
-  const selectedType = state.discoverPrefs.contentType || 'all';
-  if (['book','music','artist','song'].includes(selectedType)) return [];
+  const selectedTypes = new Set(normalizedDiscoverContentTypes());
+  if (![...selectedTypes].some(type => ['tv','movie','concert','event'].includes(type))) return [];
   const entries = [];
   state.discoverResults.clear();
 
-  if (state.settings.ticketmasterKey && (selectedType === 'all' || selectedType === 'concert' || selectedType === 'event')) {
-    if (selectedType === 'all' || selectedType === 'concert') {
+  if (state.settings.ticketmasterKey && (selectedTypes.has('concert') || selectedTypes.has('event'))) {
+    if (selectedTypes.has('concert')) {
       const concerts = state.discoverPrefs.eventAutoLikedArtistCalendar === false
         ? []
         : await getNearbyTicketmasterConcerts({ includeInferred: false, startDate, endDate, artistLimit: 14 });
@@ -5686,7 +6017,7 @@ async function collectDiscoverCalendarEntries() {
         });
       }
     }
-    if (selectedType === 'all' || selectedType === 'event') {
+    if (selectedTypes.has('event')) {
       const followed = await getFollowedTicketmasterEvents({ startDate, endDate, termLimit: 12 });
       for (const result of followed) {
         entries.push({
@@ -5700,7 +6031,7 @@ async function collectDiscoverCalendarEntries() {
     }
   }
 
-  if (selectedType === 'all' || selectedType === 'movie') {
+  if (selectedTypes.has('movie')) {
     const region = String(state.settings.tmdbWatchRegion || state.discoverPrefs.eventCountry || 'CA').toUpperCase();
     const options = discoverTMDBOptions('movie', {
       afterDate: startDate,
@@ -5729,7 +6060,7 @@ async function collectDiscoverCalendarEntries() {
     }
   }
 
-  if (selectedType === 'all' || selectedType === 'tv') {
+  if (selectedTypes.has('tv')) {
     const options = discoverTMDBOptions('tv', {
       afterDate: startDate,
       beforeDate: endDate,
@@ -5978,26 +6309,26 @@ async function loadMoreDiscoverFeed() {
 
   try {
     const candidates = await collectDiscoverFeedCandidates(batchNumber);
-    const requestedContentType = state.discoverPrefs.contentType || 'all';
+    const requestedContentTypes = normalizedDiscoverContentTypes();
+    const selectedContentTypes = new Set(requestedContentTypes);
     musicDiscoverDebug('feed candidates collected', {
       mode: state.discoverMode,
       batchNumber,
-      requestedContentType,
+      requestedContentTypes,
       total: candidates.length,
       byType: musicDiscoverTypeCounts(candidates)
     });
     const fresh = candidates.filter(result => {
       const key = discoverResultIdentity(result);
       if (!key || state.discoverFeedSeen.has(key) || findDiscoverItem(result)) return false;
-      const contentType = state.discoverPrefs.contentType || 'all';
-      if (contentType !== 'all' && (result.sourceType || '') !== contentType) return false;
+      if (!selectedContentTypes.has(result.sourceType || '')) return false;
       if (state.discoverPrefs.englishTVOnly === true && (result.sourceType || '') === 'tv') {
         if (String(result.raw?.original_language || '').toLowerCase() !== 'en') return false;
       }
       return discoverResultMatchesGenre(result);
     });
 
-    const dedicatedMusicView = ['artist', 'song', 'music'].includes(requestedContentType);
+    const dedicatedMusicView = requestedContentTypes.length > 0 && requestedContentTypes.every(type => ['artist', 'song', 'music'].includes(type));
     const batchSize = state.discoverMode === 'new'
       ? (window.matchMedia('(max-width: 760px)').matches ? 30 : 60)
       : dedicatedMusicView
@@ -6008,7 +6339,7 @@ async function loadMoreDiscoverFeed() {
     musicDiscoverDebug('feed batch ranked', {
       mode: state.discoverMode,
       batchNumber,
-      requestedContentType,
+      requestedContentTypes,
       fresh: fresh.length,
       requestedBatchSize: batchSize,
       rendered: ranked.length,
@@ -6108,22 +6439,28 @@ function asLiveDiscoverCandidate(result, source, boost = 0, exploration = false)
 }
 
 async function collectDiscoverFeedCandidates(batchNumber) {
-  const contentType = state.discoverPrefs.contentType || 'all';
+  const selectedTypes = normalizedDiscoverContentTypes();
+  const selected = new Set(selectedTypes);
+  const musicOnly = selectedTypes.length > 0 && selectedTypes.every(type => ['music', 'artist', 'song'].includes(type));
 
-  // Dedicated music views should not wait for TV/movie/book/event collectors and
-  // then throw those candidates away. Go straight to the richer music engine.
-  if (['music', 'artist', 'song'].includes(contentType)) {
+  // When every selected category is music-related, bypass unrelated catalogue
+  // collectors and use the richer Last.fm/iTunes music engine directly.
+  if (musicOnly) {
     const mode = state.discoverMode === 'new' ? 'new' : state.discoverMode === 'popular' ? 'popular' : 'for-you';
     const music = await collectMusicDiscoverCandidates(batchNumber, mode);
-    const filtered = music.filter(result => result.sourceType === contentType);
+    const filtered = music.filter(result => selected.has(result.sourceType));
     musicDiscoverDebug('dedicated music view candidates', {
       mode,
       batchNumber,
-      contentType,
+      selectedTypes,
       totalMusicPool: music.length,
       matchingType: filtered.length
     });
     return dedupeDiscoverCandidatesByBoost(filtered);
+  }
+
+  if (selectedTypes.length === 1 && selected.has('restaurant')) {
+    return collectRestaurantDiscoverCandidates(batchNumber, state.discoverMode);
   }
 
   let candidates;
@@ -6131,8 +6468,7 @@ async function collectDiscoverFeedCandidates(batchNumber) {
   else if (state.discoverMode === 'popular') candidates = await collectPopularDiscoverCandidates(batchNumber);
   else candidates = await collectForYouDiscoverCandidates(batchNumber);
 
-  if (contentType !== 'all') candidates = candidates.filter(result => result.sourceType === contentType);
-  return dedupeDiscoverCandidatesByBoost(candidates);
+  return dedupeDiscoverCandidatesByBoost(candidates.filter(result => selected.has(result.sourceType)));
 }
 
 function musicRecommendationSeedScore(item) {
@@ -6334,10 +6670,10 @@ async function collectLastFmResolvedTracks(lastfmTracks, limit = 7) {
 async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
   const personalized = mode === 'for-you';
   const includeArtists = mode !== 'new';
-  const requestedContentType = state.discoverPrefs.contentType || 'all';
-  const dedicatedArtistView = requestedContentType === 'artist';
-  const dedicatedSongView = requestedContentType === 'song';
-  const dedicatedAlbumView = requestedContentType === 'music';
+  const requestedContentTypes = normalizedDiscoverContentTypes();
+  const dedicatedArtistView = requestedContentTypes.length === 1 && requestedContentTypes[0] === 'artist';
+  const dedicatedSongView = requestedContentTypes.length === 1 && requestedContentTypes[0] === 'song';
+  const dedicatedAlbumView = requestedContentTypes.length === 1 && requestedContentTypes[0] === 'music';
   const explicitArtists = explicitLikedArtistItems();
   const inferredNames = inferredMusicArtistNames();
   const knownArtistIds = new Set(state.items.filter(item => getSourceType(item) === 'artist').map(item => String(item.providerId || '')).filter(Boolean));
@@ -6368,7 +6704,7 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
   musicDiscoverDebug('music collector start', {
     mode,
     batchNumber,
-    requestedContentType,
+    requestedContentTypes,
     lastFmConfigured: Boolean(state.settings.lastfmApiKey),
     explicitArtistCount: explicitArtists.length,
     inferredArtistCount: inferredNames.length,
@@ -6432,7 +6768,7 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
         }
       }
     } else {
-      musicDiscoverWarn('no artist seeds available for direct similarity', { requestedContentType, batchNumber });
+      musicDiscoverWarn('no artist seeds available for direct similarity', { requestedContentTypes, batchNumber });
     }
 
     // 2) Track-to-track similarity. Dedicated Song view maps more tracks directly and
@@ -6549,7 +6885,7 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
   if (!hasLastFm || mode === 'new' || sparseDedicatedArtistView || sparseDedicatedSongView) {
     if (hasLastFm && (sparseDedicatedArtistView || sparseDedicatedSongView)) {
       musicDiscoverWarn('Last.fm pool sparse; enabling iTunes supplemental fallback', {
-        requestedContentType,
+        requestedContentTypes,
         artistCandidates: currentTypeCounts.artist || 0,
         songCandidates: currentTypeCounts.song || 0
       });
@@ -6627,7 +6963,7 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
   musicDiscoverDebug('music collector complete', {
     mode,
     batchNumber,
-    requestedContentType,
+    requestedContentTypes,
     total: dedupedMusicCandidates.length,
     byType: musicDiscoverTypeCounts(dedupedMusicCandidates)
   });
@@ -6799,15 +7135,17 @@ async function collectNewDiscoverCandidates(batchNumber) {
 
   // iTunes catalogue results are broad searches rather than recommendations in
   // New. Artists have no release date, so only dated albums/songs can enter.
-  try {
-    const music = await collectMusicDiscoverCandidates(batchNumber, 'new');
-    musicDiscoverDebug('New music candidates', { batchNumber, total: music.length, byType: musicDiscoverTypeCounts(music) });
-    annotated.push(...music.filter(result => ['music','song'].includes(result.sourceType)));
-  } catch {}
+  if (normalizedDiscoverContentTypes().some(type => ['music','artist','song'].includes(type))) {
+    try {
+      const music = await collectMusicDiscoverCandidates(batchNumber, 'new');
+      musicDiscoverDebug('New music candidates', { batchNumber, total: music.length, byType: musicDiscoverTypeCounts(music) });
+      annotated.push(...music.filter(result => ['music','song'].includes(result.sourceType)));
+    } catch {}
+  }
 
   // Future Ticketmaster events belong in New, but only within the user-selected
   // horizon. They are added once; older infinite-scroll batches focus on releases.
-  if (state.settings.ticketmasterKey && batchNumber === 1) {
+  if (state.settings.ticketmasterKey && batchNumber === 1 && normalizedDiscoverContentTypes().some(type => ['concert','event'].includes(type))) {
     try {
       const events = await fetchTicketmasterEventsForPreferences('', {
         page: 0,
@@ -6862,9 +7200,11 @@ async function collectPopularDiscoverCandidates(batchNumber) {
     if (current[1].status === 'fulfilled') add(filterAlreadyKnown(current[1].value, 'movie'), 'movie', 'trending', 10);
   }
 
-  try { candidates.push(...await collectMusicDiscoverCandidates(batchNumber, 'popular')); } catch (error) { musicDiscoverWarn('Popular music collector failed', { batchNumber, error: error?.message || String(error) }); }
+  if (normalizedDiscoverContentTypes().some(type => ['music','artist','song'].includes(type))) {
+    try { candidates.push(...await collectMusicDiscoverCandidates(batchNumber, 'popular')); } catch (error) { musicDiscoverWarn('Popular music collector failed', { batchNumber, error: error?.message || String(error) }); }
+  }
 
-  if (state.settings.ticketmasterKey && batchNumber <= 4) {
+  if (state.settings.ticketmasterKey && batchNumber <= 4 && normalizedDiscoverContentTypes().some(type => ['concert','event'].includes(type))) {
     try {
       const events = await fetchTicketmasterEventsForPreferences('', {
         page: Math.max(0, batchNumber - 1), size: 24, skipPrioritySearch: true
@@ -6874,6 +7214,36 @@ async function collectPopularDiscoverCandidates(batchNumber) {
   }
 
   return dedupeDiscoverCandidatesByBoost(candidates);
+}
+
+async function collectRestaurantDiscoverCandidates(batchNumber, mode = 'for-you') {
+  if (!state.settings.googlePlacesKey) return [];
+  const saved = state.items.filter(item => getSourceType(item) === 'restaurant');
+  const cuisineSeeds = saved
+    .filter(item => item.recommended || Number(item.rating || 0) >= 4)
+    .map(item => item.title ? `restaurants like ${item.title}` : '')
+    .filter(Boolean);
+  const broad = ['restaurants', 'casual dining', 'coffee and brunch', 'pizza', 'sushi', 'thai food', 'italian food', 'mexican food'];
+  const seedPool = cuisineSeeds.length ? [...new Set([...cuisineSeeds, ...broad])] : broad;
+  const seed = seedPool[(batchNumber - 1) % seedPool.length] || 'restaurants';
+  try {
+    const results = await TrackerAPI.searchRestaurants(seed, state.settings, {
+      city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
+      region: state.discoverPrefs.eventCountry || state.settings.homeCountry || 'CA',
+      maxResultCount: 20,
+      minRating: mode === 'popular' ? 4 : 0
+    });
+    return filterAlreadyKnown(results, 'restaurant').map(result => ({
+      ...result,
+      sourceType: 'restaurant',
+      _discoverSource: cuisineSeeds.includes(seed) ? 'restaurant-taste' : 'restaurant-explore',
+      _discoverBoost: cuisineSeeds.includes(seed) ? 9 : (mode === 'popular' ? 6 : 3),
+      _discoverExploration: !cuisineSeeds.includes(seed)
+    }));
+  } catch (error) {
+    console.warn('Restaurant Discover unavailable:', error?.message || error);
+    return [];
+  }
 }
 
 async function collectForYouDiscoverCandidates(batchNumber) {
@@ -6947,13 +7317,19 @@ async function collectForYouDiscoverCandidates(batchNumber) {
   if (explore[1].status === 'fulfilled') add(filterAlreadyKnown(explore[1].value.results, 'movie'), 'movie', 'explore', 4, true);
   if (explore[2].status === 'fulfilled') add(filterAlreadyKnown(explore[2].value.results, 'book'), 'book', 'explore', 3, true);
 
-  try {
-    candidates.push(...await collectMusicDiscoverCandidates(batchNumber, 'for-you'));
-  } catch (error) {
-    musicDiscoverWarn('For You music collector failed', { batchNumber, error: error?.message || String(error) });
+  if (normalizedDiscoverContentTypes().some(type => ['music','artist','song'].includes(type))) {
+    try {
+      candidates.push(...await collectMusicDiscoverCandidates(batchNumber, 'for-you'));
+    } catch (error) {
+      musicDiscoverWarn('For You music collector failed', { batchNumber, error: error?.message || String(error) });
+    }
   }
 
-  if (state.settings.ticketmasterKey && batchNumber <= 5) {
+  if (state.settings.googlePlacesKey && batchNumber <= 5 && discoverTypeSelected('restaurant')) {
+    candidates.push(...await collectRestaurantDiscoverCandidates(batchNumber, 'for-you'));
+  }
+
+  if (state.settings.ticketmasterKey && batchNumber <= 5 && normalizedDiscoverContentTypes().some(type => ['concert','event'].includes(type))) {
     try {
       const [concerts, relatedConcerts, generalEvents] = await Promise.all([
         getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 12 }),
@@ -7229,6 +7605,7 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
 function discoverContentFamily(sourceType) {
   if (['music','artist','song'].includes(sourceType)) return 'music';
   if (['concert','event'].includes(sourceType)) return 'live';
+  if (sourceType === 'restaurant') return 'food';
   return sourceType || 'other';
 }
 
@@ -7942,7 +8319,7 @@ function saveDiscoverSettings(event) {
     streamingProviderNames: selectedEntries.map(([, name]) => name),
     prioritizeAuthors: els.prioritizeAuthors.checked,
     englishTVOnly: Boolean(els.englishTVOnly?.checked),
-    contentType: state.discoverPrefs.contentType || 'all',
+    contentTypes: normalizedDiscoverContentTypes(),
     genre: state.discoverPrefs.genre || 'all',
     eventCity: String(els.eventCity?.value || '').trim(),
     eventCountry: String(els.eventCountry?.value || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA').trim().toUpperCase(),
@@ -7985,10 +8362,12 @@ function discoverCardMarkup(result, key, fallbackType) {
       ? [result.artistName || result.subtitle || '', result.albumName || '', year].filter(Boolean).join(' · ')
       : type === 'artist'
         ? [result.subtitle || result.description || 'Artist'].filter(Boolean).join(' · ')
-        : [year, rating, streaming].filter(Boolean).join(' · ');
+        : type === 'restaurant'
+          ? [result.rating ? `${Number(result.rating).toFixed(1)}★` : '', result.primaryTypeDisplayName || '', result.formattedAddress || result.subtitle || '', 'Google Maps'].filter(Boolean).join(' · ')
+          : [year, rating, streaming].filter(Boolean).join(' · ');
   const queueStatus = item ? getQueueStatus(item) : '';
   const plusLabel = queueStatus === 'upnext' ? '+ Queue' : queueStatus === 'tbr' ? '+ TBR' : '+ Add';
-  const libraryOnly = ['music','artist','song'].includes(type);
+  const libraryOnly = ['music','artist','song','restaurant'].includes(type);
 
   return `<article class="discover-card">
     <button class="discover-card-open" type="button" data-discover-detail="${escapeAttr(key)}" aria-label="Open ${escapeAttr(result.title || 'details')}">
@@ -8001,13 +8380,28 @@ function discoverCardMarkup(result, key, fallbackType) {
       <button class="discover-title-button" type="button" data-discover-detail="${escapeAttr(key)}"><h3>${escapeHtml(result.title || 'Untitled')}</h3></button>
       ${meta ? `<p class="discover-card-meta">${escapeHtml(meta)}</p>` : ''}
       ${result.subtitle && ['book','music'].includes(type) ? `<p class="discover-card-subtitle">${escapeHtml(result.subtitle)}</p>` : ''}
-      <div class="discover-card-actions${['event','concert','music','artist','song'].includes(type) ? ' no-complete' : ''}">
+      <div class="discover-card-actions${['event','concert','music','artist','song','restaurant'].includes(type) ? ' no-complete' : ''}">
         ${['tv','movie','book'].includes(type) ? `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo watched / read' : 'Mark watched / read'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>` : ''}
         ${['tv','movie','book'].includes(type) ? `<button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>` : ''}
         ${libraryOnly ? `<button class="discover-add-button${item ? ' is-added' : ''}" type="button" data-discover-library-add="${escapeAttr(key)}" ${item ? 'disabled' : ''}>${item ? 'In Library' : '+ Library'}</button>` : ''}
       </div>
     </div>
   </article>`;
+}
+
+function openRestaurantResultForTracking(result) {
+  if (!result) return;
+  els.detailModal?.close();
+  openItemModal('', 'library');
+  if (els.itemSourceType) els.itemSourceType.value = 'restaurant';
+  updateItemFormForType();
+  if (els.catalogueQuery) els.catalogueQuery.value = '';
+  selectCatalogueResult(result);
+  if (els.manualTitle) {
+    els.manualTitle.value = '';
+    els.manualTitle.placeholder = 'Name this restaurant in your tracker';
+    els.manualTitle.focus();
+  }
 }
 
 async function handleDiscoverClick(event) {
@@ -8037,7 +8431,9 @@ async function handleDiscoverClick(event) {
   if (libraryAdd) {
     const key = libraryAdd.dataset.discoverLibraryAdd;
     const result = state.discoverResults.get(key);
-    if (result && ['music','artist','song'].includes(result.sourceType)) {
+    if (result?.sourceType === 'restaurant') {
+      openRestaurantResultForTracking(result);
+    } else if (result && ['music','artist','song'].includes(result.sourceType)) {
       ensureDiscoverItem(result, 'library');
       renderAll();
       renderDiscoverCardInPlace(key);
@@ -8166,15 +8562,17 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
 
   const sourceType = result.sourceType;
   const isMusicFamily = ['music', 'artist', 'song', 'concert'].includes(sourceType);
+  const isFoodFamily = ['food', 'restaurant', 'recipe'].includes(sourceType);
   const discoverMusicSubcategory = sourceType === 'music' ? 'Album' : musicSubcategoryForSourceType(sourceType);
+  const discoverFoodSubcategory = foodSubcategoryForSourceType(sourceType);
   item = {
     id: makeId(),
     sourceType,
-    type: isMusicFamily ? 'music' : sourceType,
-    typeLabel: isMusicFamily ? 'Music' : (SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType)),
-    subcategory: discoverMusicSubcategory,
+    type: isMusicFamily ? 'music' : isFoodFamily ? 'food' : sourceType,
+    typeLabel: isMusicFamily ? 'Music' : isFoodFamily ? 'Food' : (SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType)),
+    subcategory: isMusicFamily ? discoverMusicSubcategory : discoverFoodSubcategory,
     title: result.title || 'Untitled',
-    provider: result.provider || (sourceType === 'book' ? 'googleBooks' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'concert' ? 'ticketmaster' : sourceType === 'event' ? 'ticketmaster' : 'tmdb'),
+    provider: result.provider || (sourceType === 'book' ? 'googleBooks' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'restaurant' ? 'googlePlaces' : sourceType === 'concert' ? 'ticketmaster' : sourceType === 'event' ? 'ticketmaster' : 'tmdb'),
     providerId: String(result.providerId || ''),
     image: result.image || '',
     subtitle: result.subtitle || '',
@@ -8281,6 +8679,8 @@ function openDiscoverRatingPrompt(key, { allowTV = false } = {}) {
   const existing = findDiscoverItem(result);
   const rating = Math.max(0, Math.min(5, Number(existing?.rating || 0)));
   state.pendingDiscoverRatingValue = rating;
+  state.pendingDiscoverDateValue = existing?.date || '';
+  if (els.discoverRatingDate) els.discoverRatingDate.value = state.pendingDiscoverDateValue;
   els.discoverRatingPicker?.querySelectorAll('[data-discover-rating-choice]').forEach(button => {
     button.classList.toggle('filled', Number(button.dataset.discoverRatingChoice) <= rating);
   });
@@ -8293,6 +8693,27 @@ function openDiscoverRatingPrompt(key, { allowTV = false } = {}) {
     els.discoverRatingRecommendHeart.setAttribute('aria-label', recommended ? 'Remove from Recommended' : 'Add to Recommended');
   }
   els.discoverRatingModal.showModal();
+}
+
+function persistDiscoverOptionalDate(key, dateValue) {
+  const date = String(dateValue || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const item = findDiscoverItem(result) || ensureDiscoverItem(result, 'library');
+  item.date = date;
+  item.calendarHidden = false;
+  item.updatedAt = new Date().toISOString();
+  for (const entry of state.history) {
+    if (entry.sourceItemId !== item.id) continue;
+    if (['series-watched','movie-watched','book-finished','item-completed'].includes(entry.kind)) {
+      entry.date = date;
+      entry.showOnCalendar = true;
+    }
+  }
+  saveItems();
+  saveHistory();
+  renderAll();
 }
 
 async function handleDiscoverRatingChoice(event) {
@@ -8321,7 +8742,9 @@ async function handleDiscoverRatingChoice(event) {
     event.stopPropagation();
     const key = state.pendingDiscoverRatingKey;
     const rating = Number(state.pendingDiscoverRatingValue || 0);
+    const date = els.discoverRatingDate?.value || state.pendingDiscoverDateValue || '';
     if (key && rating > 0) persistDiscoverRating(key, rating);
+    if (key && date) persistDiscoverOptionalDate(key, date);
 
     // Continue is deliberately just a save-and-close action. In older builds TV
     // recommendations immediately opened episode tracking after this dialog,
@@ -8345,7 +8768,9 @@ async function handleDiscoverQuickMetaClick(event) {
     event.stopPropagation();
     const key = libraryAdd.dataset.discoverLibraryAdd;
     const result = state.discoverResults.get(key);
-    if (result && ['music','artist','song'].includes(result.sourceType)) {
+    if (result?.sourceType === 'restaurant') {
+      openRestaurantResultForTracking(result);
+    } else if (result && ['music','artist','song'].includes(result.sourceType)) {
       ensureDiscoverItem(result, 'library');
       renderAll();
       renderDiscoverCardInPlace(key);
@@ -8404,6 +8829,7 @@ async function openDiscoverDetail(key) {
     else if (result.sourceType === 'artist') await renderDiscoverArtistDetail(key);
     else if (result.sourceType === 'song') await renderDiscoverSongDetail(key);
     else if (result.sourceType === 'concert') await renderDiscoverConcertDetail(key);
+    else if (result.sourceType === 'restaurant') await renderDiscoverRestaurantDetail(key);
     else if (result.sourceType === 'event') await renderDiscoverEventDetail(key);
   } catch (error) {
     els.detailBody.innerHTML = `<div class="api-error">${escapeHtml(error.message)}</div>`;
@@ -8766,6 +9192,19 @@ async function renderDiscoverMovieDetail(key) {
 function discoverLibraryOnlyActionMarkup(result, key) {
   const item = findDiscoverItem(result);
   return `<div class="detail-actions"><button class="secondary-button${item ? ' is-selected' : ''}" type="button" data-discover-library-add="${escapeAttr(key)}" ${item ? 'disabled' : ''}>${item ? 'In Library' : '+ Add to Library'}</button></div>`;
+}
+
+async function renderDiscoverRestaurantDetail(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const item = findDiscoverItem(result);
+  const ratingText = Number(result.rating || 0) ? `${Number(result.rating).toFixed(1)}★${result.userRatingCount ? ` · ${Number(result.userRatingCount).toLocaleString()} reviews` : ''}` : '';
+  els.detailBody.innerHTML = `
+    ${detailHero({ type:'RESTAURANT', title:result.title, image:result.image || '', subtitle:[ratingText, result.primaryTypeDisplayName || '', result.formattedAddress || result.subtitle || ''].filter(Boolean).join(' · '), overview:'' })}
+    <div class="gmp-attribution detail-gmp-attribution" translate="no">Google Maps</div>
+    ${discoverLibraryOnlyActionMarkup(result, key)}
+    ${(result.googleMapsUrl || result.websiteUrl) ? `<section class="detail-section restaurant-links">${result.googleMapsUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(result.googleMapsUrl)}" target="_blank" rel="noopener">Open in Google Maps ↗</a>` : ''}${result.websiteUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(result.websiteUrl)}" target="_blank" rel="noopener">Website ↗</a>` : ''}</section>` : ''}
+    ${item ? `<section class="detail-section"><p class="detail-meta">Saved in Food · Restaurant. Edit it to add a visit date and order notes.</p></section>` : ''}`;
 }
 
 async function renderDiscoverAlbumDetail(key) {
@@ -9671,6 +10110,10 @@ function compareTVLibraryProgress(a, b) {
     || a.title.localeCompare(b.title);
 }
 
+function normalizeSearchText(value) {
+  return String(value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
 function makeLibraryPoster(item) {
   const poster = document.createElement('button');
   poster.type = 'button';
@@ -9684,12 +10127,18 @@ function makeLibraryPoster(item) {
   const recommendedBadge = item.recommended
     ? `<span class="library-recommended-badge" aria-label="Recommended" title="Recommended">♥</span>`
     : '';
+  const subcategoryLabel = cleanTypeLabel(item.subcategory || '');
+  const subcategoryBadge = subcategoryLabel
+    ? `<span class="library-subcategory-badge" title="${escapeAttr(subcategoryLabel)}">${escapeHtml(subcategoryLabel)}</span>`
+    : '';
   poster.innerHTML = hasThumbnail
     ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />
        ${recommendedBadge}
+       ${subcategoryBadge}
        ${personalRating > 0 ? `<span class="library-rating-badge" aria-label="Your rating ${personalRating} out of 5">★ ${escapeHtml(formatPersonalRating(personalRating))}</span>` : ''}`
     : `<span class="library-text-card">
          ${recommendedBadge}
+         ${subcategoryBadge}
          <strong class="library-text-card-title">${escapeHtml(item.title || 'Untitled')}</strong>
          ${personalRating > 0 ? `<span class="library-text-card-rating">★ ${escapeHtml(formatPersonalRating(personalRating))} / 5</span>` : ''}
          ${String(item.notes || '').trim() ? `<span class="library-text-card-notes">${escapeHtml(String(item.notes || '').trim())}</span>` : ''}
@@ -9702,10 +10151,13 @@ function renderLibrary() {
   const visibleTypes = ensureLibraryVisibleTypes();
   const sort = els.librarySort?.value || 'date';
 
+  const libraryQuery = normalizeSearchText(state.librarySearchQuery || els.librarySearch?.value || '');
   let filtered = state.items
     .filter(item => getQueueStatus(item) !== 'tbr')
+    .filter(item => !(item.calendarQueueOnly === true && item.calendarTracked !== true))
     .filter(item => state.libraryView !== 'recommended' || item.recommended)
-    .filter(item => visibleTypes.has(libraryTypeGroupKey(item)));
+    .filter(item => visibleTypes.has(libraryTypeGroupKey(item)))
+    .filter(item => !libraryQuery || normalizeSearchText([item.title, item.subtitle, item.notes, item.subcategory, getItemTypeLabel(item), item.artistName].filter(Boolean).join(' ')).includes(libraryQuery));
 
   // For Recent, dated/calendar-associated items always come first in descending
   // date order. Undated items are deliberately shuffled at the end instead of
@@ -9724,7 +10176,7 @@ function renderLibrary() {
           return Number(undatedRecentOrder.get(a.id) || 0) - Number(undatedRecentOrder.get(b.id) || 0);
         };
 
-  const preferredLabels = ['TV','Movie','Book','Music','Workout','Other'];
+  const preferredLabels = ['TV','Movie','Book','Music','Food','Workout','Other'];
   const preferredOrder = preferredLabels.map(label => slugifyType(label));
   const grouped = new Map();
   for (const item of filtered) {

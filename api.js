@@ -740,6 +740,98 @@ export const TrackerAPI = (() => {
     return run;
   }
 
+
+
+  let googlePlacesLoader = null;
+  async function loadGooglePlaces(settings) {
+    const key = required(settings.googlePlacesKey, 'Google Places API key');
+    if (globalThis.google?.maps?.importLibrary) return globalThis.google.maps.importLibrary('places');
+    if (!globalThis.document) throw new Error('Google Places search requires a browser.');
+    if (!googlePlacesLoader) {
+      googlePlacesLoader = new Promise((resolve, reject) => {
+        const callback = `__catchAllPlacesReady_${Math.random().toString(36).slice(2)}`;
+        globalThis[callback] = async () => {
+          try {
+            delete globalThis[callback];
+            resolve(await globalThis.google.maps.importLibrary('places'));
+          } catch (error) { reject(error); }
+        };
+        const script = document.createElement('script');
+        script.async = true;
+        script.defer = true;
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places&v=weekly&loading=async&callback=${encodeURIComponent(callback)}`;
+        script.onerror = () => reject(new Error('Could not load Google Places. Check the API key, Places API (New), billing, and website restrictions.'));
+        document.head.appendChild(script);
+      });
+    }
+    return googlePlacesLoader;
+  }
+
+  function googlePlaceText(value) {
+    if (typeof value === 'string') return value;
+    return value?.text || value?.toString?.() || '';
+  }
+
+  function mapGoogleRestaurant(place) {
+    const lat = typeof place?.location?.lat === 'function' ? place.location.lat() : Number(place?.location?.lat ?? NaN);
+    const lng = typeof place?.location?.lng === 'function' ? place.location.lng() : Number(place?.location?.lng ?? NaN);
+    return {
+      sourceType: 'restaurant',
+      provider: 'googlePlaces',
+      providerId: String(place?.id || ''),
+      title: googlePlaceText(place?.displayName) || 'Restaurant',
+      subtitle: place?.formattedAddress || googlePlaceText(place?.primaryTypeDisplayName) || '',
+      image: '',
+      description: '',
+      formattedAddress: place?.formattedAddress || '',
+      rating: Number(place?.rating || 0),
+      userRatingCount: Number(place?.userRatingCount || 0),
+      priceLevel: String(place?.priceLevel || ''),
+      primaryType: String(place?.primaryType || 'restaurant'),
+      primaryTypeDisplayName: googlePlaceText(place?.primaryTypeDisplayName),
+      googleMapsUrl: place?.googleMapsURI || '',
+      websiteUrl: place?.websiteURI || '',
+      lat: Number.isFinite(lat) ? lat : null,
+      lng: Number.isFinite(lng) ? lng : null,
+      raw: {
+        id: String(place?.id || ''),
+        types: Array.isArray(place?.types) ? [...place.types] : [],
+        primaryType: String(place?.primaryType || 'restaurant')
+      }
+    };
+  }
+
+  async function searchRestaurants(query, settings, options = {}) {
+    const { Place } = await loadGooglePlaces(settings);
+    const homeLat = Number(options.lat ?? settings.homeLat);
+    const homeLng = Number(options.lng ?? settings.homeLon);
+    const city = String(options.city ?? settings.homeCity ?? '').trim();
+    let textQuery = String(query || '').trim();
+    if (!textQuery) textQuery = 'restaurants';
+    if (city && !textQuery.toLowerCase().includes(city.toLowerCase())) textQuery += ` in ${city}`;
+    const request = {
+      textQuery,
+      fields: ['id','displayName','formattedAddress','location','rating','userRatingCount','priceLevel','primaryType','primaryTypeDisplayName','googleMapsURI','websiteURI','types'],
+      includedType: 'restaurant',
+      useStrictTypeFiltering: true,
+      maxResultCount: Math.min(20, Math.max(1, Number(options.maxResultCount || 12))),
+      region: String(options.region || settings.homeCountry || 'CA').toLowerCase()
+    };
+    if (Number.isFinite(homeLat) && Number.isFinite(homeLng)) request.locationBias = { lat: homeLat, lng: homeLng };
+    if (Number(options.minRating || 0) > 0) request.minRating = Math.min(5, Math.max(0, Number(options.minRating)));
+    const { places = [] } = await Place.searchByText(request);
+    return places.map(mapGoogleRestaurant).filter(place => place.providerId);
+  }
+
+  async function getRestaurantDetails(placeId, settings) {
+    const { Place } = await loadGooglePlaces(settings);
+    const place = new Place({ id: String(placeId || '') });
+    await place.fetchFields({
+      fields: ['id','displayName','formattedAddress','location','rating','userRatingCount','priceLevel','primaryType','primaryTypeDisplayName','googleMapsURI','websiteURI','types']
+    });
+    return mapGoogleRestaurant(place);
+  }
+
   function ticketmasterDateTime(value = new Date()) {
     const date = value instanceof Date ? value : new Date(value);
     return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -928,6 +1020,20 @@ export const TrackerAPI = (() => {
     });
   }
 
+
+
+  async function searchConcertCatalogue(query, settings, options = {}) {
+    required(settings.ticketmasterKey, 'Ticketmaster API key');
+    return searchTicketmasterEvents(query, settings, {
+      ...options,
+      classificationName: 'Music',
+      page: 0,
+      size: Math.min(25, Math.max(1, Number(options.size || 25))),
+      sort: 'date,asc',
+      startDateTime: ticketmasterDateTime(new Date())
+    }).then(results => results.map(result => ({ ...result, sourceType: 'concert' })));
+  }
+
   async function searchCatalogue(query, type, settings, options = {}) {
     if (!query.trim()) return [];
     if (type === 'tv' || type === 'movie') return searchTMDB(query, type, settings);
@@ -935,7 +1041,8 @@ export const TrackerAPI = (() => {
     if (type === 'music') return searchMusic(query, settings);
     if (type === 'artist') return searchArtists(query, settings);
     if (type === 'song') return searchSongs(query, settings);
-    if (type === 'concert') return searchTicketmasterCatalogue(query, settings, { ...options, classificationName: 'Music' });
+    if (type === 'concert') return searchConcertCatalogue(query, settings, options);
+    if (type === 'restaurant') return searchRestaurants(query, settings, options);
     if (type === 'event') return searchTicketmasterCatalogue(query, settings, options);
     return [];
   }
@@ -966,6 +1073,8 @@ export const TrackerAPI = (() => {
     getPlaylist,
     getYouTubeVideo,
     searchTicketmasterEvents,
+    searchRestaurants,
+    getRestaurantDetails,
     searchTicketmasterAttractions,
     getUpcomingEvents,
     getTicketmasterEvent,

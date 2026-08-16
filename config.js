@@ -23,6 +23,7 @@ export const API_CONFIG = {
   itunesCountry: (import.meta.env.EXPO_PUBLIC_ITUNES_COUNTRY || import.meta.env.VITE_ITUNES_COUNTRY || 'CA').toUpperCase(),
   tmdbWatchRegion: (import.meta.env.EXPO_PUBLIC_TMDB_WATCH_REGION || import.meta.env.VITE_TMDB_WATCH_REGION || 'CA').toUpperCase(),
   ticketmasterKey: import.meta.env.EXPO_PUBLIC_TICKETMASTER_API_KEY || import.meta.env.VITE_TICKETMASTER_API_KEY || '',
+  googlePlacesKey: import.meta.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY || import.meta.env.VITE_GOOGLE_PLACES_API_KEY || '',
   lastfmApiKey,
   lastfmApiKeySource,
   homeCity: import.meta.env.EXPO_PUBLIC_HOME_CITY || import.meta.env.VITE_HOME_CITY || '',
