@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=library-recent-calendar-1" />
+  <link rel="stylesheet" href="style.css?v=music-ticketmaster-live-1" />
 </head>
 <body class="discover-page auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -78,7 +78,7 @@
         <form id="discoverSearchForm" class="discover-search-form" role="search">
           <label class="discover-search-field">
             <span class="sr-only">Search Discover</span>
-            <input id="discoverSearchInput" type="search" autocomplete="off" placeholder="Search TV, movies, or books…" />
+            <input id="discoverSearchInput" type="search" autocomplete="off" placeholder="Search TV, movies, books, albums, artists, or songs…" />
           </label>
           <button class="primary-button discover-search-button" type="submit">Search</button>
           <button id="clearDiscoverSearch" class="quiet-button discover-search-clear" type="button" hidden>Clear</button>
@@ -100,7 +100,11 @@
                 <option value="tv">TV</option>
                 <option value="movie">Movies</option>
                 <option value="book">Books</option>
-                <option value="event">Events</option>
+                <option value="music">Albums</option>
+                <option value="artist">Artists</option>
+                <option value="song">Songs</option>
+                <option value="concert">Concerts</option>
+                <option value="event">Live Events</option>
               </select>
             </label>
             <label class="discover-type-filter">
@@ -119,7 +123,7 @@
             <div>
               <p class="discover-calendar-kicker">UPCOMING</p>
               <h2 id="discoverCalendarMonthLabel">This month</h2>
-              <p class="discover-calendar-note">Ticketmaster events, movie releases, TV premieres, and upcoming episodes from shows you track. Book release dates are not included because Google Books does not provide a reliable upcoming-release calendar.</p>
+              <p class="discover-calendar-note">Concerts by artists you like, movie releases, TV premieres, and upcoming episodes from shows you track. Book release dates are not included because Google Books does not provide a reliable upcoming-release calendar.</p>
             </div>
             <div class="discover-calendar-controls" aria-label="Discover calendar month controls">
               <button id="discoverCalendarPrevious" class="quiet-button" type="button" aria-label="Previous month">←</button>
@@ -128,7 +132,7 @@
             </div>
           </div>
           <div class="discover-calendar-legend" aria-label="Calendar content types">
-            <span><i class="discover-calendar-dot event"></i>Events</span>
+            <span><i class="discover-calendar-dot event"></i>Concerts</span>
             <span><i class="discover-calendar-dot movie"></i>Movies</span>
             <span><i class="discover-calendar-dot tv"></i>TV</span>
           </div>
@@ -140,7 +144,7 @@
 
         <section id="discoverFeedSection" class="discover-feed-section" aria-label="Discovery feed">
           <div class="discover-feed-intro">
-            <p id="discoverFeedIntroText">TV, movies, books, and nearby events mixed together. Your streaming services, watched/read history, ratings, and familiar authors are weighted toward the top — with enough randomness that each visit changes.</p>
+            <p id="discoverFeedIntroText">TV, movies, books, albums, artists, songs, concerts, and nearby live events mixed together. Live events are recommendations only unless you save them or follow the performer/team for Calendar.</p>
           </div>
           <div id="discoverFeed" class="discover-feed-grid"></div>
           <div id="discoverFeedSentinel" class="discover-feed-sentinel" aria-hidden="true">
@@ -149,7 +153,7 @@
           <p id="discoverFeedMessage" class="discover-feed-message">Keep scrolling — more will load automatically.</p>
         </section>
 
-        <p id="watchProviderAttribution" class="watch-provider-attribution">Streaming availability data by JustWatch via TMDB. Event data by Ticketmaster.</p>
+        <p id="watchProviderAttribution" class="watch-provider-attribution">Streaming availability data by JustWatch via TMDB. Music data by Apple/iTunes. Live-event data by Ticketmaster.</p>
       </div>
     </section>
 
@@ -183,8 +187,8 @@
 
       <section class="settings-section">
         <div>
-          <h3>Local events</h3>
-          <p class="settings-note">Ticketmaster events in Discover use this location. Saved events also appear in your upcoming Calendar tab.</p>
+          <h3>Live events</h3>
+          <p class="settings-note">Ticketmaster powers concerts, sports, comedy, theatre, family events, and more. Category choices below affect Discover only. Your Calendar stays selective: saved events, concerts by artists you explicitly save, and teams/performers/venues you explicitly follow.</p>
         </div>
         <div class="two-column-fields">
           <label class="field compact-field">
@@ -197,31 +201,42 @@
           </label>
         </div>
 
+        <label class="checkbox-field preference-checkbox">
+          <input id="eventAutoLikedArtistCalendar" type="checkbox" checked />
+          <span><strong>Saved artists → Calendar</strong><small>Automatically show nearby Ticketmaster concerts for Artist items in your Library. They never move into Up Next when the date arrives.</small></span>
+        </label>
+
         <label class="checkbox-field event-everything-option">
           <input id="eventEverything" type="checkbox" checked />
-          <span><strong>Everything</strong><small>Show all Ticketmaster event categories, except anything excluded below.</small></span>
+          <span><strong>Recommend all live-event types</strong><small>These recommendations stay in Discover unless you explicitly save or follow them.</small></span>
         </label>
 
         <div class="event-preference-block">
           <div>
-            <h4>Show these event types</h4>
-            <p class="settings-note">Turn off Everything to build a mix such as Music + Comedy + Hockey.</p>
+            <h4>Recommend these event types</h4>
+            <p class="settings-note">Turn off “all” to build a mix such as Sports + Comedy + Theatre.</p>
           </div>
           <div id="eventCategoryOptions" class="event-preference-grid" aria-label="Ticketmaster event types"></div>
         </div>
 
         <div class="event-preference-block">
           <div>
-            <h4>Never show</h4>
-            <p class="settings-note">Exclusions win over your selections above.</p>
+            <h4>Never recommend</h4>
+            <p class="settings-note">Exclusions win over the recommendation choices above.</p>
           </div>
           <div id="eventExclusionOptions" class="event-preference-grid event-exclusion-grid" aria-label="Excluded Ticketmaster event types"></div>
         </div>
 
         <label class="field">
-          <span>Prioritize artists, teams, or venues <em>optional</em></span>
-          <textarea id="eventPriorityTerms" rows="2" placeholder="The National, Toronto Maple Leafs, Massey Hall"></textarea>
-          <small>Separate names with commas. Matching events are pulled directly from Ticketmaster and moved toward the front.</small>
+          <span>Prioritize in Discover <em>optional</em></span>
+          <textarea id="eventPriorityTerms" rows="2" placeholder="Toronto Maple Leafs, Massey Hall, The National"></textarea>
+          <small>Teams, performers, or venues listed here are boosted in Discover but are not automatically added to Calendar.</small>
+        </label>
+
+        <label class="field">
+          <span>Always show in Calendar <em>optional</em></span>
+          <textarea id="eventCalendarFollowTerms" rows="2" placeholder="Toronto Maple Leafs, Toronto Raptors, Massey Hall"></textarea>
+          <small>Only matching nearby Ticketmaster events are added automatically. You can also follow/unfollow a performer or team from an event’s Discover details.</small>
         </label>
       </section>
 
@@ -267,8 +282,10 @@
           <option value="tv">TV</option>
           <option value="movie">Movie</option>
           <option value="book">Book</option>
-          <option value="music">Music</option>
-          <option value="event">Event</option>
+          <option value="music">Album</option>
+          <option value="artist">Artist</option>
+          <option value="song">Song</option>
+          <option value="event">Event (legacy)</option>
           <option value="youtube">YouTube</option>
           <option value="other">Other</option>
         </select>
@@ -570,6 +587,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=library-recent-calendar-1"></script>
+  <script type="module" src="app.js?v=music-ticketmaster-live-1"></script>
 </body>
 </html>

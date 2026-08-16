@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=book-discover-filter-1';
-import { API_CONFIG } from './config.js';
+import { TrackerAPI } from './api.js?v=music-ticketmaster-live-1';
+import { API_CONFIG } from './config.js?v=music-ticketmaster-live-1';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -22,7 +22,10 @@ const TYPE_LABELS = {
   tv: 'TV',
   book: 'Books',
   movie: 'Movies',
-  music: 'Music',
+  music: 'Albums',
+  artist: 'Artists',
+  song: 'Songs',
+  concert: 'Concerts',
   event: 'Events',
   workout: 'Workouts',
   other: 'Other'
@@ -32,11 +35,14 @@ const SOURCE_ITEM_LABELS = {
   tv: 'TV',
   movie: 'Movie',
   book: 'Book',
-  music: 'Music',
+  music: 'Album',
+  artist: 'Artist',
+  song: 'Song',
+  concert: 'Concert',
   event: 'Event'
 };
 
-const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'event', 'other']);
+const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'other']);
 const STICKER_COLORS = ['rust', 'red', 'coral', 'orange', 'yellow', 'cream', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'teal', 'green', 'mint', 'brown', 'black', 'white'];
 
 const CLOUD_STATE_VERSION = 2;
@@ -73,7 +79,9 @@ const DEFAULT_DISCOVER_PREFS = {
   eventEverything: true,
   eventCategoryKeys: [],
   eventExcludedCategoryKeys: [],
-  eventPriorityTerms: []
+  eventPriorityTerms: [],
+  eventCalendarFollowTerms: [],
+  eventAutoLikedArtistCalendar: true
 };
 const DEFAULT_LIBRARY_PREFS = { defaultTypeKeys: null };
 let currentUser = null;
@@ -141,6 +149,7 @@ const state = {
   libraryVisibleTypes: null,
   libraryExpandedGroups: new Set()
 };
+
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -240,6 +249,8 @@ const els = {
   eventCategoryOptions: $('#eventCategoryOptions'),
   eventExclusionOptions: $('#eventExclusionOptions'),
   eventPriorityTerms: $('#eventPriorityTerms'),
+  eventCalendarFollowTerms: $('#eventCalendarFollowTerms'),
+  eventAutoLikedArtistCalendar: $('#eventAutoLikedArtistCalendar'),
   itemModal: $('#itemModal'),
   detailModal: $('#detailModal'),
   detailBody: $('#detailBody'),
@@ -718,10 +729,10 @@ function bindEvents() {
   });
   els.openDiscoverSettings?.addEventListener('click', openDiscoverSettings);
   els.discoverSettingsForm?.addEventListener('submit', saveDiscoverSettings);
+  els.eventEverything?.addEventListener('change', syncTicketmasterPreferenceControls);
   els.streamingProviderSearch?.addEventListener('input', () => renderStreamingProviderOptions(els.streamingProviderSearch.value));
   els.streamingProviderOptions?.addEventListener('change', handleStreamingProviderToggle);
   els.clearStreamingProviders?.addEventListener('click', clearStreamingProviderSelection);
-  els.eventEverything?.addEventListener('change', syncTicketmasterPreferenceControls);
   document.querySelector('#discover')?.addEventListener('click', handleDiscoverClick);
   els.discoverQueueModal?.addEventListener('click', handleDiscoverQueueChoice);
   els.discoverRatingModal?.addEventListener('click', handleDiscoverRatingChoice);
@@ -769,6 +780,54 @@ function bindEvents() {
         if (!findDiscoverItem(result)?.updatedAt) saveItems();
         renderAll();
         if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
+      }
+      return;
+    }
+
+    const discoverEventCalendar = event.target.closest('[data-discover-event-calendar]');
+    if (discoverEventCalendar) {
+      const key = discoverEventCalendar.dataset.discoverEventCalendar;
+      const result = state.discoverResults.get(key);
+      if (result) {
+        let item = findDiscoverItem(result);
+        if (!item) {
+          item = ensureDiscoverItem(result, 'library');
+          item.discoverCalendarOnly = true;
+          item.calendarHidden = false;
+        } else {
+          item.calendarHidden = !Boolean(item.calendarHidden);
+          if (!item.date) item.date = result.eventDate || item.eventMeta?.eventDate || '';
+        }
+        item.updatedAt = new Date().toISOString();
+        saveItems();
+        renderAll();
+        if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
+      }
+      return;
+    }
+
+    const ticketmasterFollow = event.target.closest('[data-ticketmaster-calendar-follow]');
+    if (ticketmasterFollow) {
+      const key = ticketmasterFollow.dataset.ticketmasterCalendarFollow;
+      const result = state.discoverResults.get(key);
+      if (result) {
+        const eventDetails = result.providerId
+          ? await getCached(`ticketmaster:event:${result.providerId}`, () => TrackerAPI.getTicketmasterEvent(result.providerId, state.settings)).catch(() => result)
+          : result;
+        const term = ticketmasterFollowTermForEvent(eventDetails);
+        if (term) {
+          const current = normalizedTicketmasterCalendarTerms();
+          const normalized = normalizeArtistName(term);
+          const exists = current.some(value => normalizeArtistName(value) === normalized);
+          state.discoverPrefs = {
+            ...DEFAULT_DISCOVER_PREFS,
+            ...state.discoverPrefs,
+            eventCalendarFollowTerms: exists ? current.filter(value => normalizeArtistName(value) !== normalized) : [...current, term]
+          };
+          safeLocalSet(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
+          scheduleCloudSync();
+          if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
+        }
       }
       return;
     }
@@ -1310,6 +1369,115 @@ async function renderQueueCalendar() {
   }
 }
 
+function normalizeArtistName(value) {
+  return String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function explicitLikedArtistItems() {
+  return state.items.filter(item => getSourceType(item) === 'artist' && item.title);
+}
+
+function inferredMusicArtistNames() {
+  const explicit = new Set(explicitLikedArtistItems().map(item => normalizeArtistName(item.title)));
+  const names = [];
+  for (const item of state.items) {
+    const sourceType = getSourceType(item);
+    if (!['music','song'].includes(sourceType)) continue;
+    const name = String(item.artistName || item.raw?.artistName || item.subtitle || '').split(' · ')[0].trim();
+    if (!name || explicit.has(normalizeArtistName(name))) continue;
+    names.push(name);
+  }
+  return [...new Map(names.map(name => [normalizeArtistName(name), name])).values()];
+}
+
+function ticketmasterEventMatchesArtist(event, artistName) {
+  const target = normalizeArtistName(artistName);
+  if (!target) return false;
+  const attractions = (event?.attractions || []).map(normalizeArtistName).filter(Boolean);
+  if (attractions.some(name => name === target)) return true;
+  const title = normalizeArtistName(event?.title || '');
+  return title === target || title.startsWith(`${target} `) || title.includes(` ${target} `);
+}
+
+function ticketmasterConcertFromEvent(event, artistName, likedArtist = false) {
+  const lineup = [...new Set(event?.attractions || [])];
+  return {
+    ...event,
+    sourceType: 'concert',
+    provider: 'ticketmaster',
+    artistName: artistName || lineup[0] || event?.title || '',
+    lineup,
+    recommendationReason: likedArtist ? 'Saved artist' : 'Based on your music',
+    likedArtist: Boolean(likedArtist)
+  };
+}
+
+async function getNearbyTicketmasterConcerts({ includeInferred = false, startDate = '', endDate = '', artistLimit = 10 } = {}) {
+  if (!state.settings.ticketmasterKey) return [];
+  const explicit = explicitLikedArtistItems().map(item => item.title);
+  const inferred = includeInferred ? inferredMusicArtistNames() : [];
+  const names = [...new Map([...explicit, ...inferred].map(name => [normalizeArtistName(name), name])).values()].slice(0, artistLimit);
+  if (!names.length) return [];
+  const explicitSet = new Set(explicit.map(normalizeArtistName));
+  const city = state.discoverPrefs.eventCity || state.settings.homeCity || '';
+  const countryCode = state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA';
+  const dateOptions = {
+    ...(startDate ? { startDateTime: ticketmasterMonthBoundary(startDate) } : {}),
+    ...(endDate ? { endDateTime: ticketmasterMonthBoundary(endDate, true) } : {})
+  };
+  const settled = await Promise.allSettled(names.map(async artistName => {
+    const cacheKey = `ticketmaster:artist:${normalizeArtistName(artistName)}:${city}:${countryCode}:${startDate || 'now'}:${endDate || 'future'}`;
+    const events = await getCached(cacheKey, () => TrackerAPI.searchTicketmasterEvents(artistName, state.settings, {
+      city,
+      countryCode,
+      classificationName: 'Music',
+      size: 18,
+      sort: 'date,asc',
+      ...dateOptions
+    }));
+    return (events || [])
+      .filter(event => ticketmasterEventMatchesArtist(event, artistName))
+      .map(event => ticketmasterConcertFromEvent(event, artistName, explicitSet.has(normalizeArtistName(artistName))));
+  }));
+  return dedupeTicketmasterEvents(settled.flatMap(entry => entry.status === 'fulfilled' ? entry.value : []))
+    .sort((a,b) => String(a.eventDate || '').localeCompare(String(b.eventDate || '')) || String(a.title || '').localeCompare(String(b.title || '')));
+}
+
+function normalizedTicketmasterCalendarTerms(values = state.discoverPrefs.eventCalendarFollowTerms) {
+  return normalizedTicketmasterPriorityTerms(values).slice(0, 20);
+}
+
+function ticketmasterEventMatchesFollowTerm(event, term) {
+  const target = normalizeArtistName(term);
+  if (!target) return false;
+  const names = [event?.title, event?.venueName, ...(event?.attractions || [])].map(normalizeArtistName).filter(Boolean);
+  return names.some(name => name === target || name.includes(target) || target.includes(name));
+}
+
+async function getFollowedTicketmasterEvents({ startDate = '', endDate = '', termLimit = 12 } = {}) {
+  if (!state.settings.ticketmasterKey) return [];
+  const terms = normalizedTicketmasterCalendarTerms().slice(0, termLimit);
+  if (!terms.length) return [];
+  const city = state.discoverPrefs.eventCity || state.settings.homeCity || '';
+  const countryCode = state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA';
+  const settled = await Promise.allSettled(terms.map(async term => {
+    const cacheKey = `ticketmaster:follow:${normalizeArtistName(term)}:${city}:${countryCode}:${startDate || 'now'}:${endDate || 'future'}`;
+    const events = await getCached(cacheKey, () => TrackerAPI.searchTicketmasterEvents(term, state.settings, {
+      city,
+      countryCode,
+      size: 12,
+      sort: 'date,asc',
+      ...(startDate ? { startDateTime: ticketmasterMonthBoundary(startDate) } : {}),
+      ...(endDate ? { endDateTime: ticketmasterMonthBoundary(endDate, true) } : {})
+    }));
+    return (events || [])
+      .filter(event => ticketmasterEventMatchesFollowTerm(event, term))
+      .map(event => ({ ...event, sourceType: 'event', recommendationReason: `Following ${term}`, followedTerm: term }));
+  }));
+  return dedupeTicketmasterEvents(settled.flatMap(entry => entry.status === 'fulfilled' ? entry.value : []))
+    .sort((a,b) => String(a.eventDate || '').localeCompare(String(b.eventDate || '')) || String(a.title || '').localeCompare(String(b.title || '')));
+}
+
 async function buildQueueCalendarEntries() {
   const today = todayString();
   const horizon = addDaysToDateString(today, 120);
@@ -1335,13 +1503,14 @@ async function buildQueueCalendarEntries() {
       continue;
     }
 
-    if (sourceType === 'event') {
+    if (sourceType === 'event' || sourceType === 'concert') {
+      if (item.calendarHidden) continue;
       const date = item.date || item.eventMeta?.eventDate || '';
       add(item, date, item.title, [formatEventClock(item.eventMeta?.eventTime || ''), item.eventMeta?.venueName || '', item.eventMeta?.city || '', getQueueStatus(item) === 'tbr' ? 'TBR' : ''].filter(Boolean).join(' · '), item.image, 'event');
       continue;
     }
 
-    if (item.date && item.date >= today) {
+    if (!item.calendarHidden && item.date && item.date >= today) {
       add(item, item.date, item.title, [getItemTypeLabel(item), getQueueStatus(item) === 'tbr' ? 'TBR' : ''].filter(Boolean).join(' · '), item.image, 'dated');
     } else if (['movie'].includes(sourceType) && item.releaseDate && item.releaseDate >= today && getQueueStatus(item) !== 'library') {
       add(item, item.releaseDate, item.title, `${getItemTypeLabel(item)} release${getQueueStatus(item) === 'tbr' ? ' · TBR' : ''}`, item.image, 'release');
@@ -1359,16 +1528,52 @@ async function buildQueueCalendarEntries() {
     add(item, episode.air_date, item.title, `S${episode.season_number} E${episode.episode_number}${episode.name ? ` · ${episode.name}` : ''}`, TrackerAPI.tmdbImage(episode.still_path) || item.image, 'tv-episode');
   }
 
+  if (state.settings.ticketmasterKey) {
+    try {
+      const autoConcerts = state.discoverPrefs.eventAutoLikedArtistCalendar === false
+        ? []
+        : await getNearbyTicketmasterConcerts({ includeInferred: false, startDate: today, endDate: horizon, artistLimit: 14 });
+      const followedEvents = await getFollowedTicketmasterEvents({ startDate: today, endDate: horizon, termLimit: 12 });
+      const liveEvents = dedupeTicketmasterEvents([...autoConcerts, ...followedEvents]);
+      for (const liveEvent of liveEvents) {
+        const isConcert = liveEvent.sourceType === 'concert';
+        const artistItem = isConcert ? explicitLikedArtistItems().find(item => normalizeArtistName(item.title) === normalizeArtistName(liveEvent.artistName)) : null;
+        const pseudoItem = {
+          id: `live:${liveEvent.providerId}`,
+          sourceType: isConcert ? 'concert' : 'event',
+          type: isConcert ? 'concert' : 'event',
+          typeLabel: isConcert ? 'Concert' : 'Event',
+          title: liveEvent.title,
+          image: artistItem?.image || liveEvent.image || '',
+          provider: 'ticketmaster',
+          providerId: liveEvent.providerId
+        };
+        entries.push({
+          item: pseudoItem,
+          date: liveEvent.eventDate,
+          title: liveEvent.title,
+          meta: [formatEventClock(liveEvent.eventTime || ''), liveEvent.venueName || '', liveEvent.city || '', liveEvent.recommendationReason || ''].filter(Boolean).join(' · '),
+          image: artistItem?.image || liveEvent.image || '',
+          kind: isConcert ? 'concert' : 'live-event',
+          url: liveEvent.ticketUrl || ''
+        });
+      }
+    } catch {}
+  }
+
   return entries.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
 }
 
 function queueCalendarEntryMarkup(entry) {
   const label = getItemTypeLabel(entry.item);
   const art = entry.image ? `<img src="${escapeAttr(entry.image)}" alt="" />` : `<div class="queue-calendar-thumb placeholder">${escapeHtml(label?.[0] || '•')}</div>`;
-  return `<article class="queue-calendar-entry">
+  const action = entry.url
+    ? `<a class="upnext-arrow" href="${escapeAttr(entry.url)}" target="_blank" rel="noopener" aria-label="Open event">→</a>`
+    : `<button class="upnext-arrow" type="button" data-action="details" data-id="${escapeAttr(entry.item.id)}" aria-label="Open details">→</button>`;
+  return `<article class="queue-calendar-entry${entry.kind === 'concert' ? ' queue-calendar-concert' : ''}">
     ${art}
     <div class="queue-calendar-entry-copy"><strong>${escapeHtml(entry.title)}</strong><span>${escapeHtml([label, entry.meta].filter(Boolean).join(' · '))}</span></div>
-    <button class="upnext-arrow" type="button" data-action="details" data-id="${escapeAttr(entry.item.id)}" aria-label="Open details">→</button>
+    ${action}
   </article>`;
 }
 
@@ -2271,6 +2476,8 @@ async function moveItemToQueue(item, status) {
     else if (sourceType === 'book') await renderBookDetails(item);
     else if (sourceType === 'movie') await renderMovieDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
+    else if (sourceType === 'artist') await renderArtistDetails(item);
+    else if (sourceType === 'song') await renderSongDetails(item);
     else if (sourceType === 'reminder') renderReminderDetails(item);
     else if (sourceType === 'event') await renderEventDetails(item);
     else renderManualDetails(item);
@@ -2494,7 +2701,7 @@ function clearSourceSelectionForTypeChange() {
 
 function updateItemFormForType() {
   const sourceType = els.itemSourceType.value;
-  const isCatalogue = ['tv', 'book', 'movie', 'music', 'event'].includes(sourceType);
+  const isCatalogue = ['tv', 'book', 'movie', 'music', 'artist', 'song'].includes(sourceType);
   const isYouTube = sourceType === 'youtube';
   const isReminder = sourceType === 'reminder';
   const isManual = sourceType === 'other';
@@ -2506,11 +2713,11 @@ function updateItemFormForType() {
   els.manualTitleBlock.hidden = false;
   els.tvProgressFields.hidden = sourceType !== 'tv';
   els.bookProgressFields.hidden = sourceType !== 'book';
-  if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder;
+  if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder || ['music','artist','song'].includes(sourceType);
   if (sourceType === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
     els.bookStartDate.value = todayString();
   }
-  if (els.queueStatusField) els.queueStatusField.hidden = isReminder;
+  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || ['music','artist','song'].includes(sourceType);
 
   if (isYouTube) {
     els.displayTypeLabel.textContent = 'Display as';
@@ -2546,7 +2753,8 @@ function updateItemFormForType() {
     movie: 'Search movies',
     book: 'Search books',
     music: 'Search albums',
-    event: 'Search concerts, sports, theatre, events'
+    artist: 'Search artists',
+    song: 'Search songs'
   };
   els.catalogueQuery.placeholder = placeholders[sourceType] || 'Search title';
 }
@@ -2571,13 +2779,7 @@ async function searchCatalogue() {
   els.catalogueSearchButton.disabled = true;
 
   try {
-    const results = type === 'event'
-      ? await TrackerAPI.searchTicketmasterEvents(query, state.settings, {
-          city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
-          countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA',
-          size: 30
-        })
-      : await TrackerAPI.searchCatalogue(query, type, state.settings);
+    const results = await TrackerAPI.searchCatalogue(query, type, state.settings);
     renderSearchResults(results);
     showFormMessage('', false);
   } catch (error) {
@@ -2960,8 +3162,8 @@ async function saveItemFromForm(event) {
     showFormMessage('Load a YouTube playlist first.', true);
     return;
   }
-  const expectedProvider = sourceType === 'book' ? 'googleBooks' : sourceType === 'music' ? 'itunes' : sourceType === 'event' ? 'ticketmaster' : 'tmdb';
-  if (['tv','book','movie','music','event'].includes(sourceType) && (!providerId || provider !== expectedProvider)) {
+  const expectedProvider = sourceType === 'book' ? 'googleBooks' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'event' ? 'ticketmaster' : 'tmdb';
+  if (['tv','book','movie','music','artist','song','event'].includes(sourceType) && (!providerId || provider !== expectedProvider)) {
     showFormMessage('Choose a search result first.', true);
     return;
   }
@@ -3000,9 +3202,9 @@ async function saveItemFromForm(event) {
     releaseDate: extractItemReleaseDate(sourceType, state.selectedSource, editing),
     attachments: attachmentFiles,
     links: state.attachmentDraft.links.map(link => ({ ...link })),
-    date: sourceType === 'reminder' ? '' : (sourceType === 'event' ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
-    queueStatus: sourceType === 'reminder' ? 'upnext' : (els.itemQueueStatus.value || 'library'),
-    active: sourceType === 'reminder' || (els.itemQueueStatus.value || 'library') === 'upnext',
+    date: sourceType === 'reminder' ? '' : (['music','artist','song'].includes(sourceType) ? '' : (sourceType === 'event' ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || ''))),
+    queueStatus: sourceType === 'reminder' ? 'upnext' : (['music','artist','song'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library')),
+    active: sourceType === 'reminder' || (!['music','artist','song'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
     createdAt: editing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     completedAt: editing?.completedAt || '',
@@ -3175,6 +3377,8 @@ async function openDetails(id) {
     else if (sourceType === 'book') await renderBookDetails(item);
     else if (sourceType === 'movie') await renderMovieDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
+    else if (sourceType === 'artist') await renderArtistDetails(item);
+    else if (sourceType === 'song') await renderSongDetails(item);
     else if (sourceType === 'reminder') renderReminderDetails(item);
     else if (sourceType === 'event') await renderEventDetails(item);
     else renderManualDetails(item);
@@ -3492,10 +3696,33 @@ async function renderMusicDetails(item) {
   const tracks = (data.results || []).filter(r => r.wrapperType === 'track').map((track, index) => `<div class="track-row"><div>${index+1}</div><div><div class="list-title">${escapeHtml(track.trackName || 'Track')}</div><div class="list-meta">${escapeHtml(track.artistName || '')}</div></div><div>${track.trackTimeMillis ? formatMillis(track.trackTimeMillis) : ''}</div></div>`).join('');
   const image = (collection.artworkUrl100 || item.image || '').replace('100x100bb','600x600bb');
   els.detailBody.innerHTML = `
-    ${detailHero({ type:'MUSIC', title:collection.collectionName || item.title, image, subtitle:collection.artistName || item.subtitle || '', overview:collection.primaryGenreName || '' })}
+    ${detailHero({ type:'ALBUM', title:collection.collectionName || item.title, image, subtitle:collection.artistName || item.subtitle || '', overview:collection.primaryGenreName || '' })}
     ${detailEditButton(item)}
     <section class="detail-section"><h3>Tracks</h3><div class="track-list">${tracks || 'No tracks returned.'}</div></section>
   `;
+}
+
+async function renderArtistDetails(item) {
+  const data = await getCached(`artist:${item.providerId}`, () => TrackerAPI.getArtistDetails(item.providerId, state.settings));
+  const artist = (data.results || []).find(result => result.wrapperType === 'artist') || {};
+  const albums = (data.results || []).filter(result => result.wrapperType === 'collection');
+  const image = (albums.find(album => album.artworkUrl100)?.artworkUrl100 || item.image || '').replace('100x100bb', '600x600bb');
+  if (!item.image && image) { item.image = image; saveItems(); }
+  const albumRows = albums.slice(0, 8).map(album => `<div class="track-row"><div>•</div><div><div class="list-title">${escapeHtml(album.collectionName || 'Album')}</div><div class="list-meta">${escapeHtml(String(album.releaseDate || '').slice(0, 4))}</div></div></div>`).join('');
+  els.detailBody.innerHTML = `
+    ${detailHero({ type:'ARTIST', title:artist.artistName || item.title, image, subtitle:artist.primaryGenreName || item.subtitle || '', overview:item.notes || '' })}
+    ${detailEditButton(item)}
+    ${albumRows ? `<section class="detail-section"><h3>Recent albums</h3><div class="track-list">${albumRows}</div></section>` : ''}`;
+}
+
+async function renderSongDetails(item) {
+  const data = await getCached(`song:${item.providerId}`, () => TrackerAPI.getSongDetails(item.providerId, state.settings));
+  const track = (data.results || []).find(result => result.wrapperType === 'track') || (data.results || [])[0] || {};
+  const image = (track.artworkUrl100 || item.image || '').replace('100x100bb', '600x600bb');
+  els.detailBody.innerHTML = `
+    ${detailHero({ type:'SONG', title:track.trackName || item.title, image, subtitle:[track.artistName || item.subtitle || '', track.collectionName || '', track.primaryGenreName || ''].filter(Boolean).join(' · '), overview:item.notes || '' })}
+    ${detailEditButton(item)}
+    ${track.trackViewUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(track.trackViewUrl)}" target="_blank" rel="noopener">Open in Apple Music / iTunes ↗</a></section>` : ''}`;
 }
 
 function renderReminderDetails(item) {
@@ -4722,7 +4949,7 @@ function editableTypeFromLabel(label, currentType = 'other') {
     tv: 'tv', television: 'tv', 'tv show': 'tv', 'tv shows': 'tv',
     book: 'book', books: 'book',
     movie: 'movie', movies: 'movie', film: 'movie', films: 'movie',
-    music: 'music',
+    music: 'music', album: 'music', albums: 'music', artist: 'artist', artists: 'artist', song: 'song', songs: 'song',
     workout: 'workout', workouts: 'workout',
     other: 'other'
   };
@@ -4917,9 +5144,13 @@ async function runDiscoverSearch(forcedQuery = '') {
 
   try {
     const selectedType = state.discoverPrefs.contentType || 'all';
-    const types = selectedType === 'all' ? ['tv', 'movie', 'book', 'event'] : [selectedType];
+    const types = selectedType === 'all' ? ['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event'] : [selectedType];
     const settled = await Promise.allSettled(types.map(type => {
-      if (type === 'event') return fetchTicketmasterEventsForPreferences(query, { size: 30, page: 0 });
+      if (type === 'concert') return getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 14 }).then(events => {
+        const q = normalizeArtistName(query);
+        return events.filter(event => normalizeArtistName([event.artistName, event.title, event.venueName, event.city].filter(Boolean).join(' ')).includes(q));
+      });
+      if (type === 'event') return fetchTicketmasterEventsForPreferences(query, { size: 40, skipPrioritySearch: true });
       if (type !== 'book') return TrackerAPI.searchCatalogue(query, type, state.settings);
       const genre = selectedDiscoverGenre();
       if (!genre?.book?.length) return TrackerAPI.searchCatalogue(query, type, state.settings);
@@ -4931,7 +5162,7 @@ async function runDiscoverSearch(forcedQuery = '') {
       const entry = settled[index];
       if (entry.status !== 'fulfilled') continue;
       const sourceType = types[index];
-      const availableResults = filterAlreadyKnown(entry.value || [], sourceType).filter(result => sourceType !== 'event' || ticketmasterMatchesEventPreferences(result));
+      const availableResults = sourceType === 'concert' ? (entry.value || []) : filterAlreadyKnown(entry.value || [], sourceType);
       for (const result of availableResults) {
         const normalized = { ...result, sourceType, categories: result.raw?.volumeInfo?.categories || result.categories || [] };
         if (state.discoverPrefs.englishTVOnly === true && sourceType === 'tv' && String(normalized.raw?.original_language || '').toLowerCase() !== 'en') continue;
@@ -4980,9 +5211,9 @@ function updateDiscoverModeUI() {
   const copy = {
     new: 'TV, movies, books, and local events organized by when they arrived or are coming out: this week, next week, last week, and nearby months.',
     popular: 'Popular TV, movies, books, and upcoming local events, with titles on your streaming services moved toward the front.',
-    'for-you': 'Recommendations based on what you have watched, finished, rated, and the authors you return to, mixed with upcoming events nearby.',
-    discover: 'A shuffled, effectively endless mix of TV, movies, books, and upcoming events. Your tastes influence the ranking, but each session deliberately changes.',
-    calendar: 'A month-by-month view of upcoming local events, movie releases, TV premieres, and the next episodes of TV shows you already track.'
+    'for-you': 'Recommendations based on what you watch, read, and save — including artists and songs — plus selective nearby live events.',
+    discover: 'A shuffled mix of TV, movies, books, albums, artists, songs, concerts, and other nearby live events. Live events stay out of Calendar unless you follow or save them.',
+    calendar: 'A month-by-month view of concerts by saved artists, events for live interests you follow, movie releases, TV premieres, and tracked TV episodes.'
   };
   els.discoverModeTabs?.forEach(tab => {
     const active = tab.dataset.discoverMode === mode;
@@ -5083,7 +5314,7 @@ async function renderDiscoverCalendar(force = false) {
   }
   if (els.discoverStatus) {
     els.discoverStatus.hidden = false;
-    els.discoverStatus.textContent = 'Loading upcoming events and releases…';
+    els.discoverStatus.textContent = 'Loading upcoming concerts and releases…';
   }
   if (els.discoverCalendarMessage) els.discoverCalendarMessage.textContent = '';
   els.discoverCalendarGrid.innerHTML = '<div class="discover-calendar-loading">Loading calendar…</div>';
@@ -5095,16 +5326,18 @@ async function renderDiscoverCalendar(force = false) {
     if (els.discoverStatus) els.discoverStatus.hidden = true;
     if (els.discoverCalendarMessage) {
       const selectedType = state.discoverPrefs.contentType || 'all';
-      if (selectedType === 'book') {
-        els.discoverCalendarMessage.textContent = 'Books are not shown here because Google Books publication metadata is not a dependable calendar of forthcoming releases.';
+      if (['book','music','artist','song'].includes(selectedType)) {
+        els.discoverCalendarMessage.textContent = selectedType === 'book' ? 'Books are not shown here because Google Books publication metadata is not a dependable calendar of forthcoming releases.' : 'Albums, artists, and songs do not use the release calendar here.';
       } else if (!entries.length) {
-        els.discoverCalendarMessage.textContent = 'Nothing matching your current type, genre, event preferences, and location was found for this month.';
+        els.discoverCalendarMessage.textContent = 'Nothing matching your current type, genre, and location was found for this month.';
       } else {
+        const concertCount = entries.filter(entry => entry.sourceType === 'concert').length;
         const eventCount = entries.filter(entry => entry.sourceType === 'event').length;
         const movieCount = entries.filter(entry => entry.sourceType === 'movie').length;
         const tvCount = entries.filter(entry => entry.sourceType === 'tv').length;
         els.discoverCalendarMessage.textContent = [
-          eventCount ? `${eventCount} event${eventCount === 1 ? '' : 's'}` : '',
+          concertCount ? `${concertCount} concert${concertCount === 1 ? '' : 's'}` : '',
+          eventCount ? `${eventCount} followed event${eventCount === 1 ? '' : 's'}` : '',
           movieCount ? `${movieCount} movie release${movieCount === 1 ? '' : 's'}` : '',
           tvCount ? `${tvCount} TV date${tvCount === 1 ? '' : 's'}` : ''
         ].filter(Boolean).join(' · ');
@@ -5124,36 +5357,36 @@ async function renderDiscoverCalendar(force = false) {
 async function collectDiscoverCalendarEntries() {
   const { startDate, endDate } = discoverCalendarBounds();
   const selectedType = state.discoverPrefs.contentType || 'all';
-  if (selectedType === 'book') return [];
+  if (['book','music','artist','song'].includes(selectedType)) return [];
   const entries = [];
   state.discoverResults.clear();
 
-  if ((selectedType === 'all' || selectedType === 'event') && state.settings.ticketmasterKey) {
-    const paddedStart = addDaysToDateString(startDate, -1);
-    const paddedEnd = addDaysToDateString(endDate, 1);
-    for (let page = 0; page < 3; page += 1) {
-      const eventCity = String(state.discoverPrefs.eventCity || state.settings.homeCity || '').toLowerCase();
-      const eventCountry = String(state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA').toUpperCase();
-      const key = `${discoverCalendarCachePrefix()}events:${eventCity}:${eventCountry}:${ticketmasterPreferenceSignature()}:${page}`;
-      const events = await getCached(key, () => fetchTicketmasterEventsForPreferences('', {
-        page,
-        size: 50,
-        startDateTime: ticketmasterMonthBoundary(paddedStart),
-        endDateTime: ticketmasterMonthBoundary(paddedEnd, true),
-        skipPrioritySearch: true
-      }));
-      for (const result of events || []) {
-        if (!result.eventDate || result.eventDate < startDate || result.eventDate > endDate) continue;
-        if (!discoverResultMatchesGenre(result)) continue;
+  if (state.settings.ticketmasterKey && (selectedType === 'all' || selectedType === 'concert' || selectedType === 'event')) {
+    if (selectedType === 'all' || selectedType === 'concert') {
+      const concerts = state.discoverPrefs.eventAutoLikedArtistCalendar === false
+        ? []
+        : await getNearbyTicketmasterConcerts({ includeInferred: false, startDate, endDate, artistLimit: 14 });
+      for (const result of concerts) {
+        entries.push({
+          ...result,
+          sourceType: 'concert',
+          date: result.eventDate,
+          calendarKind: 'Concert',
+          calendarSecondary: [formatEventClock(result.eventTime || ''), result.venueName || result.city || '', result.recommendationReason || ''].filter(Boolean).join(' · ')
+        });
+      }
+    }
+    if (selectedType === 'all' || selectedType === 'event') {
+      const followed = await getFollowedTicketmasterEvents({ startDate, endDate, termLimit: 12 });
+      for (const result of followed) {
         entries.push({
           ...result,
           sourceType: 'event',
           date: result.eventDate,
-          calendarKind: 'Event',
-          calendarSecondary: [formatEventClock(result.eventTime || ''), result.venueName || result.city || ''].filter(Boolean).join(' · ')
+          calendarKind: 'Followed event',
+          calendarSecondary: [formatEventClock(result.eventTime || ''), result.venueName || result.city || '', result.recommendationReason || ''].filter(Boolean).join(' · ')
         });
       }
-      if ((events || []).length < 50) break;
     }
   }
 
@@ -5261,7 +5494,7 @@ async function collectDiscoverCalendarEntries() {
 }
 
 function discoverCalendarTypeOrder(type) {
-  return type === 'event' ? 0 : type === 'movie' ? 1 : 2;
+  return type === 'concert' || type === 'event' ? 0 : type === 'movie' ? 1 : 2;
 }
 
 function renderDiscoverCalendarGrid(entries) {
@@ -5308,7 +5541,7 @@ function renderDiscoverCalendarGrid(entries) {
 
 function discoverCalendarEntryMarkup(entry) {
   const key = rememberDiscoverResult(entry, entry.sourceType);
-  const typeLabel = entry.sourceType === 'event' ? 'Event' : entry.sourceType === 'movie' ? 'Movie' : 'TV';
+  const typeLabel = entry.sourceType === 'concert' ? 'Concert' : entry.sourceType === 'event' ? 'Event' : entry.sourceType === 'movie' ? 'Movie' : 'TV';
   const secondary = entry.calendarSecondary || entry.calendarKind || '';
   return `<button class="discover-calendar-entry ${escapeAttr(entry.sourceType)}" type="button" data-discover-calendar-key="${escapeAttr(key)}"${entry.calendarEpisode ? ` data-discover-calendar-season="${entry.calendarEpisode.season}" data-discover-calendar-episode="${entry.calendarEpisode.episode}"` : ''}>
     <span class="discover-calendar-entry-type">${escapeHtml(typeLabel)} · ${escapeHtml(entry.calendarKind || '')}</span>
@@ -5481,19 +5714,19 @@ async function loadMoreDiscoverFeed() {
 
 async function collectDiscoverFeedCandidates(batchNumber) {
   const contentType = state.discoverPrefs.contentType || 'all';
-  const eventPage = Math.max(0, batchNumber - 1);
-  const eventCity = state.discoverPrefs.eventCity || state.settings.homeCity || '';
-  const eventCountry = state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA';
-  const eventCacheKey = `discover:ticketmaster:${String(eventCity).toLowerCase()}:${String(eventCountry).toUpperCase()}:${ticketmasterPreferenceSignature()}:${eventPage}`;
+
+  if (contentType === 'concert') {
+    const concerts = await getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 14 });
+    return concerts.map(result => ({ ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-liked', _discoverBoost: result.likedArtist ? 14 : 8 }));
+  }
 
   if (contentType === 'event') {
-    if (!state.settings.ticketmasterKey) return [];
-    try {
-      return filterAlreadyKnown(await getCached(eventCacheKey, () => fetchTicketmasterEventsForPreferences('', { page: eventPage, size: 24 })), 'event')
-        .map(result => ({ ...result, sourceType: 'event', _discoverSource: 'ticketmaster', _discoverBoost: 8 + ticketmasterPreferenceBoost(result) }));
-    } catch {
-      return [];
-    }
+    const events = await fetchTicketmasterEventsForPreferences('', { page: Math.max(0, batchNumber - 1), size: 24 });
+    return events.map(result => ({ ...result, sourceType: 'event', _discoverSource: 'ticketmaster-live', _discoverBoost: 3 + ticketmasterPreferenceBoost(result) }));
+  }
+
+  if (['music','artist','song'].includes(contentType)) {
+    return (await collectMusicDiscoverCandidates(batchNumber)).filter(result => result.sourceType === contentType);
   }
 
   let candidates;
@@ -5502,12 +5735,99 @@ async function collectDiscoverFeedCandidates(batchNumber) {
   else if (state.discoverMode === 'for-you') candidates = await collectForYouDiscoverCandidates(batchNumber);
   else candidates = await collectShuffledDiscoverCandidates(batchNumber);
 
-  if (state.settings.ticketmasterKey) {
+  // Music discovery is deliberately lightweight: infer artists from albums/songs
+  // already saved, recommend those artists explicitly, and surface songs by them.
+  // This keeps the existing no-auth iTunes catalogue while avoiding a new music service.
+  try {
+    candidates.push(...await collectMusicDiscoverCandidates(batchNumber));
+  } catch {}
+
+  // Live events are intentionally bounded in the mixed feed. Concerts tied to
+  // saved/inferred artists receive a larger boost; the broader Ticketmaster
+  // catalogue contributes only a handful of recommendations per batch and never
+  // enters the user's Calendar unless explicitly followed or saved.
+  if (state.settings.ticketmasterKey && batchNumber <= 4) {
     try {
-      const events = filterAlreadyKnown(await getCached(eventCacheKey, () => fetchTicketmasterEventsForPreferences('', { page: eventPage, size: 20 })), 'event');
-      candidates.push(...events.map(result => ({ ...result, sourceType: 'event', _discoverSource: 'ticketmaster', _discoverBoost: (state.discoverMode === 'discover' ? 5 : 3) + ticketmasterPreferenceBoost(result) })));
+      const concerts = await getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 10 });
+      candidates.push(...concerts.map(result => ({ ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-liked', _discoverBoost: result.likedArtist ? 12 : 7 })));
+
+      const generalEvents = await fetchTicketmasterEventsForPreferences('', { page: Math.max(0, batchNumber - 1), size: 8 });
+      candidates.push(...generalEvents.map(result => ({ ...result, sourceType: 'event', _discoverSource: 'ticketmaster-live', _discoverBoost: 2 + ticketmasterPreferenceBoost(result) })));
+
+      // Co-billed attractions provide a modest related-artist signal for music
+      // without requiring a separate recommendation API.
+      const alreadyRepresented = new Set([
+        ...explicitLikedArtistItems().map(item => normalizeArtistName(item.title)),
+        ...inferredMusicArtistNames().map(normalizeArtistName)
+      ]);
+      const lineupNames = [...new Map(concerts.flatMap(concert => concert.lineup || concert.attractions || []).map(name => [normalizeArtistName(name), name])).values()]
+        .filter(name => !alreadyRepresented.has(normalizeArtistName(name)))
+        .slice(0, 2);
+      for (const artistName of lineupNames) {
+        try {
+          const found = await getCached(`itunes:artist-search:${normalizeArtistName(artistName)}`, () => TrackerAPI.searchArtists(artistName, state.settings));
+          const exact = (found || []).find(result => normalizeArtistName(result.title) === normalizeArtistName(artistName)) || (found || [])[0];
+          if (exact) candidates.push({ ...exact, sourceType: 'artist', _discoverSource: 'concert-lineup', _discoverBoost: 5 });
+        } catch {}
+      }
     } catch {}
   }
+
+  return dedupeDiscoverCandidatesByBoost(candidates);
+}
+
+async function collectMusicDiscoverCandidates(batchNumber) {
+  const explicitArtists = explicitLikedArtistItems();
+  const inferredNames = inferredMusicArtistNames();
+  const knownArtistIds = new Set(state.items.filter(item => getSourceType(item) === 'artist').map(item => String(item.providerId || '')).filter(Boolean));
+  const knownSongIds = new Set(state.items.filter(item => getSourceType(item) === 'song').map(item => String(item.providerId || '')).filter(Boolean));
+  const knownAlbumIds = new Set(state.items.filter(item => getSourceType(item) === 'music').map(item => String(item.providerId || '')).filter(Boolean));
+  const candidates = [];
+
+  // If an album/song implies an artist the user has not explicitly saved yet,
+  // recommend that artist as a first-class Library item.
+  const artistNames = [];
+  if (inferredNames.length) {
+    const start = ((Math.max(1, batchNumber) - 1) * 2) % inferredNames.length;
+    for (let offset = 0; offset < Math.min(2, inferredNames.length); offset += 1) artistNames.push(inferredNames[(start + offset) % inferredNames.length]);
+  }
+  for (const artistName of artistNames) {
+    try {
+      const results = await getCached(`itunes:artist-search:${normalizeArtistName(artistName)}`, () => TrackerAPI.searchArtists(artistName, state.settings));
+      const exact = (results || []).find(result => normalizeArtistName(result.title) === normalizeArtistName(artistName)) || (results || [])[0];
+      if (exact && !knownArtistIds.has(String(exact.providerId))) {
+        const artSource = state.items.find(item => ['music','song'].includes(getSourceType(item)) && normalizeArtistName(item.artistName || item.subtitle) === normalizeArtistName(artistName) && item.image);
+        candidates.push({ ...exact, image: exact.image || artSource?.image || '', sourceType: 'artist', _discoverSource: 'music-taste', _discoverBoost: 9 });
+      }
+    } catch {}
+  }
+
+  const songSeedNames = [...new Map([
+    ...explicitArtists.map(item => item.title),
+    ...inferredNames
+  ].map(name => [normalizeArtistName(name), name])).values()];
+  if (songSeedNames.length) {
+    const albumSeed = songSeedNames[((batchNumber - 1) || 0) % songSeedNames.length];
+    try {
+      const albums = await getCached(`itunes:albums:${normalizeArtistName(albumSeed)}`, () => TrackerAPI.searchMusic(albumSeed, state.settings));
+      const matchingAlbums = (albums || []).filter(album => normalizeArtistName(album.artistName || album.subtitle) === normalizeArtistName(albumSeed));
+      for (const album of matchingAlbums.slice(0, 3)) {
+        if (!knownAlbumIds.has(String(album.providerId))) candidates.push({ ...album, sourceType: 'music', _discoverSource: 'liked-artist-album', _discoverBoost: 5 });
+      }
+    } catch {}
+    const start = ((batchNumber - 1) * 2) % songSeedNames.length;
+    const seeds = [songSeedNames[start], songSeedNames[(start + 1) % songSeedNames.length]].filter(Boolean);
+    for (const artistName of [...new Set(seeds)]) {
+      try {
+        const songs = await getCached(`itunes:songs:${normalizeArtistName(artistName)}`, () => TrackerAPI.searchSongs(artistName, state.settings));
+        const matching = (songs || []).filter(song => normalizeArtistName(song.artistName || song.subtitle) === normalizeArtistName(artistName));
+        for (const song of matching.slice(0, 4)) {
+          if (!knownSongIds.has(String(song.providerId))) candidates.push({ ...song, sourceType: 'song', _discoverSource: 'liked-artist-song', _discoverBoost: 7 });
+        }
+      } catch {}
+    }
+  }
+
   return dedupeDiscoverCandidatesByBoost(candidates);
 }
 
@@ -5771,7 +6091,7 @@ function discoverLoadingLabel(hasItems) {
 }
 
 function discoverEndlessLabel() {
-  if (state.discoverMode === 'discover') return 'Keep scrolling — TV, movies, books, and events keep changing as more loads.';
+  if (state.discoverMode === 'discover') return 'Keep scrolling — TV, movies, books, music, concerts, and other live events keep changing as more loads.';
   if (state.discoverMode === 'for-you') return 'Keep scrolling — more recommendations will load automatically.';
   if (state.discoverMode === 'new') return 'Keep scrolling — more recent releases will load automatically.';
   return 'Keep scrolling — more popular picks will load automatically.';
@@ -6052,10 +6372,11 @@ function discoverResultIdentity(result) {
 
 function discoverNewDate(result) {
   if (!result) return '';
-  if (result.sourceType === 'event') return result.eventDate || '';
+  if (result.sourceType === 'event' || result.sourceType === 'concert') return result.eventDate || '';
   if (result.sourceType === 'book') return result.publishedDate || result.raw?.volumeInfo?.publishedDate || '';
   if (result.sourceType === 'tv') return result.newReleaseDate || result.nextEpisodeDate || result.latestEpisodeDate || result._discoverLatestDate || result.raw?.first_air_date || '';
   if (result.sourceType === 'movie') return result.raw?.release_date || result.releaseDate || '';
+  if (result.sourceType === 'music' || result.sourceType === 'song') return result.releaseDate || String(result.raw?.releaseDate || '').slice(0,10);
   return '';
 }
 
@@ -6460,7 +6781,10 @@ function ticketmasterPriorityHaystack(result) {
 }
 
 function ticketmasterPreferenceBoost(result) {
-  const terms = normalizedTicketmasterPriorityTerms(state.discoverPrefs.eventPriorityTerms);
+  const terms = [...new Set([
+    ...normalizedTicketmasterPriorityTerms(state.discoverPrefs.eventPriorityTerms),
+    ...normalizedTicketmasterCalendarTerms()
+  ])];
   if (!terms.length) return 0;
   const haystack = ticketmasterPriorityHaystack(result);
   return terms.some(term => haystack.includes(term.toLowerCase())) ? 12 : 0;
@@ -6485,7 +6809,10 @@ async function fetchTicketmasterEventsForPreferences(query = '', options = {}) {
   const selected = normalizedTicketmasterPreferenceKeys(state.discoverPrefs.eventCategoryKeys);
   const excluded = normalizedTicketmasterPreferenceKeys(state.discoverPrefs.eventExcludedCategoryKeys);
   const everything = state.discoverPrefs.eventEverything !== false;
-  const priorityTerms = normalizedTicketmasterPriorityTerms(state.discoverPrefs.eventPriorityTerms);
+  const priorityTerms = [...new Set([
+    ...normalizedTicketmasterPriorityTerms(state.discoverPrefs.eventPriorityTerms),
+    ...normalizedTicketmasterCalendarTerms()
+  ])];
   if (!everything && !selected.length) return [];
 
   const requests = [];
@@ -6568,7 +6895,10 @@ async function openDiscoverSettings() {
   if (els.eventCountry) els.eventCountry.value = (state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA').toUpperCase();
   if (els.eventEverything) els.eventEverything.checked = state.discoverPrefs.eventEverything !== false;
   if (els.eventPriorityTerms) els.eventPriorityTerms.value = normalizedTicketmasterPriorityTerms(state.discoverPrefs.eventPriorityTerms).join(', ');
+  if (els.eventCalendarFollowTerms) els.eventCalendarFollowTerms.value = normalizedTicketmasterCalendarTerms().join(', ');
+  if (els.eventAutoLikedArtistCalendar) els.eventAutoLikedArtistCalendar.checked = state.discoverPrefs.eventAutoLikedArtistCalendar !== false;
   renderTicketmasterPreferenceOptions();
+
   state.discoverProviderDraft = new Map(
     (state.discoverPrefs.streamingProviderIds || []).map((id, index) => [String(id), (state.discoverPrefs.streamingProviderNames || [])[index] || ''])
   );
@@ -6626,9 +6956,6 @@ function clearStreamingProviderSelection() {
 function saveDiscoverSettings(event) {
   event.preventDefault();
   const selectedEntries = [...state.discoverProviderDraft.entries()];
-  const eventCategoryKeys = [...(els.eventCategoryOptions?.querySelectorAll('input[type="checkbox"]:checked') || [])].map(input => input.value);
-  const eventExcludedCategoryKeys = [...(els.eventExclusionOptions?.querySelectorAll('input[type="checkbox"]:checked') || [])].map(input => input.value);
-  const eventPriorityTerms = normalizedTicketmasterPriorityTerms(els.eventPriorityTerms?.value || '');
   state.discoverPrefs = {
     ...DEFAULT_DISCOVER_PREFS,
     ...state.discoverPrefs,
@@ -6641,9 +6968,11 @@ function saveDiscoverSettings(event) {
     eventCity: String(els.eventCity?.value || '').trim(),
     eventCountry: String(els.eventCountry?.value || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA').trim().toUpperCase(),
     eventEverything: Boolean(els.eventEverything?.checked),
-    eventCategoryKeys: normalizedTicketmasterPreferenceKeys(eventCategoryKeys),
-    eventExcludedCategoryKeys: normalizedTicketmasterPreferenceKeys(eventExcludedCategoryKeys),
-    eventPriorityTerms
+    eventCategoryKeys: [...(els.eventCategoryOptions?.querySelectorAll('input[type="checkbox"]:checked') || [])].map(input => input.value),
+    eventExcludedCategoryKeys: [...(els.eventExclusionOptions?.querySelectorAll('input[type="checkbox"]:checked') || [])].map(input => input.value),
+    eventPriorityTerms: normalizedTicketmasterPriorityTerms(els.eventPriorityTerms?.value || ''),
+    eventCalendarFollowTerms: normalizedTicketmasterPriorityTerms(els.eventCalendarFollowTerms?.value || ''),
+    eventAutoLikedArtistCalendar: els.eventAutoLikedArtistCalendar?.checked !== false
   };
   localStorage.setItem(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
   scheduleCloudSync();
@@ -6671,11 +7000,16 @@ function discoverCardMarkup(result, key, fallbackType) {
   const rating = result.rating ? `★ ${Number(result.rating).toFixed(1)}` : '';
   const providers = (result.streamingProviderNames || result.preferredProviderNames || []).slice(0, 2);
   const streaming = providers.length ? providers.join(' + ') : (['tv','movie'].includes(type) ? 'Streaming varies' : '');
-  const meta = type === 'event'
-    ? [result.eventDate ? formatLongDate(result.eventDate) : '', formatEventClock(result.eventTime || ''), result.venueName || '', result.city || ''].filter(Boolean).join(' · ')
-    : [year, rating, streaming].filter(Boolean).join(' · ');
+  const meta = type === 'concert' || type === 'event'
+    ? [result.eventDate ? formatLongDate(result.eventDate) : '', formatEventClock(result.eventTime || ''), result.venueName || '', result.city || '', result.recommendationReason || ''].filter(Boolean).join(' · ')
+    : type === 'song'
+      ? [result.artistName || result.subtitle || '', result.albumName || '', year].filter(Boolean).join(' · ')
+      : type === 'artist'
+        ? [result.subtitle || result.description || 'Artist'].filter(Boolean).join(' · ')
+        : [year, rating, streaming].filter(Boolean).join(' · ');
   const queueStatus = item ? getQueueStatus(item) : '';
   const plusLabel = queueStatus === 'upnext' ? '+ Queue' : queueStatus === 'tbr' ? '+ TBR' : '+ Add';
+  const libraryOnly = ['music','artist','song'].includes(type);
 
   return `<article class="discover-card">
     <button class="discover-card-open" type="button" data-discover-detail="${escapeAttr(key)}" aria-label="Open ${escapeAttr(result.title || 'details')}">
@@ -6687,10 +7021,11 @@ function discoverCardMarkup(result, key, fallbackType) {
     <div class="discover-card-copy">
       <button class="discover-title-button" type="button" data-discover-detail="${escapeAttr(key)}"><h3>${escapeHtml(result.title || 'Untitled')}</h3></button>
       ${meta ? `<p class="discover-card-meta">${escapeHtml(meta)}</p>` : ''}
-      ${result.subtitle && type === 'book' ? `<p class="discover-card-subtitle">${escapeHtml(result.subtitle)}</p>` : ''}
-      <div class="discover-card-actions${type === 'event' ? ' no-complete' : ''}">
-        ${type === 'event' ? '' : `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo watched / read' : 'Mark watched / read'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>`}
+      ${result.subtitle && ['book','music'].includes(type) ? `<p class="discover-card-subtitle">${escapeHtml(result.subtitle)}</p>` : ''}
+      <div class="discover-card-actions${['event','concert','music','artist','song'].includes(type) ? ' no-complete' : ''}">
+        ${['tv','movie','book'].includes(type) ? `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo watched / read' : 'Mark watched / read'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>` : ''}
         ${['tv','movie','book'].includes(type) ? `<button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>` : ''}
+        ${libraryOnly ? `<button class="discover-add-button${item ? ' is-added' : ''}" type="button" data-discover-library-add="${escapeAttr(key)}" ${item ? 'disabled' : ''}>${item ? 'In Library' : '+ Library'}</button>` : ''}
       </div>
     </div>
   </article>`;
@@ -6716,6 +7051,19 @@ async function handleDiscoverClick(event) {
   const add = event.target.closest('[data-discover-add]');
   if (add) {
     openDiscoverQueueChoice(add.dataset.discoverAdd);
+    return;
+  }
+
+  const libraryAdd = event.target.closest('[data-discover-library-add]');
+  if (libraryAdd) {
+    const key = libraryAdd.dataset.discoverLibraryAdd;
+    const result = state.discoverResults.get(key);
+    if (result && ['music','artist','song'].includes(result.sourceType)) {
+      ensureDiscoverItem(result, 'library');
+      renderAll();
+      renderDiscoverCardInPlace(key);
+      if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
+    }
     return;
   }
 
@@ -6844,7 +7192,7 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
     type: sourceType,
     typeLabel: SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType),
     title: result.title || 'Untitled',
-    provider: result.provider || (sourceType === 'book' ? 'googleBooks' : sourceType === 'event' ? 'ticketmaster' : 'tmdb'),
+    provider: result.provider || (sourceType === 'book' ? 'googleBooks' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'concert' ? 'ticketmaster' : sourceType === 'event' ? 'ticketmaster' : 'tmdb'),
     providerId: String(result.providerId || ''),
     image: result.image || '',
     subtitle: result.subtitle || '',
@@ -6855,17 +7203,20 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
     releaseDate: extractItemReleaseDate(sourceType, result, null),
     attachments: [],
     links: [],
-    date: sourceType === 'event' ? (result.eventDate || '') : '',
+    date: ['event','concert'].includes(sourceType) ? (result.eventDate || '') : '',
     queueStatus,
     active: queueStatus === 'upnext',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    progress: {}
+    progress: {},
+    artistName: result.artistName || (sourceType === 'artist' ? result.title : result.subtitle) || '',
+    artistId: result.artistId || '',
+    albumName: result.albumName || ''
   };
 
   if (sourceType === 'tv') item.progress = { nextSeason: 1, nextEpisode: 1 };
   if (sourceType === 'book') item.progress = { currentPage: 0, totalPages: Number(result.pageCount || 0), readingPeriods: [] };
-  if (sourceType === 'event') {
+  if (sourceType === 'event' || sourceType === 'concert') {
     item.eventMeta = {
       eventDate: result.eventDate || '', eventTime: result.eventTime || '', startDateTime: result.startDateTime || '', timezone: result.timezone || '',
       venueName: result.venueName || '', city: result.city || '', region: result.region || '', address: result.address || '',
@@ -6997,6 +7348,21 @@ async function handleDiscoverRatingChoice(event) {
 }
 
 async function handleDiscoverQuickMetaClick(event) {
+  const libraryAdd = event.target.closest('[data-discover-library-add]');
+  if (libraryAdd) {
+    event.preventDefault();
+    event.stopPropagation();
+    const key = libraryAdd.dataset.discoverLibraryAdd;
+    const result = state.discoverResults.get(key);
+    if (result && ['music','artist','song'].includes(result.sourceType)) {
+      ensureDiscoverItem(result, 'library');
+      renderAll();
+      renderDiscoverCardInPlace(key);
+      if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
+    }
+    return;
+  }
+
   const ratingButton = event.target.closest('[data-discover-tv-rating]');
   if (ratingButton) {
     event.preventDefault();
@@ -7043,6 +7409,10 @@ async function openDiscoverDetail(key) {
     if (result.sourceType === 'tv') await renderDiscoverTVDetail(key);
     else if (result.sourceType === 'movie') await renderDiscoverMovieDetail(key);
     else if (result.sourceType === 'book') await renderDiscoverBookDetail(key);
+    else if (result.sourceType === 'music') await renderDiscoverAlbumDetail(key);
+    else if (result.sourceType === 'artist') await renderDiscoverArtistDetail(key);
+    else if (result.sourceType === 'song') await renderDiscoverSongDetail(key);
+    else if (result.sourceType === 'concert') await renderDiscoverConcertDetail(key);
     else if (result.sourceType === 'event') await renderDiscoverEventDetail(key);
   } catch (error) {
     els.detailBody.innerHTML = `<div class="api-error">${escapeHtml(error.message)}</div>`;
@@ -7380,6 +7750,81 @@ async function renderDiscoverMovieDetail(key) {
 }
 
 
+function discoverLibraryOnlyActionMarkup(result, key) {
+  const item = findDiscoverItem(result);
+  return `<div class="detail-actions"><button class="secondary-button${item ? ' is-selected' : ''}" type="button" data-discover-library-add="${escapeAttr(key)}" ${item ? 'disabled' : ''}>${item ? 'In Library' : '+ Add to Library'}</button></div>`;
+}
+
+async function renderDiscoverAlbumDetail(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const data = await getCached(`music:${result.providerId}`, () => TrackerAPI.getMusicDetails(result.providerId, state.settings));
+  const collection = (data.results || []).find(r => r.wrapperType === 'collection') || (data.results || [])[0] || {};
+  const tracks = (data.results || []).filter(r => r.wrapperType === 'track').slice(0, 20);
+  const image = (collection.artworkUrl100 || result.image || '').replace('100x100bb','600x600bb');
+  els.detailBody.innerHTML = `
+    ${detailHero({ type:'ALBUM', title:collection.collectionName || result.title, image, subtitle:[collection.artistName || result.subtitle || '', collection.primaryGenreName || ''].filter(Boolean).join(' · '), overview:'' })}
+    ${discoverLibraryOnlyActionMarkup(result, key)}
+    ${tracks.length ? `<section class="detail-section"><h3>Tracks</h3><div class="track-list">${tracks.map((track,index) => `<div class="track-row"><div>${index+1}</div><div><div class="list-title">${escapeHtml(track.trackName || 'Track')}</div><div class="list-meta">${escapeHtml(track.artistName || '')}</div></div><div>${track.trackTimeMillis ? formatMillis(track.trackTimeMillis) : ''}</div></div>`).join('')}</div></section>` : ''}`;
+}
+
+async function renderDiscoverArtistDetail(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const data = await getCached(`artist:${result.providerId}`, () => TrackerAPI.getArtistDetails(result.providerId, state.settings));
+  const artist = (data.results || []).find(r => r.wrapperType === 'artist') || {};
+  const albums = (data.results || []).filter(r => r.wrapperType === 'collection');
+  const image = (albums.find(album => album.artworkUrl100)?.artworkUrl100 || result.image || '').replace('100x100bb','600x600bb');
+  if (!result.image && image) result.image = image;
+  els.detailBody.innerHTML = `
+    ${detailHero({ type:'ARTIST', title:artist.artistName || result.title, image, subtitle:artist.primaryGenreName || result.subtitle || '', overview:'' })}
+    ${discoverLibraryOnlyActionMarkup(result, key)}
+    ${albums.length ? `<section class="detail-section"><h3>Recent albums</h3><div class="track-list">${albums.slice(0,8).map(album => `<div class="track-row"><div>•</div><div><div class="list-title">${escapeHtml(album.collectionName || 'Album')}</div><div class="list-meta">${escapeHtml(String(album.releaseDate || '').slice(0,4))}</div></div></div>`).join('')}</div></section>` : ''}`;
+}
+
+async function renderDiscoverSongDetail(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const data = await getCached(`song:${result.providerId}`, () => TrackerAPI.getSongDetails(result.providerId, state.settings));
+  const track = (data.results || []).find(r => r.wrapperType === 'track') || (data.results || [])[0] || {};
+  const image = (track.artworkUrl100 || result.image || '').replace('100x100bb','600x600bb');
+  els.detailBody.innerHTML = `
+    ${detailHero({ type:'SONG', title:track.trackName || result.title, image, subtitle:[track.artistName || result.subtitle || '', track.collectionName || result.albumName || '', track.primaryGenreName || ''].filter(Boolean).join(' · '), overview:'' })}
+    ${discoverLibraryOnlyActionMarkup(result, key)}
+    ${track.trackViewUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(track.trackViewUrl)}" target="_blank" rel="noopener">Open in Apple Music / iTunes ↗</a></section>` : ''}`;
+}
+
+function discoverEventCalendarActionMarkup(result, key) {
+  const item = findDiscoverItem(result);
+  const visible = Boolean(item && !item.calendarHidden && (item.date || item.eventMeta?.eventDate));
+  return `<button class="secondary-button${visible ? ' is-selected' : ''}" type="button" data-discover-event-calendar="${escapeAttr(key)}">${visible ? 'Remove from Calendar' : '+ Calendar'}</button>`;
+}
+
+function ticketmasterFollowTermForEvent(event) {
+  return String(event?.attractions?.[0] || event?.venueName || event?.title || '').trim();
+}
+
+function ticketmasterCalendarFollowButtonMarkup(event, key) {
+  const term = ticketmasterFollowTermForEvent(event);
+  if (!term) return '';
+  const followed = normalizedTicketmasterCalendarTerms().some(value => normalizeArtistName(value) === normalizeArtistName(term));
+  return `<button class="secondary-button${followed ? ' is-selected' : ''}" type="button" data-ticketmaster-calendar-follow="${escapeAttr(key)}">${followed ? '♥ Following' : '♡ Follow'} ${escapeHtml(term)}</button>`;
+}
+
+async function renderDiscoverConcertDetail(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const dateLine = [result.eventDate ? formatLongDate(result.eventDate) : '', formatEventClock(result.eventTime || ''), result.venueName || '', [result.city, result.region].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+  els.detailBody.innerHTML = `
+    ${detailHero({ type:'CONCERT', title:result.artistName || result.title, image:result.image || '', subtitle:dateLine, overview:result.description || '' })}
+    ${result.recommendationReason ? `<p class="discover-history-note">${escapeHtml(result.recommendationReason)}</p>` : ''}
+    <div class="detail-actions">
+      ${discoverEventCalendarActionMarkup(result, key)}
+      ${result.ticketUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(result.ticketUrl)}" target="_blank" rel="noopener">Tickets on Ticketmaster ↗</a>` : ''}
+    </div>
+    ${result.lineup?.length ? `<section class="detail-section"><h3>Lineup</h3><p>${escapeHtml(result.lineup.join(' · '))}</p></section>` : ''}`;
+}
+
 async function renderDiscoverEventDetail(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
@@ -7395,7 +7840,11 @@ async function renderDiscoverEventDetail(key) {
   const info = [(event.classifications || []).join(' · '), priceText].filter(Boolean).join(' · ');
   els.detailBody.innerHTML = `
     ${detailHero({ type:'EVENT', title:event.title || result.title, image:event.image || result.image, subtitle:dateLine, overview:event.description || result.description || '' })}
-    ${event.ticketUrl ? `<div class="detail-actions"><a class="secondary-button detail-link-button" href="${escapeAttr(event.ticketUrl)}" target="_blank" rel="noopener">Tickets on Ticketmaster ↗</a></div>` : ''}
+    <div class="detail-actions">
+      ${discoverEventCalendarActionMarkup(result, key)}
+      ${ticketmasterCalendarFollowButtonMarkup(event, key)}
+      ${event.ticketUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(event.ticketUrl)}" target="_blank" rel="noopener">Tickets on Ticketmaster ↗</a>` : ''}
+    </div>
     <section class="detail-section"><h3>Event details</h3>${info ? `<p>${escapeHtml(info)}</p>` : ''}${event.address ? `<p class="detail-meta">${escapeHtml(event.address)}</p>` : ''}</section>
   `;
 }
@@ -7875,7 +8324,7 @@ function extractItemGenres(sourceType, source, editing) {
     const names = ids.map(id => map[Number(id)]).filter(Boolean);
     return names.length ? [...new Set(names)] : [...(editing?.genres || [])];
   }
-  if (sourceType === 'music') {
+  if (['music','artist','song'].includes(sourceType)) {
     const genre = source?.raw?.primaryGenreName || source?.description || editing?.genres?.[0] || '';
     return genre ? [String(genre)] : [];
   }
@@ -7890,7 +8339,8 @@ function extractItemReleaseDate(sourceType, source, editing) {
   if (sourceType === 'book') return source?.publishedDate || source?.raw?.volumeInfo?.publishedDate || editing?.releaseDate || '';
   if (sourceType === 'tv') return source?.raw?.first_air_date || editing?.releaseDate || '';
   if (sourceType === 'movie') return source?.raw?.release_date || editing?.releaseDate || '';
-  if (sourceType === 'music') return source?.raw?.releaseDate || editing?.releaseDate || '';
+  if (sourceType === 'music' || sourceType === 'song') return source?.releaseDate || source?.raw?.releaseDate || editing?.releaseDate || '';
+  if (sourceType === 'artist') return editing?.releaseDate || '';
   if (sourceType === 'event') return source?.eventDate || source?.raw?.dates?.start?.localDate || editing?.date || editing?.releaseDate || '';
   return editing?.releaseDate || '';
 }
@@ -7947,7 +8397,7 @@ function normalizeLibraryPrefs(value) {
 
 function isCoreLibraryGroupKey(key) {
   const normalized = slugifyType(key).replace(/s$/, '');
-  return normalized === 'tv' || normalized === 'movie' || normalized === 'book';
+  return ['tv','movie','book','album','artist','song'].includes(normalized);
 }
 
 function libraryAvailableTypeGroups() {
@@ -7987,6 +8437,12 @@ function libraryDefaultTypeKeys() {
 function ensureLibraryVisibleTypes() {
   if (!(state.libraryVisibleTypes instanceof Set)) {
     state.libraryVisibleTypes = new Set(libraryDefaultTypeKeys());
+  } else if (!Array.isArray(normalizeLibraryPrefs(state.libraryPrefs).defaultTypeKeys)) {
+    // When the user has not explicitly customized Library defaults, newly available
+    // core media types (Album / Artist / Song) should become visible automatically.
+    for (const [key] of libraryAvailableTypeGroups()) {
+      if (isCoreLibraryGroupKey(key)) state.libraryVisibleTypes.add(key);
+    }
   }
   return state.libraryVisibleTypes;
 }
@@ -8162,7 +8618,7 @@ function makeLibraryPoster(item) {
   const hasThumbnail = Boolean(String(item.image || '').trim());
   if (!hasThumbnail) poster.classList.add('library-text-card-button');
   const recommendedBadge = item.recommended
-    ? `<span class="library-recommended-badge" aria-label="Recommended">♥</span>`
+    ? `<span class="library-recommended-badge" aria-label="Recommended">♥ Recommended</span>`
     : '';
   poster.innerHTML = hasThumbnail
     ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />
@@ -8204,7 +8660,7 @@ function renderLibrary() {
           return Number(undatedRecentOrder.get(a.id) || 0) - Number(undatedRecentOrder.get(b.id) || 0);
         };
 
-  const preferredLabels = ['TV','Movie','Book','Music','Workout','Other'];
+  const preferredLabels = ['TV','Movie','Book','Album','Artist','Song','Workout','Other'];
   const preferredOrder = preferredLabels.map(label => slugifyType(label));
   const grouped = new Map();
   for (const item of filtered) {
@@ -8413,7 +8869,7 @@ function getSourceType(item) {
   if (item.sourceType) return item.sourceType;
   if (item.provider === 'youtube' || item.type === 'workout') return 'youtube';
   if (item.provider === 'ticketmaster') return 'event';
-  if (['tv', 'movie', 'book', 'music', 'event'].includes(item.type)) return item.type;
+  if (['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event'].includes(item.type)) return item.type;
   return 'other';
 }
 

@@ -5607,3 +5607,18 @@ body.auth-locked > main {
 @media (max-width: 430px) {
   .tbr-type-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+
+/* Music + selective Ticketmaster live-event additions */
+.discover-calendar-entry.concert { border-left-color: #7a3344; }
+.queue-calendar-entry.queue-calendar-concert { background: rgba(251,250,245,.96); }
+.queue-calendar-entry.queue-calendar-concert .queue-calendar-entry-copy span { font-weight: 600; }
+
+
+/* Selective Ticketmaster live-event calendar entries */
+.queue-calendar-entry:not(.queue-calendar-concert) .discover-type-chip { display: none; }
+.detail-actions [data-ticketmaster-calendar-follow].is-selected,
+.detail-actions [data-discover-event-calendar].is-selected {
+  background: rgba(114, 0, 20, .08);
+  border-color: rgba(114, 0, 20, .28);
+}

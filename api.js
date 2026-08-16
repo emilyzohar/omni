@@ -137,7 +137,7 @@ export const TrackerAPI = (() => {
 
   async function searchMusic(query, settings) {
     const country = (settings.itunesCountry || 'CA').toUpperCase();
-    const url = `${ITUNES_ROOT}/search?term=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&media=music&entity=album&limit=12`;
+    const url = `${ITUNES_ROOT}/search?term=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&media=music&entity=album&limit=24`;
     const data = await fetchJson(url);
     const seen = new Set();
     return (data.results || []).filter(result => {
@@ -145,12 +145,64 @@ export const TrackerAPI = (() => {
       seen.add(result.collectionId);
       return true;
     }).map(result => ({
+      sourceType: 'music',
       provider: 'itunes',
       providerId: String(result.collectionId),
       title: result.collectionName || 'Untitled',
       subtitle: result.artistName || '',
+      artistName: result.artistName || '',
+      artistId: result.artistId ? String(result.artistId) : '',
       image: (result.artworkUrl100 || '').replace('100x100bb', '400x400bb'),
       description: result.primaryGenreName || '',
+      releaseDate: String(result.releaseDate || '').slice(0, 10),
+      raw: result
+    }));
+  }
+
+  async function searchArtists(query, settings) {
+    const country = (settings.itunesCountry || 'CA').toUpperCase();
+    const url = `${ITUNES_ROOT}/search?term=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&media=music&entity=musicArtist&limit=25`;
+    const data = await fetchJson(url);
+    const seen = new Set();
+    return (data.results || []).filter(result => {
+      if (!result.artistId || seen.has(String(result.artistId))) return false;
+      seen.add(String(result.artistId));
+      return true;
+    }).map(result => ({
+      sourceType: 'artist',
+      provider: 'itunes',
+      providerId: String(result.artistId),
+      title: result.artistName || 'Unknown artist',
+      subtitle: result.primaryGenreName || 'Artist',
+      artistName: result.artistName || '',
+      artistId: String(result.artistId),
+      image: '',
+      description: result.primaryGenreName || '',
+      raw: result
+    }));
+  }
+
+  async function searchSongs(query, settings) {
+    const country = (settings.itunesCountry || 'CA').toUpperCase();
+    const url = `${ITUNES_ROOT}/search?term=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&media=music&entity=song&limit=40`;
+    const data = await fetchJson(url);
+    const seen = new Set();
+    return (data.results || []).filter(result => {
+      if (!result.trackId || seen.has(String(result.trackId))) return false;
+      seen.add(String(result.trackId));
+      return true;
+    }).map(result => ({
+      sourceType: 'song',
+      provider: 'itunes',
+      providerId: String(result.trackId),
+      title: result.trackName || 'Untitled song',
+      subtitle: result.artistName || '',
+      artistName: result.artistName || '',
+      artistId: result.artistId ? String(result.artistId) : '',
+      albumName: result.collectionName || '',
+      image: (result.artworkUrl100 || '').replace('100x100bb', '400x400bb'),
+      description: [result.collectionName, result.primaryGenreName].filter(Boolean).join(' · '),
+      releaseDate: String(result.releaseDate || '').slice(0, 10),
       raw: result
     }));
   }
@@ -158,6 +210,16 @@ export const TrackerAPI = (() => {
   async function getMusicDetails(id, settings) {
     const country = (settings.itunesCountry || 'CA').toUpperCase();
     return fetchJson(`${ITUNES_ROOT}/lookup?id=${encodeURIComponent(id)}&country=${encodeURIComponent(country)}&entity=song`);
+  }
+
+  async function getArtistDetails(id, settings) {
+    const country = (settings.itunesCountry || 'CA').toUpperCase();
+    return fetchJson(`${ITUNES_ROOT}/lookup?id=${encodeURIComponent(id)}&country=${encodeURIComponent(country)}&entity=album&limit=12&sort=recent`);
+  }
+
+  async function getSongDetails(id, settings) {
+    const country = (settings.itunesCountry || 'CA').toUpperCase();
+    return fetchJson(`${ITUNES_ROOT}/lookup?id=${encodeURIComponent(id)}&country=${encodeURIComponent(country)}`);
   }
 
   function parsePlaylistId(value) {
@@ -541,6 +603,19 @@ export const TrackerAPI = (() => {
   }
 
 
+  // Ticketmaster's default Discovery API limit is 5 requests/second. Serialize
+  // requests with a small gap so artist-follow and event-recommendation lookups
+  // can safely share the same browser session without bursty 429 responses.
+  let ticketmasterQueue = Promise.resolve();
+  function fetchTicketmasterJson(url) {
+    const run = ticketmasterQueue.then(async () => {
+      await sleep(225);
+      return fetchJson(url);
+    });
+    ticketmasterQueue = run.catch(() => undefined);
+    return run;
+  }
+
   function ticketmasterDateTime(value = new Date()) {
     const date = value instanceof Date ? value : new Date(value);
     return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -569,7 +644,12 @@ export const TrackerAPI = (() => {
     const genre = classification?.genre?.name || '';
     const subGenre = classification?.subGenre?.name || '';
     const price = event?.priceRanges?.[0] || {};
-    const attractions = (event?._embedded?.attractions || []).map(attraction => attraction?.name).filter(Boolean);
+    const attractionDetails = (event?._embedded?.attractions || []).map(attraction => ({
+      id: String(attraction?.id || ''),
+      name: attraction?.name || '',
+      classifications: (attraction?.classifications || []).flatMap(entry => [entry?.segment?.name, entry?.genre?.name, entry?.subGenre?.name]).filter(Boolean)
+    })).filter(attraction => attraction.id || attraction.name);
+    const attractions = attractionDetails.map(attraction => attraction.name).filter(Boolean);
     return {
       sourceType: 'event',
       provider: 'ticketmaster',
@@ -593,6 +673,7 @@ export const TrackerAPI = (() => {
       status: event?.dates?.status?.code || '',
       classifications: [segment, genre, subGenre].filter(value => value && value !== 'Undefined'),
       attractions,
+      attractionDetails,
       priceRange: Number.isFinite(Number(price?.min)) || Number.isFinite(Number(price?.max)) ? {
         min: Number(price?.min || 0),
         max: Number(price?.max || 0),
@@ -636,7 +717,7 @@ export const TrackerAPI = (() => {
     if (options.venueId) params.set('venueId', String(options.venueId));
     if (options.radius) params.set('radius', String(options.radius));
     if (options.unit) params.set('unit', String(options.unit));
-    const data = await fetchJson(`${TICKETMASTER_ROOT}/events.json?${params.toString()}`);
+    const data = await fetchTicketmasterJson(`${TICKETMASTER_ROOT}/events.json?${params.toString()}`);
     return (data?._embedded?.events || []).map(mapTicketmasterEvent);
   }
 
@@ -646,7 +727,7 @@ export const TrackerAPI = (() => {
 
   async function getTicketmasterEvent(id, settings) {
     const key = required(settings.ticketmasterKey, 'Ticketmaster API key');
-    const data = await fetchJson(`${TICKETMASTER_ROOT}/events/${encodeURIComponent(id)}.json?apikey=${encodeURIComponent(key)}`);
+    const data = await fetchTicketmasterJson(`${TICKETMASTER_ROOT}/events/${encodeURIComponent(id)}.json?apikey=${encodeURIComponent(key)}`);
     return mapTicketmasterEvent(data);
   }
 
@@ -655,6 +736,8 @@ export const TrackerAPI = (() => {
     if (type === 'tv' || type === 'movie') return searchTMDB(query, type, settings);
     if (type === 'book') return searchBooks(query, settings);
     if (type === 'music') return searchMusic(query, settings);
+    if (type === 'artist') return searchArtists(query, settings);
+    if (type === 'song') return searchSongs(query, settings);
     if (type === 'event') return searchTicketmasterEvents(query, settings);
     return [];
   }
@@ -670,7 +753,11 @@ export const TrackerAPI = (() => {
     searchBooks,
     getBookDetails,
     searchMusic,
+    searchArtists,
+    searchSongs,
     getMusicDetails,
+    getArtistDetails,
+    getSongDetails,
     parsePlaylistId,
     getPlaylist,
     getYouTubeVideo,
