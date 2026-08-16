@@ -749,7 +749,7 @@ export const TrackerAPI = (() => {
     if (!globalThis.document) throw new Error('Google Places search requires a browser.');
     if (!googlePlacesLoader) {
       googlePlacesLoader = new Promise((resolve, reject) => {
-        const callback = `__catchAllPlacesReady_${Math.random().toString(36).slice(2)}`;
+        const callback = `__omniPlacesReady_${Math.random().toString(36).slice(2)}`;
         globalThis[callback] = async () => {
           try {
             delete globalThis[callback];
