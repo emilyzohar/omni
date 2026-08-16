@@ -7834,7 +7834,7 @@ dialog.modal:not([open]) {
 @media (max-width: 760px) {
   .library-controls {
     display: grid !important;
-    grid-template-columns: minmax(0, 45%) 36px minmax(0, 1fr) 38px !important;
+    grid-template-columns: minmax(0, 42%) 44px minmax(0, 1fr) 44px !important;
     grid-template-rows: auto auto !important;
     column-gap: 8px !important;
     row-gap: 13px !important;
@@ -8002,4 +8002,156 @@ dialog.modal:not([open]) {
     width: 40px !important;
     min-width: 40px !important;
   }
+}
+
+/* =========================================================
+   Omni Library details + Activity + recommendations update
+   ========================================================= */
+.detail-disclosure-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+}
+.detail-synopsis-details {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.detail-synopsis-details > summary,
+.library-similar-details > summary {
+  width: fit-content;
+  list-style: none;
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 800;
+  font-size: .82rem;
+}
+.detail-synopsis-details > summary::-webkit-details-marker,
+.library-similar-details > summary::-webkit-details-marker { display: none; }
+.detail-synopsis-details > summary::after,
+.library-similar-details > summary::after {
+  content: ' +';
+  opacity: .55;
+}
+.detail-synopsis-details[open] > summary::after,
+.library-similar-details[open] > summary::after { content: ' −'; }
+.detail-synopsis-content {
+  margin-top: 10px;
+  padding: 12px 0 2px;
+  border-top: 1px solid rgba(21,36,58,.09);
+}
+.detail-synopsis-content .detail-overview {
+  margin: 0;
+}
+.detail-availability-link {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: .8rem;
+  font-weight: 750;
+  text-decoration: none;
+}
+.detail-availability-link:hover,
+.detail-availability-link:focus-visible { text-decoration: underline; }
+
+.library-personal-meta {
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid rgba(21,36,58,.08);
+}
+.library-personal-meta .star-picker { margin: 0; }
+.library-personal-note {
+  margin: 10px 0 0;
+  color: #4d5360;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.library-personal-meta-slot:empty { display: none; }
+
+.library-similar-details {
+  padding: 15px 16px;
+}
+.library-similar-details > summary {
+  font-size: .94rem;
+}
+.library-similar-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 13px;
+}
+.library-similar-card {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px;
+  border: 1px solid rgba(21,36,58,.10);
+  border-radius: 12px;
+  background: #fffdf7;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.library-similar-card img {
+  width: 42px;
+  height: 54px;
+  flex: 0 0 auto;
+  object-fit: cover;
+  border-radius: 7px;
+}
+.library-similar-card span { min-width: 0; display: grid; gap: 3px; }
+.library-similar-card strong,
+.library-similar-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.library-similar-card strong { font-size: .82rem; }
+.library-similar-card small { color: #70737a; font-size: .7rem; line-height: 1.25; }
+
+.activity-fields { margin-bottom: 2px; }
+
+@media (max-width: 620px) {
+  /* The tab panel itself must participate in the flex height chain or the
+     sticker rows receive no scrollable height on iOS/mobile browsers. */
+  dialog.modal.sticker-settings-modal[open] {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 92dvh !important;
+    max-height: 92dvh !important;
+    overflow: hidden !important;
+  }
+  .sticker-settings-modal .track-settings-panel:not([hidden]) {
+    display: flex !important;
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+  .sticker-settings-modal .track-settings-panel:not([hidden]) > form,
+  .sticker-settings-modal .sticker-settings-form {
+    display: flex !important;
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    flex-direction: column !important;
+  }
+  .sticker-settings-modal .sticker-settings-rows {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow-y: scroll !important;
+    overflow-x: hidden !important;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .detail-disclosure-row {
+    align-items: center;
+    gap: 12px;
+  }
+  .detail-availability-link { font-size: .74rem; }
+  .library-similar-grid { grid-template-columns: 1fr; }
+  .library-similar-card img { width: 46px; height: 58px; }
 }

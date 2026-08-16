@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=mobile-tabs-types-1" />
+  <link rel="stylesheet" href="style.css?v=omni-library-activity-recs-1" />
 </head>
 <body class="auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -267,17 +267,18 @@
           <option value="movie">Movie</option>
           <option value="book">Book</option>
           <option value="music">Music</option>
-          <option value="artist">Music · Artist</option>
-          <option value="song">Music · Song</option>
-          <option value="concert">Music · Concert</option>
           <option value="food">Food</option>
-          <option value="restaurant">Food · Restaurant</option>
-          <option value="recipe">Food · Recipe</option>
           <option value="event">Event</option>
+          <option value="activity">Activity</option>
           <option value="youtube">YouTube</option>
           <option value="reminder">Reminder</option>
           <option value="other">Other</option>
         </select>
+      </label>
+
+      <label id="itemSubtypeBlock" class="field" hidden>
+        <span id="itemSubtypeLabel">Kind</span>
+        <select id="itemSubtype"></select>
       </label>
 
       <label id="displayTypeBlock" class="field" hidden>
@@ -342,6 +343,23 @@
           </label>
         </div>
         <p class="field-hint">For a one-time reminder, choose Never and a specific date. Repeating reminders use the start date as their anchor, including custom schedules such as every 3 days or every 2 months.</p>
+      </div>
+
+      <div id="activityFields" class="progress-fields activity-fields" hidden>
+        <div class="two-column-fields">
+          <label class="field compact-field">
+            <span>Starts</span>
+            <input id="activityStartDate" type="date" />
+          </label>
+          <label class="field compact-field">
+            <span>Ends <em>optional</em></span>
+            <input id="activityEndDate" type="date" />
+          </label>
+        </div>
+        <label class="field">
+          <span>With <em>optional</em></span>
+          <input id="activityPeople" type="text" autocomplete="off" placeholder="Names, separated by commas" />
+        </label>
       </div>
 
       <div id="manualTitleBlock">
@@ -598,6 +616,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=mobile-tabs-types-1"></script>
+  <script type="module" src="app.js?v=omni-library-activity-recs-1"></script>
 </body>
 </html>

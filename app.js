@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=discover-multiselect-2';
-import { API_CONFIG } from './config.js?v=discover-multiselect-2';
+import { TrackerAPI } from './api.js?v=omni-library-activity-recs-1';
+import { API_CONFIG } from './config.js?v=omni-library-activity-recs-1';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -25,6 +25,7 @@ const TYPE_LABELS = {
   music: 'Music',
   food: 'Food',
   event: 'Events',
+  activity: 'Activities',
   workout: 'Workouts',
   other: 'Other'
 };
@@ -38,12 +39,13 @@ const SOURCE_ITEM_LABELS = {
   song: 'Song',
   concert: 'Concert',
   event: 'Event',
+  activity: 'Activity',
   food: 'Food',
   restaurant: 'Restaurant',
   recipe: 'Recipe'
 };
 
-const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'food', 'restaurant', 'recipe', 'other']);
+const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'food', 'restaurant', 'recipe', 'other']);
 const STICKER_COLORS = ['rust', 'red', 'coral', 'orange', 'yellow', 'cream', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'teal', 'green', 'mint', 'brown', 'black', 'white'];
 
 const CLOUD_STATE_VERSION = 2;
@@ -343,6 +345,9 @@ const els = {
   bookProgressModal: $('#bookProgressModal'),
   itemForm: $('#itemForm'),
   itemSourceType: $('#itemSourceType'),
+  itemSubtypeBlock: $('#itemSubtypeBlock'),
+  itemSubtype: $('#itemSubtype'),
+  itemSubtypeLabel: $('#itemSubtypeLabel'),
   displayTypeBlock: $('#displayTypeBlock'),
   itemDisplayType: $('#itemDisplayType'),
   itemSubcategory: $('#itemSubcategory'),
@@ -367,6 +372,10 @@ const els = {
   playlistInput: $('#playlistInput'),
   playlistLoadButton: $('#playlistLoadButton'),
   playlistPreview: $('#playlistPreview'),
+  activityFields: $('#activityFields'),
+  activityStartDate: $('#activityStartDate'),
+  activityEndDate: $('#activityEndDate'),
+  activityPeople: $('#activityPeople'),
   manualTitleBlock: $('#manualTitleBlock'),
   manualTitle: $('#manualTitle'),
   tvProgressFields: $('#tvProgressFields'),
@@ -865,6 +874,11 @@ function bindEvents() {
   els.resetStreakSettings?.addEventListener('click', resetStreakSettings);
   els.itemSourceType?.addEventListener('change', () => {
     clearSourceSelectionForTypeChange();
+    configureItemSubtype(true);
+    updateItemFormForType();
+  });
+  els.itemSubtype?.addEventListener('change', () => {
+    clearSourceSelectionForTypeChange();
     updateItemFormForType();
   });
   els.catalogueSearchButton?.addEventListener('click', searchCatalogue);
@@ -1036,13 +1050,29 @@ function bindEvents() {
       return;
     }
 
+    const librarySimilar = event.target.closest('[data-library-similar]');
+    if (librarySimilar) {
+      try {
+        const result = JSON.parse(librarySimilar.dataset.librarySimilar || '{}');
+        const sourceType = result.sourceType || 'other';
+        els.detailModal?.close();
+        openItemModal('', 'library');
+        setItemFormSourceType(sourceType, sourceType === 'music' ? { provider: result.provider, subcategory: 'Album' } : null);
+        updateItemFormForType();
+        selectCatalogueResult(result);
+      } catch (error) {
+        console.warn('[Library Recommendations] could not open recommendation', error);
+      }
+      return;
+    }
+
     const restaurantSuggestion = event.target.closest('[data-restaurant-suggestion]');
     if (restaurantSuggestion) {
       try {
         const result = JSON.parse(restaurantSuggestion.dataset.restaurantSuggestion || '{}');
         els.detailModal?.close();
         openItemModal('', 'library');
-        if (els.itemSourceType) els.itemSourceType.value = 'restaurant';
+        setItemFormSourceType('restaurant');
         updateItemFormForType();
         selectCatalogueResult(result);
       } catch {}
@@ -2149,7 +2179,7 @@ async function getUpNextInfo(item) {
     const remaining = await countRemainingAvailableTVEpisodes(item);
     return {
       title: item.title,
-      meta: `S${episode.season_number} E${episode.episode_number} · ${episode.name || 'Episode'}${remaining ? ` · + ${remaining}` : ''}`,
+      meta: `S${episode.season_number} E${episode.episode_number} · ${episode.name || 'Episode'}${remaining ? ` · + ${remaining} −` : ''}`,
       image: TrackerAPI.tmdbImage(episode.still_path) || item.image
     };
   }
@@ -3356,7 +3386,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     els.itemModalEyebrow.textContent = 'EDIT';
     els.itemModalTitle.textContent = item.title;
     const sourceType = getSourceType(item);
-    els.itemSourceType.value = sourceType;
+    setItemFormSourceType(sourceType, item);
     if (['youtube', 'reminder', 'other'].includes(sourceType)) els.itemDisplayType.value = getItemTypeLabel(item);
     els.provider.value = item.provider || 'manual';
     els.providerId.value = item.providerId || '';
@@ -3366,6 +3396,11 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     if (els.itemSubcategory) els.itemSubcategory.value = item.subcategory || '';
     els.itemNote.value = item.notes || '';
     els.itemDate.value = item.date || '';
+    if (sourceType === 'activity') {
+      if (els.activityStartDate) els.activityStartDate.value = item.activityMeta?.startDate || item.date || '';
+      if (els.activityEndDate) els.activityEndDate.value = item.activityMeta?.endDate || item.date || '';
+      if (els.activityPeople) els.activityPeople.value = (item.activityMeta?.people || []).join(', ');
+    }
     if (els.itemReleaseDate) els.itemReleaseDate.value = normalizedReleaseDate(item.releaseDate);
     if (els.itemRecommended) els.itemRecommended.checked = Boolean(item.recommended);
     syncItemRecommendHeart();
@@ -3421,8 +3456,12 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.itemForm.reset();
   els.editingId.value = '';
   els.itemSourceType.value = 'tv';
+  configureItemSubtype(true);
   els.itemDisplayType.value = 'Workout';
   if (els.itemSubcategory) els.itemSubcategory.value = '';
+  if (els.activityStartDate) els.activityStartDate.value = todayString();
+  if (els.activityEndDate) els.activityEndDate.value = '';
+  if (els.activityPeople) els.activityPeople.value = '';
   els.itemQueueStatus.value = ['upnext','tbr','library'].includes(defaultQueueStatus) ? defaultQueueStatus : 'library';
   els.nextSeason.value = 1;
   els.nextEpisode.value = 1;
@@ -3469,6 +3508,72 @@ function resetItemForm(defaultQueueStatus = 'library') {
   updateItemFormForType();
 }
 
+const FORM_SUBTYPE_OPTIONS = {
+  music: [
+    { value: 'manual', label: 'Manual' },
+    { value: 'album', label: 'Album' },
+    { value: 'artist', label: 'Artist' },
+    { value: 'song', label: 'Song' },
+    { value: 'concert', label: 'Concert' }
+  ],
+  food: [
+    { value: 'manual', label: 'Manual' },
+    { value: 'restaurant', label: 'Restaurant' },
+    { value: 'recipe', label: 'Recipe' }
+  ]
+};
+
+function formSubtypeForItem(sourceType, item = null) {
+  if (sourceType === 'artist' || sourceType === 'song' || sourceType === 'concert' || sourceType === 'restaurant' || sourceType === 'recipe') return sourceType;
+  if (sourceType === 'music') {
+    if (item?.provider === 'itunes' || cleanTypeLabel(item?.subcategory || '') === 'Album') return 'album';
+    return 'manual';
+  }
+  if (sourceType === 'food') return 'manual';
+  return '';
+}
+
+function configureItemSubtype(reset = false, sourceTypeHint = '', item = null) {
+  if (!els.itemSubtypeBlock || !els.itemSubtype) return;
+  const parent = els.itemSourceType?.value || 'tv';
+  const options = FORM_SUBTYPE_OPTIONS[parent] || null;
+  els.itemSubtypeBlock.hidden = !options;
+  if (!options) {
+    els.itemSubtype.innerHTML = '';
+    return;
+  }
+
+  const previous = reset ? '' : els.itemSubtype.value;
+  els.itemSubtype.innerHTML = options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
+  const hinted = formSubtypeForItem(sourceTypeHint, item);
+  const preferred = hinted || (options.some(option => option.value === previous) ? previous : 'manual');
+  els.itemSubtype.value = options.some(option => option.value === preferred) ? preferred : 'manual';
+  if (els.itemSubtypeLabel) els.itemSubtypeLabel.textContent = parent === 'music' ? 'Music type' : 'Food type';
+}
+
+function selectedFormSourceType() {
+  const parent = els.itemSourceType?.value || 'tv';
+  if (parent === 'music') {
+    const subtype = els.itemSubtype?.value || 'manual';
+    if (['artist','song','concert'].includes(subtype)) return subtype;
+    return 'music';
+  }
+  if (parent === 'food') {
+    const subtype = els.itemSubtype?.value || 'manual';
+    if (['restaurant','recipe'].includes(subtype)) return subtype;
+    return 'food';
+  }
+  return parent;
+}
+
+function setItemFormSourceType(sourceType, item = null) {
+  if (!els.itemSourceType) return;
+  if (['music','artist','song','concert'].includes(sourceType)) els.itemSourceType.value = 'music';
+  else if (['food','restaurant','recipe'].includes(sourceType)) els.itemSourceType.value = 'food';
+  else els.itemSourceType.value = sourceType;
+  configureItemSubtype(true, sourceType, item);
+}
+
 function clearSourceSelectionForTypeChange() {
   state.selectedSource = null;
   state.loadedPlaylist = null;
@@ -3487,26 +3592,39 @@ function clearSourceSelectionForTypeChange() {
 }
 
 function updateItemFormForType() {
-  const sourceType = els.itemSourceType.value;
-  const isCatalogue = ['tv', 'book', 'movie', 'music', 'artist', 'song', 'concert', 'event', 'restaurant'].includes(sourceType);
+  configureItemSubtype(false);
+  const parentType = els.itemSourceType.value;
+  const subtype = els.itemSubtype?.value || '';
+  const sourceType = selectedFormSourceType();
+  const musicManual = parentType === 'music' && subtype === 'manual';
+  const musicAlbum = parentType === 'music' && subtype === 'album';
+  const foodManual = parentType === 'food' && subtype === 'manual';
+  const isCatalogue = ['tv', 'book', 'movie', 'artist', 'song', 'concert', 'event', 'restaurant'].includes(sourceType) || musicAlbum;
   const isYouTube = sourceType === 'youtube';
   const isReminder = sourceType === 'reminder';
+  const isActivity = sourceType === 'activity';
   const isManual = sourceType === 'other';
-  const isFoodManual = ['food','recipe'].includes(sourceType);
+  const isFoodManual = sourceType === 'food' || sourceType === 'recipe';
 
   els.catalogueSearchBlock.hidden = !isCatalogue;
   els.workoutBlock.hidden = !isYouTube;
   if (els.reminderBlock) els.reminderBlock.hidden = !isReminder;
+  if (els.activityFields) els.activityFields.hidden = !isActivity;
   els.displayTypeBlock.hidden = !(isYouTube || isReminder || isManual);
   els.manualTitleBlock.hidden = false;
   els.tvProgressFields.hidden = sourceType !== 'tv';
   els.bookProgressFields.hidden = sourceType !== 'book';
-  if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder;
+  if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder || isActivity;
   if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = !['tv','movie','book','music','artist','song'].includes(sourceType);
   if (sourceType === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
     els.bookStartDate.value = todayString();
   }
-  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || ['music','artist','song','concert','food','recipe'].includes(sourceType);
+  if (isActivity && !els.editingId.value && els.activityStartDate && !els.activityStartDate.value) {
+    els.activityStartDate.value = todayString();
+  }
+  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || isActivity || ['music','artist','song','concert','food','recipe'].includes(sourceType);
+  if (isActivity && els.itemQueueStatus) els.itemQueueStatus.value = 'library';
+
   const upNextOption = els.itemQueueStatus?.querySelector('option[value="upnext"]');
   if (upNextOption) {
     upNextOption.hidden = sourceType === 'restaurant';
@@ -3514,16 +3632,18 @@ function updateItemFormForType() {
     if (sourceType === 'restaurant' && els.itemQueueStatus.value === 'upnext') els.itemQueueStatus.value = 'library';
   }
 
-  const fixedMusicSubcategory = musicSubcategoryForSourceType(sourceType) || foodSubcategoryForSourceType(sourceType) || (sourceType === 'music' && (state.selectedSource?.provider === 'itunes' || els.provider?.value === 'itunes') ? 'Album' : '');
+  const fixedSubcategory = musicAlbum
+    ? 'Album'
+    : musicSubcategoryForSourceType(sourceType) || foodSubcategoryForSourceType(sourceType) || '';
   if (els.itemSubcategory) {
-    if (fixedMusicSubcategory) {
-      els.itemSubcategory.value = fixedMusicSubcategory;
+    if (fixedSubcategory) {
+      els.itemSubcategory.value = fixedSubcategory;
       els.itemSubcategory.readOnly = true;
-      els.itemSubcategory.placeholder = fixedMusicSubcategory;
+      els.itemSubcategory.placeholder = fixedSubcategory;
     } else {
       els.itemSubcategory.readOnly = false;
-      if (!els.editingId.value) els.itemSubcategory.value = '';
-      els.itemSubcategory.placeholder = 'e.g. Documentary, Lecture, Gym';
+      if (!els.editingId.value && !els.itemSubcategory.value) els.itemSubcategory.value = '';
+      els.itemSubcategory.placeholder = isActivity ? 'e.g. Trip, Outing, Social' : 'e.g. Documentary, Lecture, Gym';
     }
   }
 
@@ -3545,7 +3665,8 @@ function updateItemFormForType() {
   if (!els.editingId.value) {
     state.selectedSource = null;
     state.loadedPlaylist = null;
-    els.provider.value = isYouTube ? 'youtube' : isReminder ? 'reminder' : (isManual || isFoodManual) ? 'manual' : '';
+    const manualProvider = isManual || isFoodManual || musicManual || isActivity || sourceType === 'concert';
+    els.provider.value = isYouTube ? 'youtube' : isReminder ? 'reminder' : manualProvider ? 'manual' : '';
     els.providerId.value = '';
     els.providerImage.value = '';
     els.providerSubtitle.value = '';
@@ -3560,7 +3681,7 @@ function updateItemFormForType() {
     tv: 'Search TV shows',
     movie: 'Search movies',
     book: 'Search books',
-    music: 'Search albums (optional)',
+    music: 'Search albums',
     artist: 'Search artists',
     song: 'Search songs',
     concert: 'Search concerts — past or upcoming',
@@ -3574,14 +3695,18 @@ function updateItemFormForType() {
       ? 'Recipe name'
       : sourceType === 'restaurant'
         ? 'Name this restaurant in your tracker'
-        : 'Title';
+        : sourceType === 'activity'
+          ? 'What did you do?'
+          : 'Title';
   }
   if (els.itemNote) {
     els.itemNote.placeholder = sourceType === 'restaurant'
       ? 'What you ordered, who you went with, or anything to remember'
       : sourceType === 'recipe'
         ? 'What you changed, how it turned out, or anything to remember'
-        : 'Anything you want to remember';
+        : sourceType === 'activity'
+          ? 'Anything you want to remember'
+          : 'Anything you want to remember';
   }
   if (els.itemLinkLabel) els.itemLinkLabel.placeholder = sourceType === 'recipe' ? 'Recipe source (optional)' : 'Link label (optional)';
 }
@@ -3599,7 +3724,7 @@ function updateReminderFormFields() {
 }
 
 async function searchCatalogue() {
-  const type = els.itemSourceType.value;
+  const type = selectedFormSourceType();
   const query = els.catalogueQuery.value.trim();
   if (!query) return;
   showFormMessage('Searching…', false);
@@ -3625,7 +3750,7 @@ async function searchCatalogue() {
 function renderSearchResults(results) {
   els.searchResults.innerHTML = '';
   if (!results.length) {
-    const sourceType = els.itemSourceType.value;
+    const sourceType = selectedFormSourceType();
     const city = state.discoverPrefs.eventCity || state.settings.homeCity || '';
     const liveMessage = sourceType === 'concert'
       ? `No upcoming Ticketmaster concert results${city ? ` in ${city}` : ''}. You can always add a past concert manually.`
@@ -3656,7 +3781,7 @@ function renderSearchResults(results) {
     button.addEventListener('click', () => selectCatalogueResult(result));
     els.searchResults.appendChild(button);
   });
-  if (els.itemSourceType.value === 'restaurant') {
+  if (selectedFormSourceType() === 'restaurant') {
     const attribution = document.createElement('div');
     attribution.className = 'gmp-attribution';
     attribution.setAttribute('translate', 'no');
@@ -3668,7 +3793,8 @@ function renderSearchResults(results) {
 
 function selectCatalogueResult(result) {
   state.selectedSource = result;
-  const selectingRestaurant = els.itemSourceType.value === 'restaurant' && result.provider === 'googlePlaces';
+  const formSourceType = selectedFormSourceType();
+  const selectingRestaurant = formSourceType === 'restaurant' && result.provider === 'googlePlaces';
   // Selecting a restaurant should behave like selecting a movie: use the
   // catalogue result's actual display name as the prefilled tracker title.
   if (selectingRestaurant) {
@@ -3684,22 +3810,22 @@ function selectCatalogueResult(result) {
   els.searchResults.hidden = true;
   showSelectedSource(result);
 
-  if (els.itemSourceType.value === 'book' && result.pageCount && !els.bookTotalPages.value) {
+  if (formSourceType === 'book' && result.pageCount && !els.bookTotalPages.value) {
     els.bookTotalPages.value = result.pageCount;
   }
-  if (['event', 'concert'].includes(els.itemSourceType.value) && result.eventDate && els.itemDate) {
+  if (['event', 'concert'].includes(formSourceType) && result.eventDate && els.itemDate) {
     els.itemDate.value = result.eventDate;
   }
-  if (els.itemReleaseDate && ['tv','movie','book','music','artist','song'].includes(els.itemSourceType.value)) {
-    const releaseDate = normalizedReleaseDate(extractItemReleaseDate(els.itemSourceType.value, result, null));
+  if (els.itemReleaseDate && ['tv','movie','book','music','artist','song'].includes(formSourceType)) {
+    const releaseDate = normalizedReleaseDate(extractItemReleaseDate(formSourceType, result, null));
     if (releaseDate) els.itemReleaseDate.value = releaseDate;
   }
-  if (els.itemSourceType.value === 'music' && result.provider === 'itunes' && els.itemSubcategory) {
+  if (formSourceType === 'music' && result.provider === 'itunes' && els.itemSubcategory) {
     els.itemSubcategory.value = 'Album';
     els.itemSubcategory.readOnly = true;
     els.itemSubcategory.placeholder = 'Album';
   }
-  if (els.itemSourceType.value === 'tv' && result.providerId) {
+  if (formSourceType === 'tv' && result.providerId) {
     prepareTVWatchSetup(result.providerId).catch(error => {
       if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = error.message;
     });
@@ -3797,7 +3923,7 @@ function renderTVWatchSetup() {
         </span>
       </label>`;
     }).join('');
-    return `<details class="tv-watch-season" ${seasonIndex === 0 ? 'open' : ''}>
+    return `<details class="tv-watch-season">
       <summary>
         <span><strong>Season ${season.seasonNumber}</strong><small>${season.episodes.length} episodes${season.airDate ? ` · ${escapeHtml(season.airDate.slice(0,4))}` : ''}</small></span>
         <span class="tv-watch-season-actions">
@@ -3962,7 +4088,7 @@ async function loadPlaylistPreview() {
 
 async function saveItemFromForm(event) {
   event.preventDefault();
-  const sourceType = els.itemSourceType.value;
+  const sourceType = selectedFormSourceType();
   const editing = findItem(els.editingId.value);
   let title = els.manualTitle.value.trim();
   let provider = els.provider.value;
@@ -4012,7 +4138,7 @@ async function saveItemFromForm(event) {
     providerId = '';
     image = '';
     subtitle = '';
-  } else if (['food','recipe'].includes(sourceType)) {
+  } else if (['food','recipe','activity'].includes(sourceType)) {
     provider = 'manual';
     providerId = editing?.providerId || '';
     image = editing?.image || '';
@@ -4088,6 +4214,18 @@ async function saveItemFromForm(event) {
     showFormMessage('Custom repeats must be at least every 1 day, week, or month.', true);
     return;
   }
+  if (sourceType === 'activity') {
+    const startDate = els.activityStartDate?.value || '';
+    const endDate = els.activityEndDate?.value || '';
+    if (!startDate) {
+      showFormMessage('Choose a start date.', true);
+      return;
+    }
+    if (endDate && endDate < startDate) {
+      showFormMessage('The end date cannot be before the start date.', true);
+      return;
+    }
+  }
 
   let attachmentFiles = [];
   try {
@@ -4117,9 +4255,9 @@ async function saveItemFromForm(event) {
       : normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)),
     attachments: attachmentFiles,
     links: state.attachmentDraft.links.map(link => ({ ...link })),
-    date: sourceType === 'reminder' ? '' : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
-    queueStatus: sourceType === 'reminder' ? 'upnext' : (sourceType === 'restaurant' ? (els.itemQueueStatus.value === 'tbr' ? 'tbr' : 'library') : (['music','artist','song','concert','food','recipe'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'))),
-    active: sourceType === 'reminder' || (sourceType !== 'restaurant' && !['music','artist','song','concert','food','recipe'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
+    date: sourceType === 'reminder' ? '' : sourceType === 'activity' ? (els.activityStartDate?.value || '') : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
+    queueStatus: sourceType === 'reminder' ? 'upnext' : sourceType === 'activity' ? 'library' : (sourceType === 'restaurant' ? (els.itemQueueStatus.value === 'tbr' ? 'tbr' : 'library') : (['music','artist','song','concert','food','recipe'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'))),
+    active: sourceType === 'reminder' || (sourceType !== 'activity' && sourceType !== 'restaurant' && !['music','artist','song','concert','food','recipe'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
     createdAt: editing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     completedAt: editing?.completedAt || '',
@@ -4143,6 +4281,13 @@ async function saveItemFromForm(event) {
         status: state.selectedSource?.status || editing?.eventMeta?.status || '',
         classifications: state.selectedSource?.classifications || editing?.eventMeta?.classifications || [],
         priceRange: state.selectedSource?.priceRange || editing?.eventMeta?.priceRange || null
+      }
+    } : {}),
+    ...(sourceType === 'activity' ? {
+      activityMeta: {
+        startDate: els.activityStartDate?.value || '',
+        endDate: els.activityEndDate?.value || els.activityStartDate?.value || '',
+        people: String(els.activityPeople?.value || '').split(',').map(name => cleanTypeLabel(name)).filter(Boolean)
       }
     } : {}),
 
@@ -4421,10 +4566,12 @@ async function openDetails(id) {
     else if (sourceType === 'reminder') renderReminderDetails(item);
     else if (['event', 'concert'].includes(sourceType)) await renderEventDetails(item);
     else if (sourceType === 'restaurant') await renderRestaurantDetails(item);
+    else if (sourceType === 'activity') renderActivityDetails(item);
     else renderManualDetails(item);
     appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
     appendLibraryPersonalMetadata(item);
+    await appendLibrarySimilarRecommendations(item);
     appendItemResources(item);
   } catch (error) {
     els.detailBody.innerHTML = `${basicDetailHero(item)}<div class="api-error">${escapeHtml(error.message)}</div>${detailEditButton(item)}`;
@@ -4486,14 +4633,13 @@ async function renderTVDetails(item) {
   }).join('');
 
   const hasUnwatched = Boolean(item.tvMeta?.hasUnwatched);
+  const streamingNames = streamingAvailabilityLabel(availability, 3, '');
   els.detailBody.innerHTML = `
-    ${detailHero({ type:'TV', title:details.name || item.title, image:TrackerAPI.tmdbImage(details.poster_path) || item.image, subtitle:[details.first_air_date?.slice(0,4), details.genres?.map(g=>g.name).join(' · ')].filter(Boolean).join(' · '), overview:details.overview || '' })}
+    ${libraryDetailHero({ type:'TV', title:details.name || item.title, image:TrackerAPI.tmdbImage(details.poster_path) || item.image, subtitle:[details.first_air_date?.slice(0,4), details.genres?.map(g=>g.name).join(' · '), streamingNames].filter(Boolean).join(' · '), overview:details.overview || '', availabilityLink: availability?.link || '' })}
     <div class="tv-status-row">${tvStatusBadgeMarkup(item, details)}</div>
-    <div class="detail-progress"><strong>${hasUnwatched ? 'Up next' : 'Progress'}</strong>${hasUnwatched && next ? `S${seasonNumber} E${episodeNumber} · ${escapeHtml(next.name || 'Episode')}` : hasUnwatched ? `S${seasonNumber} E${episodeNumber}` : isTerminalSeriesStatus(details.status) ? 'All available episodes watched.' : 'You are caught up. New aired episodes will return to Up Next automatically.'}</div>
+    <div class="detail-progress"><strong>${hasUnwatched ? 'Up next' : 'Progress'}</strong>${hasUnwatched && next ? `S${seasonNumber} E${episodeNumber} · ${escapeHtml(next.name || 'Episode')}` : hasUnwatched ? `S${seasonNumber} E${episodeNumber}` : isTerminalSeriesStatus(details.status) ? 'All available episodes watched.' : 'Caught up.'}</div>
     ${tvDetailControls(item)}
-    ${streamingDetailMarkup(availability)}
-    <section class="detail-section"><div class="detail-section-heading"><h3>Seasons</h3><span class="discover-history-note compact-note">✓ marks the entire season · → opens its episodes</span></div><div class="season-list season-list-rows">${seasons || '—'}</div></section>
-    <section class="detail-section"><h3>Season ${seasonNumber} episodes</h3><div class="episode-list">${episodes || 'No episodes found.'}</div></section>
+    <section class="detail-section"><div class="detail-section-heading"><h3>Seasons</h3></div><div class="season-list season-list-rows">${seasons || '—'}</div></section>
   `;
 }
 
@@ -4529,7 +4675,7 @@ async function renderTVSeasonDetail(item, seasonNumber) {
 
     els.detailBody.innerHTML = `
       <button class="detail-back-button" type="button" data-tv-series="true" data-item-id="${item.id}">← Series</button>
-      ${detailHero({
+      ${libraryDetailHero({
         type: `TV · SEASON ${seasonNumber}`,
         title: season.name || `${series.name || item.title} · Season ${seasonNumber}`,
         image,
@@ -4558,7 +4704,7 @@ async function renderTVEpisodeDetail(item, seasonNumber, episodeNumber) {
 
     els.detailBody.innerHTML = `
       <button class="detail-back-button" type="button" data-tv-season="${seasonNumber}" data-item-id="${item.id}">← Season ${seasonNumber}</button>
-      ${detailHero({
+      ${libraryDetailHero({
         type: `TV · S${seasonNumber} E${episodeNumber}`,
         title: episode.name || `Episode ${episodeNumber}`,
         image,
@@ -4592,7 +4738,7 @@ async function renderWorkoutDetails(item) {
   }).join('');
 
   els.detailBody.innerHTML = `
-    ${detailHero({ type:`${getItemTypeLabel(item).toUpperCase()} · YOUTUBE`, title:playlist.title || item.title, image:playlist.image || item.image, subtitle:`${playlist.items.length} videos · ${playlist.subtitle || ''}`, overview:playlist.description || '' })}
+    ${libraryDetailHero({ type:`${getItemTypeLabel(item).toUpperCase()} · YOUTUBE`, title:playlist.title || item.title, image:playlist.image || item.image, subtitle:`${playlist.items.length} videos · ${playlist.subtitle || ''}`, overview:playlist.description || '' })}
     <div class="detail-progress"><strong>Progress</strong>${Math.min(index, playlist.items.length)} of ${playlist.items.length} completed</div>
     ${detailEditButton(item)}
     <section class="detail-section"><h3>Playlist</h3><div class="video-list">${videos || 'No public videos found.'}</div></section>
@@ -4620,7 +4766,7 @@ async function renderYouTubeVideoDetail(item, videoId) {
 
     els.detailBody.innerHTML = `
       <button class="detail-back-button" type="button" data-youtube-playlist="true" data-item-id="${item.id}">← Playlist</button>
-      ${detailHero({ type:`${getItemTypeLabel(item).toUpperCase()} · YOUTUBE VIDEO`, title:snippet.title || 'Video', image, subtitle:meta, overview:snippet.description || '' })}
+      ${libraryDetailHero({ type:`${getItemTypeLabel(item).toUpperCase()} · YOUTUBE VIDEO`, title:snippet.title || 'Video', image, subtitle:meta, overview:snippet.description || '' })}
       <div class="detail-actions library-detail-actions">
         <button class="primary-button" type="button" data-check-youtube-video="${escapeAttr(videoId)}" data-item-id="${item.id}" ${isYouTubeVideoLogged(item, videoId) ? 'disabled' : ''}>${isYouTubeVideoLogged(item, videoId) ? '✓ Logged' : '✓ Mark complete'}</button>
         <a class="secondary-button detail-link-button" href="https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}" target="_blank" rel="noopener">Open on YouTube ↗</a>
@@ -4648,7 +4794,7 @@ async function renderBookDetails(item) {
     ? periods.map((period, index) => `<div class="book-period-summary"><span>Period ${index + 1}</span><strong>${escapeHtml(formatShortCalendarDate(period.startDate))}${period.endDate ? ` → ${escapeHtml(formatShortCalendarDate(period.endDate))}` : ' → now'}</strong></div>`).join('')
     : '<p class="detail-meta">No reading dates yet.</p>';
   els.detailBody.innerHTML = `
-    ${detailHero({ type:'BOOK', title:info.title || item.title, image, subtitle:(info.authors || []).join(', '), overview:stripHtml(info.description || '') })}
+    ${libraryDetailHero({ type:'BOOK', title:info.title || item.title, image, subtitle:(info.authors || []).join(', '), overview:stripHtml(info.description || '') })}
     <div class="tv-status-row book-status-row">${bookStatusBadgeMarkup(item)}</div>
     <div class="detail-progress"><strong>Reading progress</strong>${total ? `Page ${current} of ${total} · ${Math.min(100, Math.round(current/total*100))}%` : `Page ${current}`}<small>${escapeHtml(bookReadingStatusText(item))}</small></div>
     ${libraryDetailActions(item)}
@@ -4666,11 +4812,11 @@ async function renderMovieDetails(item) {
   if (detailGenres.length) item.genres = detailGenres;
   if (details.release_date) item.releaseDate = details.release_date;
   saveItems();
+  const streamingNames = streamingAvailabilityLabel(availability, 3, '');
   els.detailBody.innerHTML = `
-    ${detailHero({ type:'MOVIE', title:details.title || item.title, image:TrackerAPI.tmdbImage(details.poster_path) || item.image, subtitle:[details.release_date?.slice(0,4), details.runtime ? `${details.runtime} min` : '', details.genres?.map(g=>g.name).join(' · ')].filter(Boolean).join(' · '), overview:details.overview || '' })}
+    ${libraryDetailHero({ type:'MOVIE', title:details.title || item.title, image:TrackerAPI.tmdbImage(details.poster_path) || item.image, subtitle:[details.release_date?.slice(0,4), details.runtime ? `${details.runtime} min` : '', details.genres?.map(g=>g.name).join(' · '), streamingNames].filter(Boolean).join(' · '), overview:details.overview || '', availabilityLink: availability?.link || '' })}
     ${item.mediaDisposition ? `<div class="tv-status-row"><span class="tv-status-badge tv-status-${item.mediaDisposition === 'paused' ? 'later' : 'muted'}">${item.mediaDisposition === 'paused' ? 'Paused' : 'Stopped'}</span></div>` : ''}
     ${detailEditButton(item)}
-    ${streamingDetailMarkup(availability)}
   `;
 }
 
@@ -4690,7 +4836,7 @@ async function renderEventDetails(item) {
     region: item.eventMeta?.region || '',
     address: item.eventMeta?.address || '',
     ticketUrl: item.eventMeta?.ticketUrl || '',
-    description: item.notes || '',
+    description: '',
     classifications: item.eventMeta?.classifications || [],
     priceRange: item.eventMeta?.priceRange || null,
     status: item.eventMeta?.status || ''
@@ -4725,7 +4871,7 @@ async function renderEventDetails(item) {
   const info = [classifications, priceText, event.status && event.status !== 'onsale' ? event.status.replace(/_/g, ' ') : ''].filter(Boolean).join(' · ');
 
   els.detailBody.innerHTML = `
-    ${detailHero({ type:getSourceType(item) === 'concert' ? 'CONCERT' : 'EVENT', title:event.title || item.title, image:event.image || item.image, subtitle:dateLine, overview:event.description || item.notes || '' })}
+    ${libraryDetailHero({ type:getSourceType(item) === 'concert' ? 'CONCERT' : 'EVENT', title:event.title || item.title, image:event.image || item.image, subtitle:dateLine, overview:event.description || '' })}
     ${detailEditButton(item)}
     <section class="detail-section event-detail-section"><h3>Event details</h3>
       ${info ? `<p>${escapeHtml(info)}</p>` : ''}
@@ -4740,7 +4886,7 @@ async function renderMusicDetails(item) {
   const tracks = (data.results || []).filter(r => r.wrapperType === 'track').map((track, index) => `<div class="track-row"><div>${index+1}</div><div><div class="list-title">${escapeHtml(track.trackName || 'Track')}</div><div class="list-meta">${escapeHtml(track.artistName || '')}</div></div><div>${track.trackTimeMillis ? formatMillis(track.trackTimeMillis) : ''}</div></div>`).join('');
   const image = (collection.artworkUrl100 || item.image || '').replace('100x100bb','600x600bb');
   els.detailBody.innerHTML = `
-    ${detailHero({ type:'ALBUM', title:collection.collectionName || item.title, image, subtitle:collection.artistName || item.subtitle || '', overview:collection.primaryGenreName || '' })}
+    ${libraryDetailHero({ type:'ALBUM', title:collection.collectionName || item.title, image, subtitle:collection.artistName || item.subtitle || '', overview:collection.primaryGenreName || '' })}
     ${detailEditButton(item)}
     <section class="detail-section"><h3>Tracks</h3><div class="track-list">${tracks || 'No tracks returned.'}</div></section>
   `;
@@ -4754,7 +4900,7 @@ async function renderArtistDetails(item) {
   if (!item.image && image) { item.image = image; saveItems(); }
   const albumRows = albums.slice(0, 8).map(album => `<div class="track-row"><div>•</div><div><div class="list-title">${escapeHtml(album.collectionName || 'Album')}</div><div class="list-meta">${escapeHtml(String(album.releaseDate || '').slice(0, 4))}</div></div></div>`).join('');
   els.detailBody.innerHTML = `
-    ${detailHero({ type:'ARTIST', title:artist.artistName || item.title, image, subtitle:artist.primaryGenreName || item.subtitle || '', overview:item.notes || '' })}
+    ${libraryDetailHero({ type:'ARTIST', title:artist.artistName || item.title, image, subtitle:artist.primaryGenreName || item.subtitle || '', overview:'' })}
     ${detailEditButton(item)}
     ${albumRows ? `<section class="detail-section"><h3>Recent albums</h3><div class="track-list">${albumRows}</div></section>` : ''}`;
 }
@@ -4764,7 +4910,7 @@ async function renderSongDetails(item) {
   const track = (data.results || []).find(result => result.wrapperType === 'track') || (data.results || [])[0] || {};
   const image = (track.artworkUrl100 || item.image || '').replace('100x100bb', '600x600bb');
   els.detailBody.innerHTML = `
-    ${detailHero({ type:'SONG', title:track.trackName || item.title, image, subtitle:[track.artistName || item.subtitle || '', track.collectionName || '', track.primaryGenreName || ''].filter(Boolean).join(' · '), overview:item.notes || '' })}
+    ${libraryDetailHero({ type:'SONG', title:track.trackName || item.title, image, subtitle:[track.artistName || item.subtitle || '', track.collectionName || '', track.primaryGenreName || ''].filter(Boolean).join(' · '), overview:'' })}
     ${detailEditButton(item)}
     ${track.trackViewUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(track.trackViewUrl)}" target="_blank" rel="noopener">Open in Apple Music / iTunes ↗</a></section>` : ''}`;
 }
@@ -4773,7 +4919,7 @@ function renderReminderDetails(item) {
   const dueDate = getNextReminderDueDate(item);
   const dueNow = !dueDate || dueDate <= todayString();
   els.detailBody.innerHTML = `
-    ${detailHero({ type:getItemTypeLabel(item), title:item.title, image:'', subtitle:reminderScheduleLabel(item), overview:item.notes || '' })}
+    ${libraryDetailHero({ type:getItemTypeLabel(item), title:item.title, image:'', subtitle:reminderScheduleLabel(item), overview:'' })}
     <div class="detail-progress"><strong>Next reminder</strong>${escapeHtml(reminderDueLabel(dueDate))}</div>
     <div class="detail-actions library-detail-actions">
       <button class="primary-button" type="button" data-reminder-complete="${escapeAttr(item.id)}" ${dueNow ? '' : 'disabled'}>✓ ${dueNow ? 'Mark complete' : 'Not due yet'}</button>
@@ -4793,52 +4939,146 @@ async function renderRestaurantDetails(item) {
   const googleRating = Number(live?.rating || 0);
   const ratingText = googleRating ? `Google ${googleRating.toFixed(1)}★${live?.userRatingCount ? ` · ${Number(live.userRatingCount).toLocaleString()} reviews` : ''}` : '';
 
-  let suggestions = [];
-  if (state.settings.googlePlacesKey) {
-    const seed = live?.primaryTypeDisplayName || live?.primaryType || (item.title ? `restaurants like ${item.title}` : 'restaurants');
-    try {
-      const nearby = await TrackerAPI.searchRestaurants(seed, state.settings, {
+  const visitsMarkup = visits.length
+    ? visits.map(entry => `<article class="restaurant-history-row"><div><strong>${escapeHtml(formatLongDate(entry.date))}</strong>${entry.notes ? `<p>${escapeHtml(entry.notes)}</p>` : ''}</div>${Number(entry.rating || 0) ? `<span>${formatPersonalRating(entry.rating)}★</span>` : ''}</article>`).join('')
+    : '<p class="detail-meta">No dated visits or orders logged yet. Edit this restaurant and add a date + notes to record one.</p>';
+
+  els.detailBody.innerHTML = `
+    ${libraryDetailHero({ type:'RESTAURANT', title:item.title, image:item.image || '', subtitle:[ratingText, live?.formattedAddress || ''].filter(Boolean).join(' · '), overview:'' })}
+    ${live ? '<div class="gmp-attribution detail-gmp-attribution" translate="no">Google Maps</div>' : ''}
+    ${detailEditButton(item)}
+    <section class="detail-section restaurant-history-section"><h3>Order / visit history</h3>${visitsMarkup}</section>
+    ${(live?.googleMapsUrl || live?.websiteUrl) ? `<section class="detail-section restaurant-links">${live.googleMapsUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(live.googleMapsUrl)}" target="_blank" rel="noopener">Open in Google Maps ↗</a>` : ''}${live.websiteUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(live.websiteUrl)}" target="_blank" rel="noopener">Website ↗</a>` : ''}</section>` : ''}`;
+}
+
+function renderActivityDetails(item) {
+  const startDate = item.activityMeta?.startDate || item.date || '';
+  const endDate = item.activityMeta?.endDate || startDate;
+  const dateText = startDate
+    ? (endDate && endDate !== startDate ? `${formatLongDate(startDate)} – ${formatLongDate(endDate)}` : formatLongDate(startDate))
+    : '';
+  const people = (item.activityMeta?.people || []).filter(Boolean);
+  els.detailBody.innerHTML = `
+    ${libraryDetailHero({ type:'ACTIVITY', title:item.title, image:item.image || '', subtitle:[dateText, people.length ? `with ${people.join(', ')}` : '', item.subcategory || ''].filter(Boolean).join(' · '), overview:'' })}
+    ${detailEditButton(item)}
+  `;
+}
+
+function libraryRecommendationIdentity(result) {
+  return `${result?.sourceType || ''}:${result?.provider || ''}:${result?.providerId || normalizeArtistName(result?.title || '')}`;
+}
+
+async function getLibrarySimilarRecommendations(item) {
+  const sourceType = getSourceType(item);
+  let results = [];
+  try {
+    if (['tv','movie'].includes(sourceType) && item.providerId) {
+      results = await getCached(`library:similar:${sourceType}:${item.providerId}`, () => TrackerAPI.getTMDBRecommendations(sourceType, item.providerId, state.settings, 1));
+    } else if (sourceType === 'book' && item.providerId) {
+      results = await getCached(`library:similar:book:${item.providerId}`, () => TrackerAPI.getBookRecommendations(item.providerId, state.settings));
+    } else if (sourceType === 'restaurant' && state.settings.googlePlacesKey) {
+      const live = item.providerId ? await TrackerAPI.getRestaurantDetails(item.providerId, state.settings).catch(() => null) : null;
+      const seed = live?.primaryTypeDisplayName || live?.primaryType || `restaurants like ${item.title}`;
+      results = await TrackerAPI.searchRestaurants(seed, state.settings, {
         city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
         region: state.discoverPrefs.eventCountry || state.settings.homeCountry || 'CA',
         maxResultCount: 10
       });
-      const savedIds = new Set(state.items.filter(saved => getSourceType(saved) === 'restaurant').map(saved => String(saved.providerId || '')));
-      suggestions = (nearby || []).filter(result => String(result.providerId || '') !== String(item.providerId || '') && !savedIds.has(String(result.providerId || ''))).slice(0, 6);
-    } catch (error) {
-      console.warn('Restaurant recommendations unavailable:', error?.message || error);
+    } else if (sourceType === 'artist' && state.settings.lastfmApiKey && item.title) {
+      const similar = await getCached(`library:lastfm:artist:${normalizeArtistName(item.title)}`, () => TrackerAPI.getLastFmSimilarArtists(item.title, state.settings, 12));
+      results = similar.map(lastFmArtistDiscoverCandidate).filter(Boolean);
+    } else if (sourceType === 'song' && state.settings.lastfmApiKey && item.title) {
+      const artistName = item.subtitle || item.artistName || '';
+      if (artistName) {
+        const similar = await getCached(`library:lastfm:song:${normalizeArtistName(artistName)}:${normalizeArtistName(item.title)}`, () => TrackerAPI.getLastFmSimilarTracks(artistName, item.title, state.settings, 12));
+        results = similar.map(lastFmTrackDiscoverCandidate).filter(Boolean);
+      }
+    } else if (sourceType === 'music' && state.settings.lastfmApiKey && item.subtitle) {
+      const artistName = item.subtitle;
+      const similar = await getCached(`library:lastfm:album-artist:${normalizeArtistName(artistName)}`, () => TrackerAPI.getLastFmSimilarArtists(artistName, state.settings, 12));
+      results = similar.map(lastFmArtistDiscoverCandidate).filter(Boolean);
+    } else if (sourceType === 'concert' && state.settings.lastfmApiKey && item.title) {
+      const similar = await getCached(`library:lastfm:concert:${normalizeArtistName(item.title)}`, () => TrackerAPI.getLastFmSimilarArtists(item.title, state.settings, 12));
+      results = similar.map(lastFmArtistDiscoverCandidate).filter(Boolean);
+    } else if (sourceType === 'event' && state.settings.ticketmasterKey) {
+      const seed = (item.eventMeta?.classifications || []).find(Boolean) || item.title;
+      results = await TrackerAPI.searchTicketmasterEvents(seed, state.settings, {
+        city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
+        countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || 'CA',
+        size: 10,
+        sort: 'date,asc'
+      });
     }
+  } catch (error) {
+    console.warn('[Library Recommendations] unavailable', { item: item.title, sourceType, error: error?.message || error });
+    return [];
   }
 
-  const visitsMarkup = visits.length
-    ? visits.map(entry => `<article class="restaurant-history-row"><div><strong>${escapeHtml(formatLongDate(entry.date))}</strong>${entry.notes ? `<p>${escapeHtml(entry.notes)}</p>` : ''}</div>${Number(entry.rating || 0) ? `<span>${formatPersonalRating(entry.rating)}★</span>` : ''}</article>`).join('')
-    : '<p class="detail-meta">No dated visits or orders logged yet. Edit this restaurant and add a date + notes to record one.</p>';
-  const suggestionsMarkup = suggestions.length
-    ? `<div class="restaurant-suggestion-grid">${suggestions.map(result => `<button class="restaurant-suggestion-card" type="button" data-restaurant-suggestion="${escapeAttr(JSON.stringify(result))}"><strong>${escapeHtml(result.title)}</strong><span>${escapeHtml([result.rating ? `${Number(result.rating).toFixed(1)}★` : '', result.primaryTypeDisplayName || '', result.formattedAddress || result.subtitle || ''].filter(Boolean).join(' · '))}</span></button>`).join('')}</div><div class="gmp-attribution" translate="no">Google Maps</div>`
-    : '<p class="detail-meta">No additional nearby recommendations returned yet.</p>';
+  const currentIdentity = `${sourceType}:${item.provider || ''}:${item.providerId || ''}`;
+  const saved = new Set(state.items.map(savedItem => `${getSourceType(savedItem)}:${savedItem.provider || ''}:${savedItem.providerId || ''}`));
+  const unique = new Map();
+  for (const result of results || []) {
+    if (!result?.title) continue;
+    const identity = libraryRecommendationIdentity(result);
+    const savedIdentity = `${result.sourceType || ''}:${result.provider || ''}:${result.providerId || ''}`;
+    if (identity === currentIdentity || saved.has(savedIdentity) || unique.has(identity)) continue;
+    unique.set(identity, result);
+  }
+  const output = [...unique.values()].slice(0, 3);
+  return output.length === 3 ? output : [];
+}
 
-  els.detailBody.innerHTML = `
-    ${detailHero({ type:'RESTAURANT', title:item.title, image:item.image || '', subtitle:[ratingText, live?.formattedAddress || ''].filter(Boolean).join(' · '), overview:item.notes || '' })}
-    ${live ? '<div class="gmp-attribution detail-gmp-attribution" translate="no">Google Maps</div>' : ''}
-    ${detailEditButton(item)}
-    <section class="detail-section restaurant-history-section"><h3>Order / visit history</h3>${visitsMarkup}</section>
-    <section class="detail-section"><h3>Try somewhere similar</h3>${suggestionsMarkup}</section>
-    ${(live?.googleMapsUrl || live?.websiteUrl) ? `<section class="detail-section restaurant-links">${live.googleMapsUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(live.googleMapsUrl)}" target="_blank" rel="noopener">Open in Google Maps ↗</a>` : ''}${live.websiteUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(live.websiteUrl)}" target="_blank" rel="noopener">Website ↗</a>` : ''}</section>` : ''}`;
+function librarySimilarRecommendationsMarkup(item, results) {
+  if (!results?.length) return '';
+  const isRestaurant = getSourceType(item) === 'restaurant';
+  return `<details class="detail-section library-similar-details" data-library-similar-section="${escapeAttr(item.id)}">
+    <summary>I think you’d also like</summary>
+    <div class="library-similar-grid">
+      ${results.map(result => `<button class="library-similar-card" type="button" data-library-similar="${escapeAttr(JSON.stringify(result))}">
+        ${result.image ? `<img src="${escapeAttr(result.image)}" alt="" />` : ''}
+        <span><strong>${escapeHtml(result.title)}</strong><small>${escapeHtml([result.rating ? `${Number(result.rating).toFixed(1)}★` : '', result.subtitle || result.primaryTypeDisplayName || ''].filter(Boolean).join(' · '))}</small></span>
+      </button>`).join('')}
+    </div>
+    ${isRestaurant ? '<div class="gmp-attribution" translate="no">Google Maps</div>' : ''}
+  </details>`;
+}
+
+async function appendLibrarySimilarRecommendations(item) {
+  if (!els.detailBody || !item || els.detailBody.querySelector(`[data-library-similar-section="${CSS.escape(item.id)}"]`)) return;
+  const results = await getLibrarySimilarRecommendations(item);
+  if (!results.length || state.openDetailId !== item.id || !els.detailModal?.open) return;
+  els.detailBody.insertAdjacentHTML('beforeend', librarySimilarRecommendationsMarkup(item, results));
 }
 
 function renderManualDetails(item) {
   els.detailBody.innerHTML = `${basicDetailHero(item)}${detailEditButton(item)}`;
 }
 
-function detailHero({ type, title, image, subtitle, overview }) {
+function detailHero({ type, title, image, subtitle, overview, collapseOverview = false, availabilityLink = '' }) {
+  const overviewText = overview ? escapeHtml(shorten(overview, 900)) : '';
+  const disclosure = collapseOverview
+    ? `<div class="detail-disclosure-row">
+        <details class="detail-synopsis-details">
+          <summary>Synopsis</summary>
+          <div class="detail-synopsis-content">${overviewText ? `<p class="detail-overview">${overviewText}</p>` : ''}<div class="library-personal-meta-slot"></div></div>
+        </details>
+        ${availabilityLink ? `<a class="detail-availability-link" href="${escapeAttr(availabilityLink)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}
+      </div>`
+    : (overviewText ? `<p class="detail-overview">${overviewText}</p>` : '');
   return `<div class="detail-hero">
     ${image ? `<img class="detail-poster" src="${escapeAttr(image)}" alt="" />` : '<div class="detail-poster"></div>'}
-    <div><p class="detail-type">${escapeHtml(type)}</p><h2>${escapeHtml(title)}</h2>${subtitle ? `<p class="detail-meta">${escapeHtml(subtitle)}</p>` : ''}${overview ? `<p class="detail-overview">${escapeHtml(shorten(overview, 900))}</p>` : ''}</div>
+    <div><p class="detail-type">${escapeHtml(type)}</p><h2>${escapeHtml(title)}</h2>${subtitle ? `<p class="detail-meta">${escapeHtml(subtitle)}</p>` : ''}${disclosure}</div>
   </div>`;
 }
 
-function basicDetailHero(item) {
-  return detailHero({ type: getItemTypeLabel(item), title:item.title, image:item.image, subtitle:item.subtitle || '', overview:item.notes || '' });
+function libraryDetailHero(args) {
+  return detailHero({ ...args, collapseOverview: true });
 }
+
+function basicDetailHero(item) {
+  return libraryDetailHero({ type: getItemTypeLabel(item), title:item.title, image:item.image, subtitle:item.subtitle || '', overview:'' });
+}
+
 
 function itemHasCalendarAssociations(item) {
   if (!item) return false;
@@ -4904,6 +5144,17 @@ function libraryAssociatedDateInfo(item) {
     }
   }
 
+  if (sourceType === 'activity') {
+    const startDate = item.activityMeta?.startDate || item.date || '';
+    const endDate = item.activityMeta?.endDate || startDate;
+    if (startDate) {
+      const value = endDate && endDate !== startDate
+        ? `${formatLongDate(startDate)} – ${formatLongDate(endDate)}`
+        : formatLongDate(startDate);
+      return { label: 'Date', values: [value], extra: 0 };
+    }
+  }
+
   const historyDates = state.history
     .filter(entry => entry.sourceItemId === item.id && entry.date)
     .map(entry => entry.date);
@@ -4951,35 +5202,25 @@ function formatPersonalRating(value) {
 
 function libraryPersonalMetadataMarkup(item) {
   const rating = Math.max(0, Math.min(5, Number(item.rating || 0)));
-  return `<section class="detail-section library-personal-meta" data-library-personal-meta="${escapeAttr(item.id)}" data-pending-rating="${rating}">
-    <div class="detail-section-heading">
-      <div>
-        <h3>Your rating & notes</h3>
-        <p class="personal-meta-help">Saved to this item in your Library.</p>
-      </div>
+  return `<div class="library-personal-meta" data-library-personal-meta="${escapeAttr(item.id)}" data-pending-rating="${rating}">
+    <div class="star-picker library-detail-rating-picker rating-with-heart" aria-label="Your rating out of five stars">
+      ${[1,2,3,4,5].map(value => `<button type="button" data-library-rating="${value}" data-item-id="${escapeAttr(item.id)}" class="${value <= rating ? 'filled' : ''}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
+      <button class="clear-rating" type="button" data-clear-library-rating data-item-id="${escapeAttr(item.id)}">clear</button>
+      <button class="rating-heart-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${escapeAttr(item.id)}" aria-label="${item.recommended ? 'Remove from Recommended' : 'Add to Recommended'}" aria-pressed="${Boolean(item.recommended)}" title="Recommended">${item.recommended ? '♥' : '♡'}</button>
     </div>
-    <fieldset class="rating-fieldset library-rating-fieldset">
-      <legend>Rating <span>optional</span></legend>
-      <div class="star-picker library-detail-rating-picker rating-with-heart" aria-label="Your rating out of five stars">
-        ${[1,2,3,4,5].map(value => `<button type="button" data-library-rating="${value}" data-item-id="${escapeAttr(item.id)}" class="${value <= rating ? 'filled' : ''}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
-        <button class="clear-rating" type="button" data-clear-library-rating data-item-id="${escapeAttr(item.id)}">clear</button>
-        <button class="rating-heart-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${escapeAttr(item.id)}" aria-label="${item.recommended ? 'Remove from Recommended' : 'Add to Recommended'}" aria-pressed="${Boolean(item.recommended)}" title="Recommended">${item.recommended ? '♥' : '♡'}</button>
-      </div>
-    </fieldset>
-    <label class="field">
-      <span>Notes <em>optional</em></span>
-      <textarea class="library-personal-notes" rows="3" placeholder="Anything you want to remember">${escapeHtml(item.notes || '')}</textarea>
-    </label>
-    <div class="detail-actions compact-actions">
-      <button class="primary-button" type="button" data-save-library-meta="${escapeAttr(item.id)}">Save notes</button>
-      <span class="library-meta-status" aria-live="polite"></span>
-    </div>
-  </section>`;
+    ${String(item.notes || '').trim() ? `<p class="library-personal-note">${escapeHtml(item.notes)}</p>` : ''}
+    <span class="library-meta-status" aria-live="polite"></span>
+  </div>`;
 }
 
 function appendLibraryPersonalMetadata(item) {
   if (!els.detailBody || !item || els.detailBody.querySelector(`[data-library-personal-meta="${CSS.escape(item.id)}"]`)) return;
   const markup = libraryPersonalMetadataMarkup(item);
+  const slot = els.detailBody.querySelector('.detail-synopsis-content .library-personal-meta-slot');
+  if (slot) {
+    slot.innerHTML = markup;
+    return;
+  }
   const anchor = els.detailBody.querySelector('.detail-actions') || els.detailBody.querySelector('.detail-progress') || els.detailBody.querySelector('.detail-hero');
   if (anchor) anchor.insertAdjacentHTML('afterend', markup);
   else els.detailBody.insertAdjacentHTML('beforeend', markup);
@@ -5533,7 +5774,7 @@ function getCalendarEntries() {
   const savedItems = state.items
     .filter(item => {
       const sourceType = getSourceType(item);
-      if (!item.date || sourceType === 'book' || item.calendarHidden) return false;
+      if (!item.date || ['book','activity'].includes(sourceType) || item.calendarHidden) return false;
       // + Calendar schedules a live event in Up Next first. The tracked Calendar
       // only receives it after the explicit check in that Up Next calendar row.
       if (['event', 'concert'].includes(sourceType) && item.queueCalendarScheduled === true && item.calendarTracked !== true) return false;
@@ -5560,6 +5801,10 @@ function getCalendarEntries() {
     .filter(item => getSourceType(item) === 'book' && !item.calendarHidden)
     .flatMap(item => bookReadingCalendarEntries(item));
 
+  const activityRanges = state.items
+    .filter(item => getSourceType(item) === 'activity' && !item.calendarHidden)
+    .flatMap(item => activityCalendarEntries(item));
+
   const historyEntries = state.history.filter(entry => {
     if (entry.showOnCalendar === false) return false;
     const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
@@ -5577,7 +5822,41 @@ function getCalendarEntries() {
     };
   });
 
-  return [...savedItems, ...historyEntries, ...bookRanges];
+  return [...savedItems, ...historyEntries, ...bookRanges, ...activityRanges];
+}
+
+function activityCalendarEntries(item) {
+  const start = item.activityMeta?.startDate || item.date || '';
+  const endDate = item.activityMeta?.endDate || start;
+  if (!start || !endDate || endDate < start) return [];
+  const output = [];
+  let cursor = parseLocalDate(start);
+  const end = parseLocalDate(endDate);
+  let guard = 0;
+  while (cursor <= end && guard < 3660) {
+    const date = localDateString(cursor);
+    output.push({
+      id: `activity-range:${item.id}:${date}`,
+      sourceItemId: item.id,
+      sourceType: 'activity',
+      type: item.type,
+      typeLabel: getItemTypeLabel(item),
+      subcategory: item.subcategory || '',
+      date,
+      kind: 'activity-day',
+      title: item.title,
+      subtitle: (item.activityMeta?.people || []).length ? `with ${(item.activityMeta.people || []).join(', ')}` : (item.subtitle || ''),
+      notes: item.notes || '',
+      rating: Number(item.rating || 0),
+      image: item.image || '',
+      provider: 'manual',
+      providerId: item.providerId || '',
+      createdAt: item.createdAt || item.updatedAt || ''
+    });
+    cursor = addDays(cursor, 1);
+    guard += 1;
+  }
+  return output;
 }
 
 function bookReadingCalendarEntries(item) {
@@ -8962,7 +9241,7 @@ function openRestaurantResultForTracking(result) {
   if (!result) return;
   els.detailModal?.close();
   openItemModal('', 'library');
-  if (els.itemSourceType) els.itemSourceType.value = 'restaurant';
+  setItemFormSourceType('restaurant');
   updateItemFormForType();
   if (els.catalogueQuery) els.catalogueQuery.value = '';
   selectCatalogueResult(result);
@@ -10851,6 +11130,12 @@ function itemLibraryDate(item) {
     dates.push(String(item.date).slice(0, 10));
   }
 
+  if (sourceType === 'activity') {
+    const start = String(item.activityMeta?.startDate || item.date || '').slice(0, 10);
+    const end = String(item.activityMeta?.endDate || start).slice(0, 10);
+    if (start) dates.push(end && end >= start ? end : start);
+  }
+
   // Book reading periods generate calendar entries for each day in the range.
   // The most recent visible day is the end date, or today for an active period.
   if (sourceType === 'book') {
@@ -11177,7 +11462,7 @@ function renderLibrary() {
           return Number(undatedRecentOrder.get(a.id) || 0) - Number(undatedRecentOrder.get(b.id) || 0);
         };
 
-  const preferredLabels = ['TV','Movie','Book','Music','Food','Workout','Other'];
+  const preferredLabels = ['TV','Movie','Book','Music','Food','Activity','Event','Workout','Other'];
   const preferredOrder = preferredLabels.map(label => slugifyType(label));
   const grouped = new Map();
   for (const item of filtered) {
@@ -11431,7 +11716,7 @@ function getSourceType(item) {
   if (item.sourceType) return item.sourceType;
   if (item.provider === 'youtube' || item.type === 'workout') return 'youtube';
   if (item.provider === 'ticketmaster') return 'event';
-  if (['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event'].includes(item.type)) return item.type;
+  if (['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity'].includes(item.type)) return item.type;
   return 'other';
 }
 
