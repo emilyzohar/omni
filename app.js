@@ -4375,6 +4375,24 @@ function setRating(value) {
   $$('#starPicker [data-rating]').forEach(button => button.classList.toggle('filled', Number(button.dataset.rating) <= value));
 }
 
+let actionFeedbackTimer = null;
+function showActionFeedback(message, error = false) {
+  let node = document.getElementById('omniActionFeedback');
+  if (!node) {
+    node = document.createElement('div');
+    node.id = 'omniActionFeedback';
+    node.className = 'omni-action-feedback';
+    node.setAttribute('role', 'status');
+    node.setAttribute('aria-live', 'polite');
+    document.body.appendChild(node);
+  }
+  node.textContent = String(message || '');
+  node.classList.toggle('is-error', Boolean(error));
+  node.classList.add('is-visible');
+  clearTimeout(actionFeedbackTimer);
+  actionFeedbackTimer = setTimeout(() => node.classList.remove('is-visible'), 3200);
+}
+
 function showFormMessage(message, error = false) {
   els.formMessage.textContent = message;
   els.formMessage.hidden = !message;
@@ -4857,9 +4875,10 @@ function detailEditButton(item) {
 
 function libraryReleaseDateSummaryMarkup(item) {
   const releaseDate = itemReleaseDate(item);
-  if (!releaseDate) return '';
-  const suffix = isItemNotReleased(item) ? ' · Not Released' : '';
-  return `<div class="library-detail-date-strip library-release-date-strip" data-library-release-date="${escapeAttr(item.id)}"><span>Release</span><strong>${escapeHtml(formatLongDate(releaseDate))}${escapeHtml(suffix)}</strong></div>`;
+  // Release metadata is useful in Library only while the item is genuinely upcoming.
+  // Once released, omit it entirely so historical catalogue dates do not clutter details.
+  if (!releaseDate || !isItemNotReleased(item)) return '';
+  return `<div class="library-detail-date-strip library-release-date-strip" data-library-release-date="${escapeAttr(item.id)}"><span>Release</span><strong>${escapeHtml(formatLongDate(releaseDate))}</strong></div>`;
 }
 
 function appendLibraryReleaseDateSummary(item) {
@@ -9260,7 +9279,15 @@ async function handleDiscoverQueueChoice(event) {
   if (!button || !state.pendingDiscoverKey) return;
   const key = state.pendingDiscoverKey;
   const status = button.dataset.discoverQueueChoice === 'tbr' ? 'tbr' : 'upnext';
-  addDiscoverToQueue(key, status);
+  try {
+    const item = addDiscoverToQueue(key, status);
+    const result = state.discoverResults.get(key);
+    if (!item || (result && !findDiscoverItem(result))) throw new Error('Discover item was not saved.');
+  } catch (error) {
+    console.error('[Discover] Could not add item to queue', { key, status, error });
+    showActionFeedback('Could not add to Library. Try again.', true);
+    return;
+  }
   els.discoverQueueModal.close();
   state.pendingDiscoverKey = null;
   await renderDiscover();
@@ -9463,13 +9490,11 @@ async function commitDiscoverQuickAddOnContinue(key) {
   const completionIntent = Boolean(state.pendingDiscoverCompletionIntent);
   let item = findDiscoverItem(result);
 
-  // Continue after a completion request always needs an item. Otherwise create
-  // one only when the user actually supplied metadata/recommendation.
-  const shouldCreate = Boolean(item) || completionIntent || rating > 0 || recommended || /^\d{4}-\d{2}-\d{2}$/.test(date);
-  if (!shouldCreate) return;
-
+  // Continue is the save boundary. Rating, recommendation, and date are all
+  // optional; leaving every optional field blank must still save the item.
   if (!item) {
     item = ensureDiscoverItem(result, 'library');
+    if (!item || !findDiscoverItem(result)) throw new Error('Discover item was not saved.');
     if (result.sourceType === 'tv') item.watchDisposition = 'stopped';
   }
 
@@ -9527,7 +9552,15 @@ async function handleDiscoverRatingChoice(event) {
     event.preventDefault();
     event.stopPropagation();
     const key = state.pendingDiscoverRatingKey;
-    if (key) await commitDiscoverQuickAddOnContinue(key);
+    try {
+      if (key) await commitDiscoverQuickAddOnContinue(key);
+      const result = key ? state.discoverResults.get(key) : null;
+      if (result && !findDiscoverItem(result)) throw new Error('Discover item was not saved.');
+    } catch (error) {
+      console.error('[Discover] Continue failed', { key, error });
+      showActionFeedback('Could not add to Library. Try again.', true);
+      return;
+    }
 
     // Continue is the commit boundary. X / Escape / swipe never write anything.
     els.discoverRatingModal?.close();
@@ -11016,10 +11049,6 @@ function renderLibrary() {
           return Number(undatedRecentOrder.get(a.id) || 0) - Number(undatedRecentOrder.get(b.id) || 0);
         };
 
-  const notReleasedItems = filtered.filter(item => isItemNotReleased(item))
-    .sort((a, b) => String(itemReleaseDate(a)).localeCompare(String(itemReleaseDate(b))) || a.title.localeCompare(b.title));
-  filtered = filtered.filter(item => !isItemNotReleased(item));
-
   const preferredLabels = ['TV','Movie','Book','Music','Food','Workout','Other'];
   const preferredOrder = preferredLabels.map(label => slugifyType(label));
   const grouped = new Map();
@@ -11036,35 +11065,13 @@ function renderLibrary() {
   const order = [...preferredOrder, ...customOrder];
 
   els.libraryGroups.innerHTML = '';
-  const hasLibraryItems = filtered.length > 0 || notReleasedItems.length > 0;
+  const hasLibraryItems = filtered.length > 0;
   els.libraryEmpty.hidden = hasLibraryItems;
   if (!hasLibraryItems) {
     els.libraryEmpty.textContent = state.libraryView === 'recommended' ? 'Nothing in Recommended yet.' : 'Nothing saved yet.';
     return;
   }
 
-  if (notReleasedItems.length) {
-    const expansionKey = 'status:not-released';
-    const expanded = state.libraryExpandedGroups.has(expansionKey);
-    const section = document.createElement('section');
-    section.className = `library-group library-shelf library-not-released-shelf${expanded ? ' is-expanded' : ''}`;
-    section.dataset.libraryGroup = expansionKey;
-    section.innerHTML = `
-      <div class="library-group-heading-row">
-        <div class="library-group-title-wrap">
-          <h2 class="library-group-title">Not Released</h2>
-          <span class="library-group-count">${notReleasedItems.length}</span>
-        </div>
-        <div class="library-shelf-controls">
-          ${expanded ? '' : '<button class="library-carousel-button" type="button" data-library-carousel="prev" aria-label="Scroll left">‹</button><button class="library-carousel-button" type="button" data-library-carousel="next" aria-label="Scroll right">›</button>'}
-          <button class="library-expand-button" type="button" data-library-expand="${expansionKey}">${expanded ? 'Carousel' : 'View all'}</button>
-        </div>
-      </div>
-      <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
-    const grid = section.querySelector('.library-poster-grid');
-    for (const item of notReleasedItems) grid.appendChild(makeLibraryPoster(item));
-    els.libraryGroups.appendChild(section);
-  }
 
   for (const groupKey of order) {
     const items = grouped.get(groupKey);
@@ -11182,7 +11189,7 @@ function renderLibrary() {
     }
 
     const expanded = state.libraryExpandedGroups.has(groupKey);
-    const hasSubcategories = items.some(item => cleanTypeLabel(item.subcategory || ''));
+    const hasSubcategories = items.some(item => cleanTypeLabel(item.subcategory || '') || isItemNotReleased(item));
     const section = document.createElement('section');
     section.className = `library-group library-shelf${expanded ? ' is-expanded' : ''}`;
     section.dataset.libraryGroup = groupKey;
@@ -11203,12 +11210,16 @@ function renderLibrary() {
       const host = section.querySelector('.library-subcategory-groups');
       const bySubcategory = new Map();
       for (const item of items) {
-        const label = cleanTypeLabel(item.subcategory || '') || 'General';
+        // Upcoming releases stay inside their normal parent type and collect under
+        // a local Not Released subsection instead of a global Library shelf.
+        const label = isItemNotReleased(item) ? 'Not Released' : (cleanTypeLabel(item.subcategory || '') || 'General');
         if (!bySubcategory.has(label)) bySubcategory.set(label, []);
         bySubcategory.get(label).push(item);
       }
-      const preferredMusic = ['Album', 'Artist', 'Song', 'Concert', 'General'];
+      const preferredMusic = ['Not Released', 'Album', 'Artist', 'Song', 'Concert', 'General'];
       const labels = [...bySubcategory.keys()].sort((a, b) => {
+        if (a === 'Not Released') return -1;
+        if (b === 'Not Released') return 1;
         if (groupLabel === 'Music') {
           const ai = preferredMusic.indexOf(a);
           const bi = preferredMusic.indexOf(b);

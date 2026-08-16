@@ -7008,3 +7008,33 @@ dialog.modal:not([open]) {
   .calendar-tool-buttons { gap: 2px; }
   .week-controls { gap: 2px; }
 }
+\n\n/* =========================================================\n   OMNI — MOBILE LIBRARY / TEXT ICON CLEANUP\n   ========================================================= */\n.text-gear-icon {\n  font-family: Georgia, "Times New Roman", serif;\n  font-variant-emoji: text;\n  font-size: 1.15rem;\n  line-height: 1;\n  font-weight: 400;\n  display: inline-block;\n  transform: translateY(-.02em);\n}\n\n@media (max-width: 760px) {\n  .library-section .shell {\n    padding-inline: 18px !important;\n  }\n\n  .library-heading {\n    gap: 12px !important;\n    margin-bottom: 22px !important;\n  }\n\n  .library-title-block {\n    gap: 10px !important;\n  }\n\n  .library-title-block h1 {\n    font-size: clamp(3rem, 14vw, 4.25rem) !important;\n    line-height: .92 !important;\n    letter-spacing: -.035em;\n  }\n\n  .library-folder-tabs {\n    width: 100% !important;\n    min-height: 42px;\n  }\n  .library-folder-tab {\n    min-height: 40px !important;\n    padding: 8px 14px !important;\n    font-size: .84rem !important;\n  }\n\n  .library-controls {\n    display: grid !important;\n    width: 100%;\n    gap: 10px !important;\n  }\n\n  .library-search-row {\n    display: grid !important;\n    grid-template-columns: minmax(0, 1fr) 42px;\n    align-items: stretch !important;\n    gap: 8px !important;\n  }\n  .library-search-row .library-search-control {\n    min-width: 0 !important;\n    width: 100% !important;\n  }\n  .library-search-control input {\n    width: 100% !important;\n    min-width: 0 !important;\n    min-height: 42px !important;\n    height: 42px;\n    padding: 0 14px !important;\n    font-size: .9rem !important;\n  }\n  .library-search-row .library-icon-button {\n    width: 42px !important;\n    min-width: 42px !important;\n    height: 42px !important;\n    min-height: 42px !important;\n    padding: 0 !important;\n  }\n\n  .library-filter-row {\n    display: grid !important;\n    grid-template-columns: minmax(0, 1fr) 40px minmax(92px, .72fr);\n    align-items: end !important;\n    gap: 8px !important;\n  }\n  .library-filter-row .filter-control {\n    min-width: 0 !important;\n    width: 100% !important;\n  }\n  .library-filter-row .filter-control > span {\n    display: block;\n    margin: 0 0 5px 8px !important;\n    font-size: .66rem !important;\n    line-height: 1 !important;\n    letter-spacing: .08em;\n  }\n  .library-type-filter,\n  .library-type-filter summary,\n  .library-sort-control select {\n    width: 100% !important;\n    min-width: 0 !important;\n  }\n  .library-type-filter summary,\n  .library-sort-control select {\n    height: 40px !important;\n    min-height: 40px !important;\n    padding: 0 12px !important;\n    font-size: .84rem !important;\n  }\n  .library-filter-row .library-settings-button {\n    align-self: end !important;\n    width: 40px !important;\n    min-width: 40px !important;\n    height: 40px !important;\n    min-height: 40px !important;\n    padding: 0 !important;\n    margin: 0 !important;\n  }\n\n  .library-group-heading-row {\n    gap: 8px !important;\n  }\n  .library-group-title {\n    font-size: clamp(1.85rem, 9vw, 2.65rem) !important;\n    line-height: 1 !important;\n  }\n  .library-shelf-controls {\n    gap: 4px !important;\n  }\n  .library-expand-button {\n    font-size: .76rem !important;\n    white-space: nowrap;\n  }\n}\n\n@media (max-width: 390px) {\n  .library-section .shell { padding-inline: 14px !important; }\n  .library-filter-row {\n    grid-template-columns: minmax(0, 1fr) 38px 92px;\n    gap: 6px !important;\n  }\n  .library-filter-row .library-settings-button {\n    width: 38px !important;\n    min-width: 38px !important;\n  }\n  .library-title-block h1 { font-size: 3.25rem !important; }\n}\n
+
+/* Compact action feedback: only appears when an action cannot be completed. */
+.omni-action-feedback {
+  position: fixed;
+  z-index: 9999;
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
+  left: 50%;
+  max-width: min(88vw, 420px);
+  transform: translate(-50%, -12px);
+  padding: 10px 14px;
+  border: 1px solid rgba(21, 36, 58, .2);
+  border-radius: 999px;
+  background: #fbfaf5;
+  color: #15243a;
+  box-shadow: 0 8px 24px rgba(21, 36, 58, .14);
+  font-size: .92rem;
+  font-weight: 650;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .16s ease, transform .16s ease;
+}
+.omni-action-feedback.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.omni-action-feedback.is-error {
+  border-color: rgba(114, 0, 20, .28);
+}
