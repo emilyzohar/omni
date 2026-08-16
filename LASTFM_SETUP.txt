@@ -1,35 +1,24 @@
 LAST.FM MUSIC DISCOVERY SETUP
 
-Add this to the same environment configuration used for the other API keys:
+Recommended for Vite projects:
+VITE_LASTFM_API_KEY=YOUR_LASTFM_API_KEY
 
+Also supported for projects whose Vite config exposes the EXPO_PUBLIC_ prefix:
 EXPO_PUBLIC_LASTFM_API_KEY=YOUR_LASTFM_API_KEY
 
-The app reads it internally as:
-lastfmApiKey
+Compatibility aliases also accepted:
+VITE_LASTFM_KEY
+EXPO_PUBLIC_LASTFM_KEY
 
-You do NOT need to add the Last.fm shared secret for this integration.
-The tracker only uses read-only methods that require an API key and no user authentication:
-- artist.getSimilar
-- track.getSimilar
-- tag.getTopArtists
-- tag.getTopTracks
-- chart.getTopArtists
-- chart.getTopTracks
+IMPORTANT
+- Restart the Vite dev server after changing .env files.
+- For a deployed/production app, rebuild and redeploy after adding/changing the key. Vite injects client environment values at build time.
+- You only need the Last.fm API key. The shared secret is not used for these read-only recommendation endpoints.
+- The browser console logs whether Last.fm was detected and the env variable NAME used, but never the key value.
 
-WHAT IT DOES
+Expected console output after a correct build:
+[Config] API availability { lastFmConfigured: true, lastFmEnvName: 'VITE_LASTFM_API_KEY', ... }
+[Discover][Music] music collector start { ..., lastFmConfigured: true, ... }
+[Last.fm API] request ...
 
-For You:
-- Uses saved/high-signal artists as seeds for Last.fm similar artists.
-- Uses saved songs as seeds for Last.fm similar tracks.
-- Adds tag/genre exploration so the feed reaches beyond artists already logged.
-- Resolves Last.fm recommendations through iTunes so existing artwork, IDs, album/song details, and Library behavior continue to work.
-
-Popular:
-- Uses Last.fm global top artists and tracks.
-- Resolves them through iTunes.
-- Also surfaces albums from those popular artists.
-
-New:
-- Continues using dated iTunes catalogue results because Last.fm similarity/chart results are not a release-date feed.
-
-Ticketmaster remains responsible for concert/event discovery and Calendar behavior.
+If lastFmConfigured is false, the key was not exposed to the client build. Check the env name and rebuild/restart.

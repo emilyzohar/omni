@@ -1,3 +1,19 @@
+LAST.FM CONFIG DIAGNOSTIC
+
+The app now logs at startup:
+[Config] API availability
+
+Check these fields:
+- lastFmConfigured: true
+- lastFmEnvName: VITE_LASTFM_API_KEY (recommended) or EXPO_PUBLIC_LASTFM_API_KEY
+
+If false, Last.fm requests cannot run at all. Set the env variable and RESTART/REBUILD the Vite app.
+
+Recommended:
+VITE_LASTFM_API_KEY=YOUR_KEY
+
+The key value is never logged.
+
 LAST.FM DISCOVER DEBUGGING
 
 Environment variable:

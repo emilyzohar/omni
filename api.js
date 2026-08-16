@@ -236,13 +236,19 @@ export const TrackerAPI = (() => {
     }
   }
 
+  function lastFmImage(value) {
+    const images = Array.isArray(value?.image) ? value.image : [];
+    return [...images].reverse().map(entry => String(entry?.['#text'] || '')).find(Boolean) || '';
+  }
+
   function mapLastFmArtist(artist) {
     if (!artist?.name) return null;
     return {
       name: artist.name,
       mbid: artist.mbid || '',
       match: Number(artist.match || 0),
-      url: artist.url || ''
+      url: artist.url || '',
+      image: lastFmImage(artist)
     };
   }
 
@@ -255,7 +261,8 @@ export const TrackerAPI = (() => {
       artistName,
       mbid: track.mbid || '',
       match: Number(track.match || 0),
-      url: track.url || ''
+      url: track.url || '',
+      image: lastFmImage(track)
     };
   }
 

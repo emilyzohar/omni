@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=lastfm-music-discovery-1';
-import { API_CONFIG } from './config.js?v=lastfm-music-discovery-1';
+import { TrackerAPI } from './api.js?v=lastfm-lazy-metadata-1';
+import { API_CONFIG } from './config.js?v=lastfm-lazy-metadata-1';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -150,6 +150,19 @@ const state = {
   libraryVisibleTypes: null,
   libraryExpandedGroups: new Set()
 };
+
+console.log('[Config] API availability', {
+  lastFmConfigured: Boolean(API_CONFIG.lastfmApiKey),
+  lastFmEnvName: API_CONFIG.lastfmApiKeySource || 'missing',
+  ticketmasterConfigured: Boolean(API_CONFIG.ticketmasterKey),
+  tmdbConfigured: Boolean(API_CONFIG.tmdbToken),
+  googleBooksConfigured: Boolean(API_CONFIG.googleBooksKey),
+  note: API keys are intentionally not logged
+});
+if (!API_CONFIG.lastfmApiKey) {
+  console.warn('[Config][Last.fm] API key not exposed to this build. Set VITE_LASTFM_API_KEY (recommended for Vite) or EXPO_PUBLIC_LASTFM_API_KEY if your Vite envPrefix exposes EXPO_PUBLIC_, then restart/rebuild the app.');
+}
+
 
 
 const $ = selector => document.querySelector(selector);
@@ -6030,61 +6043,105 @@ async function resolveLastFmTrackCandidate(lastfmTrack) {
   }
 }
 
-async function resolveLastFmCandidatesInBatches(values, resolver, targetLimit, label) {
-  const resolved = [];
-  let attempted = 0;
-  let failed = 0;
-  const batchSize = 5;
-  for (let start = 0; start < values.length && resolved.length < targetLimit; start += batchSize) {
-    const batch = values.slice(start, start + batchSize);
-    attempted += batch.length;
-    const settled = await Promise.allSettled(batch.map(resolver));
-    for (const result of settled) {
-      if (result.status === 'fulfilled' && result.value) resolved.push(result.value);
-      else failed += 1;
-      if (resolved.length >= targetLimit) break;
+function lastFmStableId(kind, parts = []) {
+  const token = parts.map(value => normalizeArtistName(value)).filter(Boolean).join('::');
+  return `lastfm:${kind}:${token}`;
+}
+
+function lastFmArtistDiscoverCandidate(lastfmArtist) {
+  const artistName = String(lastfmArtist?.name || '').trim();
+  if (!artistName) return null;
+  return {
+    sourceType: 'artist',
+    provider: 'lastfm',
+    providerId: lastFmStableId('artist', [artistName]),
+    artistId: '',
+    artistName,
+    title: artistName,
+    subtitle: 'Artist',
+    description: '',
+    image: lastfmArtist?.image || '',
+    lastfmUrl: lastfmArtist?.url || '',
+    raw: {
+      lastfmMbid: lastfmArtist?.mbid || '',
+      lastfmMatch: Number(lastfmArtist?.match || 0),
+      lastfmUrl: lastfmArtist?.url || ''
     }
-  }
-  musicDiscoverDebug(`${label} iTunes resolution`, {
-    supplied: values.length,
-    attempted,
-    resolved: resolved.length,
-    failed,
-    target: targetLimit
-  });
-  return resolved.slice(0, targetLimit);
+  };
+}
+
+function lastFmTrackDiscoverCandidate(lastfmTrack) {
+  const trackName = String(lastfmTrack?.name || '').trim();
+  const artistName = String(lastfmTrack?.artistName || '').trim();
+  if (!trackName || !artistName) return null;
+  return {
+    sourceType: 'song',
+    provider: 'lastfm',
+    providerId: lastFmStableId('track', [artistName, trackName]),
+    artistId: '',
+    artistName,
+    title: trackName,
+    subtitle: artistName,
+    albumName: '',
+    description: '',
+    image: lastfmTrack?.image || '',
+    lastfmUrl: lastfmTrack?.url || '',
+    releaseDate: '',
+    raw: {
+      artistName,
+      lastfmMbid: lastfmTrack?.mbid || '',
+      lastfmMatch: Number(lastfmTrack?.match || 0),
+      lastfmUrl: lastfmTrack?.url || ''
+    }
+  };
 }
 
 async function collectLastFmResolvedArtists(lastfmArtists, limit = 6) {
-  const known = knownMusicArtistNameSet();
-  const unique = [];
+  const knownNames = knownMusicArtistNameSet();
+  const knownIds = new Set(state.items.filter(item => getSourceType(item) === 'artist').map(item => String(item.providerId || '')).filter(Boolean));
+  const output = [];
   const seen = new Set();
-  const attemptPoolSize = Math.min(60, Math.max(limit * 3, limit + 12));
   for (const artist of lastfmArtists || []) {
     const key = normalizeArtistName(artist?.name);
-    if (!key || known.has(key) || seen.has(key)) continue;
+    if (!key || knownNames.has(key) || seen.has(key)) continue;
     seen.add(key);
-    unique.push(artist);
-    if (unique.length >= attemptPoolSize) break;
+    const candidate = lastFmArtistDiscoverCandidate(artist);
+    if (!candidate || knownIds.has(String(candidate.providerId))) continue;
+    output.push(candidate);
+    if (output.length >= limit) break;
   }
-  return resolveLastFmCandidatesInBatches(unique, resolveLastFmArtistCandidate, limit, 'artist');
+  musicDiscoverDebug('Last.fm artist candidates mapped directly', {
+    supplied: lastfmArtists?.length || 0,
+    mapped: output.length,
+    target: limit,
+    iTunesRequests: 0
+  });
+  return output;
 }
 
 async function collectLastFmResolvedTracks(lastfmTracks, limit = 7) {
-  const known = new Set(state.items
+  const knownSignatures = new Set(state.items
     .filter(item => getSourceType(item) === 'song')
     .map(item => `${normalizeArtistName(item.artistName || item.raw?.artistName || item.subtitle)}::${normalizeArtistName(item.title)}`));
-  const unique = [];
+  const knownIds = new Set(state.items.filter(item => getSourceType(item) === 'song').map(item => String(item.providerId || '')).filter(Boolean));
+  const output = [];
   const seen = new Set();
-  const attemptPoolSize = Math.min(60, Math.max(limit * 3, limit + 12));
   for (const track of lastfmTracks || []) {
-    const key = `${normalizeArtistName(track?.artistName)}::${normalizeArtistName(track?.name)}`;
-    if (!key || key === '::' || known.has(key) || seen.has(key)) continue;
-    seen.add(key);
-    unique.push(track);
-    if (unique.length >= attemptPoolSize) break;
+    const signature = `${normalizeArtistName(track?.artistName)}::${normalizeArtistName(track?.name)}`;
+    if (!signature || signature === '::' || knownSignatures.has(signature) || seen.has(signature)) continue;
+    seen.add(signature);
+    const candidate = lastFmTrackDiscoverCandidate(track);
+    if (!candidate || knownIds.has(String(candidate.providerId))) continue;
+    output.push(candidate);
+    if (output.length >= limit) break;
   }
-  return resolveLastFmCandidatesInBatches(unique, resolveLastFmTrackCandidate, limit, 'track');
+  musicDiscoverDebug('Last.fm track candidates mapped directly', {
+    supplied: lastfmTracks?.length || 0,
+    mapped: output.length,
+    target: limit,
+    iTunesRequests: 0
+  });
+  return output;
 }
 
 async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
@@ -6134,7 +6191,7 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
 
   // Keep a small amount of familiar material in For You, but it is no longer
   // the recommendation engine. Most new artists/tracks below come from Last.fm.
-  if (personalized && tasteNames.length) {
+  if (personalized && tasteNames.length && !dedicatedArtistView && !dedicatedSongView) {
     const familiarArtist = rotatedSlice(tasteNames, batchNumber, 1)[0];
     if (familiarArtist) {
       try {
@@ -6153,8 +6210,8 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
   const hasLastFm = Boolean(state.settings.lastfmApiKey);
 
   if (hasLastFm && personalized) {
-    // 1) Direct Last.fm similarity. Dedicated Artist view deliberately resolves
-    // a much larger pool and rotates across more saved/inferred artist seeds.
+    // 1) Direct Last.fm similarity. Dedicated Artist view maps
+    // a much larger pool directly without an iTunes request per artist and rotates across more saved/inferred artist seeds.
     const artistSeedCount = dedicatedArtistView ? Math.min(4, tasteNames.length) : Math.min(3, tasteNames.length);
     const artistSeeds = rotatedSlice(tasteNames, batchNumber, artistSeedCount);
     if (artistSeeds.length) {
@@ -6178,7 +6235,7 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
         const artist = resolvedArtists[index];
         const seedLabel = artistSeeds.length === 1 ? artistSeeds[0] : 'artists you like';
         addArtist(artist, 'lastfm-similar-artist', 11 - index * .22, false, { recommendationReason: `Similar to ${seedLabel}` });
-        if (!dedicatedArtistView && index < 6) {
+        if (!dedicatedArtistView && !dedicatedSongView && index < 2) {
           try {
             const albums = await itunesAlbumsForArtistName(artist.title);
             (albums || []).slice(0, 1).forEach(album => addAlbum(album, 'lastfm-similar-artist-album', 7.2 - index * .12, true, { recommendationReason: `Album by related artist ${artist.title}` }));
@@ -6191,7 +6248,7 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
       musicDiscoverWarn('no artist seeds available for direct similarity', { requestedContentType, batchNumber });
     }
 
-    // 2) Track-to-track similarity. Dedicated Song view resolves more tracks and
+    // 2) Track-to-track similarity. Dedicated Song view maps more tracks directly and
     // rotates across two strong song seeds instead of one.
     const songSeeds = savedMusicSongSeeds();
     const selectedSongSeeds = rotatedSlice(songSeeds.slice(0, Math.max(12, Math.min(30, songSeeds.length))), batchNumber, dedicatedSongView ? 2 : 1);
@@ -6287,7 +6344,7 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
       ]);
       resolvedArtists.forEach((artist, index) => addArtist(artist, 'lastfm-popular-artist', 7.5 - index * .18, false, { recommendationReason: 'Popular on Last.fm' }));
       resolvedTracks.forEach((song, index) => addSong(song, 'lastfm-popular-track', 7.5 - index * .15, false, { recommendationReason: 'Popular on Last.fm' }));
-      for (const [index, artist] of resolvedArtists.slice(0, 5).entries()) {
+      for (const [index, artist] of resolvedArtists.slice(0, 2).entries()) {
         try {
           const albums = await itunesAlbumsForArtistName(artist.title);
           if (albums?.[0]) addAlbum(albums[0], 'lastfm-popular-album', 6.8 - index * .16, false, { recommendationReason: `Popular artist · ${artist.title}` });
@@ -6300,8 +6357,8 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
   // for New. With Last.fm configured, For You/Popular no longer depend on these
   // loose genre text searches for artist/track recommendations.
   const currentTypeCounts = musicDiscoverTypeCounts(dedupeDiscoverCandidatesByBoost(candidates));
-  const sparseDedicatedArtistView = dedicatedArtistView && Number(currentTypeCounts.artist || 0) < 24;
-  const sparseDedicatedSongView = dedicatedSongView && Number(currentTypeCounts.song || 0) < 24;
+  const sparseDedicatedArtistView = dedicatedArtistView && Number(currentTypeCounts.artist || 0) < 18;
+  const sparseDedicatedSongView = dedicatedSongView && Number(currentTypeCounts.song || 0) < 18;
   if (!hasLastFm || mode === 'new' || sparseDedicatedArtistView || sparseDedicatedSongView) {
     if (hasLastFm && (sparseDedicatedArtistView || sparseDedicatedSongView)) {
       musicDiscoverWarn('Last.fm pool sparse; enabling iTunes supplemental fallback', {
@@ -7946,7 +8003,9 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
     progress: {},
     artistName: result.artistName || (sourceType === 'artist' ? result.title : result.subtitle) || '',
     artistId: result.artistId || '',
-    albumName: result.albumName || ''
+    albumName: result.albumName || '',
+    lastfmUrl: result.lastfmUrl || result.raw?.lastfmUrl || '',
+    raw: result.raw ? { ...result.raw } : {}
   };
 
   if (sourceType === 'tv') item.progress = { nextSeason: 1, nextEpisode: 1 };
@@ -8535,27 +8594,78 @@ async function renderDiscoverAlbumDetail(key) {
 async function renderDiscoverArtistDetail(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
-  const data = await getCached(`artist:${result.providerId}`, () => TrackerAPI.getArtistDetails(result.providerId, state.settings));
-  const artist = (data.results || []).find(r => r.wrapperType === 'artist') || {};
-  const albums = (data.results || []).filter(r => r.wrapperType === 'collection');
+  let artist = {};
+  let albums = [];
+  let metadataError = '';
+  try {
+    let itunesArtistId = String(result.raw?.itunesArtistId || result.artistId || '');
+    if (!itunesArtistId || result.provider !== 'itunes') {
+      musicDiscoverDebug('lazy iTunes artist detail resolution start', { artist: result.title, provider: result.provider });
+      const resolved = await resolveLastFmArtistCandidate({ name: result.title, mbid: result.raw?.lastfmMbid || '', match: result.raw?.lastfmMatch || 0 });
+      itunesArtistId = String(resolved?.providerId || '');
+      if (resolved) {
+        result.raw = { ...(result.raw || {}), itunesArtistId };
+        result.artistId = itunesArtistId;
+        result.image = result.image || resolved.image || '';
+        result.subtitle = resolved.subtitle || result.subtitle;
+        result.description = resolved.description || result.description;
+      }
+    }
+    if (itunesArtistId) {
+      const data = await getCached(`artist:${itunesArtistId}`, () => TrackerAPI.getArtistDetails(itunesArtistId, state.settings));
+      artist = (data.results || []).find(r => r.wrapperType === 'artist') || {};
+      albums = (data.results || []).filter(r => r.wrapperType === 'collection');
+      musicDiscoverDebug('lazy iTunes artist detail resolution complete', { artist: result.title, itunesArtistId, albums: albums.length });
+    }
+  } catch (error) {
+    metadataError = error?.message || String(error);
+    musicDiscoverWarn('lazy iTunes artist detail resolution failed', { artist: result.title, error: metadataError });
+  }
   const image = (albums.find(album => album.artworkUrl100)?.artworkUrl100 || result.image || '').replace('100x100bb','600x600bb');
   if (!result.image && image) result.image = image;
+  const externalUrl = result.lastfmUrl || result.raw?.lastfmUrl || '';
   els.detailBody.innerHTML = `
     ${detailHero({ type:'ARTIST', title:artist.artistName || result.title, image, subtitle:artist.primaryGenreName || result.subtitle || '', overview:'' })}
     ${discoverLibraryOnlyActionMarkup(result, key)}
-    ${albums.length ? `<section class="detail-section"><h3>Recent albums</h3><div class="track-list">${albums.slice(0,8).map(album => `<div class="track-row"><div>•</div><div><div class="list-title">${escapeHtml(album.collectionName || 'Album')}</div><div class="list-meta">${escapeHtml(String(album.releaseDate || '').slice(0,4))}</div></div></div>`).join('')}</div></section>` : ''}`;
+    ${metadataError ? `<section class="detail-section"><p class="list-meta">Extra iTunes metadata is temporarily unavailable. The Last.fm recommendation is still usable.</p></section>` : ''}
+    ${albums.length ? `<section class="detail-section"><h3>Recent albums</h3><div class="track-list">${albums.slice(0,8).map(album => `<div class="track-row"><div>•</div><div><div class="list-title">${escapeHtml(album.collectionName || 'Album')}</div><div class="list-meta">${escapeHtml(String(album.releaseDate || '').slice(0,4))}</div></div></div>`).join('')}</div></section>` : ''}
+    ${externalUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(externalUrl)}" target="_blank" rel="noopener">Open on Last.fm ↗</a></section>` : ''}`;
 }
 
 async function renderDiscoverSongDetail(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
-  const data = await getCached(`song:${result.providerId}`, () => TrackerAPI.getSongDetails(result.providerId, state.settings));
-  const track = (data.results || []).find(r => r.wrapperType === 'track') || (data.results || [])[0] || {};
+  let track = {};
+  let metadataError = '';
+  try {
+    let itunesTrackId = String(result.raw?.itunesTrackId || (result.provider === 'itunes' ? result.providerId : ''));
+    if (!itunesTrackId) {
+      musicDiscoverDebug('lazy iTunes song detail resolution start', { artist: result.artistName || result.subtitle, track: result.title });
+      const resolved = await resolveLastFmTrackCandidate({ name: result.title, artistName: result.artistName || result.subtitle, mbid: result.raw?.lastfmMbid || '' });
+      itunesTrackId = String(resolved?.providerId || '');
+      if (resolved) {
+        result.raw = { ...(result.raw || {}), itunesTrackId };
+        result.image = result.image || resolved.image || '';
+        result.albumName = resolved.albumName || result.albumName;
+        result.releaseDate = resolved.releaseDate || result.releaseDate;
+      }
+    }
+    if (itunesTrackId) {
+      const data = await getCached(`song:${itunesTrackId}`, () => TrackerAPI.getSongDetails(itunesTrackId, state.settings));
+      track = (data.results || []).find(r => r.wrapperType === 'track') || (data.results || [])[0] || {};
+      musicDiscoverDebug('lazy iTunes song detail resolution complete', { artist: result.artistName || result.subtitle, track: result.title, itunesTrackId });
+    }
+  } catch (error) {
+    metadataError = error?.message || String(error);
+    musicDiscoverWarn('lazy iTunes song detail resolution failed', { artist: result.artistName || result.subtitle, track: result.title, error: metadataError });
+  }
   const image = (track.artworkUrl100 || result.image || '').replace('100x100bb','600x600bb');
+  const externalUrl = track.trackViewUrl || result.lastfmUrl || result.raw?.lastfmUrl || '';
   els.detailBody.innerHTML = `
     ${detailHero({ type:'SONG', title:track.trackName || result.title, image, subtitle:[track.artistName || result.subtitle || '', track.collectionName || result.albumName || '', track.primaryGenreName || ''].filter(Boolean).join(' · '), overview:'' })}
     ${discoverLibraryOnlyActionMarkup(result, key)}
-    ${track.trackViewUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(track.trackViewUrl)}" target="_blank" rel="noopener">Open in Apple Music / iTunes ↗</a></section>` : ''}`;
+    ${metadataError ? `<section class="detail-section"><p class="list-meta">Extra iTunes metadata is temporarily unavailable. The Last.fm recommendation is still usable.</p></section>` : ''}
+    ${externalUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(externalUrl)}" target="_blank" rel="noopener">${track.trackViewUrl ? 'Open in Apple Music / iTunes' : 'Open on Last.fm'} ↗</a></section>` : ''}`;
 }
 
 function discoverEventCalendarActionMarkup(result, key) {
