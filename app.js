@@ -238,7 +238,7 @@ const els = {
   stickerSettingsRows: $('#stickerSettingsRows'),
   resetStickerSettings: $('#resetStickerSettings'),
   openStreakSettings: $('#openStreakSettings'),
-  streakSettingsModal: $('#streakSettingsModal'),
+  streakSettingsModal: $('#stickerSettingsModal'),
   streakSettingsForm: $('#streakSettingsForm'),
   streakSettingsRows: $('#streakSettingsRows'),
   resetStreakSettings: $('#resetStreakSettings'),
@@ -396,6 +396,8 @@ const els = {
   attachmentBody: $('#attachmentBody'),
   itemDate: $('#itemDate'),
   itemDateField: $('#itemDateField'),
+  itemReleaseDate: $('#itemReleaseDate'),
+  itemReleaseDateField: $('#itemReleaseDateField'),
   itemRecommended: $('#itemRecommended'),
   itemRecommendHeart: $('#itemRecommendHeart'),
   queueStatusField: $('#queueStatusField'),
@@ -850,6 +852,9 @@ function bindEvents() {
   els.openLibraryAdd?.addEventListener('click', () => openItemModal());
   els.openTrackAdd?.addEventListener('click', () => openItemModal('', 'library'));
   els.openStickerSettings?.addEventListener('click', openStickerSettings);
+  els.stickerSettingsModal?.querySelectorAll('[data-track-settings-tab]').forEach(tab => {
+    tab.addEventListener('click', () => setTrackSettingsTab(tab.dataset.trackSettingsTab));
+  });
   els.stickerSettingsForm?.addEventListener('submit', saveStickerSettings);
   els.stickerSettingsRows?.addEventListener('input', previewStickerSettings);
   els.stickerSettingsRows?.addEventListener('change', previewStickerSettings);
@@ -1424,6 +1429,7 @@ function bindEvents() {
 }
 
 function renderAll() {
+  reconcileLocalProgressQueues();
   if (els.upNextList) renderUpNext();
   if (els.trackerGrid) renderTracker();
   if (els.trackStreakSummary) renderTrackStreakSummary();
@@ -2143,7 +2149,7 @@ async function getUpNextInfo(item) {
     const remaining = await countRemainingAvailableTVEpisodes(item);
     return {
       title: item.title,
-      meta: `S${episode.season_number} E${episode.episode_number} · ${episode.name || 'Episode'}${remaining ? ` · ${remaining} episode${remaining === 1 ? '' : 's'} remaining` : ''}`,
+      meta: `S${episode.season_number} E${episode.episode_number} · ${episode.name || 'Episode'}${remaining ? ` · + ${remaining} −` : ''}`,
       image: TrackerAPI.tmdbImage(episode.still_path) || item.image
     };
   }
@@ -3078,10 +3084,74 @@ async function trackLibraryItem(item, button = null) {
   }
 }
 
+const RELEASE_QUEUE_SOURCE_TYPES = new Set(['tv', 'movie', 'book']);
+
+function normalizedReleaseDate(value) {
+  const date = String(value || '').trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '';
+}
+
+function itemReleaseDate(item) {
+  return normalizedReleaseDate(item?.releaseDate);
+}
+
+function isItemNotReleased(item, today = todayString()) {
+  const releaseDate = itemReleaseDate(item);
+  return Boolean(releaseDate && releaseDate > today);
+}
+
+function releaseQueueStage(item, today = todayString()) {
+  const releaseDate = itemReleaseDate(item);
+  if (!releaseDate || releaseDate <= today) return 'released';
+  return today >= addDaysToDateString(releaseDate, -7) ? 'tbr' : 'library';
+}
+
+function setReleaseQueueStatus(item, status) {
+  const sourceType = getSourceType(item);
+  setItemQueueStatus(item, status);
+  if (sourceType === 'tv') {
+    if (status === 'tbr') item.watchDisposition = 'watch-later';
+    else if (status === 'upnext') item.watchDisposition = 'following';
+  }
+  if (sourceType === 'book' && status === 'upnext' && item.bookDisposition === 'paused') item.bookDisposition = '';
+}
+
+function applyReleaseQueueAutomation(item, today = todayString()) {
+  if (!item) return false;
+  const releaseDate = itemReleaseDate(item);
+  const sourceType = getSourceType(item);
+  const supportsQueue = RELEASE_QUEUE_SOURCE_TYPES.has(sourceType);
+  const before = JSON.stringify({ queueStatus: getQueueStatus(item), watchDisposition: item.watchDisposition || '', bookDisposition: item.bookDisposition || '', releaseAutomation: item.releaseAutomation || null });
+
+  if (!releaseDate) {
+    if (item.releaseAutomation) delete item.releaseAutomation;
+  } else if (releaseDate > today) {
+    const desired = releaseQueueStage(item, today);
+    if (supportsQueue) setReleaseQueueStatus(item, desired);
+    item.releaseAutomation = { date: releaseDate, stage: desired };
+  } else if (supportsQueue && item.releaseAutomation?.date === releaseDate && ['library', 'tbr'].includes(item.releaseAutomation?.stage)) {
+    if (!item.completedAt && libraryDnfState(item) !== 'stopped') setReleaseQueueStatus(item, 'upnext');
+    item.releaseAutomation = { date: releaseDate, stage: 'released', activatedAt: today };
+  } else if (item.releaseAutomation?.date && item.releaseAutomation.date !== releaseDate) {
+    if (releaseDate > today) {
+      const desired = releaseQueueStage(item, today);
+      if (supportsQueue) setReleaseQueueStatus(item, desired);
+      item.releaseAutomation = { date: releaseDate, stage: desired };
+    } else {
+      delete item.releaseAutomation;
+    }
+  }
+
+  const after = JSON.stringify({ queueStatus: getQueueStatus(item), watchDisposition: item.watchDisposition || '', bookDisposition: item.bookDisposition || '', releaseAutomation: item.releaseAutomation || null });
+  return before !== after;
+}
+
 function reconcileLocalProgressQueues() {
   let changed = false;
   for (const item of state.items) {
+    if (applyReleaseQueueAutomation(item)) changed = true;
     const sourceType = getSourceType(item);
+    if (isItemNotReleased(item)) continue;
     if (sourceType === 'book') {
       const current = Number(item.progress?.currentPage || 0);
       const total = Number(item.progress?.totalPages || 0);
@@ -3199,10 +3269,11 @@ function queueMoveControls(item) {
   if (!['tv', 'movie', 'book'].includes(sourceType)) return '';
   const dnfState = libraryDnfState(item);
   const trackSelected = sourceType === 'movie' ? Boolean(item.completedAt) : current === 'upnext';
+  const unreleased = isItemNotReleased(item);
   return `<div class="queue-toggle-buttons library-status-actions" aria-label="Status">
-    <button class="secondary-button queue-toggle-button${trackSelected ? ' is-selected' : ''}" type="button" data-library-track="${escapeAttr(item.id)}" aria-pressed="${trackSelected}">Track</button>
-    <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-move-queue="tbr" data-item-id="${escapeAttr(item.id)}" aria-pressed="${current === 'tbr'}" ${item.completedAt ? 'disabled' : ''}>TBR</button>
-    <button class="secondary-button queue-toggle-button${dnfState === 'stopped' ? ' is-selected' : ''}" type="button" data-library-dnf="${escapeAttr(item.id)}" aria-pressed="${dnfState === 'stopped'}" ${item.completedAt ? 'disabled' : ''}>DNF</button>
+    <button class="secondary-button queue-toggle-button${trackSelected ? ' is-selected' : ''}" type="button" data-library-track="${escapeAttr(item.id)}" aria-pressed="${trackSelected}" ${unreleased ? 'disabled' : ''}>Track</button>
+    <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-move-queue="tbr" data-item-id="${escapeAttr(item.id)}" aria-pressed="${current === 'tbr'}" ${(item.completedAt || unreleased) ? 'disabled' : ''}>TBR</button>
+    <button class="secondary-button queue-toggle-button${dnfState === 'stopped' ? ' is-selected' : ''}" type="button" data-library-dnf="${escapeAttr(item.id)}" aria-pressed="${dnfState === 'stopped'}" ${(item.completedAt || unreleased) ? 'disabled' : ''}>DNF</button>
   </div>`;
 }
 
@@ -3295,6 +3366,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     if (els.itemSubcategory) els.itemSubcategory.value = item.subcategory || '';
     els.itemNote.value = item.notes || '';
     els.itemDate.value = item.date || '';
+    if (els.itemReleaseDate) els.itemReleaseDate.value = normalizedReleaseDate(item.releaseDate);
     if (els.itemRecommended) els.itemRecommended.checked = Boolean(item.recommended);
     syncItemRecommendHeart();
     els.itemQueueStatus.value = getQueueStatus(item);
@@ -3358,6 +3430,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.bookTotalPages.value = '';
   if (els.bookStartDate) els.bookStartDate.value = '';
   if (els.bookEndDate) els.bookEndDate.value = '';
+  if (els.itemReleaseDate) els.itemReleaseDate.value = '';
   if (els.reminderFrequency) els.reminderFrequency.value = 'none';
   if (els.reminderDueDate) els.reminderDueDate.value = todayString();
   if (els.reminderInterval) els.reminderInterval.value = '2';
@@ -3404,6 +3477,7 @@ function clearSourceSelectionForTypeChange() {
   els.providerId.value = '';
   els.providerImage.value = '';
   els.providerSubtitle.value = '';
+  if (els.itemReleaseDate) els.itemReleaseDate.value = '';
   els.catalogueQuery.value = '';
   els.playlistInput.value = '';
   els.searchResults.hidden = true;
@@ -3428,6 +3502,7 @@ function updateItemFormForType() {
   els.tvProgressFields.hidden = sourceType !== 'tv';
   els.bookProgressFields.hidden = sourceType !== 'book';
   if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder;
+  if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = !['tv','movie','book','music','artist','song'].includes(sourceType);
   if (sourceType === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
     els.bookStartDate.value = todayString();
   }
@@ -3614,6 +3689,10 @@ function selectCatalogueResult(result) {
   }
   if (['event', 'concert'].includes(els.itemSourceType.value) && result.eventDate && els.itemDate) {
     els.itemDate.value = result.eventDate;
+  }
+  if (els.itemReleaseDate && ['tv','movie','book','music','artist','song'].includes(els.itemSourceType.value)) {
+    const releaseDate = normalizedReleaseDate(extractItemReleaseDate(els.itemSourceType.value, result, null));
+    if (releaseDate) els.itemReleaseDate.value = releaseDate;
   }
   if (els.itemSourceType.value === 'music' && result.provider === 'itunes' && els.itemSubcategory) {
     els.itemSubcategory.value = 'Album';
@@ -4033,7 +4112,9 @@ async function saveItemFromForm(event) {
     notes: els.itemNote.value.trim(),
     recommended: Boolean(els.itemRecommended?.checked),
     genres: extractItemGenres(sourceType, state.selectedSource, editing),
-    releaseDate: extractItemReleaseDate(sourceType, state.selectedSource, editing),
+    releaseDate: ['tv','movie','book','music','artist','song'].includes(sourceType)
+      ? (normalizedReleaseDate(els.itemReleaseDate?.value) || normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)))
+      : normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)),
     attachments: attachmentFiles,
     links: state.attachmentDraft.links.map(link => ({ ...link })),
     date: sourceType === 'reminder' ? '' : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
@@ -4190,6 +4271,8 @@ async function saveItemFromForm(event) {
     return;
   }
 
+  applyReleaseQueueAutomation(item);
+
   if (editing) {
     state.items = state.items.map(existing => existing.id === item.id ? item : existing);
   } else {
@@ -4321,11 +4404,13 @@ async function openDetails(id) {
     else if (['event', 'concert'].includes(sourceType)) await renderEventDetails(item);
     else if (sourceType === 'restaurant') await renderRestaurantDetails(item);
     else renderManualDetails(item);
+    appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
     appendLibraryPersonalMetadata(item);
     appendItemResources(item);
   } catch (error) {
     els.detailBody.innerHTML = `${basicDetailHero(item)}<div class="api-error">${escapeHtml(error.message)}</div>${detailEditButton(item)}`;
+    appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
     appendLibraryPersonalMetadata(item);
     appendItemResources(item);
@@ -4770,6 +4855,22 @@ function detailEditButton(item) {
   return libraryDetailActions(item);
 }
 
+function libraryReleaseDateSummaryMarkup(item) {
+  const releaseDate = itemReleaseDate(item);
+  if (!releaseDate) return '';
+  const suffix = isItemNotReleased(item) ? ' · Not Released' : '';
+  return `<div class="library-detail-date-strip library-release-date-strip" data-library-release-date="${escapeAttr(item.id)}"><span>Release</span><strong>${escapeHtml(formatLongDate(releaseDate))}${escapeHtml(suffix)}</strong></div>`;
+}
+
+function appendLibraryReleaseDateSummary(item) {
+  if (!els.detailBody || !item || els.detailBody.querySelector(`[data-library-release-date="${CSS.escape(item.id)}"]`)) return;
+  const markup = libraryReleaseDateSummaryMarkup(item);
+  if (!markup) return;
+  const hero = els.detailBody.querySelector('.detail-hero');
+  if (hero) hero.insertAdjacentHTML('afterend', markup);
+  else els.detailBody.insertAdjacentHTML('afterbegin', markup);
+}
+
 function libraryAssociatedDateInfo(item) {
   if (!item) return null;
   const sourceType = getSourceType(item);
@@ -4812,9 +4913,16 @@ function appendLibraryDateSummary(item) {
   if (!els.detailBody || !item || els.detailBody.querySelector(`[data-library-date-summary="${CSS.escape(item.id)}"]`)) return;
   const markup = libraryDateSummaryMarkup(item);
   if (!markup) return;
-  const hero = els.detailBody.querySelector('.detail-hero');
-  if (hero) hero.insertAdjacentHTML('afterend', markup);
-  else els.detailBody.insertAdjacentHTML('afterbegin', markup);
+  // Keep the date log visually attached to the item title. This is deliberately
+  // inside the hero text column, directly below the H2, rather than below the
+  // entire hero/poster block.
+  const title = els.detailBody.querySelector('.detail-hero h2');
+  if (title) title.insertAdjacentHTML('afterend', markup);
+  else {
+    const hero = els.detailBody.querySelector('.detail-hero');
+    if (hero) hero.insertAdjacentHTML('afterend', markup);
+    else els.detailBody.insertAdjacentHTML('afterbegin', markup);
+  }
 }
 
 function formatPersonalRating(value) {
@@ -9165,6 +9273,7 @@ function addDiscoverToQueue(key, status) {
   const item = ensureDiscoverItem(result, status);
   setItemQueueStatus(item, status);
   item.completedAt = '';
+  applyReleaseQueueAutomation(item);
   item.updatedAt = new Date().toISOString();
   saveItems();
   renderAll();
@@ -9229,6 +9338,7 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
     item.genres = [...(result.classifications || [])];
     item.releaseDate = result.eventDate || '';
   }
+  applyReleaseQueueAutomation(item);
   state.items.push(item);
   saveItems();
   return item;
@@ -10071,9 +10181,26 @@ async function renderDiscoverBookDetail(key) {
 // ---------------------------
 // STICKER SETTINGS
 // ---------------------------
+function setTrackSettingsTab(tabName = 'stickers') {
+  const modal = els.stickerSettingsModal;
+  if (!modal) return;
+  const active = tabName === 'streaks' ? 'streaks' : 'stickers';
+  modal.querySelectorAll('[data-track-settings-tab]').forEach(tab => {
+    const selected = tab.dataset.trackSettingsTab === active;
+    tab.classList.toggle('is-active', selected);
+    tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+  });
+  modal.querySelectorAll('[data-track-settings-panel]').forEach(panel => {
+    panel.hidden = panel.dataset.trackSettingsPanel !== active;
+  });
+  if (active === 'streaks') renderStreakSettingsRows();
+  else renderStickerSettingsRows();
+  resetDialogScrollPosition(modal);
+}
+
 function openStickerSettings() {
   if (!els.stickerSettingsModal || !els.stickerSettingsRows) return;
-  renderStickerSettingsRows();
+  setTrackSettingsTab('stickers');
   showDialogAtTop(els.stickerSettingsModal);
 }
 
@@ -10376,8 +10503,7 @@ function calculateTypeStreak(typeOrGroupKey, overrideConfig = null) {
 function streakText(typeOrGroupKey, overrideConfig = null) {
   const streak = calculateTypeStreak(typeOrGroupKey, overrideConfig);
   if (!streak.enabled) return '';
-  const base = `${streak.count} day${streak.count === 1 ? '' : 's'} streak`;
-  return streak.restToday ? `${base} · rest today` : base;
+  return `${streak.count} day${streak.count === 1 ? '' : 's'}`;
 }
 
 function streakInlineMarkup(typeOrGroupKey) {
@@ -10415,9 +10541,9 @@ function renderTrackStreakSummary() {
 }
 
 function openStreakSettings() {
-  if (!els.streakSettingsModal || !els.streakSettingsRows) return;
-  renderStreakSettingsRows();
-  showDialogAtTop(els.streakSettingsModal);
+  if (!els.stickerSettingsModal || !els.streakSettingsRows) return;
+  setTrackSettingsTab('streaks');
+  showDialogAtTop(els.stickerSettingsModal);
 }
 
 function renderStreakSettingsRows() {
@@ -10473,7 +10599,7 @@ function saveStreakSettings(event) {
   state.streakPrefs = next;
   localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
   scheduleCloudSync();
-  els.streakSettingsModal?.close();
+  els.stickerSettingsModal?.close();
   renderAll();
 }
 
@@ -10527,13 +10653,13 @@ function extractItemGenres(sourceType, source, editing) {
 }
 
 function extractItemReleaseDate(sourceType, source, editing) {
-  if (sourceType === 'book') return source?.publishedDate || source?.raw?.volumeInfo?.publishedDate || editing?.releaseDate || '';
-  if (sourceType === 'tv') return source?.raw?.first_air_date || editing?.releaseDate || '';
-  if (sourceType === 'movie') return source?.raw?.release_date || editing?.releaseDate || '';
-  if (sourceType === 'music' || sourceType === 'song') return source?.releaseDate || source?.raw?.releaseDate || editing?.releaseDate || '';
-  if (sourceType === 'artist') return editing?.releaseDate || '';
-  if (['event', 'concert'].includes(sourceType)) return source?.eventDate || source?.raw?.dates?.start?.localDate || editing?.date || editing?.releaseDate || '';
-  return editing?.releaseDate || '';
+  if (sourceType === 'book') return normalizedReleaseDate(source?.publishedDate || source?.raw?.volumeInfo?.publishedDate || editing?.releaseDate || '');
+  if (sourceType === 'tv') return normalizedReleaseDate(source?.raw?.first_air_date || editing?.releaseDate || '');
+  if (sourceType === 'movie') return normalizedReleaseDate(source?.raw?.release_date || editing?.releaseDate || '');
+  if (sourceType === 'music' || sourceType === 'song') return normalizedReleaseDate(source?.releaseDate || source?.raw?.releaseDate || editing?.releaseDate || '');
+  if (sourceType === 'artist') return normalizedReleaseDate(editing?.releaseDate || '');
+  if (['event', 'concert'].includes(sourceType)) return normalizedReleaseDate(source?.eventDate || source?.raw?.dates?.start?.localDate || editing?.date || editing?.releaseDate || '');
+  return normalizedReleaseDate(editing?.releaseDate || '');
 }
 
 function setLibraryView(view) {
@@ -10699,6 +10825,7 @@ function saveLibrarySettings(event) {
 }
 
 function tvLibraryStatusKey(item) {
+  if (isItemNotReleased(item)) return 'not-released';
   const disposition = getTVWatchDisposition(item);
   if (disposition === 'paused' || (getQueueStatus(item) === 'tbr' && tvHasProgress(item) && !item.completedAt)) return 'paused';
   if (disposition === 'stopped') return 'stopped';
@@ -10709,6 +10836,7 @@ function tvLibraryStatusKey(item) {
 
 function tvLibraryStatusLabel(key) {
   return ({
+    'not-released': 'Not Released',
     'in-progress': 'In progress',
     'up-to-date': 'Up to date',
     finished: 'Finished',
@@ -10718,6 +10846,7 @@ function tvLibraryStatusLabel(key) {
 }
 
 function bookLibraryStatusKey(item) {
+  if (isItemNotReleased(item)) return 'not-released';
   if (item?.bookDisposition === 'paused' || (getQueueStatus(item) === 'tbr' && bookHasProgress(item) && !item.completedAt)) return 'paused';
   if (item?.bookDisposition === 'dnf') return 'dnf';
   const current = Math.max(0, Number(item?.progress?.currentPage || 0));
@@ -10729,6 +10858,7 @@ function bookLibraryStatusKey(item) {
 
 function bookLibraryStatusLabel(key) {
   return ({
+    'not-released': 'Not Released',
     'in-progress': 'In progress',
     finished: 'Finished',
     paused: 'Paused',
@@ -10739,7 +10869,8 @@ function bookLibraryStatusLabel(key) {
 
 function bookStatusBadgeMarkup(item) {
   const key = bookLibraryStatusKey(item);
-  const tone = key === 'in-progress' ? 'progress'
+  const tone = key === 'not-released' ? 'later'
+    : key === 'in-progress' ? 'progress'
     : key === 'finished' ? 'finished'
       : key === 'paused' ? 'later'
         : key === 'dnf' ? 'muted'
@@ -10831,9 +10962,13 @@ function makeLibraryPoster(item) {
     ? `<span class="library-subcategory-badge" title="${escapeAttr(subcategoryLabel)}">${escapeHtml(subcategoryLabel)}</span>`
     : '';
   const dispositionState = libraryDnfState(item);
-  const dispositionBadge = dispositionState
-    ? `<span class="library-disposition-badge ${escapeAttr(dispositionState)}">${dispositionState === 'paused' ? 'Paused' : 'Stopped'}</span>`
+  const releaseDate = itemReleaseDate(item);
+  const releaseBadge = isItemNotReleased(item)
+    ? `<span class="library-disposition-badge not-released">Not Released · ${escapeHtml(formatShortCalendarDate(releaseDate))}</span>`
     : '';
+  const dispositionBadge = dispositionState && !releaseBadge
+    ? `<span class="library-disposition-badge ${escapeAttr(dispositionState)}">${dispositionState === 'paused' ? 'Paused' : 'Stopped'}</span>`
+    : releaseBadge;
   poster.innerHTML = hasThumbnail
     ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />
        ${recommendedBadge}
@@ -10858,7 +10993,7 @@ function renderLibrary() {
 
   const libraryQuery = normalizeSearchText(state.librarySearchQuery || els.librarySearch?.value || '');
   let filtered = state.items
-    .filter(item => getQueueStatus(item) !== 'tbr' || libraryDnfState(item) === 'paused')
+    .filter(item => getQueueStatus(item) !== 'tbr' || libraryDnfState(item) === 'paused' || isItemNotReleased(item))
     .filter(item => !(item.calendarQueueOnly === true && item.calendarTracked !== true))
     .filter(item => state.libraryView !== 'recommended' || item.recommended)
     .filter(item => visibleTypes.has(libraryTypeGroupKey(item)))
@@ -10881,6 +11016,10 @@ function renderLibrary() {
           return Number(undatedRecentOrder.get(a.id) || 0) - Number(undatedRecentOrder.get(b.id) || 0);
         };
 
+  const notReleasedItems = filtered.filter(item => isItemNotReleased(item))
+    .sort((a, b) => String(itemReleaseDate(a)).localeCompare(String(itemReleaseDate(b))) || a.title.localeCompare(b.title));
+  filtered = filtered.filter(item => !isItemNotReleased(item));
+
   const preferredLabels = ['TV','Movie','Book','Music','Food','Workout','Other'];
   const preferredOrder = preferredLabels.map(label => slugifyType(label));
   const grouped = new Map();
@@ -10897,10 +11036,34 @@ function renderLibrary() {
   const order = [...preferredOrder, ...customOrder];
 
   els.libraryGroups.innerHTML = '';
-  els.libraryEmpty.hidden = filtered.length > 0;
-  if (!filtered.length) {
+  const hasLibraryItems = filtered.length > 0 || notReleasedItems.length > 0;
+  els.libraryEmpty.hidden = hasLibraryItems;
+  if (!hasLibraryItems) {
     els.libraryEmpty.textContent = state.libraryView === 'recommended' ? 'Nothing in Recommended yet.' : 'Nothing saved yet.';
     return;
+  }
+
+  if (notReleasedItems.length) {
+    const expansionKey = 'status:not-released';
+    const expanded = state.libraryExpandedGroups.has(expansionKey);
+    const section = document.createElement('section');
+    section.className = `library-group library-shelf library-not-released-shelf${expanded ? ' is-expanded' : ''}`;
+    section.dataset.libraryGroup = expansionKey;
+    section.innerHTML = `
+      <div class="library-group-heading-row">
+        <div class="library-group-title-wrap">
+          <h2 class="library-group-title">Not Released</h2>
+          <span class="library-group-count">${notReleasedItems.length}</span>
+        </div>
+        <div class="library-shelf-controls">
+          ${expanded ? '' : '<button class="library-carousel-button" type="button" data-library-carousel="prev" aria-label="Scroll left">‹</button><button class="library-carousel-button" type="button" data-library-carousel="next" aria-label="Scroll right">›</button>'}
+          <button class="library-expand-button" type="button" data-library-expand="${expansionKey}">${expanded ? 'Carousel' : 'View all'}</button>
+        </div>
+      </div>
+      <div class="library-poster-grid${expanded ? ' is-expanded' : ''}"></div>`;
+    const grid = section.querySelector('.library-poster-grid');
+    for (const item of notReleasedItems) grid.appendChild(makeLibraryPoster(item));
+    els.libraryGroups.appendChild(section);
   }
 
   for (const groupKey of order) {
@@ -10931,7 +11094,7 @@ function renderLibrary() {
 
       if (rootExpanded) {
         const statusHost = section.querySelector('.tv-library-status-groups');
-        for (const statusKey of ['in-progress', 'up-to-date', 'finished', 'paused', 'stopped']) {
+        for (const statusKey of ['not-released', 'in-progress', 'up-to-date', 'finished', 'paused', 'stopped']) {
           const statusItems = items.filter(item => tvLibraryStatusKey(item) === statusKey).sort(compare);
           if (!statusItems.length) continue;
           const expansionKey = `tv:${statusKey}`;
@@ -10986,7 +11149,7 @@ function renderLibrary() {
 
       if (rootExpanded) {
         const statusHost = section.querySelector('.book-library-status-groups');
-        for (const statusKey of ['in-progress', 'finished', 'paused', 'dnf', 'not-started']) {
+        for (const statusKey of ['not-released', 'in-progress', 'finished', 'paused', 'dnf', 'not-started']) {
           const statusItems = items.filter(item => bookLibraryStatusKey(item) === statusKey).sort(compare);
           if (!statusItems.length) continue;
           const expansionKey = `book:${statusKey}`;

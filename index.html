@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-pause-is-tbr-1" />
+  <link rel="stylesheet" href="style.css?v=omni-mobile-controls-library-layout-1" />
 </head>
 <body class="auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -113,10 +113,9 @@
               <button id="currentWeek" class="week-today-button" type="button">Today</button>
               <button id="nextWeek" class="week-nav-button" type="button" aria-label="Next week">→</button>
             </div>
-            <div class="calendar-tool-buttons" aria-label="Calendar settings">
-              <button id="openTrackAdd" class="calendar-tool-button track-add-item-button" type="button">+ Add item</button>
-              <button id="openStickerSettings" class="calendar-tool-button" type="button">Stickers</button>
-              <button id="openStreakSettings" class="calendar-tool-button" type="button">Streaks</button>
+            <div class="calendar-tool-buttons" aria-label="Calendar tools">
+              <button id="openTrackAdd" class="calendar-tool-button track-add-item-button icon-tool-button" type="button" aria-label="Add item" title="Add item">+</button>
+              <button id="openStickerSettings" class="calendar-tool-button icon-tool-button" type="button" aria-label="Track settings" title="Track settings">⚙</button>
             </div>
           </div>
         </div>
@@ -134,37 +133,40 @@
     <section id="library" class="library-section">
       <div class="shell">
         <div class="library-heading">
-          <div>
-            <p class="eyebrow">EVERYTHING</p>
+          <div class="library-title-block">
             <h1>Library</h1>
-          </div>
-
-          <div class="library-controls">
             <div class="library-folder-tabs" role="tablist" aria-label="Library folder">
               <button class="library-folder-tab is-active" type="button" data-library-view="all" role="tab" aria-selected="true">All</button>
               <button class="library-folder-tab" type="button" data-library-view="recommended" role="tab" aria-selected="false">Recommended</button>
             </div>
-            <label class="library-search-control">
-              <span class="sr-only">Search Library</span>
-              <input id="librarySearch" type="search" autocomplete="off" placeholder="Search Library…" />
-            </label>
-            <button id="openLibraryAdd" class="library-add-button" type="button">+ Add</button>
-            <div class="filter-control library-type-filter-control">
-              <span>Types</span>
-              <details id="typeFilter" class="library-type-filter">
-                <summary id="typeFilterSummary">TV, Movie, Book</summary>
-                <div id="typeFilterOptions" class="library-type-options" role="group" aria-label="Library types"></div>
-              </details>
+          </div>
+
+          <div class="library-controls">
+            <div class="library-search-row">
+              <label class="library-search-control">
+                <span class="sr-only">Search Library</span>
+                <input id="librarySearch" type="search" autocomplete="off" placeholder="Search Library…" />
+              </label>
+              <button id="openLibraryAdd" class="library-add-button library-icon-button" type="button" aria-label="Add item" title="Add item">+</button>
             </div>
-            <button id="openLibrarySettings" class="library-settings-button" type="button" aria-label="Library display settings">Settings</button>
-            <label class="filter-control">
-              <span>Sort</span>
-              <select id="librarySort">
-                <option value="date">Recent</option>
-                <option value="rating">Rating</option>
-                <option value="title">Title</option>
-              </select>
-            </label>
+            <div class="library-filter-row">
+              <div class="filter-control library-type-filter-control">
+                <span>Types</span>
+                <details id="typeFilter" class="library-type-filter">
+                  <summary id="typeFilterSummary">TV, Movie, Book</summary>
+                  <div id="typeFilterOptions" class="library-type-options" role="group" aria-label="Library types"></div>
+                </details>
+              </div>
+              <button id="openLibrarySettings" class="library-settings-button library-icon-button" type="button" aria-label="Library display settings" title="Library settings">⚙</button>
+              <label class="filter-control library-sort-control">
+                <span>Sort</span>
+                <select id="librarySort">
+                  <option value="date">Recent</option>
+                  <option value="rating">Rating</option>
+                  <option value="title">Title</option>
+                </select>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -194,52 +196,48 @@
     </form>
   </dialog>
 
-  <!-- STICKER CUSTOMIZATION -->
-  <dialog id="stickerSettingsModal" class="modal sticker-settings-modal">
+  <!-- TRACK SETTINGS -->
+  <dialog id="stickerSettingsModal" class="modal sticker-settings-modal track-settings-modal">
     <button class="modal-x" type="button" data-close="stickerSettingsModal" aria-label="Close">×</button>
-    <div class="modal-heading">
-      <p class="modal-eyebrow">CALENDAR</p>
-      <h2>Customize stickers</h2>
-      <p class="sticker-settings-intro">Rename the category as it appears on the Calendar, and choose sticker styles for each type and subcategory. Subcategories inherit their parent sticker until you customize them.</p>
+    <div class="modal-heading track-settings-heading">
+      <h2>Track settings</h2>
+      <div class="track-settings-tabs" role="tablist" aria-label="Track settings">
+        <button class="track-settings-tab is-active" type="button" data-track-settings-tab="stickers" role="tab" aria-selected="true">Stickers</button>
+        <button class="track-settings-tab" type="button" data-track-settings-tab="streaks" role="tab" aria-selected="false">Streaks</button>
+      </div>
     </div>
 
-    <form id="stickerSettingsForm" class="sticker-settings-form">
-      <div class="sticker-settings-head" aria-hidden="true">
-        <span>Type</span><span>Calendar name</span><span>Preview</span><span>Shape</span><span>Text (optional)</span><span>Color</span>
-      </div>
-      <div id="stickerSettingsRows" class="sticker-settings-rows"></div>
-      <div class="modal-actions">
-        <button id="resetStickerSettings" class="quiet-button" type="button">Reset defaults</button>
-        <div class="actions-right">
-          <button class="quiet-button" type="button" data-close="stickerSettingsModal">Cancel</button>
-          <button class="primary-button" type="submit">Save changes</button>
+    <section class="track-settings-panel" data-track-settings-panel="stickers">
+      <form id="stickerSettingsForm" class="sticker-settings-form">
+        <div class="sticker-settings-head" aria-hidden="true">
+          <span>Type</span><span>Calendar name</span><span>Preview</span><span>Shape</span><span>Text</span><span>Color</span>
         </div>
-      </div>
-    </form>
-  </dialog>
-
-  <!-- STREAK SETTINGS -->
-  <dialog id="streakSettingsModal" class="modal streak-settings-modal">
-    <button class="modal-x" type="button" data-close="streakSettingsModal" aria-label="Close">×</button>
-    <div class="modal-heading">
-      <p class="modal-eyebrow">TRACKING</p>
-      <h2>Streaks</h2>
-      <p class="streak-settings-intro">Turn streaks on only for the types you care about. Scheduled weekly rest days are skipped: they do not increase the streak and they do not break it.</p>
-    </div>
-
-    <form id="streakSettingsForm" class="streak-settings-form">
-      <div class="streak-settings-head" aria-hidden="true">
-        <span>Type</span><span>Track streak</span><span>Weekly rest days</span><span>Current</span>
-      </div>
-      <div id="streakSettingsRows" class="streak-settings-rows"></div>
-      <div class="modal-actions">
-        <button id="resetStreakSettings" class="quiet-button" type="button">Reset streaks</button>
-        <div class="actions-right">
-          <button class="quiet-button" type="button" data-close="streakSettingsModal">Cancel</button>
-          <button class="primary-button" type="submit">Save streaks</button>
+        <div id="stickerSettingsRows" class="sticker-settings-rows"></div>
+        <div class="modal-actions">
+          <button id="resetStickerSettings" class="quiet-button" type="button">Reset</button>
+          <div class="actions-right">
+            <button class="quiet-button" type="button" data-close="stickerSettingsModal">Cancel</button>
+            <button class="primary-button" type="submit">Save</button>
+          </div>
         </div>
-      </div>
-    </form>
+      </form>
+    </section>
+
+    <section class="track-settings-panel" data-track-settings-panel="streaks" hidden>
+      <form id="streakSettingsForm" class="streak-settings-form">
+        <div class="streak-settings-head" aria-hidden="true">
+          <span>Type</span><span>On</span><span>Rest days</span><span>Current</span>
+        </div>
+        <div id="streakSettingsRows" class="streak-settings-rows"></div>
+        <div class="modal-actions">
+          <button id="resetStreakSettings" class="quiet-button" type="button">Reset</button>
+          <div class="actions-right">
+            <button class="quiet-button" type="button" data-close="stickerSettingsModal">Cancel</button>
+            <button class="primary-button" type="submit">Save</button>
+          </div>
+        </div>
+      </form>
+    </section>
   </dialog>
 
   <!-- ADD / EDIT -->
@@ -596,6 +594,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-pause-is-tbr-1"></script>
+  <script type="module" src="app.js?v=omni-mobile-controls-library-layout-1"></script>
 </body>
 </html>

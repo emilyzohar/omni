@@ -6738,3 +6738,273 @@ dialog.modal:not([open]) {
 .library-disposition-badge.stopped {
   opacity: .7;
 }
+
+/* Omni: release workflow + consistent DNF popup */
+.library-not-released-shelf {
+  border-top: 1px solid rgba(21,36,58,.08);
+  padding-top: 14px;
+}
+.library-disposition-badge.not-released {
+  left: auto;
+  right: 8px;
+  max-width: calc(100% - 16px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.library-release-date-strip {
+  margin-bottom: 0;
+}
+
+/* =========================================================
+   Omni: compact Track controls + unified Track settings + Library hierarchy
+   ========================================================= */
+.icon-tool-button,
+.library-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 !important;
+  font-size: 1rem !important;
+  line-height: 1;
+}
+.track-add-item-button { font-size: 1.25rem !important; }
+
+/* One Track settings popup, two tabs. */
+.track-settings-modal {
+  width: min(980px, calc(100% - 30px));
+}
+.track-settings-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding-right: 42px;
+}
+.track-settings-heading h2 { margin: 0; }
+.track-settings-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid rgba(21,36,58,.12);
+  border-radius: 999px;
+  background: rgba(139,153,202,.08);
+}
+.track-settings-tab {
+  min-height: 34px;
+  padding: 7px 13px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(21,36,58,.62);
+  font: 700 .76rem/1 var(--sans);
+  cursor: pointer;
+}
+.track-settings-tab.is-active {
+  background: var(--ink);
+  color: #fff9ea;
+}
+.track-settings-panel[hidden] { display: none !important; }
+
+/* Library title owns All / Recommended. Controls are two right-aligned rows. */
+.library-heading {
+  align-items: flex-start;
+}
+.library-title-block {
+  display: grid;
+  align-content: start;
+  gap: 10px !important;
+}
+.library-title-block h1 { margin: 0; }
+.library-title-block .library-folder-tabs { width: fit-content; }
+.library-controls {
+  display: grid;
+  justify-items: end;
+  align-items: end;
+  gap: 8px;
+}
+.library-search-row,
+.library-filter-row {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+.library-search-row .library-search-control {
+  flex: 1 1 280px;
+  min-width: min(300px, 40vw);
+}
+.library-filter-row .library-settings-button {
+  align-self: end;
+}
+.library-icon-button {
+  border: 1px solid rgba(21,36,58,.16);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--navy);
+  font-weight: 700;
+  cursor: pointer;
+}
+.library-icon-button:hover,
+.library-icon-button:focus-visible {
+  background: rgba(139,153,202,.10);
+  outline: none;
+}
+.library-settings-button.library-icon-button { width: 38px; }
+
+@media (max-width: 760px) {
+  /* Mobile Track: month/date context left; week navigation + tools right. */
+  .track-heading {
+    width: 100%;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between;
+    flex-wrap: nowrap;
+    gap: 8px !important;
+    margin-bottom: 14px;
+  }
+  .track-heading > div:first-child {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .track-month-title {
+    gap: 0;
+    min-width: 0;
+  }
+  .track-month-title h1 {
+    margin: 0;
+    font-size: clamp(1.65rem, 8vw, 2.05rem) !important;
+    white-space: nowrap;
+  }
+  .track-month-title .month-nav-button { display: none !important; }
+  .calendar-controls {
+    width: auto !important;
+    flex: 0 0 auto;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 5px !important;
+    flex-wrap: nowrap !important;
+  }
+  .month-picker { display: none !important; }
+  .week-controls {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 3px;
+  }
+  .week-nav-button,
+  .week-today-button,
+  .calendar-tool-button {
+    min-height: 32px !important;
+    height: 32px !important;
+    border-radius: 999px;
+  }
+  .week-nav-button {
+    width: 32px !important;
+    min-width: 32px;
+    font-size: .95rem;
+  }
+  .week-today-button {
+    padding: 0 9px !important;
+    font-size: .68rem;
+  }
+  .calendar-tool-buttons {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 1px !important;
+  }
+  .calendar-tool-button.icon-tool-button {
+    width: 32px !important;
+    min-width: 32px !important;
+    padding: 0 !important;
+  }
+
+  /* Mobile Library: title/tabs, then Search +, then Types gear Sort. */
+  .library-heading {
+    width: 100%;
+    display: grid !important;
+    gap: 14px !important;
+    margin-bottom: 24px;
+  }
+  .library-title-block {
+    width: 100%;
+    gap: 8px !important;
+  }
+  .library-title-block .library-folder-tabs {
+    width: 100%;
+  }
+  .library-controls {
+    width: 100%;
+    display: grid !important;
+    gap: 8px;
+    justify-items: stretch;
+  }
+  .library-search-row,
+  .library-filter-row {
+    width: 100%;
+    display: flex;
+    gap: 7px;
+  }
+  .library-search-row .library-search-control {
+    order: initial !important;
+    min-width: 0 !important;
+    width: auto !important;
+    flex: 1 1 auto;
+  }
+  .library-search-control input { min-height: 40px; }
+  .library-search-row .library-icon-button {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+    flex: 0 0 40px;
+  }
+  .library-filter-row .library-type-filter-control {
+    flex: 1 1 auto;
+    width: auto !important;
+    min-width: 0;
+  }
+  .library-filter-row .library-sort-control {
+    flex: 0 1 112px;
+    width: 112px !important;
+    min-width: 0;
+  }
+  .library-filter-row .library-settings-button {
+    width: 38px !important;
+    min-width: 38px;
+    height: 38px;
+    flex: 0 0 38px;
+  }
+
+  .track-settings-modal {
+    width: 100%;
+  }
+  .track-settings-heading {
+    display: grid;
+    gap: 10px;
+    padding-right: 44px;
+  }
+  .track-settings-tabs {
+    width: 100%;
+  }
+  .track-settings-tab { flex: 1; }
+}
+
+@media (max-width: 420px) {
+  .track-month-title h1 { font-size: 1.55rem !important; }
+  .week-today-button { padding-inline: 7px !important; }
+  .week-nav-button,
+  .calendar-tool-button.icon-tool-button {
+    width: 30px !important;
+    min-width: 30px !important;
+  }
+  .calendar-tool-buttons { gap: 2px; }
+  .week-controls { gap: 2px; }
+}
