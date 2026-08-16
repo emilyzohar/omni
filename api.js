@@ -137,7 +137,7 @@ export const TrackerAPI = (() => {
 
   async function searchMusic(query, settings) {
     const country = (settings.itunesCountry || 'CA').toUpperCase();
-    const url = `${ITUNES_ROOT}/search?term=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&media=music&entity=album&limit=24`;
+    const url = `${ITUNES_ROOT}/search?term=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&media=music&entity=album&limit=50`;
     const data = await fetchJson(url);
     const seen = new Set();
     return (data.results || []).filter(result => {
@@ -161,7 +161,7 @@ export const TrackerAPI = (() => {
 
   async function searchArtists(query, settings) {
     const country = (settings.itunesCountry || 'CA').toUpperCase();
-    const url = `${ITUNES_ROOT}/search?term=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&media=music&entity=musicArtist&limit=25`;
+    const url = `${ITUNES_ROOT}/search?term=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&media=music&entity=musicArtist&limit=50`;
     const data = await fetchJson(url);
     const seen = new Set();
     return (data.results || []).filter(result => {
@@ -184,7 +184,7 @@ export const TrackerAPI = (() => {
 
   async function searchSongs(query, settings) {
     const country = (settings.itunesCountry || 'CA').toUpperCase();
-    const url = `${ITUNES_ROOT}/search?term=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&media=music&entity=song&limit=40`;
+    const url = `${ITUNES_ROOT}/search?term=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&media=music&entity=song&limit=50`;
     const data = await fetchJson(url);
     const seen = new Set();
     return (data.results || []).filter(result => {

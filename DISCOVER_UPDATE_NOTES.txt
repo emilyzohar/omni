@@ -1,0 +1,25 @@
+DISCOVER UPDATE
+
+Primary modes
+- For You: personalized by watched/read/saved/rated/recommended history, with ~25% exploration reserved for broader catalogue discovery.
+- New: This Week, Last Week, Upcoming, Recently Released.
+- Popular: broad popularity/trending catalogue; user taste does not boost ranking.
+- Removed the Discover sub-tab and Discover Calendar tab.
+
+New
+- Upcoming horizon can be set to 2 weeks, 1 month, 3 months, or 6 months.
+- Recently Released progressively loads older date windows and keeps the accumulated feed sorted newest to oldest.
+- Only items with a real usable date appear in New; Artist items are therefore not placed in New.
+
+Music
+- Albums, Artists, and Songs remain separate Library/Discover types.
+- For You uses saved/inferred artists as strong signals, but also rotates through a large broad catalogue term bank so the candidate pool is not limited to already-logged music.
+- Broad music searches yield artists from the returned songs/albums as well as the songs/albums themselves.
+- Ticketmaster related performers remain an additional related-artist signal.
+- Popular and New use non-personalized music catalogue pools.
+
+Live events
+- For You: followed/liked-artist concerts are strongest; related concerts and some broader nearby events are included.
+- New: future events appear only inside the selected Upcoming horizon.
+- Popular: nearby events are included without taste boosts.
+- Automatic Calendar behavior elsewhere in the tracker remains selective: saved artists and specifically followed live interests only.

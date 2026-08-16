@@ -5648,3 +5648,24 @@ body.auth-locked > main {
     max-width: 180px;
   }
 }
+
+/* Three-mode Discover: New-specific controls and chronological group notes. */
+.discover-upcoming-window-field[hidden] { display: none !important; }
+.discover-new-period-subtitle {
+  margin-left: 12px;
+  color: var(--muted, #667085);
+  font-size: .82rem;
+  font-weight: 600;
+  letter-spacing: .01em;
+  text-align: right;
+}
+@media (max-width: 760px) {
+  .discover-new-period-heading {
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .discover-new-period-subtitle {
+    max-width: 52%;
+    font-size: .72rem;
+  }
+}

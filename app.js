@@ -1,4 +1,4 @@
-import { TrackerAPI } from './api.js?v=related-music-1';
+import { TrackerAPI } from './api.js?v=discover-three-modes-1';
 import { API_CONFIG } from './config.js?v=music-ticketmaster-live-1';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
@@ -81,7 +81,8 @@ const DEFAULT_DISCOVER_PREFS = {
   eventExcludedCategoryKeys: [],
   eventPriorityTerms: [],
   eventCalendarFollowTerms: [],
-  eventAutoLikedArtistCalendar: true
+  eventAutoLikedArtistCalendar: true,
+  upcomingHorizonDays: 30
 };
 const DEFAULT_LIBRARY_PREFS = { defaultTypeKeys: null };
 let currentUser = null;
@@ -137,7 +138,7 @@ const state = {
   discoverFeedEmptyPasses: 0,
   discoverFeedOffsets: { tv: 1, movie: 1, book: 0 },
   discoverFeedSession: Math.random(),
-  discoverMode: 'discover',
+  discoverMode: 'for-you',
   discoverCalendarMonth: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`,
   discoverCalendarLoading: false,
   discoverCalendarEntries: [],
@@ -219,6 +220,8 @@ const els = {
   discoverModeTabs: $$('.discover-mode-tab[data-discover-mode]'),
   discoverTypeFilter: $('#discoverTypeFilter'),
   discoverGenreFilter: $('#discoverGenreFilter'),
+  discoverUpcomingWindowField: $('#discoverUpcomingWindowField'),
+  discoverUpcomingWindow: $('#discoverUpcomingWindow'),
   discoverSearchForm: $('#discoverSearchForm'),
   discoverSearchInput: $('#discoverSearchInput'),
   clearDiscoverSearch: $('#clearDiscoverSearch'),
@@ -714,6 +717,19 @@ function bindEvents() {
     safeLocalSet(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
     scheduleCloudSync();
     await refreshDiscoverForFilters();
+  });
+  els.discoverUpcomingWindow?.addEventListener('change', async () => {
+    state.discoverPrefs = {
+      ...DEFAULT_DISCOVER_PREFS,
+      ...state.discoverPrefs,
+      upcomingHorizonDays: Number(els.discoverUpcomingWindow.value || 30)
+    };
+    safeLocalSet(DISCOVER_PREFS_KEY, JSON.stringify(state.discoverPrefs));
+    scheduleCloudSync();
+    if (state.discoverMode === 'new') {
+      resetDiscoverFeed(false);
+      await loadMoreDiscoverFeed();
+    }
   });
   els.discoverSearchForm?.addEventListener('submit', async event => {
     event.preventDefault();
@@ -5071,7 +5087,7 @@ function deleteHistoryEdit() {
 // ---------------------------
 // DISCOVER
 // ---------------------------
-const DISCOVER_MODES = new Set(['new', 'popular', 'for-you', 'discover', 'calendar']);
+const DISCOVER_MODES = new Set(['for-you', 'new', 'popular']);
 const DISCOVER_BOOK_BATCH_SIZE = 20;
 const DISCOVER_GENRES = [
   { value: 'action-adventure', label: 'Action & Adventure', tmdb: ['Action', 'Adventure', 'Action & Adventure'], keywords: ['action', 'adventure'], book: ['action', 'adventure'] },
@@ -5209,7 +5225,6 @@ async function discoverSearchResultMatchesGenre(result) {
 async function refreshDiscoverForFilters() {
   await ensureDiscoverGenreCatalog();
   if (state.discoverSearchQuery) return runDiscoverSearch(state.discoverSearchQuery);
-  if (state.discoverMode === 'calendar') return renderDiscoverCalendar(true);
   resetDiscoverFeed(false);
   return loadMoreDiscoverFeed();
 }
@@ -5289,30 +5304,30 @@ async function runDiscoverSearch(forcedQuery = '') {
 }
 
 function setDiscoverMode(mode) {
-  const next = DISCOVER_MODES.has(mode) ? mode : 'discover';
+  const next = DISCOVER_MODES.has(mode) ? mode : 'for-you';
   state.discoverSearchQuery = '';
   if (els.discoverSearchInput) els.discoverSearchInput.value = '';
   if (els.clearDiscoverSearch) els.clearDiscoverSearch.hidden = true;
-  if (state.discoverMode === next && (next === 'calendar' || state.discoverFeedInitialized)) return;
+  if (state.discoverMode === next && state.discoverFeedInitialized) return;
   state.discoverMode = next;
   updateDiscoverModeUI();
   window.scrollTo({ top: 0, behavior: 'smooth' });
-  if (next === 'calendar') {
-    renderDiscoverCalendar(false);
-    return;
-  }
   resetDiscoverFeed(false);
   loadMoreDiscoverFeed();
 }
 
+function normalizedUpcomingHorizonDays() {
+  const allowed = [14, 30, 90, 180];
+  const value = Number(state.discoverPrefs.upcomingHorizonDays || 30);
+  return allowed.includes(value) ? value : 30;
+}
+
 function updateDiscoverModeUI() {
-  const mode = DISCOVER_MODES.has(state.discoverMode) ? state.discoverMode : 'discover';
+  const mode = DISCOVER_MODES.has(state.discoverMode) ? state.discoverMode : 'for-you';
   const copy = {
-    new: 'TV, movies, books, and local events organized by when they arrived or are coming out: this week, next week, last week, and nearby months.',
-    popular: 'Popular TV, movies, books, and upcoming local events, with titles on your streaming services moved toward the front.',
-    'for-you': 'Recommendations based on what you watch, read, and save — including artists and songs — plus selective nearby live events.',
-    discover: 'A shuffled mix of TV, movies, books, albums, artists, songs, concerts, and other nearby live events. Live events stay out of Calendar unless you follow or save them.',
-    calendar: 'A month-by-month view of concerts by saved artists, events for live interests you follow, movie releases, TV premieres, and tracked TV episodes.'
+    'for-you': 'Personalized recommendations across TV, movies, books, albums, artists, songs, concerts, and live events. Most results follow your taste, with some broader discoveries mixed in.',
+    new: 'Chronological releases and events: this week, last week, upcoming, then an endless stream of recently released things from newest to oldest.',
+    popular: 'What is broadly popular or trending now across your enabled content types. Your location and availability settings filter results, but your taste does not determine the ranking.'
   };
   els.discoverModeTabs?.forEach(tab => {
     const active = tab.dataset.discoverMode === mode;
@@ -5322,29 +5337,25 @@ function updateDiscoverModeUI() {
   if (els.discoverFeedIntroText) els.discoverFeedIntroText.textContent = copy[mode];
   if (els.discoverTypeFilter) els.discoverTypeFilter.value = state.discoverPrefs.contentType || 'all';
   if (els.discoverGenreFilter) els.discoverGenreFilter.value = state.discoverPrefs.genre || 'all';
-  const calendarMode = mode === 'calendar' && !state.discoverSearchQuery;
-  if (els.discoverCalendarSection) els.discoverCalendarSection.hidden = !calendarMode;
-  if (els.discoverFeedSection) els.discoverFeedSection.hidden = calendarMode;
-  if (els.discoverSearchForm) els.discoverSearchForm.hidden = calendarMode;
-  if (els.refreshDiscover) els.refreshDiscover.textContent = mode === 'discover' ? 'Shuffle' : 'Refresh';
+  if (els.discoverUpcomingWindow) els.discoverUpcomingWindow.value = String(normalizedUpcomingHorizonDays());
+  if (els.discoverUpcomingWindowField) els.discoverUpcomingWindowField.hidden = mode !== 'new';
+  if (els.discoverFeedSection) els.discoverFeedSection.hidden = false;
+  if (els.discoverSearchForm) els.discoverSearchForm.hidden = false;
+  if (els.refreshDiscover) els.refreshDiscover.textContent = mode === 'for-you' ? 'Shuffle' : 'Refresh';
 }
 
 async function renderDiscover(force = false) {
   if (!els.discoverStatus) return;
   await ensureDiscoverGenreCatalog();
+  if (!DISCOVER_MODES.has(state.discoverMode)) state.discoverMode = 'for-you';
   updateDiscoverModeUI();
   if (state.discoverSearchQuery) return runDiscoverSearch(state.discoverSearchQuery);
-  if (state.discoverMode === 'calendar') return renderDiscoverCalendar(force);
 
-  // The new Discover page is an endless mixed feed. Keep old section helpers below
-  // for compatibility with older saved/deployed HTML, but prefer this path.
   if (!els.discoverFeed) return renderLegacyDiscover(force);
 
   if (force || !state.discoverFeedInitialized) {
     resetDiscoverFeed(force);
   } else {
-    // If something was just added/watched from the feed, remove it without
-    // throwing away the user's current discovery session or scroll position.
     state.discoverFeedItems = state.discoverFeedItems.filter(result => !findDiscoverItem(result));
     renderDiscoverFeedItems();
   }
@@ -5730,11 +5741,11 @@ function resetDiscoverFeed(clearApiCache = false) {
   state.discoverFeedInitialized = true;
   state.discoverFeedEmptyPasses = 0;
   state.discoverFeedSession = Math.random();
-  const shuffled = state.discoverMode === 'discover';
+  const exploratory = state.discoverMode === 'for-you';
   state.discoverFeedOffsets = {
-    tv: shuffled ? 1 + Math.floor(Math.random() * 4) : 1,
-    movie: shuffled ? 1 + Math.floor(Math.random() * 4) : 1,
-    book: shuffled ? Math.floor(Math.random() * 4) : 0
+    tv: exploratory ? 1 + Math.floor(Math.random() * 3) : 1,
+    movie: exploratory ? 1 + Math.floor(Math.random() * 3) : 1,
+    book: exploratory ? Math.floor(Math.random() * 3) : 0
   };
   state.discoverResults.clear();
   if (els.discoverFeed) els.discoverFeed.innerHTML = '';
@@ -5778,7 +5789,9 @@ async function loadMoreDiscoverFeed() {
       return discoverResultMatchesGenre(result);
     });
 
-    const batchSize = window.matchMedia('(max-width: 760px)').matches ? 12 : 20;
+    const batchSize = state.discoverMode === 'new'
+      ? (window.matchMedia('(max-width: 760px)').matches ? 30 : 60)
+      : (window.matchMedia('(max-width: 760px)').matches ? 12 : 20);
     let ranked = await rankDiscoverFeedCandidates(fresh, batchSize);
     ranked = diversifyDiscoverFeed(ranked).slice(0, batchSize);
 
@@ -5786,7 +5799,7 @@ async function loadMoreDiscoverFeed() {
       state.discoverFeedEmptyPasses += 1;
       if (state.discoverFeedEmptyPasses >= 3) {
         state.discoverFeedDone = true;
-        if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = state.discoverMode === 'discover' ? 'You’ve reached the end of this mix. Shuffle to start a different one.' : 'No more results found in this view right now.';
+        if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = state.discoverMode === 'for-you' ? 'You’ve reached the end of this recommendation mix. Shuffle to build another one.' : 'No more results found in this view right now.';
       }
     } else {
       state.discoverFeedEmptyPasses = 0;
@@ -5811,81 +5824,64 @@ async function loadMoreDiscoverFeed() {
   }
 }
 
+const MUSIC_DISCOVERY_TERMS = [
+  'pop', 'rock', 'alternative', 'indie', 'indie rock', 'alternative rock', 'art pop',
+  'dream pop', 'shoegaze', 'post punk', 'synthpop', 'hip hop', 'rap', 'r&b',
+  'electronic', 'house', 'techno', 'ambient', 'dance', 'jazz', 'blues', 'funk',
+  'soul', 'country', 'folk', 'americana', 'singer songwriter', 'metal', 'punk',
+  'classical', 'soundtrack', 'reggae', 'latin', 'afrobeat', 'k-pop', 'j-pop',
+  'gospel', 'world', 'experimental', 'acoustic'
+];
+
+function musicTasteDiscoveryTerms() {
+  const terms = [];
+  for (const item of state.items) {
+    if (!['music','artist','song'].includes(getSourceType(item))) continue;
+    const rawGenre = item.raw?.primaryGenreName || item.genres?.[0] || item.description || '';
+    const genre = String(rawGenre || '').split('·').at(-1)?.trim().toLowerCase() || '';
+    if (genre && genre !== 'music' && genre.length < 40) terms.push(genre);
+  }
+  return [...new Set(terms)];
+}
+
+function rotatingMusicDiscoveryTerms(batchNumber, count = 2, includeTaste = true) {
+  const taste = includeTaste ? musicTasteDiscoveryTerms() : [];
+  const pool = [...taste, ...MUSIC_DISCOVERY_TERMS];
+  const unique = [...new Set(pool.map(value => String(value || '').trim().toLowerCase()).filter(Boolean))];
+  if (!unique.length) return ['pop', 'rock'].slice(0, count);
+  const start = ((Math.max(1, batchNumber) - 1) * count + Math.floor(state.discoverFeedSession * unique.length)) % unique.length;
+  return Array.from({ length: Math.min(count, unique.length) }, (_, index) => unique[(start + index) % unique.length]);
+}
+
+function ticketmasterDiscoverSourceType(result) {
+  const music = (result?.classifications || []).some(value => String(value || '').toLowerCase() === 'music');
+  return music ? 'concert' : 'event';
+}
+
+function asLiveDiscoverCandidate(result, source, boost = 0, exploration = false) {
+  return {
+    ...result,
+    sourceType: ticketmasterDiscoverSourceType(result),
+    _discoverSource: source,
+    _discoverBoost: boost,
+    _discoverExploration: Boolean(exploration)
+  };
+}
+
 async function collectDiscoverFeedCandidates(batchNumber) {
-  const contentType = state.discoverPrefs.contentType || 'all';
-
-  if (contentType === 'concert') {
-    const [likedConcerts, relatedConcerts] = await Promise.all([
-      getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 14 }),
-      getRelatedTicketmasterConcerts(batchNumber, 14)
-    ]);
-    return dedupeTicketmasterEvents([
-      ...likedConcerts.map(result => ({ ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-liked', _discoverBoost: result.likedArtist ? 14 : 9 })),
-      ...relatedConcerts.map(result => ({ ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-related', _discoverBoost: 7 }))
-    ]);
-  }
-
-  if (contentType === 'event') {
-    const events = await fetchTicketmasterEventsForPreferences('', { page: Math.max(0, batchNumber - 1), size: 24 });
-    return events.map(result => ({ ...result, sourceType: 'event', _discoverSource: 'ticketmaster-live', _discoverBoost: 3 + ticketmasterPreferenceBoost(result) }));
-  }
-
-  if (['music','artist','song'].includes(contentType)) {
-    return (await collectMusicDiscoverCandidates(batchNumber)).filter(result => result.sourceType === contentType);
-  }
-
   let candidates;
   if (state.discoverMode === 'new') candidates = await collectNewDiscoverCandidates(batchNumber);
   else if (state.discoverMode === 'popular') candidates = await collectPopularDiscoverCandidates(batchNumber);
-  else if (state.discoverMode === 'for-you') candidates = await collectForYouDiscoverCandidates(batchNumber);
-  else candidates = await collectShuffledDiscoverCandidates(batchNumber);
+  else candidates = await collectForYouDiscoverCandidates(batchNumber);
 
-  // Music discovery is deliberately lightweight: infer artists from albums/songs
-  // already saved, recommend those artists explicitly, and surface songs by them.
-  // This keeps the existing no-auth iTunes catalogue while avoiding a new music service.
-  try {
-    candidates.push(...await collectMusicDiscoverCandidates(batchNumber));
-  } catch {}
-
-  // Live events are intentionally bounded in the mixed feed. Concerts tied to
-  // saved/inferred artists receive a larger boost; the broader Ticketmaster
-  // catalogue contributes only a handful of recommendations per batch and never
-  // enters the user's Calendar unless explicitly followed or saved.
-  if (state.settings.ticketmasterKey && batchNumber <= 4) {
-    try {
-      const [concerts, relatedConcerts] = await Promise.all([
-        getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 10 }),
-        getRelatedTicketmasterConcerts(batchNumber, 8)
-      ]);
-      candidates.push(...concerts.map(result => ({ ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-liked', _discoverBoost: result.likedArtist ? 12 : 8 })));
-      candidates.push(...relatedConcerts.map(result => ({ ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-related', _discoverBoost: 6 })));
-
-      const generalEvents = await fetchTicketmasterEventsForPreferences('', { page: Math.max(0, batchNumber - 1), size: 8 });
-      candidates.push(...generalEvents.map(result => ({ ...result, sourceType: 'event', _discoverSource: 'ticketmaster-live', _discoverBoost: 2 + ticketmasterPreferenceBoost(result) })));
-
-      // Co-billed attractions provide a modest related-artist signal for music
-      // without requiring a separate recommendation API.
-      const alreadyRepresented = new Set([
-        ...explicitLikedArtistItems().map(item => normalizeArtistName(item.title)),
-        ...inferredMusicArtistNames().map(normalizeArtistName)
-      ]);
-      const lineupNames = [...new Map(concerts.flatMap(concert => concert.lineup || concert.attractions || []).map(name => [normalizeArtistName(name), name])).values()]
-        .filter(name => !alreadyRepresented.has(normalizeArtistName(name)))
-        .slice(0, 2);
-      for (const artistName of lineupNames) {
-        try {
-          const found = await getCached(`itunes:artist-search:${normalizeArtistName(artistName)}`, () => TrackerAPI.searchArtists(artistName, state.settings));
-          const exact = (found || []).find(result => normalizeArtistName(result.title) === normalizeArtistName(artistName)) || (found || [])[0];
-          if (exact) candidates.push({ ...exact, sourceType: 'artist', _discoverSource: 'concert-lineup', _discoverBoost: 5 });
-        } catch {}
-      }
-    } catch {}
-  }
-
+  const contentType = state.discoverPrefs.contentType || 'all';
+  if (contentType !== 'all') candidates = candidates.filter(result => result.sourceType === contentType);
   return dedupeDiscoverCandidatesByBoost(candidates);
 }
 
-async function collectMusicDiscoverCandidates(batchNumber) {
+async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
+  const personalized = mode === 'for-you';
+  const includeArtists = mode !== 'new';
   const explicitArtists = explicitLikedArtistItems();
   const inferredNames = inferredMusicArtistNames();
   const knownArtistIds = new Set(state.items.filter(item => getSourceType(item) === 'artist').map(item => String(item.providerId || '')).filter(Boolean));
@@ -5893,89 +5889,134 @@ async function collectMusicDiscoverCandidates(batchNumber) {
   const knownAlbumIds = new Set(state.items.filter(item => getSourceType(item) === 'music').map(item => String(item.providerId || '')).filter(Boolean));
   const candidates = [];
 
-  // If an album/song implies an artist the user has not explicitly saved yet,
-  // recommend that artist as a first-class Library item.
-  const artistNames = [];
-  if (inferredNames.length) {
-    const start = ((Math.max(1, batchNumber) - 1) * 2) % inferredNames.length;
-    for (let offset = 0; offset < Math.min(2, inferredNames.length); offset += 1) artistNames.push(inferredNames[(start + offset) % inferredNames.length]);
-  }
-  for (const artistName of artistNames) {
-    try {
-      const results = await getCached(`itunes:artist-search:${normalizeArtistName(artistName)}`, () => TrackerAPI.searchArtists(artistName, state.settings));
-      const exact = (results || []).find(result => normalizeArtistName(result.title) === normalizeArtistName(artistName)) || (results || [])[0];
-      if (exact && !knownArtistIds.has(String(exact.providerId))) {
-        const artSource = state.items.find(item => ['music','song'].includes(getSourceType(item)) && normalizeArtistName(item.artistName || item.subtitle) === normalizeArtistName(artistName) && item.image);
-        candidates.push({ ...exact, image: exact.image || artSource?.image || '', sourceType: 'artist', _discoverSource: 'music-taste', _discoverBoost: 9 });
-      }
-    } catch {}
-  }
+  const addArtist = (artist, source, boost, exploration = false, extra = {}) => {
+    if (!artist?.providerId || knownArtistIds.has(String(artist.providerId))) return;
+    candidates.push({ ...artist, ...extra, sourceType: 'artist', _discoverSource: source, _discoverBoost: boost, _discoverExploration: exploration });
+  };
+  const addSong = (song, source, boost, exploration = false, extra = {}) => {
+    if (!song?.providerId || knownSongIds.has(String(song.providerId))) return;
+    candidates.push({ ...song, ...extra, sourceType: 'song', _discoverSource: source, _discoverBoost: boost, _discoverExploration: exploration });
+  };
+  const addAlbum = (album, source, boost, exploration = false, extra = {}) => {
+    if (!album?.providerId || knownAlbumIds.has(String(album.providerId))) return;
+    candidates.push({ ...album, ...extra, sourceType: 'music', _discoverSource: source, _discoverBoost: boost, _discoverExploration: exploration });
+  };
 
-  const songSeedNames = [...new Map([
-    ...explicitArtists.map(item => item.title),
-    ...inferredNames
-  ].map(name => [normalizeArtistName(name), name])).values()];
-  if (songSeedNames.length) {
-    const albumSeed = songSeedNames[((batchNumber - 1) || 0) % songSeedNames.length];
-    try {
-      const albums = await getCached(`itunes:albums:${normalizeArtistName(albumSeed)}`, () => TrackerAPI.searchMusic(albumSeed, state.settings));
-      const matchingAlbums = (albums || []).filter(album => normalizeArtistName(album.artistName || album.subtitle) === normalizeArtistName(albumSeed));
-      for (const album of matchingAlbums.slice(0, 3)) {
-        if (!knownAlbumIds.has(String(album.providerId))) candidates.push({ ...album, sourceType: 'music', _discoverSource: 'liked-artist-album', _discoverBoost: 5 });
+  // Strong personalized layer: music by artists explicitly saved or implied by
+  // saved albums/songs. This is intentionally only one part of the pool.
+  if (personalized) {
+    const tasteNames = [...new Map([
+      ...explicitArtists.map(item => item.title),
+      ...inferredNames
+    ].map(name => [normalizeArtistName(name), name])).values()].filter(Boolean);
+    if (tasteNames.length) {
+      const start = ((Math.max(1, batchNumber) - 1) * 2) % tasteNames.length;
+      const artistSeeds = [tasteNames[start]].filter(Boolean);
+      for (const artistName of [...new Set(artistSeeds)]) {
+        try {
+          const [artists, albums, songs] = await Promise.all([
+            getCached(`itunes:artist-search:${normalizeArtistName(artistName)}`, () => TrackerAPI.searchArtists(artistName, state.settings)),
+            getCached(`itunes:albums:${normalizeArtistName(artistName)}`, () => TrackerAPI.searchMusic(artistName, state.settings)),
+            getCached(`itunes:songs:${normalizeArtistName(artistName)}`, () => TrackerAPI.searchSongs(artistName, state.settings))
+          ]);
+          if (includeArtists) {
+            const exactArtist = (artists || []).find(result => normalizeArtistName(result.title) === normalizeArtistName(artistName));
+            if (exactArtist) addArtist(exactArtist, 'music-taste', 11, false, { recommendationReason: `Because you like ${artistName}` });
+          }
+          for (const album of (albums || []).filter(album => normalizeArtistName(album.artistName || album.subtitle) === normalizeArtistName(artistName)).slice(0, 6)) {
+            addAlbum(album, 'liked-artist-album', 9, false, { recommendationReason: `Album by ${artistName}` });
+          }
+          for (const song of (songs || []).filter(song => normalizeArtistName(song.artistName || song.subtitle) === normalizeArtistName(artistName)).slice(0, 10)) {
+            addSong(song, 'liked-artist-song', 10, false, { recommendationReason: `Song by ${artistName}` });
+          }
+        } catch {}
       }
-    } catch {}
-    const start = ((batchNumber - 1) * 2) % songSeedNames.length;
-    const seeds = [songSeedNames[start], songSeedNames[(start + 1) % songSeedNames.length]].filter(Boolean);
-    for (const artistName of [...new Set(seeds)]) {
-      try {
-        const songs = await getCached(`itunes:songs:${normalizeArtistName(artistName)}`, () => TrackerAPI.searchSongs(artistName, state.settings));
-        const matching = (songs || []).filter(song => normalizeArtistName(song.artistName || song.subtitle) === normalizeArtistName(artistName));
-        for (const song of matching.slice(0, 4)) {
-          if (!knownSongIds.has(String(song.providerId))) candidates.push({ ...song, sourceType: 'song', _discoverSource: 'liked-artist-song', _discoverBoost: 7 });
-        }
-      } catch {}
     }
   }
 
-  // Broaden beyond artists the user already named. Ticketmaster attraction
-  // classifications provide a free related-artist pool by the genres represented
-  // in saved artists/albums/songs. Resolve those names back to iTunes so they can
-  // be saved as normal Artist items, then surface songs by the related artists.
-  if (state.settings.ticketmasterKey) {
+  // Broad catalogue layer. Every batch deliberately searches genres beyond the
+  // names already in the Library, so music discovery remains large even for a
+  // small or repetitive music history.
+  const broadTerms = rotatingMusicDiscoveryTerms(batchNumber, mode === 'for-you' ? 1 : 2, personalized);
+  for (const term of broadTerms) {
+    try {
+      const [albums, songs] = await Promise.all([
+        getCached(`itunes:discover:albums:${term}`, () => TrackerAPI.searchMusic(term, state.settings)),
+        getCached(`itunes:discover:songs:${term}`, () => TrackerAPI.searchSongs(term, state.settings))
+      ]);
+      const broadBoost = mode === 'popular' ? 5 : mode === 'new' ? 3 : 4;
+      if (includeArtists) {
+        const artistSources = [...(songs || []), ...(albums || [])];
+        const seenBroadArtists = new Set();
+        for (const source of artistSources) {
+          const artistId = String(source.artistId || source.raw?.artistId || '');
+          const artistName = String(source.artistName || source.subtitle || '').trim();
+          if (!artistId || !artistName || seenBroadArtists.has(artistId)) continue;
+          seenBroadArtists.add(artistId);
+          addArtist({
+            sourceType: 'artist',
+            provider: 'itunes',
+            providerId: artistId,
+            artistId,
+            artistName,
+            title: artistName,
+            subtitle: source.raw?.primaryGenreName || source.description || 'Artist',
+            description: source.raw?.primaryGenreName || '',
+            image: source.image || '',
+            raw: { artistId, artistName, primaryGenreName: source.raw?.primaryGenreName || '' }
+          }, mode === 'popular' ? 'music-popular' : 'music-explore', broadBoost + 1.5, mode === 'for-you', {
+            recommendationReason: mode === 'for-you' ? `Explore ${term}` : ''
+          });
+          if (seenBroadArtists.size >= 12) break;
+        }
+      }
+      (albums || []).slice(0, 12).forEach((album, index) => addAlbum(
+        album,
+        mode === 'popular' ? 'music-popular' : mode === 'new' ? 'music-new' : 'music-explore',
+        broadBoost + Math.max(0, 2 - index * .12),
+        mode === 'for-you',
+        { recommendationReason: mode === 'for-you' ? `Explore ${term}` : '' }
+      ));
+      (songs || []).slice(0, 18).forEach((song, index) => addSong(
+        song,
+        mode === 'popular' ? 'music-popular' : mode === 'new' ? 'music-new' : 'music-explore',
+        broadBoost + Math.max(0, 2 - index * .08),
+        mode === 'for-you',
+        { recommendationReason: mode === 'for-you' ? `Explore ${term}` : '' }
+      ));
+    } catch {}
+  }
+
+  // Ticketmaster contributes related performers when available, but it is an
+  // additional signal rather than the only way new artists enter the feed.
+  if (personalized && state.settings.ticketmasterKey) {
     try {
       const relatedAttractions = await getRelatedMusicAttractions(batchNumber, 6);
       const relatedResolved = [];
-      for (const attraction of relatedAttractions.slice(0, 4)) {
+      for (const attraction of relatedAttractions.slice(0, 3)) {
         try {
           const found = await getCached(`itunes:related-artist:${normalizeArtistName(attraction.title)}`, () => TrackerAPI.searchArtists(attraction.title, state.settings));
           const exact = (found || []).find(result => normalizeArtistName(result.title) === normalizeArtistName(attraction.title));
-          if (!exact || knownArtistIds.has(String(exact.providerId))) continue;
+          if (!exact) continue;
           const artistCandidate = {
             ...exact,
             image: exact.image || attraction.image || '',
-            sourceType: 'artist',
-            recommendationReason: attraction.relatedGenre && attraction.relatedGenre !== 'Music' ? `Related ${attraction.relatedGenre} artist` : 'Related artist',
-            _discoverSource: 'related-artist',
-            _discoverBoost: 6
+            recommendationReason: attraction.relatedGenre && attraction.relatedGenre !== 'Music' ? `Related ${attraction.relatedGenre} artist` : 'Related artist'
           };
-          candidates.push(artistCandidate);
+          addArtist(artistCandidate, 'related-artist', 8, false);
           relatedResolved.push(artistCandidate);
         } catch {}
       }
-      for (const artist of relatedResolved.slice(0, 2)) {
+      for (const artist of relatedResolved.slice(0, 1)) {
         try {
-          const songs = await getCached(`itunes:related-songs:${normalizeArtistName(artist.title)}`, () => TrackerAPI.searchSongs(artist.title, state.settings));
-          const matching = (songs || []).filter(song => normalizeArtistName(song.artistName || song.subtitle) === normalizeArtistName(artist.title));
-          for (const song of matching.slice(0, 3)) {
-            if (knownSongIds.has(String(song.providerId))) continue;
-            candidates.push({
-              ...song,
-              sourceType: 'song',
-              recommendationReason: `Song by related artist ${artist.title}`,
-              _discoverSource: 'related-artist-song',
-              _discoverBoost: 5
-            });
-          }
+          const [songs, albums] = await Promise.all([
+            getCached(`itunes:related-songs:${normalizeArtistName(artist.title)}`, () => TrackerAPI.searchSongs(artist.title, state.settings)),
+            getCached(`itunes:related-albums:${normalizeArtistName(artist.title)}`, () => TrackerAPI.searchMusic(artist.title, state.settings))
+          ]);
+          (songs || []).filter(song => normalizeArtistName(song.artistName || song.subtitle) === normalizeArtistName(artist.title)).slice(0, 6)
+            .forEach(song => addSong(song, 'related-artist-song', 7, false, { recommendationReason: `Song by related artist ${artist.title}` }));
+          (albums || []).filter(album => normalizeArtistName(album.artistName || album.subtitle) === normalizeArtistName(artist.title)).slice(0, 4)
+            .forEach(album => addAlbum(album, 'related-artist-album', 6.5, false, { recommendationReason: `Album by related artist ${artist.title}` }));
         } catch {}
       }
     } catch {}
@@ -6091,44 +6132,88 @@ async function annotateLatestTVEpisodeDates(results) {
 async function collectNewDiscoverCandidates(batchNumber) {
   const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
   const today = todayString();
-  const newWindowStart = addDaysToDateString(today, -62);
-  const newWindowEnd = addDaysToDateString(today, 62);
-  const tvPage = Math.min(500, batchNumber);
-  const moviePage = Math.min(500, batchNumber);
+  const horizonDays = normalizedUpcomingHorizonDays();
+  const upcomingEnd = addDaysToDateString(today, horizonDays);
+
+  // Batch 1 covers the current/new material plus the chosen future window.
+  // Subsequent batches step backward in fixed windows, which lets the
+  // "Recently Released" section continue loading indefinitely.
+  let windowStart;
+  let windowEnd;
+  let tmdbPage = 1;
+  if (batchNumber <= 3) {
+    // Spend three pages filling the immediate period before moving farther back.
+    windowStart = addDaysToDateString(today, -45);
+    windowEnd = upcomingEnd;
+    tmdbPage = batchNumber;
+  } else {
+    const historicalBatch = batchNumber - 4;
+    const historicalWindow = Math.floor(historicalBatch / 3);
+    tmdbPage = (historicalBatch % 3) + 1;
+    windowEnd = addDaysToDateString(today, -45 - (historicalWindow * 90));
+    windowStart = addDaysToDateString(windowEnd, -90);
+  }
+
   const bookStart = (batchNumber - 1) * DISCOVER_BOOK_BATCH_SIZE;
+  const newBookTopics = ['subject:fiction','subject:mystery','subject:romance','subject:fantasy','subject:biography','subject:history','subject:science','subject:psychology','subject:philosophy','subject:memoir'];
+  const newBookQuery = newBookTopics[(batchNumber - 1) % newBookTopics.length];
   const tasks = [
-    // "New" TV means a show with a recently aired episode, not a show whose
-    // first season happened to premiere recently.
-    TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings, discoverTMDBOptions('tv', {
-      sortBy: 'popularity.desc', minVotes: 5, afterDate: newWindowStart, beforeDate: newWindowEnd, dateField: 'air'
+    TrackerAPI.getTMDBDiscover('tv', tmdbPage, state.settings, discoverTMDBOptions('tv', {
+      sortBy: 'popularity.desc', minVotes: 3, afterDate: windowStart, beforeDate: windowEnd, dateField: 'air'
     })),
-    TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, discoverTMDBOptions('movie', { sortBy: 'primary_release_date.desc', minVotes: 10, afterDate: newWindowStart, beforeDate: newWindowEnd, dateField: 'release' })),
-    TrackerAPI.getBookFeed(bookStart, state.settings, discoverBookOptions({ query: 'subject:fiction', orderBy: 'newest', maxResults: DISCOVER_BOOK_BATCH_SIZE }))
+    TrackerAPI.getTMDBDiscover('movie', tmdbPage, state.settings, discoverTMDBOptions('movie', {
+      sortBy: 'primary_release_date.desc', minVotes: 5, afterDate: windowStart, beforeDate: windowEnd, dateField: 'release'
+    })),
+    TrackerAPI.getBookFeed(bookStart, state.settings, discoverBookOptions({ query: newBookQuery, orderBy: 'newest', maxResults: DISCOVER_BOOK_BATCH_SIZE }))
   ];
   if (selectedProviders.length) {
-    tasks.push(TrackerAPI.getTMDBDiscover('tv', tvPage, state.settings, discoverTMDBOptions('tv', {
-      sortBy: 'popularity.desc', minVotes: 3, afterDate: newWindowStart, beforeDate: newWindowEnd, dateField: 'air', providerIds: selectedProviders
+    tasks.push(TrackerAPI.getTMDBDiscover('tv', tmdbPage, state.settings, discoverTMDBOptions('tv', {
+      sortBy: 'popularity.desc', minVotes: 2, afterDate: windowStart, beforeDate: windowEnd, dateField: 'air', providerIds: selectedProviders
     })));
-    tasks.push(TrackerAPI.getTMDBDiscover('movie', moviePage, state.settings, discoverTMDBOptions('movie', { sortBy: 'primary_release_date.desc', minVotes: 5, afterDate: newWindowStart, beforeDate: newWindowEnd, dateField: 'release', providerIds: selectedProviders })));
+    tasks.push(TrackerAPI.getTMDBDiscover('movie', tmdbPage, state.settings, discoverTMDBOptions('movie', {
+      sortBy: 'primary_release_date.desc', minVotes: 3, afterDate: windowStart, beforeDate: windowEnd, dateField: 'release', providerIds: selectedProviders
+    })));
   }
+
   const settled = await Promise.allSettled(tasks);
   const candidates = [];
   const add = (results, sourceType, source, boost = 0) => (results || []).forEach(result => candidates.push({ ...result, sourceType, _discoverSource: source, _discoverBoost: boost }));
-  add(filterAlreadyKnown(settled[0].status === 'fulfilled' ? settled[0].value.results : [], 'tv'), 'tv', 'new', 2);
-  add(filterAlreadyKnown(settled[1].status === 'fulfilled' ? settled[1].value.results : [], 'movie'), 'movie', 'new', 2);
+  add(filterAlreadyKnown(settled[0].status === 'fulfilled' ? settled[0].value.results : [], 'tv'), 'tv', 'new', 3);
+  add(filterAlreadyKnown(settled[1].status === 'fulfilled' ? settled[1].value.results : [], 'movie'), 'movie', 'new', 3);
   add(filterAlreadyKnown(settled[2].status === 'fulfilled' ? settled[2].value.results : [], 'book'), 'book', 'new', 2);
   if (selectedProviders.length) {
-    add(filterAlreadyKnown(settled[3]?.status === 'fulfilled' ? settled[3].value.results : [], 'tv'), 'tv', 'preferred-streaming', 6);
-    add(filterAlreadyKnown(settled[4]?.status === 'fulfilled' ? settled[4].value.results : [], 'movie'), 'movie', 'preferred-streaming', 6);
+    add(filterAlreadyKnown(settled[3]?.status === 'fulfilled' ? settled[3].value.results : [], 'tv'), 'tv', 'preferred-streaming', 4);
+    add(filterAlreadyKnown(settled[4]?.status === 'fulfilled' ? settled[4].value.results : [], 'movie'), 'movie', 'preferred-streaming', 4);
   }
 
-  const deduped = dedupeDiscoverCandidatesByBoost(candidates);
-  const annotated = await annotateLatestTVEpisodeDates(deduped);
-  return annotated.sort((a, b) => {
-    if (a.sourceType === 'tv' && b.sourceType === 'tv') {
-      return String(b.latestEpisodeDate || '').localeCompare(String(a.latestEpisodeDate || ''));
-    }
-    return 0;
+  const annotated = await annotateLatestTVEpisodeDates(dedupeDiscoverCandidatesByBoost(candidates));
+
+  // iTunes catalogue results are broad searches rather than recommendations in
+  // New. Artists have no release date, so only dated albums/songs can enter.
+  try {
+    const music = await collectMusicDiscoverCandidates(batchNumber, 'new');
+    annotated.push(...music.filter(result => ['music','song'].includes(result.sourceType)));
+  } catch {}
+
+  // Future Ticketmaster events belong in New, but only within the user-selected
+  // horizon. They are added once; older infinite-scroll batches focus on releases.
+  if (state.settings.ticketmasterKey && batchNumber === 1) {
+    try {
+      const events = await fetchTicketmasterEventsForPreferences('', {
+        page: 0,
+        size: 50,
+        skipPrioritySearch: true,
+        startDateTime: ticketmasterMonthBoundary(today),
+        endDateTime: ticketmasterMonthBoundary(upcomingEnd, true)
+      });
+      annotated.push(...events.map(result => asLiveDiscoverCandidate(result, 'new-live', 3, false)));
+    } catch {}
+  }
+
+  return dedupeDiscoverCandidatesByBoost(annotated).filter(result => {
+    const date = discoverNewDate(result);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+    return date >= windowStart && date <= windowEnd;
   });
 }
 
@@ -6149,28 +6234,48 @@ async function collectPopularDiscoverCandidates(batchNumber) {
   const settled = await Promise.allSettled(tasks);
   const candidates = [];
   const add = (results, sourceType, source, boost = 0) => (results || []).forEach(result => candidates.push({ ...result, sourceType, _discoverSource: source, _discoverBoost: boost }));
-  add(filterAlreadyKnown(settled[0].status === 'fulfilled' ? settled[0].value.results : [], 'tv'), 'tv', 'popular', 3);
-  add(filterAlreadyKnown(settled[1].status === 'fulfilled' ? settled[1].value.results : [], 'movie'), 'movie', 'popular', 3);
-  add(filterAlreadyKnown(settled[2].status === 'fulfilled' ? settled[2].value.results : [], 'book'), 'book', 'popular', 2);
+  add(filterAlreadyKnown(settled[0].status === 'fulfilled' ? settled[0].value.results : [], 'tv'), 'tv', 'popular', 5);
+  add(filterAlreadyKnown(settled[1].status === 'fulfilled' ? settled[1].value.results : [], 'movie'), 'movie', 'popular', 5);
+  add(filterAlreadyKnown(settled[2].status === 'fulfilled' ? settled[2].value.results : [], 'book'), 'book', 'popular', 3);
   if (selectedProviders.length) {
-    add(filterAlreadyKnown(settled[3]?.status === 'fulfilled' ? settled[3].value.results : [], 'tv'), 'tv', 'preferred-streaming', 6);
-    add(filterAlreadyKnown(settled[4]?.status === 'fulfilled' ? settled[4].value.results : [], 'movie'), 'movie', 'preferred-streaming', 6);
+    // Availability can help surface something the user can actually watch, but
+    // it does not count as a taste/personalization signal.
+    add(filterAlreadyKnown(settled[3]?.status === 'fulfilled' ? settled[3].value.results : [], 'tv'), 'tv', 'available-popular', 5);
+    add(filterAlreadyKnown(settled[4]?.status === 'fulfilled' ? settled[4].value.results : [], 'movie'), 'movie', 'available-popular', 5);
   }
   if (batchNumber === 1) {
     const current = await Promise.allSettled([
       getCached('discover:trending:tv', () => TrackerAPI.getTrending('tv', state.settings)),
       getCached('discover:trending:movie', () => TrackerAPI.getTrending('movie', state.settings))
     ]);
-    if (current[0].status === 'fulfilled') add(filterAlreadyKnown(current[0].value, 'tv'), 'tv', 'trending', 8);
-    if (current[1].status === 'fulfilled') add(filterAlreadyKnown(current[1].value, 'movie'), 'movie', 'trending', 8);
+    if (current[0].status === 'fulfilled') add(filterAlreadyKnown(current[0].value, 'tv'), 'tv', 'trending', 10);
+    if (current[1].status === 'fulfilled') add(filterAlreadyKnown(current[1].value, 'movie'), 'movie', 'trending', 10);
   }
+
+  try { candidates.push(...await collectMusicDiscoverCandidates(batchNumber, 'popular')); } catch {}
+
+  if (state.settings.ticketmasterKey && batchNumber <= 4) {
+    try {
+      const events = await fetchTicketmasterEventsForPreferences('', {
+        page: Math.max(0, batchNumber - 1), size: 24, skipPrioritySearch: true
+      });
+      candidates.push(...events.map(result => asLiveDiscoverCandidate(result, 'popular-live', 4, false)));
+    } catch {}
+  }
+
   return dedupeDiscoverCandidatesByBoost(candidates);
 }
 
 async function collectForYouDiscoverCandidates(batchNumber) {
   const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
   const candidates = [];
-  const add = (results, sourceType, source, boost = 0) => (results || []).forEach(result => candidates.push({ ...result, sourceType, _discoverSource: source, _discoverBoost: boost }));
+  const add = (results, sourceType, source, boost = 0, exploration = false) => (results || []).forEach(result => candidates.push({
+    ...result,
+    sourceType,
+    _discoverSource: source,
+    _discoverBoost: boost,
+    _discoverExploration: Boolean(exploration)
+  }));
   const recommendationPage = 1 + ((batchNumber - 1) % 3);
 
   for (const sourceType of ['tv', 'movie']) {
@@ -6218,16 +6323,39 @@ async function collectForYouDiscoverCandidates(batchNumber) {
     if (providerResults[1].status === 'fulfilled') add(filterAlreadyKnown(providerResults[1].value.results, 'movie'), 'movie', 'preferred-streaming', 8);
   }
 
-  // A broad fallback prevents an empty For You page for newer profiles.
-  if (candidates.length < 20) {
-    const fallback = await Promise.allSettled([
-      TrackerAPI.getTMDBDiscover('tv', batchNumber, state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 50 })),
-      TrackerAPI.getTMDBDiscover('movie', batchNumber, state.settings, discoverTMDBOptions('movie', { sortBy: 'popularity.desc', minVotes: 75 })),
-      TrackerAPI.getBookFeed((batchNumber - 1) * DISCOVER_BOOK_BATCH_SIZE, state.settings, discoverBookOptions({ query: chooseDiscoverBookPlan(readAuthors, batchNumber).query, orderBy: 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE }))
-    ]);
-    if (fallback[0].status === 'fulfilled') add(filterAlreadyKnown(fallback[0].value.results, 'tv'), 'tv', 'fallback', 0);
-    if (fallback[1].status === 'fulfilled') add(filterAlreadyKnown(fallback[1].value.results, 'movie'), 'movie', 'fallback', 0);
-    if (fallback[2].status === 'fulfilled') add(filterAlreadyKnown(fallback[2].value.results, 'book'), 'book', 'fallback', 0);
+  // Deliberate exploration: roughly a quarter of the final For You batch is
+  // reserved for broader catalogue material, rather than hiding it in a separate
+  // "Discover" tab. These candidates are marked so rankDiscoverFeedCandidates
+  // can guarantee they actually survive the personalized ranking.
+  const explorationPage = 1 + ((batchNumber + Math.floor(state.discoverFeedSession * 11)) % 12);
+  const explore = await Promise.allSettled([
+    TrackerAPI.getTMDBDiscover('tv', explorationPage, state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 25 })),
+    TrackerAPI.getTMDBDiscover('movie', explorationPage, state.settings, discoverTMDBOptions('movie', { sortBy: 'popularity.desc', minVotes: 40 })),
+    TrackerAPI.getBookFeed((batchNumber - 1) * DISCOVER_BOOK_BATCH_SIZE, state.settings, discoverBookOptions({ query: chooseDiscoverBookPlan([], batchNumber).query, orderBy: 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE }))
+  ]);
+  if (explore[0].status === 'fulfilled') add(filterAlreadyKnown(explore[0].value.results, 'tv'), 'tv', 'explore', 4, true);
+  if (explore[1].status === 'fulfilled') add(filterAlreadyKnown(explore[1].value.results, 'movie'), 'movie', 'explore', 4, true);
+  if (explore[2].status === 'fulfilled') add(filterAlreadyKnown(explore[2].value.results, 'book'), 'book', 'explore', 3, true);
+
+  try { candidates.push(...await collectMusicDiscoverCandidates(batchNumber, 'for-you')); } catch {}
+
+  if (state.settings.ticketmasterKey && batchNumber <= 5) {
+    try {
+      const [concerts, relatedConcerts, generalEvents] = await Promise.all([
+        getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 12 }),
+        getRelatedTicketmasterConcerts(batchNumber, 12),
+        fetchTicketmasterEventsForPreferences('', { page: Math.max(0, batchNumber - 1), size: 12, skipPrioritySearch: true })
+      ]);
+      candidates.push(...concerts.map(result => ({
+        ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-liked',
+        _discoverBoost: result.likedArtist ? 14 : 10, _discoverExploration: false
+      })));
+      candidates.push(...relatedConcerts.map(result => ({
+        ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-related',
+        _discoverBoost: 8, _discoverExploration: false
+      })));
+      candidates.push(...generalEvents.map(result => asLiveDiscoverCandidate(result, 'live-explore', 3, true)));
+    } catch {}
   }
 
   return dedupeDiscoverCandidatesByBoost(candidates);
@@ -6235,18 +6363,16 @@ async function collectForYouDiscoverCandidates(batchNumber) {
 
 function discoverLoadingLabel(hasItems) {
   const labels = {
-    new: hasItems ? 'Finding more new releases…' : 'Loading what’s new…',
+    new: hasItems ? 'Loading older releases…' : 'Loading what’s new…',
     popular: hasItems ? 'Finding more popular picks…' : 'Loading what’s popular…',
-    'for-you': hasItems ? 'Finding more for you…' : 'Building recommendations for you…',
-    discover: hasItems ? 'Finding more…' : 'Building a fresh mix for you…'
+    'for-you': hasItems ? 'Finding more for you…' : 'Building recommendations for you…'
   };
-  return labels[state.discoverMode] || labels.discover;
+  return labels[state.discoverMode] || labels['for-you'];
 }
 
 function discoverEndlessLabel() {
-  if (state.discoverMode === 'discover') return 'Keep scrolling — TV, movies, books, music, concerts, and other live events keep changing as more loads.';
-  if (state.discoverMode === 'for-you') return 'Keep scrolling — more recommendations will load automatically.';
-  if (state.discoverMode === 'new') return 'Keep scrolling — more recent releases will load automatically.';
+  if (state.discoverMode === 'for-you') return 'Keep scrolling — more personalized and exploratory recommendations will load automatically.';
+  if (state.discoverMode === 'new') return 'Keep scrolling — Recently Released keeps loading backward from newest to oldest.';
   return 'Keep scrolling — more popular picks will load automatically.';
 }
 
@@ -6314,10 +6440,13 @@ function pickDiscoverSeed(type, excludedIds = new Set()) {
 
 function discoverTasteProfile(type) {
   const profile = new Map();
+  const now = Date.now();
   for (const item of state.items) {
     if (getSourceType(item) !== type || !item.genres?.length) continue;
     const rating = Number(item.rating || 0);
-    const engaged = Boolean(item.completedAt) || item.recommended ||
+    const queue = getQueueStatus(item);
+    const queued = queue === 'upnext' || queue === 'tbr';
+    const engaged = Boolean(item.completedAt) || item.recommended || queued ||
       (type === 'tv' && state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched')) ||
       (type === 'book' && Number(item.progress?.currentPage || 0) > 0);
     if (!engaged && !rating) continue;
@@ -6327,8 +6456,18 @@ function discoverTasteProfile(type) {
     else if (rating === 3) signal += .5;
     else if (rating > 0) signal -= (3 - rating) * 2.4;
     else if (engaged) signal += .7;
-    if (item.recommended) signal += 2.5;
-    if (type === 'tv' && getTVWatchDisposition(item) === 'stopped') signal -= 2.5;
+    if (queued && !item.completedAt) signal += .35;
+    if (item.recommended) signal += 3.2;
+    if (type === 'tv' && getTVWatchDisposition(item) === 'stopped') signal -= 3;
+    if (type === 'book' && item.bookDisposition === 'dnf') signal -= 3;
+
+    const activityTime = Date.parse(item.updatedAt || item.completedAt || item.createdAt || '');
+    if (Number.isFinite(activityTime)) {
+      const ageDays = Math.max(0, (now - activityTime) / 86400000);
+      const halfLife = item.recommended ? 1460 : 730;
+      const recency = Math.max(item.recommended ? .72 : .30, Math.exp(-ageDays / halfLife));
+      signal *= recency;
+    }
 
     for (const genre of item.genres) {
       const key = String(genre || '').trim().toLowerCase();
@@ -6369,7 +6508,7 @@ function discoverGenreAffinity(result, profiles) {
 async function rankDiscoverFeedCandidates(results, batchSize) {
   const readAuthors = getReadAuthors();
   const authorSet = new Set(readAuthors.map(author => author.toLowerCase()));
-  const mode = state.discoverMode || 'discover';
+  const mode = DISCOVER_MODES.has(state.discoverMode) ? state.discoverMode : 'for-you';
   const tasteProfiles = mode === 'for-you' ? {
     tv: discoverTasteProfile('tv'),
     movie: discoverTasteProfile('movie'),
@@ -6380,11 +6519,11 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
     const rating = Number(result.rating || 0);
     if (rating) score += Math.min(3, rating / 3.5);
 
-    if (result.sourceType === 'book' && authorSet.size) {
+    if (mode === 'for-you' && result.sourceType === 'book' && authorSet.size) {
       const resultAuthors = String(result.subtitle || '').split(',').map(value => value.trim().toLowerCase());
       if (resultAuthors.some(author => authorSet.has(author))) {
         result = { ...result, authorMatch: true };
-        score += mode === 'for-you' ? 10 : 4;
+        score += 10;
       }
     }
 
@@ -6405,7 +6544,7 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
       }
     }
 
-    const jitterMax = mode === 'discover' ? 6.5 : mode === 'for-you' ? 2.2 : .6;
+    const jitterMax = mode === 'for-you' ? 2.2 : .6;
     const jitter = Math.random() * jitterMax;
     return { ...result, _discoverScore: score + jitter, _discoverJitter: jitter };
   }).sort((a,b) => b._discoverScore - a._discoverScore);
@@ -6413,7 +6552,37 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
   // Pick the batch first, then resolve watch-provider names only for TV/movies
   // that will actually be rendered. This matters for an endless feed: it avoids
   // dozens of unnecessary provider calls for cards the user never sees.
-  let selected = diversifyDiscoverFeed(prelim).slice(0, batchSize);
+  let selected;
+  if (mode === 'new') {
+    const groupKeys = ['this-week', 'last-week', 'upcoming', 'recently-released'];
+    const perGroup = Math.max(4, Math.floor(batchSize / groupKeys.length));
+    const picked = [];
+    const pickedIds = new Set();
+    for (const key of groupKeys) {
+      const group = prelim.filter(result => discoverNewPeriod(result).key === key).slice(0, perGroup);
+      for (const result of group) {
+        const id = discoverResultIdentity(result);
+        if (!pickedIds.has(id)) { picked.push(result); pickedIds.add(id); }
+      }
+    }
+    for (const result of prelim) {
+      if (picked.length >= batchSize) break;
+      const id = discoverResultIdentity(result);
+      if (!pickedIds.has(id)) { picked.push(result); pickedIds.add(id); }
+    }
+    selected = diversifyDiscoverFeed(picked).slice(0, batchSize);
+  } else if (mode === 'for-you') {
+    const explorationTarget = Math.max(2, Math.round(batchSize * .25));
+    const exploration = prelim.filter(result => result._discoverExploration);
+    const core = prelim.filter(result => !result._discoverExploration);
+    const explorationSelected = selectAcrossContentFamilies(exploration, explorationTarget);
+    selected = diversifyDiscoverFeed([
+      ...core.slice(0, Math.max(0, batchSize - explorationSelected.length)),
+      ...explorationSelected
+    ]).slice(0, batchSize);
+  } else {
+    selected = diversifyDiscoverFeed(prelim).slice(0, batchSize);
+  }
   const tv = selected.filter(result => result.sourceType === 'tv');
   const movie = selected.filter(result => result.sourceType === 'movie');
   const [tvAnnotated, movieAnnotated] = await Promise.all([
@@ -6432,12 +6601,43 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
   return selected;
 }
 
+function discoverContentFamily(sourceType) {
+  if (['music','artist','song'].includes(sourceType)) return 'music';
+  if (['concert','event'].includes(sourceType)) return 'live';
+  return sourceType || 'other';
+}
+
+function selectAcrossContentFamilies(results, limit) {
+  const buckets = new Map();
+  for (const result of results || []) {
+    const family = discoverContentFamily(result.sourceType);
+    if (!buckets.has(family)) buckets.set(family, []);
+    buckets.get(family).push(result);
+  }
+  const families = [...buckets.keys()];
+  const selected = [];
+  let round = 0;
+  while (selected.length < limit && families.some(family => buckets.get(family)?.[round])) {
+    for (const family of families) {
+      const value = buckets.get(family)?.[round];
+      if (value) selected.push(value);
+      if (selected.length >= limit) break;
+    }
+    round += 1;
+  }
+  return selected;
+}
+
 function diversifyDiscoverFeed(results) {
   const remaining = [...(results || [])];
   const output = [];
   while (remaining.length) {
-    const recentTypes = output.slice(-2).map(item => item.sourceType);
-    let index = remaining.findIndex((item, candidateIndex) => candidateIndex < 8 && !(recentTypes.length === 2 && recentTypes.every(type => type === item.sourceType)));
+    const recentFamilies = output.slice(-2).map(item => discoverContentFamily(item.sourceType));
+    let index = remaining.findIndex((item, candidateIndex) => {
+      if (candidateIndex >= 10) return false;
+      const family = discoverContentFamily(item.sourceType);
+      return !(recentFamilies.length === 2 && recentFamilies.every(value => value === family));
+    });
     if (index < 0) index = 0;
     output.push(remaining.splice(index, 1)[0]);
   }
@@ -6546,29 +6746,27 @@ function monthKey(dateString) {
 
 function discoverNewPeriod(result) {
   const date = discoverNewDate(result);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { key: 'undated', label: 'More new releases', order: 100, date };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { key: 'undated', label: 'Recently Released', order: 40, date };
   const today = todayString();
   const thisWeek = mondayWeekStartString(today);
   const nextWeek = addDaysToDateString(thisWeek, 7);
-  const afterNextWeek = addDaysToDateString(thisWeek, 14);
   const lastWeek = addDaysToDateString(thisWeek, -7);
-  const currentMonth = monthKey(today);
-  const dateMonth = monthKey(date);
-  const todayDate = parseLocalDateString(today);
-  const nextMonthDate = new Date(todayDate.getFullYear(), todayDate.getMonth() + 1, 1, 12);
-  const prevMonthDate = new Date(todayDate.getFullYear(), todayDate.getMonth() - 1, 1, 12);
-  const nextMonth = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth()+1).padStart(2,'0')}`;
-  const prevMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth()+1).padStart(2,'0')}`;
+  const upcomingEnd = addDaysToDateString(today, normalizedUpcomingHorizonDays());
 
-  if (date >= nextWeek && date < afterNextWeek) return { key: 'next-week', label: 'Coming next week', order: 20, date };
-  if (date >= thisWeek && date < nextWeek) return { key: 'this-week', label: 'This week', order: 10, date };
-  if (date >= lastWeek && date < thisWeek) return { key: 'last-week', label: 'Last week', order: 30, date };
-  if (date > today && dateMonth === currentMonth) return { key: 'later-this-month', label: 'Later this month', order: 40, date };
-  if (date > today && dateMonth === nextMonth) return { key: 'next-month', label: 'Next month', order: 60, date };
-  if (date > today) return { key: 'coming-later', label: 'Coming later', order: 80, date };
-  if (date < lastWeek && dateMonth === currentMonth) return { key: 'earlier-this-month', label: 'Earlier this month', order: 50, date };
-  if (dateMonth === prevMonth) return { key: 'last-month', label: 'Last month', order: 70, date };
-  return { key: 'earlier', label: 'Earlier', order: 90, date };
+  if (date >= thisWeek && date < nextWeek) return { key: 'this-week', label: 'This Week', order: 10, date };
+  if (date >= lastWeek && date < thisWeek) return { key: 'last-week', label: 'Last Week', order: 20, date };
+  if (date >= nextWeek && date <= upcomingEnd) return { key: 'upcoming', label: 'Upcoming', order: 30, date };
+  if (date < lastWeek) return { key: 'recently-released', label: 'Recently Released', order: 40, date };
+  return { key: 'outside-window', label: 'Upcoming', order: 90, date };
+}
+
+function upcomingHorizonLabel() {
+  const days = normalizedUpcomingHorizonDays();
+  if (days === 14) return 'next 2 weeks';
+  if (days === 30) return 'next month';
+  if (days === 90) return 'next 3 months';
+  if (days === 180) return 'next 6 months';
+  return `next ${days} days`;
 }
 
 function renderDiscoverNewGroupedItems() {
@@ -6577,12 +6775,13 @@ function renderDiscoverNewGroupedItems() {
   const groups = new Map();
   for (const result of state.discoverFeedItems) {
     const period = discoverNewPeriod(result);
+    if (period.key === 'outside-window') continue;
     if (!groups.has(period.key)) groups.set(period.key, { ...period, items: [] });
     groups.get(period.key).items.push(result);
   }
   const ordered = [...groups.values()].sort((a,b) => a.order - b.order);
   els.discoverFeed.innerHTML = ordered.map(group => {
-    const upcoming = ['next-week','later-this-month','next-month','coming-later'].includes(group.key);
+    const upcoming = group.key === 'upcoming';
     group.items.sort((a,b) => {
       const ad = discoverNewDate(a), bd = discoverNewDate(b);
       return upcoming ? String(ad).localeCompare(String(bd)) : String(bd).localeCompare(String(ad));
@@ -6591,7 +6790,9 @@ function renderDiscoverNewGroupedItems() {
       const key = rememberDiscoverResult(result, result.sourceType);
       return discoverCardMarkup(result, key, result.sourceType);
     }).join('');
-    return `<section class="discover-new-period-group"><div class="discover-new-period-heading"><h2>${escapeHtml(group.label)}</h2></div><div class="discover-new-period-grid">${cards}</div></section>`;
+    const sub = group.key === 'upcoming' ? `<span class="discover-new-period-subtitle">${escapeHtml(upcomingHorizonLabel())}</span>` : '';
+    const note = group.key === 'recently-released' ? '<span class="discover-new-period-subtitle">newest → oldest · keep scrolling for older releases</span>' : '';
+    return `<section class="discover-new-period-group"><div class="discover-new-period-heading"><h2>${escapeHtml(group.label)}</h2>${sub || note}</div><div class="discover-new-period-grid">${cards}</div></section>`;
   }).join('');
 }
 
