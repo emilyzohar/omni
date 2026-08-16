@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-library-activity-recs-1" />
+  <link rel="stylesheet" href="style.css?v=omni-rows-visible-1" />
 </head>
 <body class="auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -207,6 +207,7 @@
       <h2>Track settings</h2>
       <div class="track-settings-tabs" role="tablist" aria-label="Track settings">
         <button class="track-settings-tab is-active" type="button" data-track-settings-tab="stickers" role="tab" aria-selected="true">Stickers</button>
+        <button class="track-settings-tab" type="button" data-track-settings-tab="rows" role="tab" aria-selected="false">Rows</button>
         <button class="track-settings-tab" type="button" data-track-settings-tab="streaks" role="tab" aria-selected="false">Streaks</button>
       </div>
     </div>
@@ -219,6 +220,20 @@
         <div id="stickerSettingsRows" class="sticker-settings-rows"></div>
         <div class="modal-actions">
           <button id="resetStickerSettings" class="quiet-button" type="button">Reset</button>
+          <div class="actions-right">
+            <button class="quiet-button" type="button" data-close="stickerSettingsModal">Cancel</button>
+            <button class="primary-button" type="submit">Save</button>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <section class="track-settings-panel" data-track-settings-panel="rows" hidden>
+      <form id="calendarRowSettingsForm" class="calendar-row-settings-form">
+        <p class="calendar-row-settings-hint">Give types the same row name to combine them on one Track calendar row.</p>
+        <div id="calendarRowSettingsRows" class="calendar-row-settings-rows"></div>
+        <div class="modal-actions">
+          <button id="resetCalendarRowSettings" class="quiet-button" type="button">Reset</button>
           <div class="actions-right">
             <button class="quiet-button" type="button" data-close="stickerSettingsModal">Cancel</button>
             <button class="primary-button" type="submit">Save</button>
@@ -616,6 +631,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-library-activity-recs-1"></script>
+  <script type="module" src="app.js?v=omni-rows-visible-1"></script>
 </body>
 </html>
