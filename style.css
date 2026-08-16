@@ -6487,15 +6487,16 @@ body.auth-locked > main {
 
 
 /* =========================================================
-   Modal close control: always pinned to the visible top-right
+   Modal close control: pinned to the popup's top-right corner
+   (sticky within the popup, never to the browser viewport)
    ========================================================= */
 dialog.modal[open] > .modal-x {
-  position: fixed !important;
-  top: max(12px, env(safe-area-inset-top)) !important;
-  right: max(12px, env(safe-area-inset-right)) !important;
+  position: sticky !important;
+  top: 0 !important;
+  right: 0 !important;
   left: auto !important;
-  margin: 0 !important;
-  z-index: 10020 !important;
+  margin: 0 0 0 auto !important;
+  z-index: 20 !important;
   width: 42px;
   height: 42px;
   display: grid;
@@ -6510,7 +6511,68 @@ dialog.modal[open] > .modal-x {
 
 @media (max-width: 760px) {
   dialog.modal[open] > .modal-x {
-    top: max(10px, env(safe-area-inset-top)) !important;
-    right: max(10px, env(safe-area-inset-right)) !important;
+    top: 0 !important;
+    right: 0 !important;
+  }
+}
+
+
+/* =========================================================
+   Mobile sticker visibility fix + minimal UX copy
+   ========================================================= */
+/* Never let layout CSS make a closed <dialog> visible. This fixes the
+   phantom Customize Stickers sheet on mobile and keeps close() reliable. */
+dialog.modal:not([open]) {
+  display: none !important;
+}
+
+@media (max-width: 620px) {
+  dialog.modal.sticker-settings-modal[open] {
+    display: flex !important;
+  }
+}
+
+/* Minimal interface copy: keep controls, labels, state/error messages,
+   attribution, and actual item content; remove redundant helper prose. */
+.eyebrow,
+.modal-eyebrow,
+.auth-copy,
+.tracker-note,
+.sticker-settings-intro,
+.streak-settings-intro,
+.queue-choice-note,
+.restaurant-quick-add-note,
+.discover-rating-note,
+.discover-feed-intro,
+.discover-feed-message,
+.settings-note,
+.field-hint,
+.book-period-editor-heading small,
+.attachment-label small,
+.discover-settings-modal .toggle-row small,
+.discover-settings-modal .field > small {
+  display: none !important;
+}
+
+/* Tighten headings after removing explanatory copy. */
+.modal-heading,
+.discover-feed-section,
+.section-title-row > div,
+.track-heading > div,
+.library-heading > div,
+.discover-heading > div {
+  gap: 0;
+}
+
+.modal-heading {
+  margin-bottom: 12px;
+}
+
+@media (max-width: 620px) {
+  .sticker-settings-modal .modal-heading {
+    padding-bottom: 6px;
+  }
+  .sticker-settings-modal .modal-heading h2 {
+    margin-bottom: 0;
   }
 }

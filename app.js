@@ -156,6 +156,8 @@ const state = {
   pendingDiscoverRatingTrackTV: false,
   pendingDiscoverRatingValue: 0,
   pendingDiscoverDateValue: '',
+  pendingDiscoverRecommendedValue: false,
+  pendingDiscoverCompletionIntent: false,
   discoverQuickAddRollback: null,
   discoverQuickAddCommitted: false,
   pendingRestaurantQuickKey: null,
@@ -946,12 +948,14 @@ function bindEvents() {
   els.restaurantQuickAddModal?.addEventListener('click', handleRestaurantQuickAddChoice);
   els.detailBody?.addEventListener('click', handleDiscoverQuickMetaClick);
   els.discoverRatingModal?.addEventListener('close', () => {
-    const key = state.pendingDiscoverRatingKey || state.discoverQuickAddRollback?.key || '';
-    finishDiscoverQuickAddClose(key);
+    // Discover quick-add is intentionally write-free until Continue is pressed.
+    // Closing with X / Escape / swipe therefore needs no rollback.
     state.pendingDiscoverRatingKey = null;
     state.pendingDiscoverRatingTrackTV = false;
     state.pendingDiscoverRatingValue = 0;
     state.pendingDiscoverDateValue = '';
+    state.pendingDiscoverRecommendedValue = false;
+    state.pendingDiscoverCompletionIntent = false;
     if (els.discoverRatingDate) els.discoverRatingDate.value = '';
   });
   els.restaurantQuickAddModal?.addEventListener('close', () => { state.pendingRestaurantQuickKey = null; state.pendingRestaurantQuickRating = 0; if (els.restaurantQuickAddDate) els.restaurantQuickAddDate.value = ''; });
@@ -5897,7 +5901,7 @@ async function runDiscoverSearch(forcedQuery = '') {
       els.discoverStatus.hidden = ranked.length > 0;
       els.discoverStatus.textContent = ranked.length ? '' : `No results for “${query}” with these filters.`;
     }
-    if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = ranked.length ? `${ranked.length} result${ranked.length === 1 ? '' : 's'} shown.` : 'Try another search or change the filters.';
+    if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = ranked.length ? `${ranked.length} result${ranked.length === 1 ? '' : 's'}` : 'No results';
   } catch (error) {
     if (els.discoverStatus) {
       els.discoverStatus.hidden = false;
@@ -6425,7 +6429,7 @@ async function loadMoreDiscoverFeed() {
       state.discoverFeedEmptyPasses += 1;
       if (state.discoverFeedEmptyPasses >= 3) {
         state.discoverFeedDone = true;
-        if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = state.discoverMode === 'for-you' ? 'You’ve reached the end of this recommendation mix. Shuffle to build another one.' : 'No more results found in this view right now.';
+        if (els.discoverFeedMessage) els.discoverFeedMessage.textContent = 'End of results';
       }
     } else {
       state.discoverFeedEmptyPasses = 0;
@@ -7426,19 +7430,12 @@ async function collectForYouDiscoverCandidates(batchNumber) {
   return dedupeDiscoverCandidatesByBoost(candidates);
 }
 
-function discoverLoadingLabel(hasItems) {
-  const labels = {
-    new: hasItems ? 'Loading older releases…' : 'Loading what’s new…',
-    popular: hasItems ? 'Finding more popular picks…' : 'Loading what’s popular…',
-    'for-you': hasItems ? 'Finding more for you…' : 'Building recommendations for you…'
-  };
-  return labels[state.discoverMode] || labels['for-you'];
+function discoverLoadingLabel() {
+  return 'Loading…';
 }
 
 function discoverEndlessLabel() {
-  if (state.discoverMode === 'for-you') return 'Keep scrolling — more personalized and exploratory recommendations will load automatically.';
-  if (state.discoverMode === 'new') return 'Keep scrolling — Recently Released keeps loading backward from newest to oldest.';
-  return 'Keep scrolling — more popular picks will load automatically.';
+  return '';
 }
 
 function dedupeDiscoverCandidatesByBoost(results) {
@@ -8608,8 +8605,12 @@ async function handleDiscoverClick(event) {
         const picker = els.detailBody?.querySelector('[data-tv-watch-picker]');
         picker?.scrollIntoView({ block: 'start', behavior: 'smooth' });
       });
-    } else {
-      await markDiscoverCompleted(key, { promptForRating: true });
+    } else if (result && isDiscoverCompleted(result)) {
+      // Undo is an explicit action and can happen immediately.
+      await markDiscoverCompleted(key, { promptForRating: false });
+    } else if (result) {
+      // New completion is provisional until the quick-add Continue button.
+      openDiscoverRatingPrompt(key, { completionIntent: true });
     }
     return;
   }
@@ -8728,8 +8729,8 @@ async function handleDiscoverRateRecommend(key) {
   if (!result) return;
   const existing = findDiscoverItem(result);
 
-  // A filled star is deliberately simple: remove Recommended only.
-  // Ratings and watched/read history remain intact.
+  // Existing Recommended can still be explicitly removed without opening a
+  // quick-add flow. For a new recommendation, do not create anything yet.
   if (existing?.recommended) {
     existing.recommended = false;
     existing.updatedAt = new Date().toISOString();
@@ -8739,27 +8740,17 @@ async function handleDiscoverRateRecommend(key) {
     return;
   }
 
-  beginDiscoverQuickAddSession(key);
-  const item = ensureDiscoverItem(result, 'library');
-  item.recommended = true;
-  item.updatedAt = new Date().toISOString();
-  saveItems();
-  renderLibrary();
-  renderDiscoverCardInPlace(key);
-
   if (result.sourceType === 'tv') {
     state.pendingDiscoverRatingTrackTV = true;
-    openDiscoverRatingPrompt(key, { allowTV: true });
+    openDiscoverRatingPrompt(key, { allowTV: true, recommendIntent: true });
     return;
   }
 
   if (result.sourceType === 'movie' || result.sourceType === 'book') {
-    if (!isDiscoverCompleted(result)) {
-      await markDiscoverCompleted(key, { promptForRating: true });
-    } else {
-      openDiscoverRatingPrompt(key);
-    }
-    return;
+    openDiscoverRatingPrompt(key, {
+      completionIntent: !isDiscoverCompleted(result),
+      recommendIntent: true
+    });
   }
 }
 
@@ -8902,7 +8893,6 @@ function isDiscoverCompleted(result) {
 async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
   const result = state.discoverResults.get(key);
   if (!result) return;
-  if (promptForRating && ['movie','book'].includes(result.sourceType)) beginDiscoverQuickAddSession(key);
   const item = ensureDiscoverItem(result, 'library');
 
   if (result.sourceType === 'book') {
@@ -8910,7 +8900,7 @@ async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
     await markWholeBookComplete(item, { createReadingPeriod: false });
     renderDiscoverCardInPlace(key);
     if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
-    if (!wasComplete && promptForRating) openDiscoverRatingPrompt(key);
+    if (!wasComplete && promptForRating) openDiscoverRatingPrompt(key, { completionIntent: false });
     return;
   }
 
@@ -8944,27 +8934,31 @@ async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
   renderAll();
   renderDiscoverCardInPlace(key);
   if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
-  if (promptForRating && result.sourceType === 'movie') openDiscoverRatingPrompt(key);
+  if (promptForRating && result.sourceType === 'movie') openDiscoverRatingPrompt(key, { completionIntent: false });
 }
 
-function openDiscoverRatingPrompt(key, { allowTV = false } = {}) {
+function openDiscoverRatingPrompt(key, { allowTV = false, completionIntent = false, recommendIntent = null } = {}) {
   const result = state.discoverResults.get(key);
   const allowed = ['movie','book'].includes(result?.sourceType) || (allowTV && result?.sourceType === 'tv');
   if (!result || !allowed || !els.discoverRatingModal) return;
-  beginDiscoverQuickAddSession(key);
+
+  // IMPORTANT: opening this modal must not mutate Library/history. Everything
+  // below is temporary UI state until the user presses Continue.
   state.pendingDiscoverRatingKey = key;
+  state.pendingDiscoverCompletionIntent = Boolean(completionIntent);
   if (els.discoverRatingTitle) els.discoverRatingTitle.textContent = `Rate ${result.title || (result.sourceType === 'book' ? 'this book' : 'this movie')}`;
   const existing = findDiscoverItem(result);
   const rating = Math.max(0, Math.min(5, Number(existing?.rating || 0)));
   state.pendingDiscoverRatingValue = rating;
   state.pendingDiscoverDateValue = existing?.date || '';
+  state.pendingDiscoverRecommendedValue = recommendIntent == null ? Boolean(existing?.recommended) : Boolean(recommendIntent);
   if (els.discoverRatingDate) els.discoverRatingDate.value = state.pendingDiscoverDateValue;
   els.discoverRatingPicker?.querySelectorAll('[data-discover-rating-choice]').forEach(button => {
     button.classList.toggle('filled', Number(button.dataset.discoverRatingChoice) <= rating);
   });
   if (els.discoverRatingRecommendHeart) {
+    const recommended = state.pendingDiscoverRecommendedValue;
     els.discoverRatingRecommendHeart.dataset.discoverRecommend = key;
-    const recommended = Boolean(existing?.recommended);
     els.discoverRatingRecommendHeart.textContent = recommended ? '♥' : '♡';
     els.discoverRatingRecommendHeart.classList.toggle('is-recommended', recommended);
     els.discoverRatingRecommendHeart.setAttribute('aria-pressed', String(recommended));
@@ -8994,13 +8988,61 @@ function persistDiscoverOptionalDate(key, dateValue) {
   renderAll();
 }
 
+async function commitDiscoverQuickAddOnContinue(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+
+  const rating = Math.max(0, Math.min(5, Number(state.pendingDiscoverRatingValue || 0)));
+  const date = String(els.discoverRatingDate?.value || state.pendingDiscoverDateValue || '').trim();
+  const recommended = Boolean(state.pendingDiscoverRecommendedValue);
+  const completionIntent = Boolean(state.pendingDiscoverCompletionIntent);
+  let item = findDiscoverItem(result);
+
+  // Continue after a completion request always needs an item. Otherwise create
+  // one only when the user actually supplied metadata/recommendation.
+  const shouldCreate = Boolean(item) || completionIntent || rating > 0 || recommended || /^\d{4}-\d{2}-\d{2}$/.test(date);
+  if (!shouldCreate) return;
+
+  if (!item) {
+    item = ensureDiscoverItem(result, 'library');
+    if (result.sourceType === 'tv') item.watchDisposition = 'stopped';
+  }
+
+  item.rating = rating;
+  item.recommended = recommended;
+  item.updatedAt = new Date().toISOString();
+  saveItems();
+
+  if (completionIntent && !isDiscoverCompleted(result)) {
+    await markDiscoverCompleted(key, { promptForRating: false });
+    item = findDiscoverItem(result) || item;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    persistDiscoverOptionalDate(key, date);
+  } else {
+    // Keep completion-history ratings synchronized even when no date is given.
+    for (const entry of state.history) {
+      if (entry.sourceItemId === item.id && ['series-watched','movie-watched','book-finished','item-completed'].includes(entry.kind)) {
+        entry.rating = rating;
+      }
+    }
+    saveHistory();
+    renderAll();
+  }
+  renderDiscoverCardInPlace(key);
+}
+
 async function handleDiscoverRatingChoice(event) {
   const heart = event.target.closest('[data-discover-recommend]');
   if (heart && state.pendingDiscoverRatingKey) {
     event.preventDefault();
     event.stopPropagation();
-    const key = state.pendingDiscoverRatingKey;
-    await toggleDiscoverRecommended(key);
+    state.pendingDiscoverRecommendedValue = !state.pendingDiscoverRecommendedValue;
+    heart.textContent = state.pendingDiscoverRecommendedValue ? '♥' : '♡';
+    heart.classList.toggle('is-recommended', state.pendingDiscoverRecommendedValue);
+    heart.setAttribute('aria-pressed', String(state.pendingDiscoverRecommendedValue));
+    heart.setAttribute('aria-label', state.pendingDiscoverRecommendedValue ? 'Remove from Recommended' : 'Add to Recommended');
     return;
   }
 
@@ -9019,15 +9061,9 @@ async function handleDiscoverRatingChoice(event) {
     event.preventDefault();
     event.stopPropagation();
     const key = state.pendingDiscoverRatingKey;
-    const rating = Number(state.pendingDiscoverRatingValue || 0);
-    const date = els.discoverRatingDate?.value || state.pendingDiscoverDateValue || '';
-    if (key && rating > 0) persistDiscoverRating(key, rating);
-    if (key && date) persistDiscoverOptionalDate(key, date);
-    if (key) commitDiscoverQuickAddSession(key);
+    if (key) await commitDiscoverQuickAddOnContinue(key);
 
-    // Continue is deliberately just a save-and-close action. In older builds TV
-    // recommendations immediately opened episode tracking after this dialog,
-    // which made Continue feel as though the popup had not actually closed.
+    // Continue is the commit boundary. X / Escape / swipe never write anything.
     els.discoverRatingModal?.close();
   }
 }
