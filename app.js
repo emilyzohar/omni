@@ -423,6 +423,7 @@ async function bootstrapAuth() {
   bindAuthEvents();
 
   if (!hasSupabaseConfig) {
+    lockApp();
     setAuthMessage('Supabase is not configured yet. Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY to .env, then rebuild the site.', true);
     if (els.continueLocalButton) els.continueLocalButton.hidden = false;
     return;
@@ -431,6 +432,7 @@ async function bootstrapAuth() {
   setAuthMessage('Checking your session…', false);
   const { data, error } = await supabase.auth.getSession();
   if (error) {
+    lockApp();
     setAuthMessage(error.message || 'Could not check your session.', true);
     return;
   }
@@ -591,12 +593,13 @@ function startAppOnce() {
 }
 
 function lockApp() {
+  document.body.classList.remove('auth-pending');
   document.body.classList.add('auth-locked');
   if (els.authScreen) els.authScreen.hidden = false;
 }
 
 function unlockApp() {
-  document.body.classList.remove('auth-locked');
+  document.body.classList.remove('auth-pending', 'auth-locked');
   if (els.authScreen) els.authScreen.hidden = true;
 }
 
@@ -1081,7 +1084,9 @@ function bindEvents() {
 
     const libraryRating = event.target.closest('[data-library-rating]');
     if (libraryRating) {
-      saveLibraryRating(libraryRating.dataset.itemId, Number(libraryRating.dataset.libraryRating));
+      const item = findItem(libraryRating.dataset.itemId);
+      const selected = Number(libraryRating.dataset.libraryRating);
+      saveLibraryRating(libraryRating.dataset.itemId, toggledStarRating(item?.rating, selected));
       return;
     }
 
@@ -1328,9 +1333,12 @@ function bindEvents() {
 
     const discoverTVRating = event.target.closest('[data-discover-tv-rating]');
     if (discoverTVRating) {
-      const rating = Number(discoverTVRating.dataset.discoverTvRating);
-      setDiscoverTVPendingRating(discoverTVRating.dataset.discoverKey, rating);
-      persistDiscoverRating(discoverTVRating.dataset.discoverKey, rating);
+      const key = discoverTVRating.dataset.discoverKey;
+      const section = els.detailBody?.querySelector(`[data-discover-tv-meta="${CSS.escape(key)}"]`);
+      const selected = Number(discoverTVRating.dataset.discoverTvRating);
+      const rating = toggledStarRating(section?.dataset.pendingRating, selected);
+      setDiscoverTVPendingRating(key, rating);
+      persistDiscoverRating(key, rating);
       return;
     }
 
@@ -3991,10 +3999,17 @@ async function deleteEditingItem() {
   renderAll();
 }
 
+function toggledStarRating(currentValue, selectedValue) {
+  const current = Math.max(0, Math.min(5, Number(currentValue || 0)));
+  const selected = Math.max(0, Math.min(5, Number(selectedValue || 0)));
+  return current === selected ? 0 : selected;
+}
+
 function chooseRating(event) {
   const button = event.target.closest('[data-rating]');
   if (!button) return;
-  setRating(Number(button.dataset.rating));
+  const selected = Number(button.dataset.rating);
+  setRating(toggledStarRating(els.itemRating?.value, selected));
 }
 
 function syncItemRecommendHeart() {
@@ -5623,7 +5638,8 @@ function toggleHistorySourceRecommended() {
 function chooseHistoryRating(event) {
   const button = event.target.closest('[data-history-rating]');
   if (!button) return;
-  setHistoryRating(Number(button.dataset.historyRating));
+  const selected = Number(button.dataset.historyRating);
+  setHistoryRating(toggledStarRating(els.historyEditRating?.value, selected));
 }
 
 function setHistoryRating(value) {
@@ -8566,7 +8582,8 @@ async function handleRestaurantQuickAddChoice(event) {
   const ratingButton = event.target.closest('[data-restaurant-quick-rating]');
   if (ratingButton) {
     event.preventDefault();
-    state.pendingRestaurantQuickRating = Number(ratingButton.dataset.restaurantQuickRating || 0);
+    const selected = Number(ratingButton.dataset.restaurantQuickRating || 0);
+    state.pendingRestaurantQuickRating = toggledStarRating(state.pendingRestaurantQuickRating, selected);
     els.restaurantQuickAddRatingPicker?.querySelectorAll('[data-restaurant-quick-rating]').forEach(button => {
       button.classList.toggle('filled', Number(button.dataset.restaurantQuickRating) <= state.pendingRestaurantQuickRating);
     });
@@ -9050,7 +9067,8 @@ async function handleDiscoverRatingChoice(event) {
   if (choice && state.pendingDiscoverRatingKey) {
     event.preventDefault();
     event.stopPropagation();
-    const rating = Number(choice.dataset.discoverRatingChoice);
+    const selected = Number(choice.dataset.discoverRatingChoice);
+    const rating = toggledStarRating(state.pendingDiscoverRatingValue, selected);
     state.pendingDiscoverRatingValue = rating;
     els.discoverRatingPicker?.querySelectorAll('[data-discover-rating-choice]').forEach(button => {
       button.classList.toggle('filled', Number(button.dataset.discoverRatingChoice) <= rating);
@@ -9105,7 +9123,9 @@ async function handleDiscoverQuickMetaClick(event) {
     event.preventDefault();
     event.stopPropagation();
     const key = ratingButton.dataset.discoverKey;
-    const rating = Number(ratingButton.dataset.discoverTvRating);
+    const section = els.detailBody?.querySelector(`[data-discover-tv-meta="${CSS.escape(key)}"]`);
+    const selected = Number(ratingButton.dataset.discoverTvRating);
+    const rating = toggledStarRating(section?.dataset.pendingRating, selected);
     setDiscoverTVPendingRating(key, rating);
     persistDiscoverRating(key, rating);
     return;

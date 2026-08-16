@@ -1853,9 +1853,13 @@ h3 { margin-bottom: 0; font-size: 1.65rem; }
   max-width: none;
 }
 
+body.auth-pending,
 body.auth-locked {
   overflow: hidden;
 }
+body.auth-pending > .site-header,
+body.auth-pending > main,
+body.auth-pending > .auth-screen,
 body.auth-locked > .site-header,
 body.auth-locked > main {
   display: none;

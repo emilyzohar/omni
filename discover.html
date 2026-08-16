@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#720014" />
   <style>
+    body.auth-pending > .site-header,
+    body.auth-pending > main,
+    body.auth-pending > .auth-screen,
     body.auth-locked > .site-header,
     body.auth-locked > main { display: none !important; }
     [hidden] { display: none !important; }
@@ -13,13 +16,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-1" />
+  <link rel="stylesheet" href="style.css?v=omni-auth-rating-1" />
 </head>
-<body class="discover-page auth-locked">
-  <section id="authScreen" class="auth-screen">
+<body class="discover-page auth-pending">
+  <section id="authScreen" class="auth-screen" hidden>
     <div class="auth-card">
       <div class="auth-brand">
-        <span class="auth-mark">CA</span>
+        <span class="auth-mark">omni</span>
         <div>
           <p class="eyebrow">OMNI</p>
           <h1>Your tracker</h1>
@@ -612,6 +615,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-1"></script>
+  <script type="module" src="app.js?v=omni-auth-rating-1"></script>
 </body>
 </html>
