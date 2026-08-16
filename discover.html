@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=discover-multiselect-2" />
+  <link rel="stylesheet" href="style.css?v=discover-quickadd-cancel-closefix-1" />
 </head>
 <body class="discover-page auth-locked">
   <section id="authScreen" class="auth-screen">
@@ -437,6 +437,37 @@
     </div>
   </dialog>
 
+  <!-- RESTAURANT QUICK ADD -->
+  <dialog id="restaurantQuickAddModal" class="modal small-modal restaurant-quick-add-modal">
+    <button class="modal-x" type="button" data-close="restaurantQuickAddModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">ADD RESTAURANT</p>
+      <h2 id="restaurantQuickAddTitle">Restaurant</h2>
+    </div>
+    <p class="restaurant-quick-add-note">Track a visit now, or save the restaurant to TBR for later.</p>
+    <section class="restaurant-quick-track-panel">
+      <h3>Track</h3>
+      <label class="field">
+        <span>Date <em>optional</em></span>
+        <input id="restaurantQuickAddDate" type="date" />
+      </label>
+      <fieldset class="rating-fieldset">
+        <legend>Rating <span>optional</span></legend>
+        <div id="restaurantQuickAddRatingPicker" class="star-picker restaurant-quick-rating-picker" aria-label="Restaurant rating out of five stars">
+          <button type="button" data-restaurant-quick-rating="1" aria-label="1 star">★</button>
+          <button type="button" data-restaurant-quick-rating="2" aria-label="2 stars">★</button>
+          <button type="button" data-restaurant-quick-rating="3" aria-label="3 stars">★</button>
+          <button type="button" data-restaurant-quick-rating="4" aria-label="4 stars">★</button>
+          <button type="button" data-restaurant-quick-rating="5" aria-label="5 stars">★</button>
+          <button class="clear-rating" type="button" data-restaurant-quick-rating-clear>clear</button>
+        </div>
+      </fieldset>
+      <button class="primary-button restaurant-quick-action" type="button" data-restaurant-quick-action="track">Track restaurant</button>
+    </section>
+    <div class="restaurant-quick-divider"><span>or</span></div>
+    <button class="secondary-button restaurant-quick-action restaurant-tbr-action" type="button" data-restaurant-quick-action="tbr">Add to TBR</button>
+  </dialog>
+
   <!-- QUICK RATING -->
   <dialog id="discoverRatingModal" class="modal small-modal discover-rating-modal">
     <button class="modal-x" type="button" data-close="discoverRatingModal" aria-label="Close">×</button>
@@ -581,6 +612,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=places-key-tmdb-throttle-1"></script>
+  <script type="module" src="app.js?v=discover-quickadd-cancel-closefix-1"></script>
 </body>
 </html>

@@ -156,6 +156,10 @@ const state = {
   pendingDiscoverRatingTrackTV: false,
   pendingDiscoverRatingValue: 0,
   pendingDiscoverDateValue: '',
+  discoverQuickAddRollback: null,
+  discoverQuickAddCommitted: false,
+  pendingRestaurantQuickKey: null,
+  pendingRestaurantQuickRating: 0,
   tvDraftProviderId: '',
   tvDraftWatched: new Set(),
   tvDraftInitialWatched: new Set(),
@@ -293,6 +297,10 @@ const els = {
   discoverRatingPicker: $('#discoverRatingPicker'),
   discoverRatingRecommendHeart: $('#discoverRatingRecommendHeart'),
   discoverRatingDate: $('#discoverRatingDate'),
+  restaurantQuickAddModal: $('#restaurantQuickAddModal'),
+  restaurantQuickAddTitle: $('#restaurantQuickAddTitle'),
+  restaurantQuickAddDate: $('#restaurantQuickAddDate'),
+  restaurantQuickAddRatingPicker: $('#restaurantQuickAddRatingPicker'),
   openDiscoverSettings: $('#openDiscoverSettings'),
   discoverSettingsModal: $('#discoverSettingsModal'),
   discoverSettingsForm: $('#discoverSettingsForm'),
@@ -935,8 +943,18 @@ function bindEvents() {
   document.querySelector('#discover')?.addEventListener('click', handleDiscoverClick);
   els.discoverQueueModal?.addEventListener('click', handleDiscoverQueueChoice);
   els.discoverRatingModal?.addEventListener('click', handleDiscoverRatingChoice);
+  els.restaurantQuickAddModal?.addEventListener('click', handleRestaurantQuickAddChoice);
   els.detailBody?.addEventListener('click', handleDiscoverQuickMetaClick);
-  els.discoverRatingModal?.addEventListener('close', () => { state.pendingDiscoverRatingKey = null; state.pendingDiscoverRatingTrackTV = false; state.pendingDiscoverRatingValue = 0; state.pendingDiscoverDateValue = ''; if (els.discoverRatingDate) els.discoverRatingDate.value = ''; });
+  els.discoverRatingModal?.addEventListener('close', () => {
+    const key = state.pendingDiscoverRatingKey || state.discoverQuickAddRollback?.key || '';
+    finishDiscoverQuickAddClose(key);
+    state.pendingDiscoverRatingKey = null;
+    state.pendingDiscoverRatingTrackTV = false;
+    state.pendingDiscoverRatingValue = 0;
+    state.pendingDiscoverDateValue = '';
+    if (els.discoverRatingDate) els.discoverRatingDate.value = '';
+  });
+  els.restaurantQuickAddModal?.addEventListener('close', () => { state.pendingRestaurantQuickKey = null; state.pendingRestaurantQuickRating = 0; if (els.restaurantQuickAddDate) els.restaurantQuickAddDate.value = ''; });
   els.bookProgressForm?.addEventListener('submit', saveBookProgress);
   els.bookAddPeriod?.addEventListener('click', () => addBookPeriodEditorRow({ startDate: todayString(), endDate: '' }));
   els.bookPauseResume?.addEventListener('click', toggleBookPauseResume);
@@ -946,7 +964,12 @@ function bindEvents() {
 
   document.addEventListener('click', async event => {
     const close = event.target.closest('[data-close]');
-    if (close) document.getElementById(close.dataset.close)?.close();
+    if (close) {
+      event.preventDefault();
+      event.stopPropagation();
+      document.getElementById(close.dataset.close)?.close();
+      return;
+    }
 
     const restaurantSuggestion = event.target.closest('[data-restaurant-suggestion]');
     if (restaurantSuggestion) {
@@ -1445,9 +1468,14 @@ async function renderUpNext(options = {}) {
         button.dataset.id = item.id;
         button.setAttribute('aria-label', `Open ${item.title}`);
         button.title = item.title;
-        button.innerHTML = item.image
-          ? `<img class="tbr-thumbnail-image" src="${escapeAttr(item.image)}" alt="" loading="lazy" />`
-          : `<span class="tbr-thumbnail-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`;
+        if (getSourceType(item) === 'restaurant') {
+          button.classList.add('tbr-text-button');
+          button.innerHTML = `<span class="tbr-text-title">${escapeHtml(item.title || 'Restaurant')}</span><span class="tbr-text-meta">Restaurant</span>`;
+        } else {
+          button.innerHTML = item.image
+            ? `<img class="tbr-thumbnail-image" src="${escapeAttr(item.image)}" alt="" loading="lazy" />`
+            : `<span class="tbr-thumbnail-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`;
+        }
         grid.appendChild(button);
       }
 
@@ -2890,8 +2918,16 @@ async function moveItemToQueue(item, status) {
 }
 
 function queueMoveControls(item) {
-  if (!item || !['tv','movie','book'].includes(getSourceType(item))) return '';
+  if (!item) return '';
+  const sourceType = getSourceType(item);
   const current = getQueueStatus(item);
+  if (sourceType === 'restaurant') {
+    return `<div class="queue-toggle-buttons" aria-label="Restaurant status">
+      <button class="secondary-button queue-toggle-button${current === 'library' ? ' is-selected' : ''}" type="button" data-move-queue="library" data-item-id="${item.id}" aria-pressed="${current === 'library'}">Track</button>
+      <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-move-queue="tbr" data-item-id="${item.id}" aria-pressed="${current === 'tbr'}">TBR</button>
+    </div>`;
+  }
+  if (!['tv','movie','book'].includes(sourceType)) return '';
   return `<div class="queue-toggle-buttons" aria-label="Queue placement">
     <button class="secondary-button queue-toggle-button${current === 'upnext' ? ' is-selected' : ''}" type="button" data-move-queue="upnext" data-item-id="${item.id}" aria-pressed="${current === 'upnext'}">Up Next</button>
     <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-move-queue="tbr" data-item-id="${item.id}" aria-pressed="${current === 'tbr'}">TBR</button>
@@ -3123,7 +3159,13 @@ function updateItemFormForType() {
   if (sourceType === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
     els.bookStartDate.value = todayString();
   }
-  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || ['music','artist','song','concert','food','restaurant','recipe'].includes(sourceType);
+  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || ['music','artist','song','concert','food','recipe'].includes(sourceType);
+  const upNextOption = els.itemQueueStatus?.querySelector('option[value="upnext"]');
+  if (upNextOption) {
+    upNextOption.hidden = sourceType === 'restaurant';
+    upNextOption.disabled = sourceType === 'restaurant';
+    if (sourceType === 'restaurant' && els.itemQueueStatus.value === 'upnext') els.itemQueueStatus.value = 'library';
+  }
 
   const fixedMusicSubcategory = musicSubcategoryForSourceType(sourceType) || foodSubcategoryForSourceType(sourceType) || (sourceType === 'music' && (state.selectedSource?.provider === 'itunes' || els.provider?.value === 'itunes') ? 'Album' : '');
   if (els.itemSubcategory) {
@@ -3280,12 +3322,11 @@ function renderSearchResults(results) {
 function selectCatalogueResult(result) {
   state.selectedSource = result;
   const selectingRestaurant = els.itemSourceType.value === 'restaurant' && result.provider === 'googlePlaces';
-  // Google Maps content is transient. Persist only the Place ID; the restaurant
-  // label saved in Catch All comes from what the user typed into the search/title field.
+  // Selecting a restaurant should behave like selecting a movie: use the
+  // catalogue result's actual display name as the prefilled tracker title.
   if (selectingRestaurant) {
-    const userLabel = String(els.catalogueQuery?.value || '').trim();
-    els.manualTitle.value = userLabel;
-    els.manualTitle.placeholder = 'Name this restaurant in your tracker';
+    els.manualTitle.value = result.title || String(els.catalogueQuery?.value || '').trim();
+    els.manualTitle.placeholder = 'Restaurant name';
   } else {
     els.manualTitle.value = result.title || '';
   }
@@ -3724,8 +3765,8 @@ async function saveItemFromForm(event) {
     attachments: attachmentFiles,
     links: state.attachmentDraft.links.map(link => ({ ...link })),
     date: sourceType === 'reminder' ? '' : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
-    queueStatus: sourceType === 'reminder' ? 'upnext' : (['music','artist','song','concert','food','restaurant','recipe'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library')),
-    active: sourceType === 'reminder' || (!['music','artist','song','concert','food','restaurant','recipe'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
+    queueStatus: sourceType === 'reminder' ? 'upnext' : (sourceType === 'restaurant' ? (els.itemQueueStatus.value === 'tbr' ? 'tbr' : 'library') : (['music','artist','song','concert','food','recipe'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'))),
+    active: sourceType === 'reminder' || (sourceType !== 'restaurant' && !['music','artist','song','concert','food','recipe'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
     createdAt: editing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     completedAt: editing?.completedAt || '',
@@ -3829,6 +3870,8 @@ async function saveItemFromForm(event) {
     if (formRating > 0) existingRestaurant.rating = formRating;
     if (els.itemRecommended?.checked) existingRestaurant.recommended = true;
     if (formNotes && !String(existingRestaurant.notes || '').trim()) existingRestaurant.notes = formNotes;
+    if (els.itemQueueStatus?.value === 'tbr') setItemQueueStatus(existingRestaurant, 'tbr');
+    else setItemQueueStatus(existingRestaurant, 'library');
     existingRestaurant.updatedAt = new Date().toISOString();
     existingRestaurant.attachments = [
       ...(existingRestaurant.attachments || []),
@@ -4392,6 +4435,7 @@ async function renderRestaurantDetails(item) {
   els.detailBody.innerHTML = `
     ${detailHero({ type:'RESTAURANT', title:item.title, image:item.image || '', subtitle:[ratingText, live?.formattedAddress || ''].filter(Boolean).join(' · '), overview:item.notes || '' })}
     ${live ? '<div class="gmp-attribution detail-gmp-attribution" translate="no">Google Maps</div>' : ''}
+    ${queueMoveControls(item)}
     ${detailEditButton(item)}
     <section class="detail-section restaurant-history-section"><h3>Order / visit history</h3>${visitsMarkup}</section>
     <section class="detail-section"><h3>Try somewhere similar</h3>${suggestionsMarkup}</section>
@@ -8400,6 +8444,22 @@ function discoverCardMarkup(result, key, fallbackType) {
   const plusLabel = queueStatus === 'upnext' ? '+ Queue' : queueStatus === 'tbr' ? '+ TBR' : '+ Add';
   const libraryOnly = ['music','artist','song','restaurant'].includes(type);
 
+  // Restaurants from Google Places generally do not provide a useful poster-style
+  // image in this tracker. Render them as compact text cards instead of reserving
+  // a large empty 2:3 thumbnail area.
+  if (type === 'restaurant') {
+    return `<article class="discover-card discover-text-card discover-restaurant-card">
+      <button class="discover-text-card-open" type="button" data-discover-detail="${escapeAttr(key)}" aria-label="Open ${escapeAttr(result.title || 'restaurant details')}">
+        <span class="discover-text-type-chip">${escapeHtml(getTypeLabel(type))}</span>
+        <strong class="discover-text-card-title">${escapeHtml(result.title || 'Untitled')}</strong>
+        ${meta ? `<span class="discover-text-card-meta">${escapeHtml(meta)}</span>` : ''}
+      </button>
+      <div class="discover-card-actions no-complete discover-text-card-actions">
+        <button class="discover-add-button${item ? ' is-added' : ''}" type="button" data-discover-restaurant-add="${escapeAttr(key)}">${item ? (getQueueStatus(item) === 'tbr' ? 'In TBR' : '+ Visit') : '+ Add'}</button>
+      </div>
+    </article>`;
+  }
+
   return `<article class="discover-card">
     <button class="discover-card-open" type="button" data-discover-detail="${escapeAttr(key)}" aria-label="Open ${escapeAttr(result.title || 'details')}">
       <div class="discover-poster-wrap">
@@ -8429,10 +8489,112 @@ function openRestaurantResultForTracking(result) {
   if (els.catalogueQuery) els.catalogueQuery.value = '';
   selectCatalogueResult(result);
   if (els.manualTitle) {
-    els.manualTitle.value = '';
-    els.manualTitle.placeholder = 'Name this restaurant in your tracker';
+    els.manualTitle.value = result.title || '';
+    els.manualTitle.placeholder = 'Restaurant name';
     els.manualTitle.focus();
   }
+}
+
+function openRestaurantQuickAdd(key) {
+  const result = state.discoverResults.get(key);
+  if (!result || result.sourceType !== 'restaurant' || !els.restaurantQuickAddModal) return;
+  state.pendingRestaurantQuickKey = key;
+  const existing = findDiscoverItem(result);
+  const rating = Math.max(0, Math.min(5, Number(existing?.rating || 0)));
+  state.pendingRestaurantQuickRating = rating;
+  if (els.restaurantQuickAddTitle) els.restaurantQuickAddTitle.textContent = result.title || 'Restaurant';
+  if (els.restaurantQuickAddDate) els.restaurantQuickAddDate.value = '';
+  els.restaurantQuickAddRatingPicker?.querySelectorAll('[data-restaurant-quick-rating]').forEach(button => {
+    button.classList.toggle('filled', Number(button.dataset.restaurantQuickRating) <= rating);
+  });
+  els.restaurantQuickAddModal.showModal();
+}
+
+function saveRestaurantToTBR(key) {
+  const result = state.discoverResults.get(key);
+  if (!result || result.sourceType !== 'restaurant') return null;
+  const item = ensureDiscoverItem(result, 'tbr');
+  setItemQueueStatus(item, 'tbr');
+  item.date = '';
+  item.updatedAt = new Date().toISOString();
+  saveItems();
+  renderAll();
+  renderDiscoverCardInPlace(key);
+  return item;
+}
+
+function trackRestaurantFromDiscover(key, { date = '', rating = 0 } = {}) {
+  const result = state.discoverResults.get(key);
+  if (!result || result.sourceType !== 'restaurant') return null;
+  const item = ensureDiscoverItem(result, 'library');
+  setItemQueueStatus(item, 'library');
+  if (Number(rating || 0) > 0) item.rating = Number(rating);
+  item.updatedAt = new Date().toISOString();
+  item.date = '';
+
+  const visitDate = String(date || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(visitDate)) {
+    const duplicateVisit = state.history.some(entry =>
+      entry.sourceItemId === item.id && entry.kind === 'restaurant-visit' && entry.date === visitDate
+    );
+    if (!duplicateVisit) {
+      addHistoryRecord({
+        sourceItemId: item.id,
+        sourceType: 'restaurant',
+        type: 'food',
+        typeLabel: 'Food',
+        subcategory: 'Restaurant',
+        date: visitDate,
+        showOnCalendar: true,
+        kind: 'restaurant-visit',
+        title: item.title,
+        subtitle: 'Restaurant visit',
+        notes: '',
+        rating: Number(rating || 0),
+        image: '',
+        provider: item.provider,
+        providerId: item.providerId
+      });
+      saveHistory();
+    }
+  }
+
+  saveItems();
+  renderAll();
+  renderDiscoverCardInPlace(key);
+  return item;
+}
+
+async function handleRestaurantQuickAddChoice(event) {
+  const ratingButton = event.target.closest('[data-restaurant-quick-rating]');
+  if (ratingButton) {
+    event.preventDefault();
+    state.pendingRestaurantQuickRating = Number(ratingButton.dataset.restaurantQuickRating || 0);
+    els.restaurantQuickAddRatingPicker?.querySelectorAll('[data-restaurant-quick-rating]').forEach(button => {
+      button.classList.toggle('filled', Number(button.dataset.restaurantQuickRating) <= state.pendingRestaurantQuickRating);
+    });
+    return;
+  }
+  const clearRating = event.target.closest('[data-restaurant-quick-rating-clear]');
+  if (clearRating) {
+    event.preventDefault();
+    state.pendingRestaurantQuickRating = 0;
+    els.restaurantQuickAddRatingPicker?.querySelectorAll('[data-restaurant-quick-rating]').forEach(button => button.classList.remove('filled'));
+    return;
+  }
+  const action = event.target.closest('[data-restaurant-quick-action]');
+  if (!action || !state.pendingRestaurantQuickKey) return;
+  const key = state.pendingRestaurantQuickKey;
+  if (action.dataset.restaurantQuickAction === 'tbr') {
+    saveRestaurantToTBR(key);
+  } else {
+    trackRestaurantFromDiscover(key, {
+      date: els.restaurantQuickAddDate?.value || '',
+      rating: state.pendingRestaurantQuickRating
+    });
+  }
+  els.restaurantQuickAddModal?.close();
+  if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
 }
 
 async function handleDiscoverClick(event) {
@@ -8458,6 +8620,12 @@ async function handleDiscoverClick(event) {
     return;
   }
 
+  const restaurantAdd = event.target.closest('[data-discover-restaurant-add]');
+  if (restaurantAdd) {
+    openRestaurantQuickAdd(restaurantAdd.dataset.discoverRestaurantAdd);
+    return;
+  }
+
   const libraryAdd = event.target.closest('[data-discover-library-add]');
   if (libraryAdd) {
     const key = libraryAdd.dataset.discoverLibraryAdd;
@@ -8479,6 +8647,82 @@ async function handleDiscoverClick(event) {
   }
 }
 
+function cloneDiscoverQuickAddValue(value) {
+  if (value == null) return value;
+  try {
+    return typeof structuredClone === 'function'
+      ? structuredClone(value)
+      : JSON.parse(JSON.stringify(value));
+  } catch {
+    return JSON.parse(JSON.stringify(value));
+  }
+}
+
+function beginDiscoverQuickAddSession(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  if (state.discoverQuickAddRollback?.key === key) return;
+
+  // Only one quick-add dialog can be active at a time. If a stale session is
+  // left behind, discard the marker rather than allowing it to affect a new card.
+  state.discoverQuickAddRollback = null;
+  state.discoverQuickAddCommitted = false;
+
+  const existing = findDiscoverItem(result);
+  state.discoverQuickAddRollback = {
+    key,
+    itemId: existing?.id || '',
+    itemSnapshot: existing ? cloneDiscoverQuickAddValue(existing) : null,
+    historySnapshot: existing
+      ? state.history.filter(entry => entry.sourceItemId === existing.id).map(cloneDiscoverQuickAddValue)
+      : []
+  };
+}
+
+function commitDiscoverQuickAddSession(key = '') {
+  if (!state.discoverQuickAddRollback) return;
+  if (key && state.discoverQuickAddRollback.key !== key) return;
+  state.discoverQuickAddCommitted = true;
+  state.discoverQuickAddRollback = null;
+}
+
+function rollbackDiscoverQuickAddSession(key = '') {
+  const rollback = state.discoverQuickAddRollback;
+  if (!rollback || state.discoverQuickAddCommitted) return false;
+  if (key && rollback.key !== key) return false;
+  const result = state.discoverResults.get(rollback.key);
+
+  if (rollback.itemSnapshot) {
+    const index = state.items.findIndex(item => item.id === rollback.itemId);
+    const restored = cloneDiscoverQuickAddValue(rollback.itemSnapshot);
+    if (index >= 0) state.items.splice(index, 1, restored);
+    else state.items.push(restored);
+
+    state.history = state.history.filter(entry => entry.sourceItemId !== rollback.itemId);
+    state.history.push(...rollback.historySnapshot.map(cloneDiscoverQuickAddValue));
+  } else if (result) {
+    const current = findDiscoverItem(result);
+    if (current) {
+      state.items = state.items.filter(item => item.id !== current.id);
+      state.history = state.history.filter(entry => entry.sourceItemId !== current.id);
+    }
+  }
+
+  state.discoverQuickAddRollback = null;
+  state.discoverQuickAddCommitted = false;
+  saveItems();
+  saveHistory();
+  renderAll();
+  renderDiscoverCardInPlace(rollback.key);
+  return true;
+}
+
+function finishDiscoverQuickAddClose(key = '') {
+  if (!state.discoverQuickAddCommitted) rollbackDiscoverQuickAddSession(key);
+  state.discoverQuickAddRollback = null;
+  state.discoverQuickAddCommitted = false;
+}
+
 async function handleDiscoverRateRecommend(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
@@ -8495,6 +8739,7 @@ async function handleDiscoverRateRecommend(key) {
     return;
   }
 
+  beginDiscoverQuickAddSession(key);
   const item = ensureDiscoverItem(result, 'library');
   item.recommended = true;
   item.updatedAt = new Date().toISOString();
@@ -8657,6 +8902,7 @@ function isDiscoverCompleted(result) {
 async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
   const result = state.discoverResults.get(key);
   if (!result) return;
+  if (promptForRating && ['movie','book'].includes(result.sourceType)) beginDiscoverQuickAddSession(key);
   const item = ensureDiscoverItem(result, 'library');
 
   if (result.sourceType === 'book') {
@@ -8705,6 +8951,7 @@ function openDiscoverRatingPrompt(key, { allowTV = false } = {}) {
   const result = state.discoverResults.get(key);
   const allowed = ['movie','book'].includes(result?.sourceType) || (allowTV && result?.sourceType === 'tv');
   if (!result || !allowed || !els.discoverRatingModal) return;
+  beginDiscoverQuickAddSession(key);
   state.pendingDiscoverRatingKey = key;
   if (els.discoverRatingTitle) els.discoverRatingTitle.textContent = `Rate ${result.title || (result.sourceType === 'book' ? 'this book' : 'this movie')}`;
   const existing = findDiscoverItem(result);
@@ -8776,6 +9023,7 @@ async function handleDiscoverRatingChoice(event) {
     const date = els.discoverRatingDate?.value || state.pendingDiscoverDateValue || '';
     if (key && rating > 0) persistDiscoverRating(key, rating);
     if (key && date) persistDiscoverOptionalDate(key, date);
+    if (key) commitDiscoverQuickAddSession(key);
 
     // Continue is deliberately just a save-and-close action. In older builds TV
     // recommendations immediately opened episode tracking after this dialog,
@@ -8790,6 +9038,12 @@ async function handleDiscoverQuickMetaClick(event) {
     event.preventDefault();
     event.stopPropagation();
     await markDiscoverSeriesWatched(seriesComplete.dataset.discoverKey, seriesComplete);
+    return;
+  }
+
+  const restaurantAdd = event.target.closest('[data-discover-restaurant-add]');
+  if (restaurantAdd) {
+    openRestaurantQuickAdd(restaurantAdd.dataset.discoverRestaurantAdd);
     return;
   }
 
@@ -9233,7 +9487,7 @@ async function renderDiscoverRestaurantDetail(key) {
   els.detailBody.innerHTML = `
     ${detailHero({ type:'RESTAURANT', title:result.title, image:result.image || '', subtitle:[ratingText, result.primaryTypeDisplayName || '', result.formattedAddress || result.subtitle || ''].filter(Boolean).join(' · '), overview:'' })}
     <div class="gmp-attribution detail-gmp-attribution" translate="no">Google Maps</div>
-    ${discoverLibraryOnlyActionMarkup(result, key)}
+    <div class="detail-actions"><button class="secondary-button${item ? ' is-selected' : ''}" type="button" data-discover-restaurant-add="${escapeAttr(key)}">${item ? (getQueueStatus(item) === 'tbr' ? 'In TBR' : '+ Visit') : '+ Add'}</button></div>
     ${(result.googleMapsUrl || result.websiteUrl) ? `<section class="detail-section restaurant-links">${result.googleMapsUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(result.googleMapsUrl)}" target="_blank" rel="noopener">Open in Google Maps ↗</a>` : ''}${result.websiteUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(result.websiteUrl)}" target="_blank" rel="noopener">Website ↗</a>` : ''}</section>` : ''}
     ${item ? `<section class="detail-section"><p class="detail-meta">Saved in Food · Restaurant. Edit it to add a visit date and order notes.</p></section>` : ''}`;
 }
@@ -9469,33 +9723,42 @@ function renderStickerSettingsRows() {
     row.dataset.stickerSubcategory = target.subcategory;
     const parentSaved = state.stickerPrefs?.[target.type] || {};
     row.innerHTML = `
-      <strong class="sticker-setting-type">${escapeHtml(target.label)}</strong>
-      ${target.subcategory
-        ? `<span class="sticker-setting-calendar-inherit">Uses ${escapeHtml(getCalendarCategoryLabel(target.type, getTypeLabel(target.type)))}</span>`
-        : `<label class="sticker-setting-field sticker-setting-calendar-name">
-            <span class="sticker-setting-mobile-label">Calendar name</span>
-            <input data-sticker-field="calendar-label" type="text" maxlength="30" value="${escapeAttr(parentSaved.calendarLabel || '')}" placeholder="${escapeAttr(target.label)}" />
-          </label>`}
-      <div class="sticker-setting-preview">${calendarStickerMarkup(target.type, sampleEntry)}</div>
-      <label class="sticker-setting-field">
-        <span class="sticker-setting-mobile-label">Shape</span>
-        <select data-sticker-field="shape">
-          <option value="square" ${config.shape === 'square' ? 'selected' : ''}>Square</option>
-          <option value="circle" ${config.shape === 'circle' ? 'selected' : ''}>Circle</option>
-          <option value="star" ${config.shape === 'star' ? 'selected' : ''}>Star</option>
-          <option value="heart" ${config.shape === 'heart' ? 'selected' : ''}>Heart</option>
-        </select>
-      </label>
-      <label class="sticker-setting-field">
-        <span class="sticker-setting-mobile-label">Text</span>
-        <input data-sticker-field="label" type="text" maxlength="3" value="${escapeAttr(['star','heart'].includes(config.shape) ? '' : config.label)}" placeholder="leave blank for no text" ${['star','heart'].includes(config.shape) ? 'disabled' : ''} />
-      </label>
-      <label class="sticker-setting-field">
-        <span class="sticker-setting-mobile-label">Color</span>
-        <select data-sticker-field="color">
-          ${STICKER_COLORS.map(color => `<option value="${color}" ${config.color === color ? 'selected' : ''}>${color[0].toUpperCase()+color.slice(1)}</option>`).join('')}
-        </select>
-      </label>`;
+      <div class="sticker-setting-card-head">
+        <div class="sticker-setting-title-wrap">
+          <strong class="sticker-setting-type">${escapeHtml(target.label)}</strong>
+          ${target.subcategory
+            ? `<span class="sticker-setting-calendar-inherit">Uses ${escapeHtml(getCalendarCategoryLabel(target.type, getTypeLabel(target.type)))}</span>`
+            : ''}
+        </div>
+        <div class="sticker-setting-preview">${calendarStickerMarkup(target.type, sampleEntry)}</div>
+      </div>
+      <div class="sticker-setting-card-controls">
+        ${target.subcategory
+          ? ''
+          : `<label class="sticker-setting-field sticker-setting-calendar-name sticker-setting-field-wide">
+              <span class="sticker-setting-mobile-label">Calendar name</span>
+              <input data-sticker-field="calendar-label" type="text" maxlength="30" value="${escapeAttr(parentSaved.calendarLabel || '')}" placeholder="${escapeAttr(target.label)}" />
+            </label>`}
+        <label class="sticker-setting-field sticker-setting-shape-field">
+          <span class="sticker-setting-mobile-label">Shape</span>
+          <select data-sticker-field="shape">
+            <option value="square" ${config.shape === 'square' ? 'selected' : ''}>Square</option>
+            <option value="circle" ${config.shape === 'circle' ? 'selected' : ''}>Circle</option>
+            <option value="star" ${config.shape === 'star' ? 'selected' : ''}>Star</option>
+            <option value="heart" ${config.shape === 'heart' ? 'selected' : ''}>Heart</option>
+          </select>
+        </label>
+        <label class="sticker-setting-field sticker-setting-color-field">
+          <span class="sticker-setting-mobile-label">Color</span>
+          <select data-sticker-field="color">
+            ${STICKER_COLORS.map(color => `<option value="${color}" ${config.color === color ? 'selected' : ''}>${color[0].toUpperCase()+color.slice(1)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="sticker-setting-field sticker-setting-text-field sticker-setting-field-wide">
+          <span class="sticker-setting-mobile-label">Sticker text</span>
+          <input data-sticker-field="label" type="text" maxlength="3" value="${escapeAttr(['star','heart'].includes(config.shape) ? '' : config.label)}" placeholder="Optional, up to 3 characters" ${['star','heart'].includes(config.shape) ? 'disabled' : ''} />
+        </label>
+      </div>`;
     els.stickerSettingsRows.appendChild(row);
   }
 }
@@ -10154,7 +10417,13 @@ function makeLibraryPoster(item) {
   poster.title = [item.title, item.rating ? `${item.rating}/5` : '', item.genres?.[0] || ''].filter(Boolean).join(' · ');
   const personalRating = Math.max(0, Math.min(5, Number(item.rating || 0)));
   const hasThumbnail = Boolean(String(item.image || '').trim());
-  if (!hasThumbnail) poster.classList.add('library-text-card-button');
+  if (!hasThumbnail) {
+    poster.classList.add('library-text-card-button');
+    // Let longer titles claim a little more horizontal space in the carousel.
+    // CSS still clamps this to sensible responsive bounds, but the title itself
+    // is never line-clamped.
+    poster.style.setProperty('--library-text-title-chars', String(Math.min(42, Math.max(12, String(item.title || '').trim().length || 12))));
+  }
   const recommendedBadge = item.recommended
     ? `<span class="library-recommended-badge" aria-label="Recommended" title="Recommended">♥</span>`
     : '';
