@@ -191,6 +191,8 @@ console.log('[Config] API availability', {
   lastFmEnvName: API_CONFIG.lastfmApiKeySource || 'missing',
   ticketmasterConfigured: Boolean(API_CONFIG.ticketmasterKey),
   googlePlacesConfigured: Boolean(API_CONFIG.googlePlacesKey),
+  googlePlacesEnvName: API_CONFIG.googlePlacesKeySource || 'missing',
+  googlePlacesKeyWasNormalized: Boolean(API_CONFIG.googlePlacesKeyWasNormalized),
   tmdbConfigured: Boolean(API_CONFIG.tmdbToken),
   googleBooksConfigured: Boolean(API_CONFIG.googleBooksKey),
   note: 'API keys are intentionally not logged'
@@ -1528,9 +1530,11 @@ async function renderUpNext(options = {}) {
   }
 
   const tvItems = items.filter(item => getSourceType(item) === 'tv');
-  await Promise.all(tvItems.map(async item => {
+  // TV cards can each inspect multiple TMDB endpoints. Enrich them serially so
+  // the "episodes remaining" feature cannot create a large parallel request burst.
+  for (const item of tvItems) {
     const card = cards.get(item.id);
-    if (!card) return;
+    if (!card) continue;
     try {
       const [info, availability] = await Promise.all([
         getUpNextInfo(item),
@@ -1547,7 +1551,8 @@ async function renderUpNext(options = {}) {
         error: error.message
       });
     }
-  }));
+    await new Promise(resolve => setTimeout(resolve, 125));
+  }
 }
 
 function setQueueView(view) {
@@ -2009,6 +2014,11 @@ function tbrMeta(item) {
 
 async function countRemainingAvailableTVEpisodes(item) {
   if (!item?.providerId) return 0;
+  const cachedAt = Date.parse(item.tvMeta?.remainingCheckedAt || '');
+  const cachedCount = Number(item.tvMeta?.remainingAvailableCount);
+  if (Number.isFinite(cachedAt) && Date.now() - cachedAt < 60 * 60 * 1000 && Number.isFinite(cachedCount)) {
+    return Math.max(0, cachedCount);
+  }
   const show = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
   const seasons = (show.seasons || []).filter(season => Number(season.season_number) > 0 && Number(season.episode_count) > 0);
   let remaining = 0;
@@ -2019,13 +2029,19 @@ async function countRemainingAvailableTVEpisodes(item) {
       if (!isTVEpisodeConsumed(item, info.season_number, episode.episode_number)) remaining += 1;
     }
   }
+  item.tvMeta = {
+    ...(item.tvMeta || {}),
+    remainingAvailableCount: remaining,
+    remainingCheckedAt: new Date().toISOString()
+  };
+  saveItems();
   return remaining;
 }
 
 async function getUpNextInfo(item) {
   if (getSourceType(item) === 'tv') {
     const checkedAt = Date.parse(item.tvMeta?.checkedAt || '');
-    if (!Number.isFinite(checkedAt) || Date.now() - checkedAt > 30000) {
+    if (!Number.isFinite(checkedAt) || Date.now() - checkedAt > 60 * 60 * 1000) {
       await syncTVProgressToFirstUnwatched(item);
     }
     const episode = await getCached(`tv:${item.providerId}:s${item.progress?.nextSeason || 1}e${item.progress?.nextEpisode || 1}`, () =>
@@ -2535,15 +2551,30 @@ async function reconcileSingleTVItem(item, prefetchedDetails = null) {
 }
 
 async function reconcileTVQueueStates() {
-  const tvItems = state.items.filter(item => getSourceType(item) === 'tv' && item.providerId);
-  const results = await Promise.all(tvItems.map(async item => {
+  // Reconcile only TV that is actually in Up Next. The previous implementation
+  // refreshed every TV title in the Library in parallel, which could launch 100+
+  // TMDB requests at once and immediately hit 429 rate limits.
+  const tvItems = state.items.filter(item =>
+    getSourceType(item) === 'tv' &&
+    item.providerId &&
+    getQueueStatus(item) === 'upnext'
+  );
+  const results = [];
+  for (const item of tvItems) {
+    const checkedAt = Date.parse(item.tvMeta?.checkedAt || '');
+    if (Number.isFinite(checkedAt) && Date.now() - checkedAt < 60 * 60 * 1000) {
+      results.push(false);
+      continue;
+    }
     try {
-      return await reconcileSingleTVItem(item);
+      results.push(await reconcileSingleTVItem(item));
     } catch (error) {
       console.warn(`Could not refresh TV status for ${item.title}:`, error);
-      return false;
+      results.push(false);
     }
-  }));
+    // Avoid a burst even when several Up Next shows need fresh metadata.
+    await new Promise(resolve => setTimeout(resolve, 175));
+  }
   const changed = results.some(Boolean);
   if (changed) saveItems();
   return changed;

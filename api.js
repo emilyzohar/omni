@@ -819,8 +819,16 @@ export const TrackerAPI = (() => {
     };
     if (Number.isFinite(homeLat) && Number.isFinite(homeLng)) request.locationBias = { lat: homeLat, lng: homeLng };
     if (Number(options.minRating || 0) > 0) request.minRating = Math.min(5, Math.max(0, Number(options.minRating)));
-    const { places = [] } = await Place.searchByText(request);
-    return places.map(mapGoogleRestaurant).filter(place => place.providerId);
+    try {
+      const { places = [] } = await Place.searchByText(request);
+      return places.map(mapGoogleRestaurant).filter(place => place.providerId);
+    } catch (error) {
+      const message = String(error?.message || error || 'Google Places search failed');
+      if (/api key not valid|invalidkey|invalid_argument/i.test(message)) {
+        throw new Error('Google Places rejected the API key. In GitHub Actions, EXPO_PUBLIC_GOOGLE_PLACES_API_KEY must contain only the browser API key value (not KEY=value and not quotes). The same Google Cloud project must have billing, Maps JavaScript API, and Places API (New) enabled, and the key must allow this website referrer.');
+      }
+      throw error;
+    }
   }
 
   async function getRestaurantDetails(placeId, settings) {
