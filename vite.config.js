@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 export default defineConfig(({ command }) => ({
   envPrefix: ['VITE_', 'EXPO_PUBLIC_'],
-  base: command === 'build' ? '/catch-all/' : '/',
+  base: command === 'build' ? '/omni/' : '/',
   build: {
     rollupOptions: {
       input: {

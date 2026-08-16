@@ -1,4 +1,4 @@
-name: Build and deploy Catch All
+name: Build and deploy Omni
 
 on:
   push:
