@@ -16,13 +16,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-auth-rating-1" />
+  <link rel="stylesheet" href="style.css?v=omni-pause-is-tbr-1" />
 </head>
 <body class="discover-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
     <div class="auth-card">
       <div class="auth-brand">
-        <span class="auth-mark">omni</span>
+        <span class="auth-mark">OM</span>
         <div>
           <p class="eyebrow">OMNI</p>
           <h1>Your tracker</h1>
@@ -560,6 +560,17 @@
   </dialog>
 
   <!-- DETAILS -->
+  <dialog id="dnfChoiceModal" class="modal small-modal dnf-choice-modal">
+    <div class="modal-header">
+      <div><h2>DNF</h2></div>
+      <button class="icon-button modal-close-button" type="button" data-close="dnfChoiceModal" aria-label="Close">×</button>
+    </div>
+    <div class="dnf-choice-actions">
+      <button class="secondary-button" type="button" data-dnf-choice="pause">Pause</button>
+      <button class="secondary-button danger-button" type="button" data-dnf-choice="stop">Stop</button>
+    </div>
+  </dialog>
+
   <dialog id="detailModal" class="modal detail-modal">
     <button class="modal-x" type="button" data-close="detailModal" aria-label="Close">×</button>
     <div id="detailBody" class="detail-body"></div>
@@ -615,6 +626,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-auth-rating-1"></script>
+  <script type="module" src="app.js?v=omni-pause-is-tbr-1"></script>
 </body>
 </html>

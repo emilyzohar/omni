@@ -6580,3 +6580,161 @@ dialog.modal:not([open]) {
     margin-bottom: 0;
   }
 }
+
+/* Omni: consistent Library detail actions + visible tracked dates + month navigation */
+.track-month-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+.month-nav-button {
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255,255,255,.72);
+  font: 400 1.65rem/1 var(--sans);
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, transform .15s ease;
+}
+.month-nav-button:hover,
+.month-nav-button:focus-visible {
+  color: #fff;
+  background: rgba(255,255,255,.12);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.library-detail-date-strip {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 12px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(21,36,58,.055);
+  color: #59616b;
+  font-size: .78rem;
+  line-height: 1.25;
+}
+.library-detail-date-strip span {
+  color: #858071;
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.library-detail-date-strip strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.library-detail-date-strip em {
+  font-style: normal;
+  color: #858071;
+}
+
+.library-detail-actions {
+  align-items: center;
+}
+.library-detail-actions > .queue-toggle-buttons {
+  order: 2;
+}
+.library-detail-actions > .library-calendar-toggle {
+  order: 3;
+}
+.library-detail-actions > [data-edit-id] {
+  order: 4;
+}
+.library-detail-actions > .primary-button,
+.library-detail-actions > button:not(.queue-toggle-button):not(.library-calendar-toggle):not([data-edit-id]) {
+  order: 1;
+}
+
+@media (max-width: 760px) {
+  .month-nav-button { display: none; }
+  .library-detail-date-strip {
+    width: auto;
+    flex-wrap: wrap;
+    border-radius: 10px;
+  }
+  .library-detail-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .library-detail-actions > .queue-toggle-buttons {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .library-detail-actions > .queue-toggle-buttons .queue-toggle-button {
+    min-width: 0;
+  }
+  .library-detail-actions > button,
+  .library-detail-actions > a {
+    width: 100%;
+  }
+}
+
+/* Track / TBR / DNF status controls */
+.dnf-choice-modal {
+  max-width: 420px;
+}
+.dnf-choice-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding-top: 8px;
+}
+.dnf-choice-actions .secondary-button {
+  min-height: 46px;
+}
+.library-detail-actions > .queue-toggle-buttons {
+  order: 1;
+}
+.library-detail-actions > .primary-button,
+.library-detail-actions > button:not(.queue-toggle-button):not(.library-calendar-toggle):not([data-edit-id]),
+.library-detail-actions > a:not(.detail-link-button) {
+  order: 2;
+}
+.library-status-actions .queue-toggle-button:disabled {
+  opacity: .42;
+  cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .dnf-choice-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+  .library-status-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.library-disposition-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 3;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(251, 250, 245, .92);
+  border: 1px solid rgba(21, 36, 58, .16);
+  color: var(--ink);
+  font-size: .68rem;
+  line-height: 1;
+  font-weight: 700;
+}
+.library-text-card .library-disposition-badge {
+  position: static;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+.library-disposition-badge.stopped {
+  opacity: .7;
+}

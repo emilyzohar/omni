@@ -244,6 +244,8 @@ const els = {
   resetStreakSettings: $('#resetStreakSettings'),
   monthPicker: $('#monthPicker'),
   monthLabel: $('#monthLabel'),
+  previousMonth: $('#previousMonth'),
+  nextMonth: $('#nextMonth'),
   trackerGrid: $('#trackerGrid'),
   trackStreakSummary: $('#trackStreakSummary'),
   weekControls: $('#weekControls'),
@@ -738,6 +740,7 @@ function migrateSavedMusicClassification() {
 function init() {
   migrateSavedMusicClassification();
   migrateSavedFoodClassification();
+  reconcileLocalProgressQueues();
   const now = new Date();
   if (els.monthPicker) {
     els.monthPicker.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -746,6 +749,32 @@ function init() {
 
   bindEvents();
   renderAll();
+}
+
+function resetDialogScrollPosition(dialog) {
+  if (!dialog) return;
+  dialog.scrollTop = 0;
+  dialog.scrollLeft = 0;
+  const scrollables = dialog.querySelectorAll('*');
+  for (const element of scrollables) {
+    if (!(element instanceof HTMLElement)) continue;
+    const style = getComputedStyle(element);
+    const canScrollY = ['auto', 'scroll'].includes(style.overflowY) && element.scrollHeight > element.clientHeight;
+    const canScrollX = ['auto', 'scroll'].includes(style.overflowX) && element.scrollWidth > element.clientWidth;
+    if (canScrollY) element.scrollTop = 0;
+    if (canScrollX) element.scrollLeft = 0;
+  }
+}
+
+function showDialogAtTop(dialog) {
+  if (!dialog) return;
+  if (!dialog.open) dialog.showModal();
+  const reset = () => resetDialogScrollPosition(dialog);
+  reset();
+  requestAnimationFrame(() => {
+    reset();
+    requestAnimationFrame(reset);
+  });
 }
 
 function enableMobileDialogSwipeToClose() {
@@ -867,6 +896,8 @@ function bindEvents() {
     state.calendarWeekStart = startOfWeek(new Date(year, month - 1, 1, 12));
     renderTracker();
   });
+  els.previousMonth?.addEventListener('click', () => shiftCalendarMonth(-1));
+  els.nextMonth?.addEventListener('click', () => shiftCalendarMonth(1));
   els.previousWeek?.addEventListener('click', () => shiftCalendarWeek(-7));
   els.nextWeek?.addEventListener('click', () => shiftCalendarWeek(7));
   els.currentWeek?.addEventListener('click', () => {
@@ -975,6 +1006,28 @@ function bindEvents() {
       event.preventDefault();
       event.stopPropagation();
       document.getElementById(close.dataset.close)?.close();
+      return;
+    }
+
+    const libraryTrack = event.target.closest('[data-library-track]');
+    if (libraryTrack) {
+      const item = findItem(libraryTrack.dataset.libraryTrack || state.openDetailId);
+      if (item) await trackLibraryItem(item, libraryTrack);
+      return;
+    }
+
+    const libraryDnf = event.target.closest('[data-library-dnf]');
+    if (libraryDnf) {
+      const item = findItem(libraryDnf.dataset.libraryDnf || state.openDetailId);
+      if (item) openDnfChoice(item);
+      return;
+    }
+
+    const dnfChoice = event.target.closest('[data-dnf-choice]');
+    if (dnfChoice) {
+      const dialog = document.getElementById('dnfChoiceModal');
+      const item = findItem(dialog?.dataset.itemId || '');
+      if (item) await applyLibraryDnfChoice(item, dnfChoice.dataset.dnfChoice);
       return;
     }
 
@@ -2531,7 +2584,7 @@ async function findNextUnwatchedTVEpisode(item, afterSeason = 0, afterEpisode = 
 }
 
 function getTVWatchDisposition(item) {
-  if (['following', 'watch-later', 'stopped'].includes(item.watchDisposition)) return item.watchDisposition;
+  if (['following', 'watch-later', 'paused', 'stopped'].includes(item.watchDisposition)) return item.watchDisposition;
   if (getQueueStatus(item) === 'tbr') return 'watch-later';
   return 'following';
 }
@@ -2571,7 +2624,7 @@ async function reconcileSingleTVItem(item, prefetchedDetails = null) {
     item.completedAt = '';
   }
 
-  if (disposition === 'stopped') {
+  if (['paused', 'stopped'].includes(disposition)) {
     setItemQueueStatus(item, 'library');
   } else if (disposition === 'watch-later') {
     setItemQueueStatus(item, 'tbr');
@@ -2631,7 +2684,8 @@ function tvStatusLabels(item, details = null) {
   const hasUnwatched = Boolean(item.tvMeta?.hasUnwatched);
   const labels = [];
 
-  if (disposition === 'stopped') labels.push({ label: 'Stopped watching', tone: 'muted' });
+  if (disposition === 'paused') labels.push({ label: 'Paused', tone: 'later' });
+  else if (disposition === 'stopped') labels.push({ label: 'Stopped', tone: 'muted' });
   else if (disposition === 'watch-later') labels.push({ label: 'TBR', tone: 'later' });
   else if (hasUnwatched) labels.push({ label: 'In progress', tone: 'progress' });
   else if (isTerminalSeriesStatus(status)) labels.push({ label: 'Finished', tone: 'finished' });
@@ -2649,7 +2703,8 @@ function tvStatusBadgeMarkup(item, details = null) {
 
 function tvDetailControls(item) {
   const wholeComplete = hasSeriesBulkCompletion(item);
-  return `<div class="detail-actions tv-watch-actions"><button class="primary-button${wholeComplete ? ' is-complete' : ''}" type="button" data-tv-mark-series-complete="${item.id}">${wholeComplete ? '↶ Undo series complete' : '✓ Mark series complete'}</button>${queueMoveControls(item)}${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
+  const completeButton = `<button class="secondary-button${wholeComplete ? ' is-complete' : ''}" type="button" data-tv-mark-series-complete="${escapeAttr(item.id)}">${wholeComplete ? '↶ Undo complete' : 'Mark complete'}</button>`;
+  return libraryDetailActions(item, { trailing: completeButton, className: 'tv-watch-actions' });
 }
 
 async function applyTVWatchAction(item, action) {
@@ -2750,7 +2805,7 @@ async function markWholeBookComplete(item, options = {}) {
     return;
   }
 
-  if (item.bookDisposition === 'dnf') {
+  if (['paused', 'dnf'].includes(item.bookDisposition)) {
     item.bookDisposition = '';
     delete item.bookDNFSnapshot;
   }
@@ -2803,6 +2858,7 @@ async function toggleSpecificTVEpisode(item, seasonNumber, episodeNumber) {
     // A single episode checked from the normal show detail is something watched now,
     // so it is eligible for today's calendar. Whole-season/import actions are not.
     addHistoryRecord(tvHistoryRecord(item, episode, seasonNumber, episodeNumber));
+    if (getTVWatchDisposition(item) === 'watch-later') item.watchDisposition = 'following';
     await recalculateTVProgress(item);
   }
 
@@ -2878,6 +2934,7 @@ async function markTVSeasonWatched(item, seasonNumber) {
   } else {
     await maybeMarkEarlierTVSeasonsWatched(item, seasonNumber);
     for (const episode of aired) addImportedTVEpisode(item, episode, seasonNumber);
+    if (getTVWatchDisposition(item) === 'watch-later') item.watchDisposition = 'following';
   }
 
   await recalculateTVProgress(item);
@@ -2892,21 +2949,220 @@ async function markTVSeasonWatched(item, seasonNumber) {
   return aired.length;
 }
 
+function tvHasProgress(item) {
+  if (!item || getSourceType(item) !== 'tv') return false;
+  if (item.completedAt) return true;
+  if (state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched')) return true;
+  return Number(item.progress?.nextSeason || 1) > 1 || Number(item.progress?.nextEpisode || 1) > 1;
+}
+
+function bookHasProgress(item) {
+  if (!item || getSourceType(item) !== 'book') return false;
+  return Boolean(item.completedAt) || Number(item.progress?.currentPage || 0) > 0 || getBookReadingPeriods(item).length > 0;
+}
+
+function closeActiveBookPeriod(item) {
+  const periods = getBookReadingPeriods(item);
+  const latest = periods.at(-1);
+  if (latest?.startDate && !latest.endDate) latest.endDate = todayString();
+  item.progress = { ...item.progress, readingPeriods: periods };
+}
+
+function libraryDnfState(item) {
+  const sourceType = getSourceType(item);
+  if (sourceType === 'tv') {
+    if (item.watchDisposition === 'stopped') return 'stopped';
+    if (item.watchDisposition === 'paused' || (getQueueStatus(item) === 'tbr' && tvHasProgress(item) && !item.completedAt)) return 'paused';
+    return '';
+  }
+  if (sourceType === 'book') {
+    if (item.bookDisposition === 'dnf') return 'stopped';
+    if (item.bookDisposition === 'paused' || (getQueueStatus(item) === 'tbr' && bookHasProgress(item) && !item.completedAt)) return 'paused';
+    return '';
+  }
+  if (sourceType === 'movie') return item.mediaDisposition === 'paused' ? 'paused' : item.mediaDisposition === 'stopped' ? 'stopped' : '';
+  return '';
+}
+
+function openDnfChoice(item) {
+  if (!item) return;
+  const dialog = document.getElementById('dnfChoiceModal');
+  if (!dialog) return;
+  dialog.dataset.itemId = item.id;
+  const title = dialog.querySelector('h2');
+  if (title) title.textContent = `DNF · ${item.title}`;
+  showDialogAtTop(dialog);
+}
+
+async function applyLibraryDnfChoice(item, choice) {
+  if (!item || !['pause', 'stop'].includes(choice)) return;
+  const sourceType = getSourceType(item);
+
+  if (sourceType === 'tv') {
+    item.watchDisposition = choice === 'pause' ? 'paused' : 'stopped';
+    setItemQueueStatus(item, choice === 'pause' ? 'tbr' : 'library');
+  } else if (sourceType === 'book') {
+    closeActiveBookPeriod(item);
+    item.bookDisposition = choice === 'pause' ? 'paused' : 'dnf';
+    setItemQueueStatus(item, choice === 'pause' ? 'tbr' : 'library');
+  } else if (sourceType === 'movie') {
+    item.mediaDisposition = choice === 'pause' ? 'paused' : 'stopped';
+    setItemQueueStatus(item, choice === 'pause' ? 'tbr' : 'library');
+  } else {
+    return;
+  }
+
+  item.updatedAt = new Date().toISOString();
+  saveItems();
+  renderAll();
+  document.getElementById('dnfChoiceModal')?.close();
+  if (els.detailModal?.open && state.openDetailId === item.id) await openDetails(item.id);
+}
+
+async function trackLibraryItem(item, button = null) {
+  if (!item) return;
+  const sourceType = getSourceType(item);
+  if (button) button.disabled = true;
+  try {
+    if (sourceType === 'tv') {
+      item.watchDisposition = 'following';
+      setItemQueueStatus(item, 'upnext');
+      await reconcileSingleTVItem(item);
+      if (item.tvMeta?.hasUnwatched) {
+        const completed = await advanceTV(item);
+        if (completed) addHistoryRecord(completed);
+      }
+      item.updatedAt = new Date().toISOString();
+      saveItems();
+      saveHistory();
+      renderAll();
+      if (els.detailModal?.open && state.openDetailId === item.id) await renderTVDetails(item);
+      return;
+    }
+
+    if (sourceType === 'book') {
+      const wasPausedOrStopped = ['paused', 'dnf'].includes(item.bookDisposition);
+      if (wasPausedOrStopped) { item.bookDisposition = ''; delete item.bookDNFSnapshot; }
+      if (wasPausedOrStopped && Number(item.progress?.currentPage || 0) > 0 && !item.completedAt) {
+        const periods = getBookReadingPeriods(item);
+        const latest = periods.at(-1);
+        if (!latest || latest.endDate) periods.push({ startDate: todayString(), endDate: '' });
+        item.progress = { ...item.progress, readingPeriods: periods };
+      }
+      if ((Number(item.progress?.currentPage || 0) > 0 || getBookReadingPeriods(item).some(period => period.startDate && !period.endDate)) && !item.completedAt) setItemQueueStatus(item, 'upnext');
+      item.updatedAt = new Date().toISOString();
+      saveItems();
+      renderAll();
+      els.detailModal?.close();
+      openBookProgress(item);
+      return;
+    }
+
+    if (sourceType === 'movie') {
+      item.mediaDisposition = '';
+      if (!item.completedAt) {
+        addHistoryRecord(genericCompletionRecord(item, true));
+        item.completedAt = todayString();
+      }
+      setItemQueueStatus(item, 'library');
+      item.updatedAt = new Date().toISOString();
+      saveItems();
+      saveHistory();
+      renderAll();
+      if (els.detailModal?.open && state.openDetailId === item.id) await renderMovieDetails(item);
+    }
+  } catch (error) {
+    alert(error.message || String(error));
+  } finally {
+    if (button?.isConnected) button.disabled = false;
+  }
+}
+
+function reconcileLocalProgressQueues() {
+  let changed = false;
+  for (const item of state.items) {
+    const sourceType = getSourceType(item);
+    if (sourceType === 'book') {
+      const current = Number(item.progress?.currentPage || 0);
+      const total = Number(item.progress?.totalPages || 0);
+      const finished = Boolean(item.completedAt) || (total > 0 && current >= total);
+      const periods = getBookReadingPeriods(item);
+      const latest = periods.at(-1);
+      const activeReadingPeriod = Boolean(latest?.startDate && !latest.endDate);
+      if (!finished && !item.bookDisposition && latest?.endDate && ['library', 'tbr'].includes(getQueueStatus(item))) {
+        item.bookDisposition = 'paused';
+        changed = true;
+      }
+      if (item.bookDisposition === 'paused') {
+        if (getQueueStatus(item) !== 'tbr') { setItemQueueStatus(item, 'tbr'); changed = true; }
+      } else if (item.bookDisposition === 'dnf') {
+        if (getQueueStatus(item) !== 'library') { setItemQueueStatus(item, 'library'); changed = true; }
+      } else if ((current > 0 || activeReadingPeriod) && !finished && getQueueStatus(item) !== 'upnext') {
+        setItemQueueStatus(item, 'upnext');
+        changed = true;
+      }
+    } else if (sourceType === 'tv') {
+      const disposition = getTVWatchDisposition(item);
+      if (disposition === 'paused' && getQueueStatus(item) !== 'tbr') {
+        setItemQueueStatus(item, 'tbr');
+        changed = true;
+      } else if (disposition === 'stopped' && getQueueStatus(item) !== 'library') {
+        setItemQueueStatus(item, 'library');
+        changed = true;
+      } else if (disposition === 'following' && item.tvMeta?.hasUnwatched && getQueueStatus(item) !== 'upnext') {
+        setItemQueueStatus(item, 'upnext');
+        changed = true;
+      }
+    }
+  }
+  if (changed) saveItems();
+}
+
 async function moveItemToQueue(item, status) {
   let next = ['upnext', 'tbr', 'library'].includes(status) ? status : 'library';
-  if (next !== 'library' && getQueueStatus(item) === next) next = 'library';
-  if (getSourceType(item) === 'tv') {
+  const sourceType = getSourceType(item);
+  const current = getQueueStatus(item);
+  const progressedPause = next === 'tbr' && current === 'tbr' && (
+    (sourceType === 'tv' && tvHasProgress(item) && !item.completedAt) ||
+    (sourceType === 'book' && bookHasProgress(item) && !item.completedAt) ||
+    libraryDnfState(item) === 'paused'
+  );
+  if (progressedPause) return;
+  if (next !== 'library' && current === next) next = 'library';
+
+  if (sourceType === 'tv') {
     if (next === 'upnext') {
       item.watchDisposition = 'following';
       setItemQueueStatus(item, 'upnext');
       await reconcileSingleTVItem(item);
     } else if (next === 'tbr') {
-      item.watchDisposition = 'watch-later';
+      if (tvHasProgress(item) && !item.completedAt) {
+        item.watchDisposition = 'paused';
+      } else {
+        item.watchDisposition = 'watch-later';
+      }
       setItemQueueStatus(item, 'tbr');
     } else {
-      item.watchDisposition = 'stopped';
       setItemQueueStatus(item, 'library');
     }
+  } else if (sourceType === 'book') {
+    if (next === 'upnext') {
+      if (item.bookDisposition === 'paused') item.bookDisposition = '';
+      setItemQueueStatus(item, 'upnext');
+    } else if (next === 'tbr') {
+      if (bookHasProgress(item) && !item.completedAt) {
+        closeActiveBookPeriod(item);
+        item.bookDisposition = 'paused';
+      } else {
+        item.bookDisposition = '';
+      }
+      setItemQueueStatus(item, 'tbr');
+    } else {
+      setItemQueueStatus(item, 'library');
+    }
+  } else if (sourceType === 'movie') {
+    if (next === 'tbr' && item.mediaDisposition !== 'paused') item.mediaDisposition = '';
+    setItemQueueStatus(item, next);
   } else {
     setItemQueueStatus(item, next);
   }
@@ -2914,7 +3170,6 @@ async function moveItemToQueue(item, status) {
   saveItems();
   renderAll();
   if (els.detailModal?.open && state.openDetailId === item.id) {
-    const sourceType = getSourceType(item);
     if (sourceType === 'tv') await renderTVDetails(item);
     else if (sourceType === 'youtube') await renderWorkoutDetails(item);
     else if (sourceType === 'book') await renderBookDetails(item);
@@ -2933,16 +3188,21 @@ function queueMoveControls(item) {
   if (!item) return '';
   const sourceType = getSourceType(item);
   const current = getQueueStatus(item);
+
   if (sourceType === 'restaurant') {
-    return `<div class="queue-toggle-buttons" aria-label="Restaurant status">
+    return `<div class="queue-toggle-buttons" aria-label="Library placement">
       <button class="secondary-button queue-toggle-button${current === 'library' ? ' is-selected' : ''}" type="button" data-move-queue="library" data-item-id="${item.id}" aria-pressed="${current === 'library'}">Track</button>
       <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-move-queue="tbr" data-item-id="${item.id}" aria-pressed="${current === 'tbr'}">TBR</button>
     </div>`;
   }
-  if (!['tv','movie','book'].includes(sourceType)) return '';
-  return `<div class="queue-toggle-buttons" aria-label="Queue placement">
-    <button class="secondary-button queue-toggle-button${current === 'upnext' ? ' is-selected' : ''}" type="button" data-move-queue="upnext" data-item-id="${item.id}" aria-pressed="${current === 'upnext'}">Up Next</button>
-    <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-move-queue="tbr" data-item-id="${item.id}" aria-pressed="${current === 'tbr'}">TBR</button>
+
+  if (!['tv', 'movie', 'book'].includes(sourceType)) return '';
+  const dnfState = libraryDnfState(item);
+  const trackSelected = sourceType === 'movie' ? Boolean(item.completedAt) : current === 'upnext';
+  return `<div class="queue-toggle-buttons library-status-actions" aria-label="Status">
+    <button class="secondary-button queue-toggle-button${trackSelected ? ' is-selected' : ''}" type="button" data-library-track="${escapeAttr(item.id)}" aria-pressed="${trackSelected}">Track</button>
+    <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-move-queue="tbr" data-item-id="${escapeAttr(item.id)}" aria-pressed="${current === 'tbr'}" ${item.completedAt ? 'disabled' : ''}>TBR</button>
+    <button class="secondary-button queue-toggle-button${dnfState === 'stopped' ? ' is-selected' : ''}" type="button" data-library-dnf="${escapeAttr(item.id)}" aria-pressed="${dnfState === 'stopped'}" ${item.completedAt ? 'disabled' : ''}>DNF</button>
   </div>`;
 }
 
@@ -3077,7 +3337,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
   }
 
   updateItemFormForType();
-  els.itemModal.showModal();
+  showDialogAtTop(els.itemModal);
   if (item && getSourceType(item) === 'tv' && item.providerId) {
     prepareTVWatchSetup(item.providerId, item.id).catch(error => {
       if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = error.message;
@@ -4046,7 +4306,7 @@ async function openDetails(id) {
   if (!item) return;
   state.openDetailId = id;
   els.detailBody.innerHTML = '<p class="loading-detail">Loading details…</p>';
-  els.detailModal.showModal();
+  showDialogAtTop(els.detailModal);
 
   try {
     const sourceType = getSourceType(item);
@@ -4061,10 +4321,12 @@ async function openDetails(id) {
     else if (['event', 'concert'].includes(sourceType)) await renderEventDetails(item);
     else if (sourceType === 'restaurant') await renderRestaurantDetails(item);
     else renderManualDetails(item);
+    appendLibraryDateSummary(item);
     appendLibraryPersonalMetadata(item);
     appendItemResources(item);
   } catch (error) {
     els.detailBody.innerHTML = `${basicDetailHero(item)}<div class="api-error">${escapeHtml(error.message)}</div>${detailEditButton(item)}`;
+    appendLibraryDateSummary(item);
     appendLibraryPersonalMetadata(item);
     appendItemResources(item);
   }
@@ -4256,10 +4518,10 @@ async function renderYouTubeVideoDetail(item, videoId) {
     els.detailBody.innerHTML = `
       <button class="detail-back-button" type="button" data-youtube-playlist="true" data-item-id="${item.id}">← Playlist</button>
       ${detailHero({ type:`${getItemTypeLabel(item).toUpperCase()} · YOUTUBE VIDEO`, title:snippet.title || 'Video', image, subtitle:meta, overview:snippet.description || '' })}
-      <div class="detail-actions">
+      <div class="detail-actions library-detail-actions">
         <button class="primary-button" type="button" data-check-youtube-video="${escapeAttr(videoId)}" data-item-id="${item.id}" ${isYouTubeVideoLogged(item, videoId) ? 'disabled' : ''}>${isYouTubeVideoLogged(item, videoId) ? '✓ Logged' : '✓ Mark complete'}</button>
         <a class="secondary-button detail-link-button" href="https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}" target="_blank" rel="noopener">Open on YouTube ↗</a>
-        ${detailEditButton(item).replace('<div class="detail-actions">','').replace('</div>','')}
+        ${libraryDetailActionContents(item)}
       </div>
       ${(stats.viewCount || stats.likeCount) ? `<section class="detail-section"><h3>Video info</h3><p>${escapeHtml([stats.viewCount ? `${Number(stats.viewCount).toLocaleString()} views` : '', stats.likeCount ? `${Number(stats.likeCount).toLocaleString()} likes` : ''].filter(Boolean).join(' · '))}</p></section>` : ''}
     `;
@@ -4286,11 +4548,10 @@ async function renderBookDetails(item) {
     ${detailHero({ type:'BOOK', title:info.title || item.title, image, subtitle:(info.authors || []).join(', '), overview:stripHtml(info.description || '') })}
     <div class="tv-status-row book-status-row">${bookStatusBadgeMarkup(item)}</div>
     <div class="detail-progress"><strong>Reading progress</strong>${total ? `Page ${current} of ${total} · ${Math.min(100, Math.round(current/total*100))}%` : `Page ${current}`}<small>${escapeHtml(bookReadingStatusText(item))}</small></div>
-    <div class="detail-actions"><button class="primary-button${item.completedAt ? ' is-complete' : ''}" type="button" data-book-mark-complete-item="${item.id}">${item.completedAt ? '↶ Mark unread' : '✓ Mark book complete'}</button><button class="secondary-button${item.bookDisposition === 'dnf' ? ' is-complete' : ''}" type="button" data-book-toggle-dnf="${item.id}">${item.bookDisposition === 'dnf' ? '↶ Resume reading' : 'Mark DNF'}</button>${queueMoveControls(item)}<button class="secondary-button" type="button" id="detailUpdatePages">Update pages & dates</button>${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>
+    ${libraryDetailActions(item)}
     <section class="detail-section"><h3>Reading dates</h3><div class="book-period-summary-list">${periodMarkup}</div></section>
     <section class="detail-section"><h3>Book info</h3><p>${escapeHtml([info.publisher, info.publishedDate, info.pageCount ? `${info.pageCount} pages` : ''].filter(Boolean).join(' · '))}</p></section>
   `;
-  $('#detailUpdatePages')?.addEventListener('click', () => { els.detailModal.close(); openBookProgress(item); });
 }
 
 async function renderMovieDetails(item) {
@@ -4304,6 +4565,7 @@ async function renderMovieDetails(item) {
   saveItems();
   els.detailBody.innerHTML = `
     ${detailHero({ type:'MOVIE', title:details.title || item.title, image:TrackerAPI.tmdbImage(details.poster_path) || item.image, subtitle:[details.release_date?.slice(0,4), details.runtime ? `${details.runtime} min` : '', details.genres?.map(g=>g.name).join(' · ')].filter(Boolean).join(' · '), overview:details.overview || '' })}
+    ${item.mediaDisposition ? `<div class="tv-status-row"><span class="tv-status-badge tv-status-${item.mediaDisposition === 'paused' ? 'later' : 'muted'}">${item.mediaDisposition === 'paused' ? 'Paused' : 'Stopped'}</span></div>` : ''}
     ${detailEditButton(item)}
     ${streamingDetailMarkup(availability)}
   `;
@@ -4410,9 +4672,9 @@ function renderReminderDetails(item) {
   els.detailBody.innerHTML = `
     ${detailHero({ type:getItemTypeLabel(item), title:item.title, image:'', subtitle:reminderScheduleLabel(item), overview:item.notes || '' })}
     <div class="detail-progress"><strong>Next reminder</strong>${escapeHtml(reminderDueLabel(dueDate))}</div>
-    <div class="detail-actions">
+    <div class="detail-actions library-detail-actions">
       <button class="primary-button" type="button" data-reminder-complete="${escapeAttr(item.id)}" ${dueNow ? '' : 'disabled'}>✓ ${dueNow ? 'Mark complete' : 'Not due yet'}</button>
-      ${detailEditButton(item).replace('<div class="detail-actions">','').replace('</div>','')}
+      ${libraryDetailActionContents(item)}
     </div>`;
 }
 
@@ -4454,7 +4716,6 @@ async function renderRestaurantDetails(item) {
   els.detailBody.innerHTML = `
     ${detailHero({ type:'RESTAURANT', title:item.title, image:item.image || '', subtitle:[ratingText, live?.formattedAddress || ''].filter(Boolean).join(' · '), overview:item.notes || '' })}
     ${live ? '<div class="gmp-attribution detail-gmp-attribution" translate="no">Google Maps</div>' : ''}
-    ${queueMoveControls(item)}
     ${detailEditButton(item)}
     <section class="detail-section restaurant-history-section"><h3>Order / visit history</h3>${visitsMarkup}</section>
     <section class="detail-section"><h3>Try somewhere similar</h3>${suggestionsMarkup}</section>
@@ -4496,8 +4757,64 @@ function libraryCalendarToggleButton(item) {
   return `<button class="quiet-button library-calendar-toggle${hidden ? ' is-hidden' : ''}" type="button" data-toggle-library-calendar="${escapeAttr(item.id)}">${hidden ? 'Show on calendar' : 'Remove from calendar'}</button>`;
 }
 
+function libraryDetailActionContents(item, { leading = '', trailing = '' } = {}) {
+  return `${leading}${queueMoveControls(item)}${trailing}${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${escapeAttr(item.id)}">Edit</button>`;
+}
+
+function libraryDetailActions(item, { leading = '', trailing = '', className = '' } = {}) {
+  const classes = ['detail-actions', 'library-detail-actions', className].filter(Boolean).join(' ');
+  return `<div class="${classes}">${libraryDetailActionContents(item, { leading, trailing })}</div>`;
+}
+
 function detailEditButton(item) {
-  return `<div class="detail-actions">${queueMoveControls(item)}${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${item.id}">Edit</button></div>`;
+  return libraryDetailActions(item);
+}
+
+function libraryAssociatedDateInfo(item) {
+  if (!item) return null;
+  const sourceType = getSourceType(item);
+
+  if (sourceType === 'book') {
+    const periods = getBookReadingPeriods(item);
+    if (periods.length) {
+      const latest = periods[periods.length - 1];
+      const start = latest.startDate ? formatLongDate(latest.startDate) : '';
+      const end = latest.endDate ? formatLongDate(latest.endDate) : '';
+      return { label: 'Reading', values: [start && end ? `${start} – ${end}` : start || end].filter(Boolean), extra: Math.max(0, periods.length - 1) };
+    }
+  }
+
+  const historyDates = state.history
+    .filter(entry => entry.sourceItemId === item.id && entry.date)
+    .map(entry => entry.date);
+  const dates = [...new Set([item.date, ...historyDates].filter(Boolean))].sort((a, b) => String(b).localeCompare(String(a)));
+  if (!dates.length) return null;
+
+  let label = 'Tracked';
+  if (sourceType === 'restaurant') label = dates.length > 1 ? 'Visits' : 'Visit';
+  else if (['event', 'concert'].includes(sourceType)) label = 'Date';
+  else if (item.date && dates.length === 1) label = 'Date';
+
+  return {
+    label,
+    values: dates.slice(0, 3).map(formatLongDate),
+    extra: Math.max(0, dates.length - 3)
+  };
+}
+
+function libraryDateSummaryMarkup(item) {
+  const info = libraryAssociatedDateInfo(item);
+  if (!info?.values?.length) return '';
+  return `<div class="library-detail-date-strip" data-library-date-summary="${escapeAttr(item.id)}"><span>${escapeHtml(info.label)}</span><strong>${info.values.map(escapeHtml).join(' · ')}</strong>${info.extra ? `<em>+${info.extra}</em>` : ''}</div>`;
+}
+
+function appendLibraryDateSummary(item) {
+  if (!els.detailBody || !item || els.detailBody.querySelector(`[data-library-date-summary="${CSS.escape(item.id)}"]`)) return;
+  const markup = libraryDateSummaryMarkup(item);
+  if (!markup) return;
+  const hero = els.detailBody.querySelector('.detail-hero');
+  if (hero) hero.insertAdjacentHTML('afterend', markup);
+  else els.detailBody.insertAdjacentHTML('afterbegin', markup);
 }
 
 function formatPersonalRating(value) {
@@ -4733,7 +5050,7 @@ async function openAttachmentViewer(id) {
   cleanupAttachmentViewer();
   els.attachmentTitle.textContent = meta.name || 'File';
   els.attachmentBody.innerHTML = '<p class="loading-detail">Opening…</p>';
-  els.attachmentModal.showModal();
+  showDialogAtTop(els.attachmentModal);
 
   try {
     const record = await getAttachmentBlob(id);
@@ -4916,7 +5233,7 @@ function openBookProgress(item) {
     completeButton.classList.toggle('is-complete', Boolean(item.completedAt));
   }
   renderBookPeriodsEditor(item);
-  els.bookProgressModal.showModal();
+  showDialogAtTop(els.bookProgressModal);
 }
 
 function renderBookPeriodsEditor(item) {
@@ -4997,7 +5314,8 @@ function updateBookPauseResumeButton() {
 }
 
 function bookReadingStatusText(item) {
-  if (item?.bookDisposition === 'dnf') return 'Did not finish';
+  if (item?.bookDisposition === 'paused') return 'Paused';
+  if (item?.bookDisposition === 'dnf') return 'Stopped';
   const periods = getBookReadingPeriods(item);
   if (!periods.length) return 'No reading dates yet';
   const latest = periods.at(-1);
@@ -5033,8 +5351,16 @@ function saveBookProgress(event) {
   item.progress = { ...item.progress, currentPage: current, totalPages: total, readingPeriods: periods };
   item.date = '';
 
-  if (getQueueStatus(item) === 'tbr' && current > 0 && !(total && current >= total)) {
-    setItemQueueStatus(item, 'upnext');
+  const latestDraftPeriod = periods.at(-1);
+  const readingPaused = Boolean(latestDraftPeriod?.startDate && latestDraftPeriod.endDate);
+  if (current > 0 && !(total && current >= total)) {
+    if (readingPaused) {
+      item.bookDisposition = 'paused';
+      setItemQueueStatus(item, 'library');
+    } else if (!['paused', 'dnf'].includes(item.bookDisposition)) {
+      item.bookDisposition = '';
+      setItemQueueStatus(item, 'upnext');
+    }
   }
 
   if (total && current >= total) {
@@ -5354,6 +5680,18 @@ function renderWeekTracker() {
   }
 }
 
+function shiftCalendarMonth(months) {
+  if (!els.monthPicker) return;
+  const [yearText, monthText] = String(els.monthPicker.value || '').split('-');
+  const base = Number(yearText) && Number(monthText)
+    ? new Date(Number(yearText), Number(monthText) - 1, 1, 12)
+    : new Date();
+  const target = new Date(base.getFullYear(), base.getMonth() + Number(months || 0), 1, 12);
+  els.monthPicker.value = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}`;
+  state.calendarWeekStart = startOfWeek(target);
+  renderTracker();
+}
+
 function shiftCalendarWeek(days) {
   state.calendarWeekStart = addDays(state.calendarWeekStart || startOfWeek(new Date()), days);
   renderTracker();
@@ -5570,7 +5908,7 @@ function openCalendarGroup(groupKey, date) {
       <p class="detail-meta">${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} · every past entry can be edited</p>
     </div>
     <section class="detail-section calendar-event-list">${rows}</section>`;
-  els.detailModal.showModal();
+  showDialogAtTop(els.detailModal);
 
   els.detailBody.querySelectorAll('[data-open-source-id]').forEach(button => {
     button.addEventListener('click', () => {
@@ -5607,7 +5945,7 @@ function openHistoryEdit(id) {
   els.historyEditShowCalendar.checked = entry.showOnCalendar !== false;
   setHistoryRating(Number(entry.rating ?? source?.rating ?? 0));
   syncHistoryRecommendHeart(source);
-  els.historyEditModal.showModal();
+  showDialogAtTop(els.historyEditModal);
 }
 
 function syncHistoryRecommendHeart(source = null) {
@@ -6306,7 +6644,7 @@ async function handleDiscoverCalendarClick(event) {
   const episode = Number(button.dataset.discoverCalendarEpisode || 0);
   if (season && episode) {
     state.openDiscoverKey = key;
-    els.detailModal.showModal();
+    showDialogAtTop(els.detailModal);
     els.detailBody.innerHTML = '<p class="loading-detail">Loading episode…</p>';
     try {
       await renderDiscoverTVEpisodeDetail(key, season, episode);
@@ -8348,7 +8686,7 @@ async function openDiscoverSettings() {
   );
   els.streamingProviderSearch.value = '';
   els.streamingRegionNote.textContent = `Streaming region: ${(state.settings.tmdbWatchRegion || 'CA').toUpperCase()}`;
-  els.discoverSettingsModal.showModal();
+  showDialogAtTop(els.discoverSettingsModal);
 
   try {
     if (!state.watchProviderCatalog.length) {
@@ -8520,7 +8858,7 @@ function openRestaurantQuickAdd(key) {
   els.restaurantQuickAddRatingPicker?.querySelectorAll('[data-restaurant-quick-rating]').forEach(button => {
     button.classList.toggle('filled', Number(button.dataset.restaurantQuickRating) <= rating);
   });
-  els.restaurantQuickAddModal.showModal();
+  showDialogAtTop(els.restaurantQuickAddModal);
 }
 
 function saveRestaurantToTBR(key) {
@@ -8806,7 +9144,7 @@ function openDiscoverQueueChoice(key) {
   if (!result || !els.discoverQueueModal) return;
   state.pendingDiscoverKey = key;
   els.discoverQueueTitle.textContent = result.title || 'Where should this go?';
-  els.discoverQueueModal.showModal();
+  showDialogAtTop(els.discoverQueueModal);
 }
 
 async function handleDiscoverQueueChoice(event) {
@@ -8981,7 +9319,7 @@ function openDiscoverRatingPrompt(key, { allowTV = false, completionIntent = fal
     els.discoverRatingRecommendHeart.setAttribute('aria-pressed', String(recommended));
     els.discoverRatingRecommendHeart.setAttribute('aria-label', recommended ? 'Remove from Recommended' : 'Add to Recommended');
   }
-  els.discoverRatingModal.showModal();
+  showDialogAtTop(els.discoverRatingModal);
 }
 
 function persistDiscoverOptionalDate(key, dateValue) {
@@ -9160,7 +9498,7 @@ async function openDiscoverDetail(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
   state.openDiscoverKey = key;
-  if (!els.detailModal.open) els.detailModal.showModal();
+  if (!els.detailModal.open) showDialogAtTop(els.detailModal);
   els.detailBody.innerHTML = '<p class="loading-detail">Loading details…</p>';
   try {
     if (result.sourceType === 'tv') await renderDiscoverTVDetail(key);
@@ -9736,7 +10074,7 @@ async function renderDiscoverBookDetail(key) {
 function openStickerSettings() {
   if (!els.stickerSettingsModal || !els.stickerSettingsRows) return;
   renderStickerSettingsRows();
-  els.stickerSettingsModal.showModal();
+  showDialogAtTop(els.stickerSettingsModal);
 }
 
 function getRecognizedStickerTargets() {
@@ -10079,7 +10417,7 @@ function renderTrackStreakSummary() {
 function openStreakSettings() {
   if (!els.streakSettingsModal || !els.streakSettingsRows) return;
   renderStreakSettingsRows();
-  els.streakSettingsModal.showModal();
+  showDialogAtTop(els.streakSettingsModal);
 }
 
 function renderStreakSettingsRows() {
@@ -10340,7 +10678,7 @@ function renderLibraryDefaultTypeOptions(selectedKeys = new Set(libraryDefaultTy
 
 function openLibrarySettings() {
   renderLibraryDefaultTypeOptions(new Set(libraryDefaultTypeKeys()));
-  els.librarySettingsModal?.showModal();
+  showDialogAtTop(els.librarySettingsModal);
 }
 
 function resetLibrarySettingsDraft() {
@@ -10362,6 +10700,7 @@ function saveLibrarySettings(event) {
 
 function tvLibraryStatusKey(item) {
   const disposition = getTVWatchDisposition(item);
+  if (disposition === 'paused' || (getQueueStatus(item) === 'tbr' && tvHasProgress(item) && !item.completedAt)) return 'paused';
   if (disposition === 'stopped') return 'stopped';
   if (Boolean(item.tvMeta?.hasUnwatched) || getQueueStatus(item) === 'upnext') return 'in-progress';
   if (isTerminalSeriesStatus(item.tvMeta?.seriesStatus || '')) return 'finished';
@@ -10373,11 +10712,13 @@ function tvLibraryStatusLabel(key) {
     'in-progress': 'In progress',
     'up-to-date': 'Up to date',
     finished: 'Finished',
-    stopped: 'Stopped watching'
+    paused: 'Paused',
+    stopped: 'Stopped'
   })[key] || key;
 }
 
 function bookLibraryStatusKey(item) {
+  if (item?.bookDisposition === 'paused' || (getQueueStatus(item) === 'tbr' && bookHasProgress(item) && !item.completedAt)) return 'paused';
   if (item?.bookDisposition === 'dnf') return 'dnf';
   const current = Math.max(0, Number(item?.progress?.currentPage || 0));
   const total = Math.max(0, Number(item?.progress?.totalPages || 0));
@@ -10390,7 +10731,8 @@ function bookLibraryStatusLabel(key) {
   return ({
     'in-progress': 'In progress',
     finished: 'Finished',
-    dnf: 'DNF',
+    paused: 'Paused',
+    dnf: 'Stopped',
     'not-started': 'Not started'
   })[key] || key;
 }
@@ -10399,7 +10741,8 @@ function bookStatusBadgeMarkup(item) {
   const key = bookLibraryStatusKey(item);
   const tone = key === 'in-progress' ? 'progress'
     : key === 'finished' ? 'finished'
-      : key === 'dnf' ? 'muted'
+      : key === 'paused' ? 'later'
+        : key === 'dnf' ? 'muted'
         : 'later';
   return `<span class="tv-status-badge tv-status-${tone}">${escapeHtml(bookLibraryStatusLabel(key))}</span>`;
 }
@@ -10487,14 +10830,20 @@ function makeLibraryPoster(item) {
   const subcategoryBadge = subcategoryLabel
     ? `<span class="library-subcategory-badge" title="${escapeAttr(subcategoryLabel)}">${escapeHtml(subcategoryLabel)}</span>`
     : '';
+  const dispositionState = libraryDnfState(item);
+  const dispositionBadge = dispositionState
+    ? `<span class="library-disposition-badge ${escapeAttr(dispositionState)}">${dispositionState === 'paused' ? 'Paused' : 'Stopped'}</span>`
+    : '';
   poster.innerHTML = hasThumbnail
     ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />
        ${recommendedBadge}
        ${subcategoryBadge}
+       ${dispositionBadge}
        ${personalRating > 0 ? `<span class="library-rating-badge" aria-label="Your rating ${personalRating} out of 5">★ ${escapeHtml(formatPersonalRating(personalRating))}</span>` : ''}`
     : `<span class="library-text-card">
          ${recommendedBadge}
          ${subcategoryBadge}
+         ${dispositionBadge}
          <strong class="library-text-card-title">${escapeHtml(item.title || 'Untitled')}</strong>
          ${personalRating > 0 ? `<span class="library-text-card-rating">★ ${escapeHtml(formatPersonalRating(personalRating))} / 5</span>` : ''}
          ${String(item.notes || '').trim() ? `<span class="library-text-card-notes">${escapeHtml(String(item.notes || '').trim())}</span>` : ''}
@@ -10509,7 +10858,7 @@ function renderLibrary() {
 
   const libraryQuery = normalizeSearchText(state.librarySearchQuery || els.librarySearch?.value || '');
   let filtered = state.items
-    .filter(item => getQueueStatus(item) !== 'tbr')
+    .filter(item => getQueueStatus(item) !== 'tbr' || libraryDnfState(item) === 'paused')
     .filter(item => !(item.calendarQueueOnly === true && item.calendarTracked !== true))
     .filter(item => state.libraryView !== 'recommended' || item.recommended)
     .filter(item => visibleTypes.has(libraryTypeGroupKey(item)))
@@ -10582,7 +10931,7 @@ function renderLibrary() {
 
       if (rootExpanded) {
         const statusHost = section.querySelector('.tv-library-status-groups');
-        for (const statusKey of ['in-progress', 'up-to-date', 'finished', 'stopped']) {
+        for (const statusKey of ['in-progress', 'up-to-date', 'finished', 'paused', 'stopped']) {
           const statusItems = items.filter(item => tvLibraryStatusKey(item) === statusKey).sort(compare);
           if (!statusItems.length) continue;
           const expansionKey = `tv:${statusKey}`;
@@ -10637,7 +10986,7 @@ function renderLibrary() {
 
       if (rootExpanded) {
         const statusHost = section.querySelector('.book-library-status-groups');
-        for (const statusKey of ['in-progress', 'finished', 'dnf', 'not-started']) {
+        for (const statusKey of ['in-progress', 'finished', 'paused', 'dnf', 'not-started']) {
           const statusItems = items.filter(item => bookLibraryStatusKey(item) === statusKey).sort(compare);
           if (!statusItems.length) continue;
           const expansionKey = `book:${statusKey}`;
@@ -10797,7 +11146,7 @@ function setItemQueueStatus(item, status) {
   item.active = next === 'upnext';
   if (getSourceType(item) === 'tv') {
     if (next === 'tbr') item.watchDisposition = 'watch-later';
-    else if (next === 'upnext' && item.watchDisposition !== 'stopped') item.watchDisposition = 'following';
+    else if (next === 'upnext' && !['paused', 'stopped'].includes(item.watchDisposition)) item.watchDisposition = 'following';
   }
   return item;
 }

@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-auth-rating-1" />
+  <link rel="stylesheet" href="style.css?v=omni-pause-is-tbr-1" />
 </head>
 <body class="auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -100,7 +100,11 @@
         <div class="track-heading">
           <div>
             <p class="eyebrow light">DATED ITEMS</p>
-            <h1 id="monthLabel">August</h1>
+            <div class="track-month-title">
+              <button id="previousMonth" class="month-nav-button" type="button" aria-label="Previous month" title="Previous month">‹</button>
+              <h1 id="monthLabel">August</h1>
+              <button id="nextMonth" class="month-nav-button" type="button" aria-label="Next month" title="Next month">›</button>
+            </div>
           </div>
           <div class="calendar-controls">
             <input id="monthPicker" class="month-picker" type="month" aria-label="Choose month" />
@@ -526,6 +530,17 @@
   </dialog>
 
   <!-- DETAILS -->
+  <dialog id="dnfChoiceModal" class="modal small-modal dnf-choice-modal">
+    <div class="modal-header">
+      <div><h2>DNF</h2></div>
+      <button class="icon-button modal-close-button" type="button" data-close="dnfChoiceModal" aria-label="Close">×</button>
+    </div>
+    <div class="dnf-choice-actions">
+      <button class="secondary-button" type="button" data-dnf-choice="pause">Pause</button>
+      <button class="secondary-button danger-button" type="button" data-dnf-choice="stop">Stop</button>
+    </div>
+  </dialog>
+
   <dialog id="detailModal" class="modal detail-modal">
     <button class="modal-x" type="button" data-close="detailModal" aria-label="Close">×</button>
     <div id="detailBody" class="detail-body"></div>
@@ -581,6 +596,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-auth-rating-1"></script>
+  <script type="module" src="app.js?v=omni-pause-is-tbr-1"></script>
 </body>
 </html>
