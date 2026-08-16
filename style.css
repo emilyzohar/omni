@@ -7704,3 +7704,302 @@ dialog.modal:not([open]) {
     pointer-events: none;
   }
 }
+
+/* =========================================================
+   OMNI — MOBILE LIBRARY: TYPES + SETTINGS LEFT, VIEW RIGHT
+   Phone-first final override.
+   ========================================================= */
+@media (max-width: 760px) {
+  .library-controls {
+    gap: 20px !important;
+  }
+
+  .library-filter-row {
+    display: grid !important;
+    width: 100% !important;
+    grid-template-columns: minmax(0, 1fr) 42px max-content !important;
+    grid-template-areas:
+      "types settings tabs"
+      "sort sort sort" !important;
+    column-gap: 8px !important;
+    row-gap: 12px !important;
+    align-items: end !important;
+  }
+
+  .library-filter-row .library-type-filter-control {
+    grid-area: types !important;
+    min-width: 0 !important;
+    width: 100% !important;
+    justify-self: stretch !important;
+  }
+
+  .library-filter-row .library-type-filter-control > span {
+    margin: 0 0 5px 4px !important;
+    text-align: left !important;
+    font-size: .72rem !important;
+  }
+
+  .library-type-filter,
+  .library-type-filter > summary {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .library-type-filter > summary {
+    height: 44px !important;
+    min-height: 44px !important;
+    padding: 0 13px !important;
+    font-size: .9rem !important;
+    text-align: left !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .library-filter-row .library-settings-button {
+    grid-area: settings !important;
+    width: 42px !important;
+    min-width: 42px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    margin: 0 !important;
+    align-self: end !important;
+  }
+
+  .library-folder-tabs-mobile {
+    grid-area: tabs !important;
+    display: inline-flex !important;
+    width: max-content !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    padding: 3px !important;
+    gap: 2px !important;
+    justify-self: end !important;
+    align-self: end !important;
+    box-sizing: border-box !important;
+  }
+
+  .library-folder-tabs-mobile .library-folder-tab {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: auto !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    padding: 0 10px !important;
+    font-size: .7rem !important;
+    line-height: 1 !important;
+    white-space: nowrap !important;
+    overflow: visible !important;
+  }
+
+  .library-filter-row .library-sort-control {
+    grid-area: sort !important;
+    width: min(100%, 230px) !important;
+    min-width: 0 !important;
+    justify-self: end !important;
+  }
+
+  .library-filter-row .library-sort-control > span {
+    margin: 0 0 5px 6px !important;
+    font-size: .72rem !important;
+    text-align: left !important;
+  }
+}
+
+@media (max-width: 390px) {
+  .library-filter-row {
+    grid-template-columns: minmax(0, 1fr) 40px max-content !important;
+    column-gap: 6px !important;
+  }
+
+  .library-filter-row .library-settings-button {
+    width: 40px !important;
+    min-width: 40px !important;
+  }
+
+  .library-folder-tabs-mobile .library-folder-tab {
+    padding-inline: 8px !important;
+    font-size: .66rem !important;
+  }
+}
+
+/* =========================================================
+   OMNI — MOBILE LIBRARY TWO-ROW CONTROL GRID
+   Row 1: All/Recommended | Types | Settings
+   Row 2: Search          | +     | Sort
+   The first-column controls intentionally share the same width.
+   ========================================================= */
+@media (max-width: 760px) {
+  .library-controls {
+    display: grid !important;
+    grid-template-columns: minmax(0, 42%) 44px minmax(0, 1fr) 44px !important;
+    grid-template-rows: auto auto !important;
+    column-gap: 8px !important;
+    row-gap: 13px !important;
+    width: 100% !important;
+    align-items: end !important;
+  }
+
+  /* Flatten the old two wrapper rows into the shared grid. */
+  .library-search-row,
+  .library-filter-row {
+    display: contents !important;
+  }
+
+  /* Row 1 */
+  .library-folder-tabs-mobile {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    display: flex !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    padding: 3px !important;
+    gap: 2px !important;
+    margin: 0 !important;
+    justify-self: stretch !important;
+    align-self: end !important;
+    box-sizing: border-box !important;
+  }
+
+  .library-folder-tabs-mobile .library-folder-tab {
+    flex: 1 1 50% !important;
+    width: auto !important;
+    min-width: 0 !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    padding: 0 7px !important;
+    font-size: .69rem !important;
+    line-height: 1 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: clip !important;
+  }
+
+  .library-filter-row .library-type-filter-control {
+    grid-column: 2 / 4 !important;
+    grid-row: 1 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    align-self: end !important;
+  }
+
+  .library-filter-row .library-type-filter-control > span {
+    margin: 0 0 4px 8px !important;
+    min-height: 0 !important;
+    font-size: .66rem !important;
+    line-height: 1 !important;
+    text-align: left !important;
+  }
+
+  .library-type-filter,
+  .library-type-filter > summary {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .library-type-filter > summary {
+    height: 44px !important;
+    min-height: 44px !important;
+    padding: 0 13px !important;
+    box-sizing: border-box !important;
+    font-size: .9rem !important;
+    text-align: left !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .library-filter-row .library-settings-button {
+    grid-column: 4 !important;
+    grid-row: 1 !important;
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    margin: 0 !important;
+    align-self: end !important;
+    justify-self: end !important;
+  }
+
+  /* Row 2 */
+  .library-search-row .library-search-control {
+    grid-column: 1 !important;
+    grid-row: 2 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    align-self: end !important;
+  }
+
+  .library-search-control input {
+    width: 100% !important;
+    min-width: 0 !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    box-sizing: border-box !important;
+  }
+
+  .library-search-row .library-add-button {
+    grid-column: 2 !important;
+    grid-row: 2 !important;
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    margin: 0 !important;
+    align-self: end !important;
+    justify-self: stretch !important;
+  }
+
+  .library-filter-row .library-sort-control {
+    grid-column: 3 / 5 !important;
+    grid-row: 2 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    align-self: end !important;
+    justify-self: stretch !important;
+  }
+
+  .library-filter-row .library-sort-control > span {
+    margin: 0 0 4px 8px !important;
+    min-height: 0 !important;
+    font-size: .66rem !important;
+    line-height: 1 !important;
+    text-align: left !important;
+  }
+
+  .library-sort-control select {
+    width: 100% !important;
+    min-width: 0 !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    padding-inline: 14px 38px !important;
+    box-sizing: border-box !important;
+    font-size: .9rem !important;
+  }
+}
+
+@media (max-width: 390px) {
+  .library-controls {
+    grid-template-columns: minmax(0, 41%) 40px minmax(0, 1fr) 40px !important;
+    column-gap: 6px !important;
+  }
+
+  .library-folder-tabs-mobile .library-folder-tab {
+    padding-inline: 5px !important;
+    font-size: .64rem !important;
+  }
+
+  .library-filter-row .library-settings-button,
+  .library-search-row .library-add-button {
+    width: 40px !important;
+    min-width: 40px !important;
+  }
+}
