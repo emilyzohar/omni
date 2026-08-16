@@ -9081,6 +9081,7 @@ async function handleDiscoverClick(event) {
   if (complete) {
     const key = complete.dataset.discoverComplete;
     const result = state.discoverResults.get(key);
+    discoverBookSaveDebug('completion check clicked', result, { discoverKey: key, alreadyCompleted: result ? isDiscoverCompleted(result) : false });
     if (result?.sourceType === 'tv') {
       await openDiscoverDetail(key);
       requestAnimationFrame(() => {
@@ -9099,7 +9100,10 @@ async function handleDiscoverClick(event) {
 
   const add = event.target.closest('[data-discover-add]');
   if (add) {
-    openDiscoverQueueChoice(add.dataset.discoverAdd);
+    const key = add.dataset.discoverAdd;
+    const result = state.discoverResults.get(key);
+    discoverBookSaveDebug('+ Add clicked', result, { discoverKey: key });
+    openDiscoverQueueChoice(key);
     return;
   }
 
@@ -9269,6 +9273,7 @@ function renderDiscoverCardInPlace(key) {
 function openDiscoverQueueChoice(key) {
   const result = state.discoverResults.get(key);
   if (!result || !els.discoverQueueModal) return;
+  discoverBookSaveDebug('queue modal opened', result, { discoverKey: key });
   state.pendingDiscoverKey = key;
   els.discoverQueueTitle.textContent = result.title || 'Where should this go?';
   showDialogAtTop(els.discoverQueueModal);
@@ -9279,12 +9284,21 @@ async function handleDiscoverQueueChoice(event) {
   if (!button || !state.pendingDiscoverKey) return;
   const key = state.pendingDiscoverKey;
   const status = button.dataset.discoverQueueChoice === 'tbr' ? 'tbr' : 'upnext';
+  const result = state.discoverResults.get(key);
+  discoverBookSaveDebug('queue choice clicked', result, { discoverKey: key, target: status });
   try {
+    if (!result) throw new Error('Discover result is no longer available.');
     const item = addDiscoverToQueue(key, status);
-    const result = state.discoverResults.get(key);
-    if (!item || (result && !findDiscoverItem(result))) throw new Error('Discover item was not saved.');
+    const verified = findDiscoverItem(result);
+    if (!item || !verified) throw new Error('Discover item was not saved.');
+    const visibility = discoverLibraryVisibility(verified);
+    discoverBookSaveDebug('queue save verified', result, { target: status, savedItemId: verified.id, visibility });
+    if (result.sourceType === 'book') {
+      showActionFeedback(status === 'tbr' ? 'Added to TBR' : visibility.visible ? 'Added to Library' : 'Saved · hidden by Library filter');
+    }
   } catch (error) {
-    console.error('[Discover] Could not add item to queue', { key, status, error });
+    console.error('[Discover] Could not add item to queue', { key, status, result, error });
+    if (result?.sourceType === 'book') console.error('[Discover][Book Save] queue save failed', { key, status, title: result.title, providerId: result.providerId, error });
     showActionFeedback('Could not add to Library. Try again.', true);
     return;
   }
@@ -9297,6 +9311,7 @@ async function handleDiscoverQueueChoice(event) {
 function addDiscoverToQueue(key, status) {
   const result = state.discoverResults.get(key);
   if (!result) return null;
+  discoverBookSaveDebug('addDiscoverToQueue start', result, { discoverKey: key, target: status });
   const item = ensureDiscoverItem(result, status);
   setItemQueueStatus(item, status);
   item.completedAt = '';
@@ -9304,7 +9319,46 @@ function addDiscoverToQueue(key, status) {
   item.updatedAt = new Date().toISOString();
   saveItems();
   renderAll();
+  discoverBookSaveDebug('addDiscoverToQueue complete', result, { savedItemId: item?.id || '', finalQueueStatus: item ? getQueueStatus(item) : '' });
   return item;
+}
+
+function discoverBookSaveDebug(label, result, extra = {}) {
+  if (result?.sourceType !== 'book') return;
+  const existing = findDiscoverItem(result);
+  console.log(`[Discover][Book Save] ${label}`, {
+    title: result.title || '',
+    providerId: String(result.providerId || ''),
+    key: `${result.sourceType || 'book'}:${String(result.providerId || '')}`,
+    existingItemId: existing?.id || '',
+    queueStatus: existing ? getQueueStatus(existing) : '',
+    itemCount: state.items.length,
+    ...extra
+  });
+}
+
+function discoverLibraryVisibility(item) {
+  if (!item) return { visible: false, reason: 'missing-item' };
+  const queueStatus = getQueueStatus(item);
+  if (queueStatus === 'tbr' && libraryDnfState(item) !== 'paused' && !isItemNotReleased(item)) {
+    return { visible: false, reason: 'tbr-only' };
+  }
+  if (item.calendarQueueOnly === true && item.calendarTracked !== true) {
+    return { visible: false, reason: 'calendar-queue-only' };
+  }
+  if (state.libraryView === 'recommended' && !item.recommended) {
+    return { visible: false, reason: 'recommended-filter' };
+  }
+  const groupKey = libraryTypeGroupKey(item);
+  if (!ensureLibraryVisibleTypes().has(groupKey)) {
+    return { visible: false, reason: `type-filter:${groupKey}` };
+  }
+  const query = normalizeSearchText(state.librarySearchQuery || els.librarySearch?.value || '');
+  if (query) {
+    const haystack = normalizeSearchText([item.title, item.subtitle, item.notes, item.subcategory, getItemTypeLabel(item), item.artistName].filter(Boolean).join(' '));
+    if (!haystack.includes(query)) return { visible: false, reason: 'search-filter' };
+  }
+  return { visible: true, reason: 'visible' };
 }
 
 function findDiscoverItem(result) {
@@ -9315,8 +9369,12 @@ function findDiscoverItem(result) {
 }
 
 function ensureDiscoverItem(result, queueStatus = 'library') {
+  discoverBookSaveDebug('ensureDiscoverItem start', result, { requestedQueueStatus: queueStatus });
   let item = findDiscoverItem(result);
-  if (item) return item;
+  if (item) {
+    discoverBookSaveDebug('ensureDiscoverItem found existing', result, { requestedQueueStatus: queueStatus, itemId: item.id, existingQueueStatus: getQueueStatus(item) });
+    return item;
+  }
 
   const sourceType = result.sourceType;
   const isMusicFamily = ['music', 'artist', 'song', 'concert'].includes(sourceType);
@@ -9368,6 +9426,12 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
   applyReleaseQueueAutomation(item);
   state.items.push(item);
   saveItems();
+  discoverBookSaveDebug('ensureDiscoverItem created', result, {
+    requestedQueueStatus: queueStatus,
+    itemId: item.id,
+    savedInState: state.items.some(candidate => candidate.id === item.id),
+    finalQueueStatus: getQueueStatus(item)
+  });
   return item;
 }
 
@@ -9389,7 +9453,9 @@ async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
 
   if (result.sourceType === 'book') {
     const wasComplete = Boolean(item.completedAt);
+    discoverBookSaveDebug('book completion start', result, { itemId: item.id, wasComplete });
     await markWholeBookComplete(item, { createReadingPeriod: false });
+    discoverBookSaveDebug('book completion saved', result, { itemId: item.id, completedAt: item.completedAt || '', queueStatus: getQueueStatus(item) });
     renderDiscoverCardInPlace(key);
     if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
     if (!wasComplete && promptForRating) openDiscoverRatingPrompt(key, { completionIntent: false });
@@ -9436,6 +9502,7 @@ function openDiscoverRatingPrompt(key, { allowTV = false, completionIntent = fal
 
   // IMPORTANT: opening this modal must not mutate Library/history. Everything
   // below is temporary UI state until the user presses Continue.
+  discoverBookSaveDebug('rating/date modal opened', result, { discoverKey: key, completionIntent: Boolean(completionIntent), recommendIntent });
   state.pendingDiscoverRatingKey = key;
   state.pendingDiscoverCompletionIntent = Boolean(completionIntent);
   if (els.discoverRatingTitle) els.discoverRatingTitle.textContent = `Rate ${result.title || (result.sourceType === 'book' ? 'this book' : 'this movie')}`;
@@ -9482,13 +9549,14 @@ function persistDiscoverOptionalDate(key, dateValue) {
 
 async function commitDiscoverQuickAddOnContinue(key) {
   const result = state.discoverResults.get(key);
-  if (!result) return;
+  if (!result) throw new Error(`Discover result missing for key: ${key || '(empty)'}`);
 
   const rating = Math.max(0, Math.min(5, Number(state.pendingDiscoverRatingValue || 0)));
   const date = String(els.discoverRatingDate?.value || state.pendingDiscoverDateValue || '').trim();
   const recommended = Boolean(state.pendingDiscoverRecommendedValue);
   const completionIntent = Boolean(state.pendingDiscoverCompletionIntent);
   let item = findDiscoverItem(result);
+  discoverBookSaveDebug('Continue commit start', result, { key, rating, date, recommended, completionIntent, existingItemId: item?.id || '' });
 
   // Continue is the save boundary. Rating, recommendation, and date are all
   // optional; leaving every optional field blank must still save the item.
@@ -9520,6 +9588,17 @@ async function commitDiscoverQuickAddOnContinue(key) {
     saveHistory();
     renderAll();
   }
+  const verified = findDiscoverItem(result);
+  if (!verified) throw new Error('Discover item disappeared after save.');
+  const visibility = discoverLibraryVisibility(verified);
+  discoverBookSaveDebug('Continue commit verified', result, {
+    itemId: verified.id,
+    queueStatus: getQueueStatus(verified),
+    rating: verified.rating,
+    date: verified.date || '',
+    completedAt: verified.completedAt || '',
+    visibility
+  });
   renderDiscoverCardInPlace(key);
 }
 
@@ -9552,12 +9631,31 @@ async function handleDiscoverRatingChoice(event) {
     event.preventDefault();
     event.stopPropagation();
     const key = state.pendingDiscoverRatingKey;
+    const result = key ? state.discoverResults.get(key) : null;
+    discoverBookSaveDebug('Continue clicked', result, {
+      key: key || '',
+      pendingRating: state.pendingDiscoverRatingValue,
+      pendingDate: els.discoverRatingDate?.value || state.pendingDiscoverDateValue || '',
+      completionIntent: state.pendingDiscoverCompletionIntent
+    });
     try {
-      if (key) await commitDiscoverQuickAddOnContinue(key);
-      const result = key ? state.discoverResults.get(key) : null;
-      if (result && !findDiscoverItem(result)) throw new Error('Discover item was not saved.');
+      if (!key) throw new Error('No pending Discover item. The quick-add state was lost before Continue.');
+      if (!result) throw new Error(`Discover result missing before Continue: ${key}`);
+      await commitDiscoverQuickAddOnContinue(key);
+      const verified = findDiscoverItem(result);
+      if (!verified) throw new Error('Discover item was not saved.');
+      if (result.sourceType === 'book') {
+        const visibility = discoverLibraryVisibility(verified);
+        showActionFeedback(visibility.visible ? 'Added to Library' : visibility.reason === 'tbr-only' ? 'Added to TBR' : 'Saved · hidden by Library filter');
+      }
     } catch (error) {
-      console.error('[Discover] Continue failed', { key, error });
+      console.error('[Discover] Continue failed', { key, result, pendingState: {
+        rating: state.pendingDiscoverRatingValue,
+        date: els.discoverRatingDate?.value || state.pendingDiscoverDateValue || '',
+        recommended: state.pendingDiscoverRecommendedValue,
+        completionIntent: state.pendingDiscoverCompletionIntent
+      }, error });
+      if (result?.sourceType === 'book' || !result) console.error('[Discover][Book Save] Continue failed', { key, title: result?.title || '', providerId: result?.providerId || '', error });
       showActionFeedback('Could not add to Library. Try again.', true);
       return;
     }

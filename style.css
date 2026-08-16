@@ -7008,7 +7008,152 @@ dialog.modal:not([open]) {
   .calendar-tool-buttons { gap: 2px; }
   .week-controls { gap: 2px; }
 }
-\n\n/* =========================================================\n   OMNI — MOBILE LIBRARY / TEXT ICON CLEANUP\n   ========================================================= */\n.text-gear-icon {\n  font-family: Georgia, "Times New Roman", serif;\n  font-variant-emoji: text;\n  font-size: 1.15rem;\n  line-height: 1;\n  font-weight: 400;\n  display: inline-block;\n  transform: translateY(-.02em);\n}\n\n@media (max-width: 760px) {\n  .library-section .shell {\n    padding-inline: 18px !important;\n  }\n\n  .library-heading {\n    gap: 12px !important;\n    margin-bottom: 22px !important;\n  }\n\n  .library-title-block {\n    gap: 10px !important;\n  }\n\n  .library-title-block h1 {\n    font-size: clamp(3rem, 14vw, 4.25rem) !important;\n    line-height: .92 !important;\n    letter-spacing: -.035em;\n  }\n\n  .library-folder-tabs {\n    width: 100% !important;\n    min-height: 42px;\n  }\n  .library-folder-tab {\n    min-height: 40px !important;\n    padding: 8px 14px !important;\n    font-size: .84rem !important;\n  }\n\n  .library-controls {\n    display: grid !important;\n    width: 100%;\n    gap: 10px !important;\n  }\n\n  .library-search-row {\n    display: grid !important;\n    grid-template-columns: minmax(0, 1fr) 42px;\n    align-items: stretch !important;\n    gap: 8px !important;\n  }\n  .library-search-row .library-search-control {\n    min-width: 0 !important;\n    width: 100% !important;\n  }\n  .library-search-control input {\n    width: 100% !important;\n    min-width: 0 !important;\n    min-height: 42px !important;\n    height: 42px;\n    padding: 0 14px !important;\n    font-size: .9rem !important;\n  }\n  .library-search-row .library-icon-button {\n    width: 42px !important;\n    min-width: 42px !important;\n    height: 42px !important;\n    min-height: 42px !important;\n    padding: 0 !important;\n  }\n\n  .library-filter-row {\n    display: grid !important;\n    grid-template-columns: minmax(0, 1fr) 40px minmax(92px, .72fr);\n    align-items: end !important;\n    gap: 8px !important;\n  }\n  .library-filter-row .filter-control {\n    min-width: 0 !important;\n    width: 100% !important;\n  }\n  .library-filter-row .filter-control > span {\n    display: block;\n    margin: 0 0 5px 8px !important;\n    font-size: .66rem !important;\n    line-height: 1 !important;\n    letter-spacing: .08em;\n  }\n  .library-type-filter,\n  .library-type-filter summary,\n  .library-sort-control select {\n    width: 100% !important;\n    min-width: 0 !important;\n  }\n  .library-type-filter summary,\n  .library-sort-control select {\n    height: 40px !important;\n    min-height: 40px !important;\n    padding: 0 12px !important;\n    font-size: .84rem !important;\n  }\n  .library-filter-row .library-settings-button {\n    align-self: end !important;\n    width: 40px !important;\n    min-width: 40px !important;\n    height: 40px !important;\n    min-height: 40px !important;\n    padding: 0 !important;\n    margin: 0 !important;\n  }\n\n  .library-group-heading-row {\n    gap: 8px !important;\n  }\n  .library-group-title {\n    font-size: clamp(1.85rem, 9vw, 2.65rem) !important;\n    line-height: 1 !important;\n  }\n  .library-shelf-controls {\n    gap: 4px !important;\n  }\n  .library-expand-button {\n    font-size: .76rem !important;\n    white-space: nowrap;\n  }\n}\n\n@media (max-width: 390px) {\n  .library-section .shell { padding-inline: 14px !important; }\n  .library-filter-row {\n    grid-template-columns: minmax(0, 1fr) 38px 92px;\n    gap: 6px !important;\n  }\n  .library-filter-row .library-settings-button {\n    width: 38px !important;\n    min-width: 38px !important;\n  }\n  .library-title-block h1 { font-size: 3.25rem !important; }\n}\n
+
+
+/* =========================================================
+   OMNI — MOBILE LIBRARY / TEXT ICON CLEANUP
+   ========================================================= */
+.text-gear-icon {
+  font-family: Georgia, "Times New Roman", serif;
+  font-variant-emoji: text;
+  font-size: 1.15rem;
+  line-height: 1;
+  font-weight: 400;
+  display: inline-block;
+  transform: translateY(-.02em);
+}
+
+@media (max-width: 760px) {
+  .library-section .shell {
+    padding-inline: 18px !important;
+  }
+
+  .library-heading {
+    gap: 12px !important;
+    margin-bottom: 22px !important;
+  }
+
+  .library-title-block {
+    gap: 10px !important;
+  }
+
+  .library-title-block h1 {
+    font-size: clamp(3rem, 14vw, 4.25rem) !important;
+    line-height: .92 !important;
+    letter-spacing: -.035em;
+  }
+
+  .library-folder-tabs {
+    width: 100% !important;
+    min-height: 42px;
+  }
+  .library-folder-tab {
+    min-height: 40px !important;
+    padding: 8px 14px !important;
+    font-size: .84rem !important;
+  }
+
+  .library-controls {
+    display: grid !important;
+    width: 100%;
+    gap: 10px !important;
+  }
+
+  .library-search-row {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) 42px;
+    align-items: stretch !important;
+    gap: 8px !important;
+  }
+  .library-search-row .library-search-control {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+  .library-search-control input {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 42px !important;
+    height: 42px;
+    padding: 0 14px !important;
+    font-size: .9rem !important;
+  }
+  .library-search-row .library-icon-button {
+    width: 42px !important;
+    min-width: 42px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 0 !important;
+  }
+
+  .library-filter-row {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) 40px minmax(92px, .72fr);
+    align-items: end !important;
+    gap: 8px !important;
+  }
+  .library-filter-row .filter-control {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+  .library-filter-row .filter-control > span {
+    display: block;
+    margin: 0 0 5px 8px !important;
+    font-size: .66rem !important;
+    line-height: 1 !important;
+    letter-spacing: .08em;
+  }
+  .library-type-filter,
+  .library-type-filter summary,
+  .library-sort-control select {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  .library-type-filter summary,
+  .library-sort-control select {
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 0 12px !important;
+    font-size: .84rem !important;
+  }
+  .library-filter-row .library-settings-button {
+    align-self: end !important;
+    width: 40px !important;
+    min-width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .library-group-heading-row {
+    gap: 8px !important;
+  }
+  .library-group-title {
+    font-size: clamp(1.85rem, 9vw, 2.65rem) !important;
+    line-height: 1 !important;
+  }
+  .library-shelf-controls {
+    gap: 4px !important;
+  }
+  .library-expand-button {
+    font-size: .76rem !important;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 390px) {
+  .library-section .shell { padding-inline: 14px !important; }
+  .library-filter-row {
+    grid-template-columns: minmax(0, 1fr) 38px 92px;
+    gap: 6px !important;
+  }
+  .library-filter-row .library-settings-button {
+    width: 38px !important;
+    min-width: 38px !important;
+  }
+  .library-title-block h1 { font-size: 3.25rem !important; }
+}
+
 
 /* Compact action feedback: only appears when an action cannot be completed. */
 .omni-action-feedback {
@@ -7037,4 +7182,161 @@ dialog.modal:not([open]) {
 }
 .omni-action-feedback.is-error {
   border-color: rgba(114, 0, 20, .28);
+}
+
+
+/* =========================================================
+   OMNI — CONTROL ALIGNMENT PASS
+   ========================================================= */
+/* Library controls use matched heights and explicit columns so labels and
+   controls stay on one baseline instead of flex-shrinking independently. */
+.library-search-row {
+  display: grid !important;
+  grid-template-columns: minmax(260px, 1fr) 48px;
+  align-items: center !important;
+  gap: 12px !important;
+}
+.library-search-row .library-search-control {
+  min-width: 0 !important;
+  width: 100% !important;
+}
+.library-search-control input {
+  height: 48px;
+  min-height: 48px;
+  padding-inline: 18px;
+}
+.library-search-row .library-icon-button {
+  width: 48px !important;
+  min-width: 48px !important;
+  height: 48px !important;
+  min-height: 48px !important;
+}
+.library-filter-row {
+  display: grid !important;
+  grid-template-columns: minmax(190px, 1.2fr) 48px minmax(150px, .8fr);
+  align-items: end !important;
+  gap: 12px !important;
+}
+.library-filter-row .filter-control {
+  width: 100% !important;
+  min-width: 0 !important;
+}
+.library-filter-row .filter-control > span {
+  display: block;
+  min-height: 14px;
+  margin: 0 0 7px 10px !important;
+  line-height: 1 !important;
+}
+.library-type-filter,
+.library-type-filter summary,
+.library-sort-control select {
+  width: 100% !important;
+  min-width: 0 !important;
+}
+.library-type-filter summary,
+.library-sort-control select,
+.library-filter-row .library-settings-button {
+  height: 48px !important;
+  min-height: 48px !important;
+}
+.library-type-filter summary,
+.library-sort-control select {
+  padding-inline: 16px !important;
+}
+.library-filter-row .library-settings-button {
+  width: 48px !important;
+  min-width: 48px !important;
+  margin: 0 !important;
+  align-self: end !important;
+}
+
+/* Track controls: month picker and circular tools share the same visual height. */
+.calendar-controls {
+  align-items: center !important;
+  gap: 10px !important;
+}
+.month-picker {
+  width: 250px;
+  min-width: 250px;
+  height: 48px;
+  min-height: 48px !important;
+  padding: 0 18px !important;
+  box-sizing: border-box;
+}
+.calendar-tool-buttons {
+  align-items: center !important;
+  gap: 10px !important;
+}
+.calendar-tool-button.icon-tool-button {
+  width: 48px !important;
+  min-width: 48px !important;
+  height: 48px !important;
+  min-height: 48px !important;
+}
+
+@media (max-width: 900px) and (min-width: 761px) {
+  .library-heading {
+    display: grid !important;
+    grid-template-columns: 1fr;
+    align-items: start !important;
+  }
+  .library-controls { width: 100%; }
+  .library-search-row,
+  .library-filter-row { width: 100%; }
+  .calendar-controls { gap: 8px !important; }
+  .month-picker { width: 220px; min-width: 220px; }
+}
+
+@media (max-width: 760px) {
+  .library-search-row {
+    grid-template-columns: minmax(0, 1fr) 42px !important;
+    gap: 8px !important;
+  }
+  .library-search-control input,
+  .library-search-row .library-icon-button {
+    height: 42px !important;
+    min-height: 42px !important;
+  }
+  .library-search-row .library-icon-button {
+    width: 42px !important;
+    min-width: 42px !important;
+  }
+  .library-filter-row {
+    grid-template-columns: 42px minmax(0, 1fr) !important;
+    grid-template-areas:
+      "types types"
+      "settings sort" !important;
+    column-gap: 8px !important;
+    row-gap: 10px !important;
+    align-items: end !important;
+  }
+  .library-filter-row .library-type-filter-control {
+    grid-area: types;
+  }
+  .library-filter-row .library-settings-button {
+    grid-area: settings;
+  }
+  .library-filter-row .library-sort-control {
+    grid-area: sort;
+  }
+  .library-filter-row .filter-control > span {
+    margin: 0 0 6px 8px !important;
+  }
+  .library-type-filter summary,
+  .library-sort-control select,
+  .library-filter-row .library-settings-button {
+    height: 42px !important;
+    min-height: 42px !important;
+  }
+  .library-filter-row .library-settings-button {
+    width: 42px !important;
+    min-width: 42px !important;
+  }
+  /* Existing mobile Track layout owns navigation; keep its compact 32px tools. */
+  .calendar-tool-button.icon-tool-button {
+    width: 32px !important;
+    min-width: 32px !important;
+    height: 32px !important;
+    min-height: 32px !important;
+  }
 }
