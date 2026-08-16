@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-library-activity-recs-1';
-import { API_CONFIG } from './config.js?v=omni-library-activity-recs-1';
+import { TrackerAPI } from './api.js?v=omni-library-detail-actions-activity-edit-1';
+import { API_CONFIG } from './config.js?v=omni-library-detail-actions-activity-edit-1';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -5060,7 +5060,7 @@ function detailHero({ type, title, image, subtitle, overview, collapseOverview =
     ? `<div class="detail-disclosure-row">
         <details class="detail-synopsis-details">
           <summary>Synopsis</summary>
-          <div class="detail-synopsis-content">${overviewText ? `<p class="detail-overview">${overviewText}</p>` : ''}<div class="library-personal-meta-slot"></div></div>
+          <div class="detail-synopsis-content">${overviewText ? `<p class="detail-overview">${overviewText}</p>` : ''}</div>
         </details>
         ${availabilityLink ? `<a class="detail-availability-link" href="${escapeAttr(availabilityLink)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}
       </div>`
@@ -5097,16 +5097,18 @@ function libraryCalendarToggleButton(item) {
   // tracked-calendar inclusion; do not provide a bypass in its detail panel.
   if (['event', 'concert'].includes(sourceType) && item.queueCalendarScheduled === true && item.calendarTracked !== true) return '';
   const hidden = Boolean(item.calendarHidden);
-  return `<button class="quiet-button library-calendar-toggle${hidden ? ' is-hidden' : ''}" type="button" data-toggle-library-calendar="${escapeAttr(item.id)}">${hidden ? 'Show on calendar' : 'Remove from calendar'}</button>`;
+  return `<button class="library-calendar-footnote${hidden ? ' is-hidden' : ''}" type="button" data-toggle-library-calendar="${escapeAttr(item.id)}">${hidden ? 'Show on calendar' : 'Remove from calendar'}</button>`;
 }
 
 function libraryDetailActionContents(item, { leading = '', trailing = '' } = {}) {
-  return `${leading}${queueMoveControls(item)}${trailing}${libraryCalendarToggleButton(item)}<button class="secondary-button" type="button" data-edit-id="${escapeAttr(item.id)}">Edit</button>`;
+  return `${leading}${queueMoveControls(item)}${trailing}`;
 }
 
 function libraryDetailActions(item, { leading = '', trailing = '', className = '' } = {}) {
+  const contents = libraryDetailActionContents(item, { leading, trailing });
+  if (!contents) return '';
   const classes = ['detail-actions', 'library-detail-actions', className].filter(Boolean).join(' ');
-  return `<div class="${classes}">${libraryDetailActionContents(item, { leading, trailing })}</div>`;
+  return `<div class="${classes}">${contents}</div>`;
 }
 
 function detailEditButton(item) {
@@ -5202,13 +5204,18 @@ function formatPersonalRating(value) {
 
 function libraryPersonalMetadataMarkup(item) {
   const rating = Math.max(0, Math.min(5, Number(item.rating || 0)));
+  const calendarFootnote = libraryCalendarToggleButton(item);
   return `<div class="library-personal-meta" data-library-personal-meta="${escapeAttr(item.id)}" data-pending-rating="${rating}">
-    <div class="star-picker library-detail-rating-picker rating-with-heart" aria-label="Your rating out of five stars">
-      ${[1,2,3,4,5].map(value => `<button type="button" data-library-rating="${value}" data-item-id="${escapeAttr(item.id)}" class="${value <= rating ? 'filled' : ''}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
-      <button class="clear-rating" type="button" data-clear-library-rating data-item-id="${escapeAttr(item.id)}">clear</button>
-      <button class="rating-heart-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${escapeAttr(item.id)}" aria-label="${item.recommended ? 'Remove from Recommended' : 'Add to Recommended'}" aria-pressed="${Boolean(item.recommended)}" title="Recommended">${item.recommended ? '♥' : '♡'}</button>
+    <div class="library-personal-meta-row">
+      <div class="star-picker library-detail-rating-picker rating-with-heart" aria-label="Your rating out of five stars">
+        ${[1,2,3,4,5].map(value => `<button type="button" data-library-rating="${value}" data-item-id="${escapeAttr(item.id)}" class="${value <= rating ? 'filled' : ''}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
+        <button class="clear-rating" type="button" data-clear-library-rating data-item-id="${escapeAttr(item.id)}">clear</button>
+        <button class="rating-heart-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${escapeAttr(item.id)}" aria-label="${item.recommended ? 'Remove from Recommended' : 'Add to Recommended'}" aria-pressed="${Boolean(item.recommended)}" title="Recommended">${item.recommended ? '♥' : '♡'}</button>
+      </div>
+      <button class="secondary-button library-personal-edit" type="button" data-edit-id="${escapeAttr(item.id)}">Edit</button>
     </div>
     ${String(item.notes || '').trim() ? `<p class="library-personal-note">${escapeHtml(item.notes)}</p>` : ''}
+    ${calendarFootnote ? `<div class="library-personal-footnotes">${calendarFootnote}</div>` : ''}
     <span class="library-meta-status" aria-live="polite"></span>
   </div>`;
 }
@@ -5216,14 +5223,14 @@ function libraryPersonalMetadataMarkup(item) {
 function appendLibraryPersonalMetadata(item) {
   if (!els.detailBody || !item || els.detailBody.querySelector(`[data-library-personal-meta="${CSS.escape(item.id)}"]`)) return;
   const markup = libraryPersonalMetadataMarkup(item);
-  const slot = els.detailBody.querySelector('.detail-synopsis-content .library-personal-meta-slot');
-  if (slot) {
-    slot.innerHTML = markup;
+  const disclosure = els.detailBody.querySelector('.detail-disclosure-row');
+  if (disclosure) {
+    disclosure.insertAdjacentHTML('afterend', markup);
     return;
   }
-  const anchor = els.detailBody.querySelector('.detail-actions') || els.detailBody.querySelector('.detail-progress') || els.detailBody.querySelector('.detail-hero');
-  if (anchor) anchor.insertAdjacentHTML('afterend', markup);
-  else els.detailBody.insertAdjacentHTML('beforeend', markup);
+  const hero = els.detailBody.querySelector('.detail-hero');
+  if (hero) hero.insertAdjacentHTML('afterend', markup);
+  else els.detailBody.insertAdjacentHTML('afterbegin', markup);
 }
 
 function setLibraryPendingRating(itemId, value) {
@@ -6288,7 +6295,7 @@ function openCalendarGroup(groupKey, date) {
   const rows = entries.map(entry => {
     const rating = Number(entry.rating || 0);
     const ratingMarkup = rating > 0 ? `<div class="calendar-event-rating" aria-label="${rating} out of 5 stars">${'★'.repeat(Math.floor(rating))}${rating % 1 ? '½' : ''} <span>${rating}/5</span></div>` : '';
-    const editButton = (entry.kind === 'dated-item' || entry.kind === 'book-reading-day')
+    const editButton = (entry.kind === 'dated-item' || entry.kind === 'book-reading-day' || entry.kind === 'activity-day')
       ? `<button class="secondary-button" type="button" data-edit-calendar-item="${escapeAttr(entry.sourceItemId)}">Edit</button>`
       : `<button class="secondary-button" type="button" data-edit-history-id="${escapeAttr(entry.id)}">Edit</button>`;
     return `
