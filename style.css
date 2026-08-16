@@ -7834,9 +7834,9 @@ dialog.modal:not([open]) {
 @media (max-width: 760px) {
   .library-controls {
     display: grid !important;
-    grid-template-columns: minmax(0, 42%) 44px minmax(0, 1fr) 44px !important;
+    grid-template-columns: minmax(0, 44%) 38px minmax(0, 1fr) 38px !important;
     grid-template-rows: auto auto !important;
-    column-gap: 8px !important;
+    column-gap: 6px !important;
     row-gap: 13px !important;
     width: 100% !important;
     align-items: end !important;
