@@ -2799,6 +2799,9 @@ function makeRecentTrackedPoster(entry) {
         subcategory: entry.subcategory || ''
       };
   const shell = makeLibraryPoster(display);
+  // The Last 30 Days popup already groups entries under their date heading, so
+  // don't repeat the Library footer date inside each card.
+  shell.querySelector('.library-card-tracked-date')?.remove();
   shell.classList.add('stats-recent-card');
   const poster = shell.querySelector('.library-poster-button');
   if (poster) {
@@ -5152,7 +5155,7 @@ function normalizeAddActionCategory(value, fallback = 'other') {
 
 function inferCustomTypeActionCategory(entry) {
   if (!entry) return 'other';
-  if (ADD_ACTION_CATEGORIES.includes(String(entry.actionCategory || ''))) return entry.actionCategory;
+  if (ADD_ACTION_CATEGORIES.includes(String(entry.actionCategory || '')) && String(entry.actionCategory || '') !== 'other') return entry.actionCategory;
   const matchingItems = (state.items || []).filter(item => String(item?.type || '') === String(entry.type || ''));
   const explicitCounts = new Map();
   for (const item of matchingItems) {
@@ -5172,7 +5175,7 @@ function inferCustomTypeActionCategory(entry) {
     if (source === 'recipe' || source === 'food') return 'ate';
     if (source === 'workout' || source === 'class') return 'completed';
   }
-  return 'other';
+  return 'completed';
 }
 
 function customAddKindOptions() {
@@ -5210,23 +5213,34 @@ function kindForCurrentForm(item = null) {
   return parent || 'workout';
 }
 
-function refreshItemKindChoices(preferredKind = '') {
+function refreshItemKindChoices(preferredKind = '', preferredAction = '') {
   if (!els.itemKindChoice) return;
-  const custom = customAddKindOptions();
+  const requestedKind = preferredKind || els.itemKindChoice.value || '';
+  const inferredAction = requestedKind && requestedKind !== 'new-type' ? addActionForKind(requestedKind) : '';
+  const action = normalizeAddActionCategory(preferredAction || els.itemActionChoice?.value || inferredAction || 'completed', 'completed');
+  const fixed = OVERALL_ADD_KIND_OPTIONS.filter(option => option.actionCategory === action);
+  const allCustom = customAddKindOptions();
+  const custom = allCustom.filter(option => option.actionCategory === action);
+  // While editing a custom Type, keep that Type selected if the user changes I…
+  // so saving can move the Type into its new action group instead of switching items.
+  if (String(requestedKind).startsWith('custom:') && !custom.some(option => option.value === requestedKind)) {
+    const currentCustom = allCustom.find(option => option.value === requestedKind);
+    if (currentCustom) custom.unshift(currentCustom);
+  }
   const options = [
-    ...OVERALL_ADD_KIND_OPTIONS,
+    ...fixed,
     ...custom,
-    { value: 'new-type', label: 'Create New…', parent: 'other', createNew: true }
+    { value: 'new-type', label: 'Create your own…', parent: 'other', createNew: true }
   ];
-  const current = preferredKind || els.itemKindChoice.value || 'workout';
-  const fixedMarkup = OVERALL_ADD_KIND_OPTIONS
+  const fixedMarkup = fixed
     .map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`)
     .join('');
   const customMarkup = custom.length
     ? `<optgroup label="Your types">${custom.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('')}</optgroup>`
     : '';
-  els.itemKindChoice.innerHTML = `${fixedMarkup}${customMarkup}<option value="new-type">Create New…</option>`;
-  els.itemKindChoice.value = options.some(option => option.value === current) ? current : 'workout';
+  els.itemKindChoice.innerHTML = `${fixedMarkup}${customMarkup}<option value="new-type">Create your own…</option>`;
+  const fallback = fixed[0]?.value || custom[0]?.value || 'new-type';
+  els.itemKindChoice.value = options.some(option => option.value === requestedKind) ? requestedKind : fallback;
 }
 
 function setUnderlyingFormTypeForKind(kind) {
@@ -5238,7 +5252,7 @@ function setUnderlyingFormTypeForKind(kind) {
   refreshItemTypeOptions(parent);
   els.itemSourceType.value = parent;
   configureItemSubtype(true);
-  if (els.itemActionChoice) els.itemActionChoice.value = addActionForKind(kind);
+  if (els.itemActionChoice && kind !== 'new-type') els.itemActionChoice.value = addActionForKind(kind);
 }
 
 function applyItemKindChoice(clearSource = false) {
@@ -5251,11 +5265,10 @@ function applyItemKindChoice(clearSource = false) {
 function syncAddActionControls(item = null) {
   if (!els.itemKindChoice) return;
   const kind = kindForCurrentForm(item);
-  refreshItemKindChoices(kind);
-  if (els.itemActionChoice) {
-    const stored = String(item?.actionCategory || '');
-    els.itemActionChoice.value = ADD_ACTION_CATEGORIES.includes(stored) ? stored : addActionForKind(kind);
-  }
+  const stored = String(item?.actionCategory || '');
+  const action = ADD_ACTION_CATEGORIES.includes(stored) && stored !== 'other' ? stored : addActionForKind(kind);
+  if (els.itemActionChoice) els.itemActionChoice.value = action === 'other' ? 'completed' : action;
+  refreshItemKindChoices(kind, els.itemActionChoice?.value || action);
 }
 
 function preferredAddKindFromUsage() {
@@ -6427,7 +6440,7 @@ async function saveItemFromForm(event) {
   const buddyFriendId = startBuddyAfterSave ? (els.itemBuddyWatchPerson?.value || '') : '';
   const sourceType = selectedFormSourceType();
   const editing = findItem(els.editingId.value);
-  const selectedActionCategory = normalizeAddActionCategory(addActionForKind(els.itemKindChoice?.value || kindForCurrentForm(editing)) || editing?.actionCategory || 'other');
+  const selectedActionCategory = normalizeAddActionCategory(els.itemActionChoice?.value || editing?.actionCategory || addActionForKind(els.itemKindChoice?.value || kindForCurrentForm(editing)) || 'completed', 'completed');
   const reminderFeature = formUsesReminder();
   const repeatLogFeature = formUsesRepeatLog();
   let title = els.manualTitle.value.trim();
@@ -14735,6 +14748,27 @@ function itemLastTrackedDate(item) {
   return dates.sort().at(-1) || '';
 }
 
+function libraryCardFooterDate(item) {
+  if (!item || getSourceType(item) === 'book') return '';
+  const sourceType = getSourceType(item);
+
+  // Match Library's in-card date badge: explicit logged/history dates plus item.date.
+  // Do not use completedAt or createdAt, because those are storage/completion metadata
+  // and can differ from the date the user actually watched/went/completed something.
+  if (sourceType === 'activity') {
+    const start = String(item.activityMeta?.startDate || item.date || '').slice(0, 10);
+    const end = String(item.activityMeta?.endDate || start).slice(0, 10);
+    return end || start;
+  }
+
+  const dates = state.history
+    .filter(entry => entry.sourceItemId === item.id && entry.date)
+    .map(entry => String(entry.date).slice(0, 10))
+    .filter(Boolean);
+  if (item.date) dates.push(String(item.date).slice(0, 10));
+  return [...new Set(dates)].sort().at(-1) || '';
+}
+
 function normalizeLibraryPrefs(value) {
   const keys = Array.isArray(value?.defaultTypeKeys)
     ? [...new Set(value.defaultTypeKeys.map(key => slugifyType(key)).filter(Boolean))]
@@ -14813,9 +14847,10 @@ function refreshTypeFilter() {
       <span>${escapeHtml(label)}</span>
     </label>`).join('');
   els.typeFilterOptions.innerHTML = `${options}
-    <div class="library-type-filter-actions" aria-label="Filter defaults">
+    <div class="library-type-filter-actions" aria-label="Type tools">
       <button type="button" data-library-filter-action="save-default">Make current default</button>
       <button type="button" data-library-filter-action="reset-default">Reset default</button>
+      <button type="button" data-library-filter-action="clean-unused">Clean up unused types</button>
       <small class="library-type-filter-status" aria-live="polite"></small>
     </div>`;
   if (els.typeFilterSummary) els.typeFilterSummary.textContent = libraryTypeFilterSummary();
@@ -14855,6 +14890,76 @@ function resetLibraryFilterDefault() {
   libraryFilterStatus('Default reset');
 }
 
+function unusedCustomTypes() {
+  return (state.customTypes || []).filter(custom => {
+    const type = String(custom?.type || '');
+    if (!type) return false;
+    const hasItem = state.items.some(item => String(item?.type || '') === type);
+    const hasHistory = state.history.some(entry => String(entry?.type || '') === type);
+    return !hasItem && !hasHistory;
+  });
+}
+
+function cleanUpUnusedTypes() {
+  const unused = unusedCustomTypes();
+  if (!unused.length) {
+    libraryFilterStatus('No unused types');
+    return;
+  }
+  const labels = unused.map(entry => cleanTypeLabel(entry.label || getTypeLabel(entry.type))).filter(Boolean);
+  const preview = labels.slice(0, 8).join(', ');
+  const more = labels.length > 8 ? ` +${labels.length - 8} more` : '';
+  if (!confirm(`Remove ${unused.length} unused ${unused.length === 1 ? 'type' : 'types'}?\n\n${preview}${more}\n\nNo Library items or tracked history will be deleted.`)) return;
+
+  const removedTypes = new Set(unused.map(entry => String(entry.type || '')));
+  const removedGroupKeys = new Set(unused.map(entry => slugifyType(entry.label || getTypeLabel(entry.type))));
+  state.customTypes = state.customTypes.filter(entry => !removedTypes.has(String(entry.type || '')));
+
+  const nextUsage = { ...(state.typeUsage || {}) };
+  for (const type of removedTypes) {
+    delete nextUsage[type];
+    delete nextUsage[`custom:${type}`];
+    delete nextUsage[`builtin:${type}`];
+  }
+  state.typeUsage = nextUsage;
+
+  const nextStickerPrefs = { ...(state.stickerPrefs || {}) };
+  for (const key of Object.keys(nextStickerPrefs)) {
+    if (key === '__calendar') continue;
+    if ([...removedTypes].some(type => key === type || key.startsWith(`${type}::subcategory::`))) delete nextStickerPrefs[key];
+  }
+  state.stickerPrefs = nextStickerPrefs;
+
+  const nextStreakPrefs = { ...(state.streakPrefs || {}) };
+  for (const key of Object.keys(nextStreakPrefs)) {
+    if (removedTypes.has(key) || removedGroupKeys.has(key)) delete nextStreakPrefs[key];
+  }
+  state.streakPrefs = nextStreakPrefs;
+
+  const prefs = normalizeLibraryPrefs(state.libraryPrefs);
+  if (Array.isArray(prefs.defaultTypeKeys)) {
+    prefs.defaultTypeKeys = prefs.defaultTypeKeys.filter(key => !removedGroupKeys.has(slugifyType(key)));
+  }
+  state.libraryPrefs = prefs;
+  if (state.libraryVisibleTypes instanceof Set) {
+    for (const key of removedGroupKeys) state.libraryVisibleTypes.delete(key);
+  }
+
+  safeLocalSet(CUSTOM_TYPES_KEY, state.customTypes);
+  safeLocalSet(TYPE_USAGE_KEY, state.typeUsage);
+  safeLocalSet(STICKER_PREFS_KEY, state.stickerPrefs);
+  safeLocalSet(STREAK_PREFS_KEY, state.streakPrefs);
+  safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
+  scheduleCloudSync();
+  refreshItemTypeOptions?.();
+  refreshItemKindChoices?.('', els.itemActionChoice?.value || 'completed');
+  refreshTypeFilter();
+  renderLibrary();
+  if (els.stickerSettingsRows) renderStickerSettingsRows();
+  if (els.streakSettingsRows) renderStreakSettingsRows();
+  libraryFilterStatus(`Removed ${unused.length} unused ${unused.length === 1 ? 'type' : 'types'}`);
+}
+
 function handleLibraryTypeFilterAction(event) {
   const button = event.target.closest?.('[data-library-filter-action]');
   if (!button) return;
@@ -14862,6 +14967,7 @@ function handleLibraryTypeFilterAction(event) {
   event.stopPropagation();
   if (button.dataset.libraryFilterAction === 'save-default') saveCurrentLibraryFilterAsDefault();
   if (button.dataset.libraryFilterAction === 'reset-default') resetLibraryFilterDefault();
+  if (button.dataset.libraryFilterAction === 'clean-unused') cleanUpUnusedTypes();
 }
 
 function renderLibraryDefaultTypeOptions(selectedKeys = new Set(libraryDefaultTypeKeys())) {
@@ -15092,11 +15198,11 @@ function makeLibraryPoster(item) {
   albumButton.setAttribute('aria-label', `Add ${item.title} to album`);
   albumButton.title = 'Add to collection';
   shell.append(poster, albumButton);
-  const trackedDate = itemLastTrackedDate(item);
+  const trackedDate = libraryCardFooterDate(item);
   if (trackedDate) {
     const tracked = document.createElement('span');
     tracked.className = 'library-card-tracked-date';
-    tracked.textContent = `Tracked ${formatShortCalendarDate(trackedDate)}`;
+    tracked.textContent = formatShortCalendarDate(trackedDate);
     shell.appendChild(tracked);
   }
   return shell;

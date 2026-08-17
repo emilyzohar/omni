@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-card-date-layout-50" />
+  <link rel="stylesheet" href="style.css?v=omni-add-features-date-cleanup-55" />
 </head>
 <body class="library-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -216,14 +216,16 @@
             <option value="watched">Watched</option>
             <option value="read">Read</option>
             <option value="played">Played</option>
-            <option value="went">Went</option>
-            <option value="completed">Completed</option>
-            <option value="other">Other</option>
+            <option value="went">Went to</option>
+            <option value="listened">Listened to</option>
+            <option value="ate">Ate</option>
+            <option value="made">Made</option>
+            <option value="completed" selected>Completed</option>
           </select>
         </label>
         <label class="field">
-          <span>What…</span>
-          <select id="itemKindChoice" aria-label="What kind of thing?"></select>
+          <span>Type</span>
+          <select id="itemKindChoice" aria-label="Type"></select>
         </label>
       </div>
 
@@ -243,7 +245,7 @@
           <option value="youtube">YouTube</option>
           <option value="workout">Workouts</option>
           <option value="reminder">Reminder</option>
-          <option value="other">Other</option>
+          <option value="other">Create New</option>
         </select>
       </label>
 
@@ -269,6 +271,40 @@
         <input id="itemDisplayType" type="text" autocomplete="off" placeholder="Workout" />
       </label>
 
+      <details id="itemFeaturesDisclosure" class="compact-add-option item-features-disclosure">
+        <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Add features</span><small id="itemFeaturesSummary">None</small></summary>
+        <div class="compact-add-body item-feature-grid">
+          <div id="itemFindSourceDisclosure" class="item-feature-source">
+            <label class="field compact-field">
+              <span>Find / link with</span>
+              <select id="itemFindSource" aria-label="Find or link with a service">
+                <option value="auto">Automatic for this type</option>
+                <option value="manual">No linked source</option>
+                <option value="youtube-videos">YouTube</option>
+                <option value="google-places">Google Maps / Places</option>
+                <option value="ticketmaster-events">Live events · Ticketmaster</option>
+                <option value="ticketmaster-concerts">Concerts · Ticketmaster</option>
+                <option value="tmdb-tv">TV · TMDB</option>
+                <option value="tmdb-movie">Movies · TMDB</option>
+                <option value="google-books">Books · Google Books</option>
+                <option value="igdb-games">Video games · IGDB</option>
+                <option value="bgg-games">Board games · BoardGameGeek</option>
+                <option value="apple-albums">Albums · Apple Music</option>
+                <option value="lastfm-artists">Artists · Last.fm</option>
+                <option value="apple-songs">Songs · Apple Music</option>
+              </select>
+            </label>
+            <small id="itemFindSourceSummary" class="item-feature-inline-summary">Automatic</small>
+          </div>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUseRepeatLog" type="checkbox" /><span>Class / repeatable sessions</span></label>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUseReminder" type="checkbox" /><span>Reminder / recurrence</span></label>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUseDateRange" type="checkbox" /><span>Date range / multiple days</span></label>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUsePlaylist" type="checkbox" /><span>YouTube playlist progress</span></label>
+          <label class="field compact-field"><span>Progress tracking</span><select id="itemProgressMode"><option value="auto">Automatic</option><option value="none">None</option><option value="tv">Episodes</option><option value="book">Pages</option></select></label>
+          <p class="compact-feature-help">Features are independent of Type. For example, a Workout can use Class-style sessions and YouTube, or an Event can use a reminder and Google Maps.</p>
+        </div>
+      </details>
+
       <div id="catalogueSearchBlock" class="find-it-block">
         <label class="field">
           <span>Find it</span>
@@ -277,40 +313,9 @@
             <button id="catalogueSearchButton" class="secondary-button" type="button">Search</button>
           </div>
         </label>
-        <details id="itemFindSourceDisclosure" class="compact-add-option find-source-disclosure">
-          <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Search source</span><small id="itemFindSourceSummary">Automatic</small></summary>
-          <label class="field compact-field compact-add-body">
-            <span class="sr-only">Search source</span>
-            <select id="itemFindSource" aria-label="Search source">
-              <option value="auto">Automatic</option>
-              <option value="tmdb-tv">TV · TMDB</option>
-              <option value="tmdb-movie">Movies · TMDB</option>
-              <option value="google-books">Books · Google Books</option>
-              <option value="igdb-games">Video games · IGDB</option>
-              <option value="bgg-games">Board games · BoardGameGeek</option>
-              <option value="apple-albums">Music albums · Apple Music</option>
-              <option value="lastfm-artists">Artists · Last.fm</option>
-              <option value="apple-songs">Songs · Apple Music</option>
-              <option value="youtube-videos">YouTube videos · YouTube</option>
-              <option value="google-places">Places · Google Maps</option>
-              <option value="ticketmaster-events">Events · Ticketmaster</option>
-              <option value="ticketmaster-concerts">Concerts · Ticketmaster</option>
-              <option value="manual">No lookup</option>
-            </select>
-          </label>
-        </details>
         <div id="searchResults" class="search-results" hidden></div>
         <div id="selectedSource" class="selected-source" hidden></div>
       </div>
-
-      <details id="itemFeaturesDisclosure" class="compact-add-option item-features-disclosure">
-        <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Options</span><small id="itemFeaturesSummary">automatic</small></summary>
-        <div class="compact-add-body item-feature-grid">
-          <label class="field compact-field"><span>Progress</span><select id="itemProgressMode"><option value="auto">Automatic</option><option value="none">None</option><option value="tv">Episodes</option><option value="book">Pages</option></select></label>
-          <label class="checkbox-field compact-feature-toggle"><input id="itemUseDateRange" type="checkbox" /><span>Multiple days</span></label>
-          <label class="checkbox-field compact-feature-toggle"><input id="itemUsePlaylist" type="checkbox" /><span>YouTube playlist</span></label>
-        </div>
-      </details>
 
       <div id="workoutBlock" hidden>
         <label class="field">
@@ -651,6 +656,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-games-51"></script>
+  <script type="module" src="app.js?v=omni-add-features-date-cleanup-55"></script>
 </body>
 </html>

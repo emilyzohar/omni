@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-flexible-functionality-54" />
+  <link rel="stylesheet" href="style.css?v=omni-add-features-date-cleanup-55" />
 </head>
 <body class="auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -242,12 +242,24 @@
       <input id="providerImage" type="hidden" />
       <input id="providerSubtitle" type="hidden" />
 
-      <div class="add-type-grid">
+      <div class="add-intent-grid">
+        <label class="field">
+          <span>I…</span>
+          <select id="itemActionChoice" aria-label="What did you do?">
+            <option value="watched">Watched</option>
+            <option value="read">Read</option>
+            <option value="played">Played</option>
+            <option value="went">Went to</option>
+            <option value="listened">Listened to</option>
+            <option value="ate">Ate</option>
+            <option value="made">Made</option>
+            <option value="completed" selected>Completed</option>
+          </select>
+        </label>
         <label class="field">
           <span>Type</span>
           <select id="itemKindChoice" aria-label="Type"></select>
         </label>
-        <input id="itemActionChoice" type="hidden" value="completed" />
       </div>
 
       <label class="field add-underlying-type" hidden>
@@ -677,6 +689,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-type-feature-taxonomy-55"></script>
+  <script type="module" src="app.js?v=omni-add-features-date-cleanup-55"></script>
 </body>
 </html>
