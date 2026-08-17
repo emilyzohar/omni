@@ -2559,7 +2559,7 @@ function renderGenrePie(genres = []) {
   const overflow = genres.slice(9);
   if (overflow.length) visible.push({ label:'Other', count:overflow.reduce((sum,entry) => sum + entry[1],0), labels:overflow.map(entry => entry[0]) });
   const total = visible.reduce((sum,entry) => sum + entry.count,0) || 1;
-const genreColors = {
+  const genreColors = {
   Romance: '#f77390',
   Crime: '#65151B',
   Horror: '#17151D',
@@ -2577,16 +2577,21 @@ const genreColors = {
   History: '#8F6246',
   'Other': '#aaa9a9' 
 };
-
+  const genreAliases = {
+    'Sci-Fi & Fantasy': 'Science Fiction',
+    'Action & Adventure': 'Action',
+    Kids: 'Family'
+  };
+  const genreColor = label => genreColors[genreAliases[label] || label] || genreColors.Other;
   let angle = -Math.PI / 2;
-  const paths = visible.map((entry,index) => {
+  const paths = visible.map(entry => {
     const next = angle + (entry.count / total) * Math.PI * 2;
     const d = statsPiePath(100,100,82,angle,next);
     angle = next;
     const encoded = escapeAttr(JSON.stringify(entry.labels));
-    return `<path class="stats-genre-slice" d="${d}" fill="${palette[index % palette.length]}" tabindex="0" role="button" data-stats-genre-list="${encoded}" aria-label="${escapeAttr(`${entry.label}: ${entry.count}`)}"><title>${escapeHtml(entry.label)} · ${entry.count}</title></path>`;
+    return `<path class="stats-genre-slice" d="${d}" fill="${genreColor(entry.label)}" tabindex="0" role="button" data-stats-genre-list="${encoded}" aria-label="${escapeAttr(`${entry.label}: ${entry.count}`)}"><title>${escapeHtml(entry.label)} · ${entry.count}</title></path>`;
   }).join('');
-  const legend = visible.map((entry,index) => `<button class="stats-genre-legend-row" type="button" data-stats-genre-list="${escapeAttr(JSON.stringify(entry.labels))}"><span class="stats-genre-swatch" style="--genre-color:${palette[index % palette.length]}"></span><span>${escapeHtml(entry.label)}</span><strong>${entry.count}</strong></button>`).join('');
+  const legend = visible.map(entry => `<button class="stats-genre-legend-row" type="button" data-stats-genre-list="${escapeAttr(JSON.stringify(entry.labels))}"><span class="stats-genre-swatch" style="--genre-color:${genreColor(entry.label)}"></span><span>${escapeHtml(entry.label)}</span><strong>${entry.count}</strong></button>`).join('');
   els.statsGenres.innerHTML = `<div class="stats-genre-pie-layout"><svg class="stats-genre-pie" viewBox="0 0 200 200" role="img" aria-label="Genres watched pie chart">${paths}</svg><div class="stats-genre-legend">${legend}</div></div>`;
 }
 
