@@ -9345,3 +9345,517 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
 }
 
 .social-profile-library-window { grid-template-columns: 1fr; align-items: stretch; }
+
+/* =========================================================
+   Social profile refinement — Omni palette + themed profile surfaces
+   ========================================================= */
+.social-page {
+  --social-bg: var(--cream-2);
+  --social-paper: var(--paper);
+  --social-ink: var(--ink);
+  --social-accent: var(--blue-deep);
+  --social-accent-deep: #6676ad;
+  --social-soft: rgba(139,153,202,.11);
+  background: var(--cream-2);
+}
+.social-page .site-header { background: var(--maroon); }
+.social-page .site-header .nav { color: #fff8e8; }
+.social-page .social-section {
+  background:
+    radial-gradient(circle at 92% 2%, rgba(139,153,202,.08), transparent 24%),
+    var(--cream-2);
+}
+.social-page .primary-button { background: var(--ink); }
+.social-page .secondary-button:hover,
+.social-page .social-follow-button:hover { background: rgba(139,153,202,.11); }
+.social-page .social-profile-settings-modal,
+.social-page .social-view-profile-modal,
+.social-page .social-item-detail-modal { background: #fbf8ec; }
+.social-page .social-tab.is-active,
+.social-page .library-folder-tab.is-active { color: var(--ink); }
+.social-page .library-carousel-button,
+.social-page .library-expand-button { color: #59616f; }
+
+/* Theme chooser uses the same six families as Track. */
+.social-profile-theme-card { overflow: visible; }
+.social-profile-theme-head > span { display: grid; gap: 2px; }
+.social-profile-theme-head strong { font-size: .86rem; }
+.social-profile-theme-head small { color: #777871; font-size: .7rem; }
+.social-profile-theme-picker {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  padding: 0 13px 13px;
+}
+.social-profile-theme-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid rgba(21,36,58,.10);
+  border-radius: 999px;
+  background: rgba(255,255,255,.64);
+  cursor: pointer;
+  font-size: .68rem;
+  font-weight: 700;
+}
+.social-profile-theme-choice:has(input:checked) {
+  border-color: rgba(21,36,58,.28);
+  box-shadow: 0 0 0 2px rgba(139,153,202,.13);
+}
+.social-profile-theme-choice input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.social-profile-theme-dot {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(21,36,58,.12);
+}
+.social-profile-theme-choice[data-social-profile-theme-choice="blue"] .social-profile-theme-dot { background: var(--blue); }
+.social-profile-theme-choice[data-social-profile-theme-choice="burgundy"] .social-profile-theme-dot { background: #742b3e; }
+.social-profile-theme-choice[data-social-profile-theme-choice="slate"] .social-profile-theme-dot { background: #586a7d; }
+.social-profile-theme-choice[data-social-profile-theme-choice="charcoal"] .social-profile-theme-dot { background: #454c55; }
+.social-profile-theme-choice[data-social-profile-theme-choice="forest"] .social-profile-theme-dot { background: #566d5c; }
+.social-profile-theme-choice[data-social-profile-theme-choice="espresso"] .social-profile-theme-dot { background: #665149; }
+
+/* The chosen profile colour is deliberately softer than Track so the Library
+   remains readable and still feels like Omni. */
+.social-profile-surface,
+.social-profile-library-window {
+  --profile-bg: #eef0f7;
+  --profile-accent: #7889c2;
+  --profile-border: rgba(120,137,194,.19);
+}
+.social-profile-surface[data-social-profile-theme="blue"],
+.social-profile-library-window[data-social-profile-theme="blue"] {
+  --profile-bg: #edf0f8;
+  --profile-accent: #7889c2;
+  --profile-border: rgba(120,137,194,.20);
+}
+.social-profile-surface[data-social-profile-theme="burgundy"],
+.social-profile-library-window[data-social-profile-theme="burgundy"] {
+  --profile-bg: #f3e9eb;
+  --profile-accent: #742b3e;
+  --profile-border: rgba(116,43,62,.18);
+}
+.social-profile-surface[data-social-profile-theme="slate"],
+.social-profile-library-window[data-social-profile-theme="slate"] {
+  --profile-bg: #ebeff1;
+  --profile-accent: #586a7d;
+  --profile-border: rgba(88,106,125,.18);
+}
+.social-profile-surface[data-social-profile-theme="charcoal"],
+.social-profile-library-window[data-social-profile-theme="charcoal"] {
+  --profile-bg: #edeeef;
+  --profile-accent: #454c55;
+  --profile-border: rgba(69,76,85,.17);
+}
+.social-profile-surface[data-social-profile-theme="forest"],
+.social-profile-library-window[data-social-profile-theme="forest"] {
+  --profile-bg: #ebf0ec;
+  --profile-accent: #566d5c;
+  --profile-border: rgba(86,109,92,.18);
+}
+.social-profile-surface[data-social-profile-theme="espresso"],
+.social-profile-library-window[data-social-profile-theme="espresso"] {
+  --profile-bg: #f0ebe8;
+  --profile-accent: #665149;
+  --profile-border: rgba(102,81,73,.18);
+}
+.social-profile-surface {
+  display: grid;
+  gap: 20px;
+  padding: 20px;
+  border: 1px solid var(--profile-border);
+  border-radius: 22px;
+  background: var(--profile-bg);
+}
+.social-profile-surface .social-profile-hero { border-bottom-color: var(--profile-border); }
+.social-profile-surface .social-avatar {
+  background: var(--profile-accent);
+  color: #fff8e8;
+}
+.social-profile-surface .library-group-title,
+.social-profile-surface .social-profile-library-heading h3 { color: var(--ink); }
+.social-profile-library-window {
+  border-color: var(--profile-border);
+  background: color-mix(in srgb, var(--profile-bg) 54%, var(--paper));
+  box-shadow: 0 6px 18px rgba(21,36,58,.065);
+}
+.social-profile-library-window::before {
+  content: '';
+  height: 3px;
+  margin: -12px -12px 0;
+  border-radius: 15px 15px 0 0;
+  background: var(--profile-accent);
+  opacity: .72;
+}
+.social-library-window-preview {
+  background: rgba(255,255,255,.46);
+  color: var(--ink);
+}
+.social-library-window-preview:hover { background: rgba(255,255,255,.72); }
+.social-library-window-open { color: var(--profile-accent); }
+.social-profile-hero .social-avatar { background: var(--profile-accent); color: #fff8e8; }
+
+/* Totals become small metadata pills rather than dashboard cards. */
+.social-total-summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: -4px;
+}
+.social-total-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-height: 28px;
+  padding: 5px 9px;
+  border: 1px solid var(--profile-border);
+  border-radius: 999px;
+  background: rgba(255,255,255,.46);
+  color: #606773;
+  font-size: .66rem;
+}
+.social-total-pill strong {
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: .9rem;
+  font-weight: 700;
+}
+
+/* Streaks use the same compact pill language as the Track streak summary. */
+.social-shared-streaks { gap: 7px; padding: 0; }
+.social-shared-streaks .social-shared-section-heading h3 {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: #74766f;
+}
+.social-track-streak-summary {
+  margin: 0;
+  gap: 7px;
+}
+.social-track-streak-card {
+  min-height: 36px;
+  padding: 4px 9px 4px 4px;
+  border-color: var(--profile-border);
+  background: rgba(255,255,255,.48);
+  color: var(--ink);
+}
+.social-track-streak-card .track-streak-sticker {
+  width: 26px;
+  height: 26px;
+  flex-basis: 26px;
+}
+.social-track-streak-card .track-streak-copy {
+  display: grid;
+  gap: 0;
+}
+.social-track-streak-card .track-streak-copy strong {
+  font-size: .68rem;
+  line-height: 1.1;
+}
+.social-track-streak-card .track-streak-copy small {
+  color: #737875;
+  font-size: .6rem;
+  line-height: 1.15;
+}
+
+/* Profile Library cards now behave like Library cards: click for details. */
+.social-library-poster {
+  appearance: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.social-library-poster:hover {
+  transform: translateY(-3px) rotate(-.25deg);
+  filter: brightness(1.015);
+}
+.social-library-poster:focus-visible {
+  outline: 2px solid var(--profile-accent);
+  outline-offset: 3px;
+}
+
+/* Read-only profile item details with actions that apply only to the viewer. */
+.social-item-detail-modal {
+  width: min(760px, calc(100% - 30px));
+}
+.social-item-detail-modal[data-social-profile-theme="blue"] { --social-detail-accent: #7889c2; }
+.social-item-detail-modal[data-social-profile-theme="burgundy"] { --social-detail-accent: #742b3e; }
+.social-item-detail-modal[data-social-profile-theme="slate"] { --social-detail-accent: #586a7d; }
+.social-item-detail-modal[data-social-profile-theme="charcoal"] { --social-detail-accent: #454c55; }
+.social-item-detail-modal[data-social-profile-theme="forest"] { --social-detail-accent: #566d5c; }
+.social-item-detail-modal[data-social-profile-theme="espresso"] { --social-detail-accent: #665149; }
+.social-detail-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 13px;
+}
+.social-detail-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 27px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(21,36,58,.055);
+  color: #5d6470;
+  font-size: .68rem;
+  font-weight: 750;
+}
+.social-detail-badge.is-recommended { color: var(--maroon); background: rgba(114,0,20,.065); }
+.social-shared-personal-detail {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+}
+.social-shared-personal-detail h3 { margin-bottom: 0; }
+.social-detail-rating {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: fit-content;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: rgba(21,36,58,.055);
+  font-size: .75rem;
+}
+.social-detail-rating span {
+  color: #858071;
+  font-size: .66rem;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.social-detail-rating strong { color: #8c6d16; }
+.social-detail-notes {
+  display: grid;
+  gap: 5px;
+  max-width: 620px;
+}
+.social-detail-notes > span {
+  color: #858071;
+  font-size: .66rem;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.social-detail-notes p {
+  margin: 0;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.social-item-own-actions {
+  padding-top: 14px;
+  border-top: 1px solid rgba(21,36,58,.08);
+}
+.social-item-own-actions::before {
+  content: 'Add to your Omni';
+  align-self: center;
+  margin-right: 4px;
+  color: #7b7a72;
+  font-size: .66rem;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 760px) {
+  .social-profile-surface {
+    padding: 14px;
+    border-radius: 17px;
+  }
+  .social-profile-theme-picker { gap: 5px; }
+  .social-profile-theme-choice { padding: 6px 8px; }
+  .social-total-summary,
+  .social-track-streak-summary {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scrollbar-width: none;
+  }
+  .social-total-summary::-webkit-scrollbar,
+  .social-track-streak-summary::-webkit-scrollbar { display: none; }
+  .social-total-pill,
+  .social-track-streak-card { flex: 0 0 auto; }
+  .social-item-detail-modal { width: 100%; }
+  .social-item-own-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .social-item-own-actions .queue-toggle-buttons { width: 100%; }
+  .social-item-own-actions .queue-toggle-button { flex: 1; }
+}
+
+/* =========================================================
+   Social profile cards v4 — active TV progress, logged dates, separate TBR
+   ========================================================= */
+.social-library-progress-badge {
+  right: 6px !important;
+  bottom: 6px !important;
+  background: var(--profile-accent, #7889c2);
+}
+.social-library-poster:has(.library-rating-badge) .social-library-progress-badge {
+  bottom: 6px !important;
+}
+
+.social-library-date-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 34px;
+  z-index: 4;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 6px;
+  border-radius: 999px;
+  background: rgba(251,250,245,.90);
+  color: #59616b;
+  box-shadow: 0 2px 6px rgba(0,0,0,.09);
+  backdrop-filter: blur(5px);
+  font: 750 .54rem/1 var(--sans);
+}
+
+/* Only exceptional dispositions appear as badges. Ordinary TV/Book status is
+   represented by the expanded Library subgroup headings instead. */
+.social-library-status-badge {
+  left: auto;
+  right: 7px;
+  bottom: 7px;
+}
+.social-library-poster:has(.social-library-progress-badge) .social-library-status-badge {
+  bottom: 7px;
+}
+
+.social-library-poster:has(.social-library-date-badge) .social-library-people-badge,
+.social-library-poster:has(.social-library-progress-badge):has(.social-library-date-badge) .social-library-people-badge {
+  bottom: 60px;
+}
+
+.social-library-tbr-share {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: rgba(139,153,202,.075);
+  color: var(--ink);
+}
+.social-library-tbr-share input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+}
+.social-library-tbr-share > span {
+  display: grid;
+  gap: 2px;
+}
+.social-library-tbr-share strong { font-size: .75rem; }
+.social-library-tbr-share small {
+  color: #73766f;
+  font-size: .64rem;
+  line-height: 1.35;
+}
+
+.social-profile-tbr-browser {
+  display: grid;
+  gap: 18px;
+  margin-top: 8px;
+  padding-top: 20px;
+  border-top: 1px solid var(--profile-border, rgba(21,36,58,.10));
+}
+.social-profile-tbr-heading {
+  padding-top: 0;
+  border-top: 0;
+}
+.social-profile-tbr-note {
+  color: #7b776c;
+  font-size: .68rem;
+  font-weight: 650;
+}
+
+@media (max-width: 760px) {
+  .social-profile-tbr-heading {
+    align-items: flex-start;
+    flex-direction: row;
+  }
+  .social-profile-tbr-note { text-align: right; }
+}
+
+
+/* =========================================================
+   Buddy Watch entry points + social profile card cleanup
+   ========================================================= */
+.upnext-actions {
+  gap: 7px;
+}
+.queue-buddy-button {
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(21,36,58,.055);
+  color: var(--ink);
+  font-size: .68rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+.queue-buddy-button:hover,
+.queue-buddy-button:focus-visible {
+  background: rgba(21,36,58,.10);
+  outline: none;
+}
+.buddy-watch-item-action { white-space: nowrap; }
+.save-buddy-watch-item[hidden] { display: none !important; }
+.buddy-watch-quick-item {
+  display: grid;
+  grid-template-columns: 48px minmax(0,1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  border-radius: 12px;
+  background: rgba(139,153,202,.10);
+}
+.buddy-watch-quick-item img,
+.buddy-watch-quick-placeholder {
+  width: 48px;
+  height: 62px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: rgba(21,36,58,.08);
+}
+.buddy-watch-quick-item span:last-child { min-width: 0; display: grid; gap: 3px; }
+.buddy-watch-quick-item strong,
+.buddy-watch-quick-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.buddy-watch-quick-item small { color: var(--muted); font-size: .75rem; }
+
+/* Watched/logged dates are detail metadata, never poster overlays. */
+.social-library-date-badge { display: none !important; }
+.social-shared-watch-date { margin-top: 10px; }
+
+/* TBR is no longer a separate profile browser; old snapshot markup stays hidden
+   if a cached render briefly survives while v7 republishes. */
+.social-profile-tbr-browser { display: none !important; }
+
+@media (max-width: 620px) {
+  .upnext-actions { flex-direction: column; gap: 4px; }
+  .queue-buddy-button { min-height: 28px; padding: 4px 7px; font-size: .62rem; }
+  .save-buddy-watch-item { order: -1; }
+}

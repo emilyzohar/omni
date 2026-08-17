@@ -433,6 +433,7 @@ const els = {
   itemModalEyebrow: $('#itemModalEyebrow'),
   itemModalTitle: $('#itemModalTitle'),
   deleteItem: $('#deleteItem'),
+  saveBuddyWatchItem: $('#saveBuddyWatchItem'),
   formMessage: $('#formMessage'),
   bookProgressForm: $('#bookProgressForm'),
   bookProgressId: $('#bookProgressId'),
@@ -923,6 +924,12 @@ function bindEvents() {
   els.tvClearWatched?.addEventListener('click', () => { state.tvDraftBulkBaseline = null; setAllTVDraftEpisodes(false); });
   els.itemForm?.addEventListener('submit', saveItemFromForm);
   els.deleteItem?.addEventListener('click', deleteEditingItem);
+  document.addEventListener('click', event => {
+    const shortcut = event.target.closest('[data-buddy-watch-item]');
+    if (!shortcut) return;
+    const item = findItem(shortcut.dataset.buddyWatchItem || '');
+    if (item) openQuickBuddyWatchForItem(item).catch(error => console.warn('[Buddy Watch] could not open:', error));
+  });
   els.historyEditForm?.addEventListener('submit', saveHistoryEdit);
   els.historyEditDelete?.addEventListener('click', deleteHistoryEdit);
   els.historyRatingPicker?.addEventListener('click', chooseHistoryRating);
@@ -2124,6 +2131,10 @@ function queueCardMarkup(item, info) {
     action = `<button class="check-button" type="button" data-action="complete" data-id="${item.id}" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}">✓</button>`;
   }
 
+  const buddyAction = !isTBR && socialState.schemaReady && socialState.profile && ['tv','movie','youtube'].includes(sourceType)
+    ? `<button class="queue-buddy-button" type="button" data-action="buddy" data-id="${escapeAttr(item.id)}" aria-label="Start Buddy Watch">Buddy</button>`
+    : '';
+
   return `
     ${art}
     <div class="upnext-main">
@@ -2135,7 +2146,7 @@ function queueCardMarkup(item, info) {
       </div>
       <button class="upnext-arrow" type="button" data-action="details" data-id="${item.id}" aria-label="Open details">→</button>
     </div>
-    <div class="upnext-actions">${action}</div>
+    <div class="upnext-actions">${buddyAction}${action}</div>
   `;
 }
 
@@ -2283,6 +2294,11 @@ async function handleUpNextClick(event) {
 
   if (button.dataset.action === 'details') {
     openDetails(item.id);
+    return;
+  }
+
+  if (button.dataset.action === 'buddy') {
+    await openQuickBuddyWatchForItem(item);
     return;
   }
 
@@ -3688,6 +3704,7 @@ function updateItemFormForType() {
     els.activityStartDate.value = todayString();
   }
   if (els.queueStatusField) els.queueStatusField.hidden = isReminder || isActivity || ['music','artist','song','concert','food','recipe'].includes(sourceType);
+  if (els.saveBuddyWatchItem) els.saveBuddyWatchItem.hidden = !(socialState.schemaReady && socialState.profile && ['tv','movie','youtube'].includes(sourceType));
   if (isActivity && els.itemQueueStatus) els.itemQueueStatus.value = 'library';
 
   const upNextOption = els.itemQueueStatus?.querySelector('option[value="upnext"]');
@@ -4153,6 +4170,7 @@ async function loadPlaylistPreview() {
 
 async function saveItemFromForm(event) {
   event.preventDefault();
+  const startBuddyAfterSave = Boolean(event.submitter?.matches?.('[data-save-buddy-watch]'));
   const sourceType = selectedFormSourceType();
   const editing = findItem(els.editingId.value);
   let title = els.manualTitle.value.trim();
@@ -4541,6 +4559,9 @@ async function saveItemFromForm(event) {
   await deleteRemovedDraftAttachments();
   els.itemModal.close();
   renderAll();
+  if (startBuddyAfterSave && ['tv','movie','youtube'].includes(getSourceType(item))) {
+    openQuickBuddyWatchForItem(item).catch(error => console.warn('[Buddy Watch] could not open after save:', error));
+  }
 }
 
 async function deleteEditingItem() {
@@ -5282,8 +5303,13 @@ function libraryCalendarToggleButton(item) {
   return `<button class="library-calendar-footnote${hidden ? ' is-hidden' : ''}" type="button" data-toggle-library-calendar="${escapeAttr(item.id)}">${hidden ? 'Show on calendar' : 'Remove from calendar'}</button>`;
 }
 
+function buddyWatchItemActionMarkup(item) {
+  if (!item || !socialState.schemaReady || !socialState.profile || !['tv','movie','youtube'].includes(getSourceType(item))) return '';
+  return `<button class="secondary-button buddy-watch-item-action" type="button" data-buddy-watch-item="${escapeAttr(item.id)}">Buddy Watch</button>`;
+}
+
 function libraryDetailActionContents(item, { leading = '', trailing = '' } = {}) {
-  return `${leading}${queueMoveControls(item)}${trailing}`;
+  return `${leading}${queueMoveControls(item)}${buddyWatchItemActionMarkup(item)}${trailing}`;
 }
 
 function libraryDetailActions(item, { leading = '', trailing = '', className = '' } = {}) {
@@ -12886,7 +12912,7 @@ function escapeAttr(value) { return escapeHtml(value); }
 // =========================================================
 // SOCIAL — profiles, sharing snapshots, following, Buddy Watch
 // =========================================================
-const SOCIAL_SNAPSHOT_VERSION = 4;
+const SOCIAL_SNAPSHOT_VERSION = 7;
 const SOCIAL_SHARE_SECTION_META = Object.freeze({
   recommended: { label: 'Recommended', description: 'Share all recommended types by default; uncheck anything you want private.', items: true },
   upnext: { label: 'Up Next', description: 'Share all Up Next types by default; uncheck anything you want private.', items: true },
@@ -12894,6 +12920,8 @@ const SOCIAL_SHARE_SECTION_META = Object.freeze({
   streaks: { label: 'Streaks', description: 'Share all active streak types by default; uncheck any you want private.', items: false, streaks: true },
   library: { label: 'Library', description: 'Share all Library types by default; uncheck types or individual items to hide them while shared-type totals remain visible.', items: true }
 });
+
+const SOCIAL_PROFILE_THEME_IDS = new Set(CALENDAR_THEMES.map(theme => theme.id));
 
 const socialState = {
   schemaReady: null,
@@ -12910,23 +12938,26 @@ const socialState = {
   acceptedConnections: [],
   buddyWatches: [],
   viewedProfile: null,
+  activeSharedItem: null,
   profileViewModes: new Map(),
   profileExpandedGroups: new Map()
 };
 
 function emptySocialShareSettings() {
   return {
+    profileTheme: 'blue',
     shareWithPeople: false,
     recommended: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
     upnext: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
     ratings: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
     streaks: { enabled: false, excludedTypes: [] },
-    library: { enabled: false, excludedTypes: [], hiddenItemIds: [] }
+    library: { enabled: false, excludedTypes: [], hiddenItemIds: [], includeTbr: false }
   };
 }
 
 function normalizeSocialShareSettings(raw = {}) {
   const base = emptySocialShareSettings();
+  base.profileTheme = SOCIAL_PROFILE_THEME_IDS.has(String(raw?.profileTheme || '')) ? String(raw.profileTheme) : 'blue';
   base.shareWithPeople = Boolean(raw?.shareWithPeople);
   for (const key of Object.keys(SOCIAL_SHARE_SECTION_META)) {
     const incoming = raw?.[key] && typeof raw[key] === 'object' ? raw[key] : {};
@@ -12948,6 +12979,7 @@ function normalizeSocialShareSettings(raw = {}) {
     if ('hiddenItemIds' in base[key]) {
       base[key].hiddenItemIds = [...new Set((Array.isArray(incoming.hiddenItemIds) ? incoming.hiddenItemIds : []).map(value => String(value || '').trim()).filter(Boolean))];
     }
+    if (key === 'library') base.library.includeTbr = Boolean(incoming.includeTbr);
   }
   return base;
 }
@@ -12991,8 +13023,9 @@ async function ensureSocialProfile() {
     if (prefsResult.error) throw prefsResult.error;
     return { ...data, share_settings: prefsResult.data?.share_settings || emptySocialShareSettings() };
   }
-  if (!$('#socialRoot')) return null;
-
+  // Create the social profile in the background on any Omni page. Sharing remains
+  // opt-in/off by default, but Buddy Watch shortcuts can then work from Add,
+  // Up Next, and Library without requiring a prior visit to Social.
   const candidate = socialDefaultUsername(currentUser);
   const display = String(currentUser.email || '').split('@')[0] || 'Omni user';
   const insert = {
@@ -13034,6 +13067,10 @@ async function initializeSocialForUser() {
     socialState.shareSettings = normalizeSocialShareSettings(profile.share_settings);
     scheduleSocialSnapshotPublish(80);
     if ($('#socialRoot')) await loadSocialPage();
+    else {
+      renderUpNext().catch(() => {});
+      if (els.itemModal?.open) updateItemFormForType();
+    }
   } catch (error) {
     if (socialSchemaMissing(error)) setSocialSchemaReady(false, error);
     else console.warn('[Social] initialization failed:', error);
@@ -13050,12 +13087,43 @@ function socialTypeLabel(type) {
   return getRecognizedTypes().find(entry => entry.type === type)?.label || getTypeLabel(type) || type;
 }
 
+function socialIsTbrOnlyItem(item) {
+  if (!item || getQueueStatus(item) !== 'tbr') return false;
+  // Paused/in-progress titles and not-yet-released titles are already treated as
+  // part of Library elsewhere in Omni. Only pure watch/read-later entries need
+  // the extra social TBR permission.
+  return libraryDnfState(item) !== 'paused' && !isItemNotReleased(item);
+}
+
+function socialTrackedLibraryItems() {
+  return state.items.filter(item => !socialIsTbrOnlyItem(item));
+}
+
 function socialShareCandidates(section) {
   if (section === 'recommended') return state.items.filter(item => Boolean(item.recommended));
   if (section === 'upnext') return state.items.filter(item => getQueueStatus(item) === 'upnext');
   if (section === 'ratings') return state.items.filter(item => Number(item.rating || 0) > 0);
   if (section === 'library') return [...state.items];
   return [];
+}
+
+function socialLatestLoggedDate(item) {
+  if (!item) return '';
+  const sourceType = getSourceType(item);
+  const watchedKinds = sourceType === 'tv'
+    ? new Set(['episode-watched', 'series-watched'])
+    : sourceType === 'movie'
+      ? new Set(['movie-watched'])
+      : sourceType === 'book'
+        ? new Set(['book-finished'])
+        : new Set(['item-completed']);
+  const dates = state.history
+    .filter(entry => entry.sourceItemId === item.id && watchedKinds.has(entry.kind) && entry.date)
+    .map(entry => String(entry.date).slice(0, 10))
+    .filter(Boolean);
+  if (dates.length) return dates.sort().at(-1) || '';
+  const fallback = String(item.completedAt || (sourceType === 'movie' ? item.date || '' : '')).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(fallback) ? fallback : '';
 }
 
 function socialSectionTypeKeys(section) {
@@ -13072,21 +13140,35 @@ function socialTypeIsAllowed(section, type, settings = socialState.shareSettings
 function socialItemIsAllowed(section, item, settings = socialState.shareSettings) {
   const prefs = settings?.[section];
   if (!prefs?.enabled || !item) return false;
+  // Pure TBR entries never leak through Recommended/Ratings/Library unless the
+  // profile owner has explicitly opted into sharing TBR.
+  if (socialIsTbrOnlyItem(item) && !settings?.library?.includeTbr) return false;
   if (!socialTypeIsAllowed(section, item.type, settings)) return false;
   if (prefs.hiddenItemIds?.includes(item.id)) return false;
   return true;
+}
+
+function socialTVIsActivelyWatching(item) {
+  if (!item || getSourceType(item) !== 'tv') return false;
+  return getTVWatchDisposition(item) === 'following'
+    && !item.completedAt
+    && !isTerminalSeriesStatus(item.tvMeta?.seriesStatus || '')
+    && Boolean(item.tvMeta?.hasUnwatched);
 }
 
 function socialItemSummary(item, settings = null, section = '') {
   const sourceType = getSourceType(item);
   const shareWithPeople = Boolean(settings?.shareWithPeople);
   const libraryAllowed = socialItemIsAllowed('library', item, settings);
-  const recommendedAllowed = socialItemIsAllowed('recommended', item, settings);
-  const ratingAllowed = socialItemIsAllowed('ratings', item, settings);
-  const upNextAllowed = socialItemIsAllowed('upnext', item, settings);
+  const recommendedAllowed = Boolean(item.recommended && socialItemIsAllowed('recommended', item, settings));
+  const ratingAllowed = Boolean(Number(item.rating || 0) > 0 && socialItemIsAllowed('ratings', item, settings));
+  const upNextAllowed = Boolean(getQueueStatus(item) === 'upnext' && socialItemIsAllowed('upnext', item, settings));
   let statusKey = '';
   let statusLabel = '';
-  if (libraryAllowed && sourceType === 'tv') {
+  if (section === 'tbr') {
+    statusKey = 'not-started';
+    statusLabel = 'Not started yet';
+  } else if ((libraryAllowed || upNextAllowed) && sourceType === 'tv') {
     statusKey = tvLibraryStatusKey(item);
     statusLabel = tvLibraryStatusLabel(statusKey);
   } else if (libraryAllowed && sourceType === 'book') {
@@ -13099,11 +13181,22 @@ function socialItemSummary(item, settings = null, section = '') {
     statusKey = 'not-released';
     statusLabel = 'Not Released';
   }
+
+  // TV episode position is meaningful socially only while the person is actively
+  // watching: not paused, not caught up, and not finished. Other Up Next types
+  // can keep their ordinary progress text.
+  const activelyWatching = sourceType === 'tv' ? socialTVIsActivelyWatching(item) : false;
+  const progress = upNextAllowed
+    ? (sourceType === 'tv' ? (activelyWatching ? (progressFallback(item) || '') : '') : (progressFallback(item) || ''))
+    : '';
+
   return {
     key: `${item.provider || 'manual'}:${item.providerId || item.id}`,
     title: item.title || 'Untitled',
     subtitle: item.subtitle || '',
     image: item.image || '',
+    description: item.description || '',
+    notes: libraryAllowed ? String(item.notes || '') : '',
     sourceType,
     type: item.type,
     typeLabel: getItemTypeLabel(item),
@@ -13112,11 +13205,17 @@ function socialItemSummary(item, settings = null, section = '') {
     subcategory: libraryAllowed ? cleanTypeLabel(item.subcategory || '') : '',
     provider: item.provider || '',
     providerId: item.providerId || '',
+    releaseDate: libraryAllowed ? String(item.releaseDate || '') : '',
+    pageCount: sourceType === 'book' ? Number(item.progress?.totalPages || 0) : 0,
+    artistName: sourceType === 'artist' ? item.title || '' : String(item.artistName || ''),
     rating: ratingAllowed ? Number(item.rating || 0) : 0,
-    progress: upNextAllowed ? (progressFallback(item) || '') : '',
-    recommended: Boolean(recommendedAllowed),
+    progress,
+    recommended: recommendedAllowed,
+    queueStatus: libraryAllowed ? getQueueStatus(item) : '',
     statusKey,
     statusLabel,
+    activelyWatching,
+    trackedDate: libraryAllowed ? socialLatestLoggedDate(item) : '',
     people: shareWithPeople ? getItemPeople(item) : [],
     sharedVia: section || ''
   };
@@ -13124,19 +13223,30 @@ function socialItemSummary(item, settings = null, section = '') {
 
 function buildSocialSnapshotPayload(settings = socialState.shareSettings || emptySocialShareSettings()) {
   const normalized = normalizeSocialShareSettings(settings);
+  const trackedItems = socialTrackedLibraryItems();
   const libraryTypes = normalized.library.enabled ? socialSectionTypeKeys('library').filter(type => !normalized.library.excludedTypes.includes(type)) : [];
   const totals = libraryTypes.map(type => ({
     type,
     label: socialTypeLabel(type),
-    count: state.items.filter(item => item.type === type).length
-  })).sort((a,b) => a.label.localeCompare(b.label));
+    count: trackedItems.filter(item => item.type === type).length
+  })).filter(total => total.count > 0).sort((a,b) => a.label.localeCompare(b.label));
 
   const sections = {};
-  for (const section of ['recommended','upnext','ratings','library']) {
+  for (const section of ['recommended','upnext','ratings']) {
     sections[section] = socialShareCandidates(section)
       .filter(item => socialItemIsAllowed(section, item, normalized))
       .map(item => socialItemSummary(item, normalized, section));
   }
+  sections.library = socialShareCandidates('library')
+    .filter(item => !socialIsTbrOnlyItem(item))
+    .filter(item => socialItemIsAllowed('library', item, normalized))
+    .map(item => socialItemSummary(item, normalized, 'library'));
+  sections.tbr = normalized.library.enabled && normalized.library.includeTbr
+    ? state.items
+        .filter(item => socialIsTbrOnlyItem(item))
+        .filter(item => socialItemIsAllowed('library', item, normalized))
+        .map(item => socialItemSummary(item, normalized, 'tbr'))
+    : [];
 
   const streakPrefs = normalized.streaks;
   sections.streaks = streakPrefs.enabled
@@ -13144,12 +13254,13 @@ function buildSocialSnapshotPayload(settings = socialState.shareSettings || empt
         .filter(group => !streakPrefs.excludedTypes.includes(group.key))
         .map(group => {
           const result = calculateTypeStreak(group.key);
-          return { key: group.key, label: group.label, count: result.count, restToday: Boolean(result.restToday), enabled: Boolean(result.enabled) };
+          return { key: group.key, label: group.label, type: group.representativeType || group.key, count: result.count, restToday: Boolean(result.restToday), enabled: Boolean(result.enabled) };
         })
     : [];
 
   return {
     version: SOCIAL_SNAPSHOT_VERSION,
+    theme: normalized.profileTheme,
     totals,
     sharing: {
       recommended: Boolean(normalized.recommended.enabled),
@@ -13157,6 +13268,7 @@ function buildSocialSnapshotPayload(settings = socialState.shareSettings || empt
       ratings: Boolean(normalized.ratings.enabled),
       streaks: Boolean(normalized.streaks.enabled),
       library: Boolean(normalized.library.enabled),
+      tbr: Boolean(normalized.library.enabled && normalized.library.includeTbr),
       withPeople: Boolean(normalized.shareWithPeople)
     },
     sections,
@@ -13207,6 +13319,7 @@ function initSocialPage() {
   $('#socialFollowRequests')?.addEventListener('click', handleSocialActionClick);
   $('#socialViewProfileBody')?.addEventListener('click', handleSocialActionClick);
   $('#socialMyProfile')?.addEventListener('click', handleSocialActionClick);
+  $('#socialItemDetailBody')?.addEventListener('click', handleSocialItemDetailClick);
   $('#socialCreateBuddyWatch')?.addEventListener('click', openBuddyWatchCreate);
   $('#buddyWatchCreateForm')?.addEventListener('submit', createBuddyWatch);
   $('#socialBuddyList')?.addEventListener('click', handleBuddyWatchClick);
@@ -13267,27 +13380,39 @@ function socialTypeCheckboxes(section, prefs) {
     <label class="social-type-choice"><input type="checkbox" data-social-share-type="${escapeAttr(type)}" ${prefs.excludedTypes?.includes(type) ? '' : 'checked'} /><span>${escapeHtml(socialTypeLabel(type))}</span></label>`).join('');
 }
 
-function socialItemChoiceMarkup(item, prefs) {
+function socialItemChoiceMarkup(item, prefs, section = '') {
   const hidden = prefs.hiddenItemIds?.includes(item.id);
   const typeSelected = !prefs.excludedTypes?.includes(item.type);
-  const visible = typeSelected && !hidden;
-  return `<label class="social-item-choice${typeSelected ? '' : ' is-type-disabled'}" data-social-item-type="${escapeAttr(item.type)}">
-    <input type="checkbox" data-social-share-item="${escapeAttr(item.id)}" ${visible ? 'checked' : ''} ${typeSelected ? '' : 'disabled'} />
+  const tbrOnly = section === 'library' && socialIsTbrOnlyItem(item);
+  const tbrAllowed = !tbrOnly || Boolean(prefs.includeTbr);
+  const enabled = typeSelected && tbrAllowed;
+  const visible = enabled && !hidden;
+  return `<label class="social-item-choice${enabled ? '' : ' is-type-disabled'}" data-social-item-type="${escapeAttr(item.type)}" ${tbrOnly ? 'data-social-item-tbr="true"' : ''}>
+    <input type="checkbox" data-social-share-item="${escapeAttr(item.id)}" ${visible ? 'checked' : ''} ${enabled ? '' : 'disabled'} />
     ${item.image ? `<img src="${escapeAttr(item.image)}" alt="" />` : '<span class="social-item-choice-placeholder"></span>'}
-    <span><strong>${escapeHtml(item.title || 'Untitled')}</strong><small>${escapeHtml(getItemTypeLabel(item))}</small></span>
+    <span><strong>${escapeHtml(item.title || 'Untitled')}</strong><small>${escapeHtml(getItemTypeLabel(item))}${tbrOnly ? ' · TBR' : ''}</small></span>
   </label>`;
+}
+
+function socialProfileThemePickerMarkup(selectedTheme = 'blue') {
+  const selected = SOCIAL_PROFILE_THEME_IDS.has(selectedTheme) ? selectedTheme : 'blue';
+  return `<article class="social-share-card social-profile-theme-card">
+    <div class="social-share-card-head social-profile-theme-head"><span><strong>Profile background</strong><small>Use the same colour family choices as the Track calendar. The profile stays in Omni's normal Library style.</small></span></div>
+    <div class="social-profile-theme-picker">${CALENDAR_THEMES.map(theme => `<label class="social-profile-theme-choice" data-social-profile-theme-choice="${escapeAttr(theme.id)}"><input type="radio" name="socialProfileTheme" data-social-profile-theme-input value="${escapeAttr(theme.id)}" ${selected === theme.id ? 'checked' : ''} /><span class="social-profile-theme-dot" aria-hidden="true"></span><span>${escapeHtml(theme.label)}</span></label>`).join('')}</div>
+  </article>`;
 }
 
 function renderSocialShareSettingsEditor() {
   const host = $('#socialShareSettings');
   if (!host) return;
   const settings = normalizeSocialShareSettings(socialState.shareSettings);
+  const themeCard = socialProfileThemePickerMarkup(settings.profileTheme);
   const withPeopleCard = `<article class="social-share-card social-with-people-share-card">
     <div class="social-share-card-head">
       <label class="social-share-enable"><input type="checkbox" data-social-share-with-people ${settings.shareWithPeople ? 'checked' : ''} /><span><strong>With people</strong><small>Show the “with” names attached to an item whenever that item is shared elsewhere on your profile.</small></span></label>
     </div>
   </article>`;
-  host.innerHTML = withPeopleCard + Object.entries(SOCIAL_SHARE_SECTION_META).map(([section, meta]) => {
+  host.innerHTML = themeCard + withPeopleCard + Object.entries(SOCIAL_SHARE_SECTION_META).map(([section, meta]) => {
     const prefs = settings[section];
     const candidates = meta.items ? socialShareCandidates(section) : [];
     const noStreaks = section === 'streaks' && socialShareableStreakGroups().length === 0;
@@ -13296,8 +13421,9 @@ function renderSocialShareSettingsEditor() {
         <label class="social-share-enable"><input type="checkbox" data-social-share-enabled ${prefs.enabled && !noStreaks ? 'checked' : ''} ${noStreaks ? 'disabled' : ''} /><span><strong>${escapeHtml(meta.label)}</strong><small>${escapeHtml(meta.description)}</small></span></label>
       </div>
       <div class="social-share-card-body" ${prefs.enabled && !noStreaks ? '' : 'hidden'}>
+        ${section === 'library' ? `<label class="social-library-tbr-share"><input type="checkbox" data-social-share-tbr ${prefs.includeTbr ? 'checked' : ''} /><span><strong>Include TBR items</strong><small>Off by default. If shared, TBR stays in its own profile subsection and does not count toward tracked totals.</small></span></label>` : ''}
         <div class="social-type-choices">${socialTypeCheckboxes(section, prefs)}</div>
-        ${meta.items ? `<details class="social-item-picker"><summary>Individual items <span>${candidates.length}</span></summary><div class="social-item-choice-list">${candidates.length ? candidates.map(item => socialItemChoiceMarkup(item, prefs)).join('') : '<p class="social-sharing-empty">No matching items yet.</p>'}</div></details>` : ''}
+        ${meta.items ? `<details class="social-item-picker"><summary>Individual items <span>${candidates.length}</span></summary><div class="social-item-choice-list">${candidates.length ? candidates.map(item => socialItemChoiceMarkup(item, prefs, section)).join('') : '<p class="social-sharing-empty">No matching items yet.</p>'}</div></details>` : ''}
       </div>
     </article>`;
   }).join('');
@@ -13317,14 +13443,31 @@ function handleSocialShareFormChange(event) {
     }
     return;
   }
+  if (event.target.matches('[data-social-share-tbr]')) {
+    const allowTbr = event.target.checked;
+    card.querySelectorAll('[data-social-item-tbr="true"]').forEach(label => {
+      const type = label.dataset.socialItemType;
+      const typeChoice = card.querySelector(`[data-social-share-type="${CSS.escape(type)}"]`);
+      const input = label.querySelector('[data-social-share-item]');
+      const enabled = allowTbr && Boolean(typeChoice?.checked);
+      label.classList.toggle('is-type-disabled', !enabled);
+      if (input) {
+        input.disabled = !enabled;
+        if (enabled && !input.checked) input.checked = true;
+      }
+    });
+    return;
+  }
   if (event.target.matches('[data-social-share-type]')) {
     const type = event.target.dataset.socialShareType;
+    const tbrAllowed = Boolean(card.querySelector('[data-social-share-tbr]')?.checked);
     card.querySelectorAll(`[data-social-item-type="${CSS.escape(type)}"]`).forEach(label => {
       const input = label.querySelector('[data-social-share-item]');
-      label.classList.toggle('is-type-disabled', !event.target.checked);
+      const enabled = event.target.checked && (!label.hasAttribute('data-social-item-tbr') || tbrAllowed);
+      label.classList.toggle('is-type-disabled', !enabled);
       if (input) {
-        input.disabled = !event.target.checked;
-        if (event.target.checked && !input.checked) input.checked = true;
+        input.disabled = !enabled;
+        if (enabled && !input.checked) input.checked = true;
       }
     });
   }
@@ -13332,12 +13475,15 @@ function handleSocialShareFormChange(event) {
 
 function readSocialShareSettingsEditor() {
   const next = emptySocialShareSettings();
+  const chosenTheme = $('#socialShareSettings [data-social-profile-theme-input]:checked')?.value || 'blue';
+  next.profileTheme = SOCIAL_PROFILE_THEME_IDS.has(chosenTheme) ? chosenTheme : 'blue';
   next.shareWithPeople = Boolean($('#socialShareSettings [data-social-share-with-people]')?.checked);
   $$('#socialShareSettings [data-social-share-section]').forEach(card => {
     const section = card.dataset.socialShareSection;
     if (!next[section]) return;
     next[section].enabled = Boolean(card.querySelector('[data-social-share-enabled]')?.checked);
     next[section].excludedTypes = [...card.querySelectorAll('[data-social-share-type]:not(:checked)')].map(input => input.dataset.socialShareType).filter(Boolean);
+    if (section === 'library') next.library.includeTbr = Boolean(card.querySelector('[data-social-share-tbr]')?.checked);
     if ('hiddenItemIds' in next[section]) {
       const candidates = socialShareCandidates(section);
       const candidateIds = new Set(candidates.map(item => item.id));
@@ -13345,7 +13491,10 @@ function readSocialShareSettingsEditor() {
       const preservedHidden = (socialState.shareSettings?.[section]?.hiddenItemIds || []).filter(id => !candidateIds.has(id));
       next[section].hiddenItemIds = [...new Set([
         ...preservedHidden,
-        ...candidates.filter(item => !next[section].excludedTypes.includes(item.type) && !visibleIds.has(item.id)).map(item => item.id)
+        ...candidates.filter(item => {
+          if (section === 'library' && socialIsTbrOnlyItem(item) && !next.library.includeTbr) return false;
+          return !next[section].excludedTypes.includes(item.type) && !visibleIds.has(item.id);
+        }).map(item => item.id)
       ])];
     }
   });
@@ -13416,7 +13565,8 @@ function socialProfileCardMarkup(profile, snapshot = null, relation = null) {
   const totalText = totals.slice(0,4).map(entry => `${entry.count} ${String(entry.label || '').toLowerCase()}`).join(' · ');
   const relationButton = profile.user_id === currentUser?.id ? '' : socialFollowButtonMarkup(profile, relation);
   const hasSnapshot = Boolean(snapshot);
-  return `<article class="social-profile-card${hasSnapshot ? ' social-profile-library-window' : ''}" data-social-profile-id="${escapeAttr(profile.user_id)}">
+  const profileTheme = SOCIAL_PROFILE_THEME_IDS.has(String(payload.theme || '')) ? String(payload.theme) : 'blue';
+  return `<article class="social-profile-card${hasSnapshot ? ' social-profile-library-window' : ''}" data-social-profile-id="${escapeAttr(profile.user_id)}" data-social-profile-theme="${escapeAttr(profileTheme)}">
     <div class="social-profile-card-head">
       <button class="social-profile-card-main" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}">
         <span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span>
@@ -13505,6 +13655,11 @@ async function handleSocialPeopleSearch(event) {
 }
 
 async function handleSocialActionClick(event) {
+  const openItem = event.target.closest('[data-social-open-item]');
+  if (openItem) {
+    await openSocialSharedItemDetail(openItem.dataset.socialProfileId || currentUser?.id || '', openItem.dataset.socialOpenItem || '');
+    return;
+  }
   const viewMode = event.target.closest('[data-social-profile-view-mode]');
   if (viewMode) {
     const userId = viewMode.dataset.socialProfileId || currentUser?.id || '';
@@ -13623,34 +13778,49 @@ function socialProfileItemGroupLabel(items, key) {
   return items?.find(item => item.libraryGroupLabel)?.libraryGroupLabel || items?.find(item => item.typeLabel)?.typeLabel || socialTypeLabel(key);
 }
 
-function socialLibraryPosterMarkup(item) {
+function socialLibraryPosterMarkup(item, profileId = '') {
   const rating = Math.max(0, Math.min(5, Number(item?.rating || 0)));
   const subcategory = cleanTypeLabel(item?.subcategory || '');
+  const statusKey = cleanTypeLabel(item?.statusKey || '');
   const statusLabel = cleanTypeLabel(item?.statusLabel || '');
+  const sourceType = item?.sourceType || item?.type || '';
   const hasImage = Boolean(String(item?.image || '').trim());
   const people = Array.isArray(item?.people) ? item.people.filter(Boolean) : [];
+  // A TV episode position appears only while actively watching. Old snapshots are
+  // also guarded here so caught-up/paused/finished shows cannot keep stale progress.
+  const progress = sourceType === 'tv' ? (item?.activelyWatching === true ? String(item?.progress || '') : '') : String(item?.progress || '');
   const recommendedBadge = item?.recommended ? '<span class="library-recommended-badge" aria-label="Recommended" title="Recommended">♥</span>' : '';
   const subcategoryBadge = subcategory ? `<span class="library-subcategory-badge" title="${escapeAttr(subcategory)}">${escapeHtml(subcategory)}</span>` : '';
-  const statusBadge = statusLabel ? `<span class="library-disposition-badge social-library-status-badge ${escapeAttr(item.statusKey || '')}">${escapeHtml(statusLabel)}</span>` : '';
+  // Match the user's own Library cards: state badges are reserved for exceptional
+  // dispositions, not ordinary In progress / Up to date / Finished states.
+  const dispositionBadge = ['paused','stopped','not-released'].includes(statusKey)
+    ? `<span class="library-disposition-badge social-library-status-badge ${escapeAttr(statusKey)}">${escapeHtml(statusKey === 'not-released' && item?.releaseDate ? `Not Released · ${formatShortCalendarDate(String(item.releaseDate).slice(0,10))}` : (statusLabel || (statusKey === 'paused' ? 'Paused' : statusKey === 'stopped' ? 'Stopped' : 'Not Released')))}</span>`
+    : '';
   const ratingBadge = rating > 0 ? `<span class="library-rating-badge">★ ${escapeHtml(formatPersonalRating(rating))}</span>` : '';
-  const progressBadge = item?.progress ? `<span class="social-library-progress-badge">${escapeHtml(item.progress)}</span>` : '';
+  const progressBadge = progress ? `<span class="social-library-progress-badge">${escapeHtml(progress)}</span>` : '';
   const peopleBadge = people.length ? `<span class="social-library-people-badge">with ${escapeHtml(people.join(', '))}</span>` : '';
+  const common = `type="button" data-social-open-item="${escapeAttr(item?.key || '')}" data-social-profile-id="${escapeAttr(profileId)}" aria-label="Open ${escapeAttr(item?.title || 'item')}"`;
   if (hasImage) {
-    return `<article class="library-poster-button social-library-poster" title="${escapeAttr([item.title, item.subtitle, rating ? `${formatPersonalRating(rating)}/5` : '', item.progress || '', people.length ? `with ${people.join(', ')}` : ''].filter(Boolean).join(' · '))}"><img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title || '')}" loading="lazy" />${recommendedBadge}${subcategoryBadge}${statusBadge}${ratingBadge}${progressBadge}${peopleBadge}</article>`;
+    return `<button class="library-poster-button social-library-poster" ${common} title="${escapeAttr([item.title, item.subtitle, rating ? `${formatPersonalRating(rating)}/5` : '', progress, people.length ? `with ${people.join(', ')}` : ''].filter(Boolean).join(' · '))}"><img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title || '')}" loading="lazy" />${recommendedBadge}${subcategoryBadge}${dispositionBadge}${ratingBadge}${progressBadge}${peopleBadge}</button>`;
   }
-  return `<article class="library-poster-button library-text-card-button social-library-poster"><span class="library-text-card">${recommendedBadge}${subcategoryBadge}${statusBadge}<strong class="library-text-card-title">${escapeHtml(item?.title || 'Untitled')}</strong>${item?.subtitle ? `<span class="social-library-text-subtitle">${escapeHtml(item.subtitle)}</span>` : ''}${rating > 0 ? `<span class="library-text-card-rating">★ ${escapeHtml(formatPersonalRating(rating))} / 5</span>` : ''}${item?.progress ? `<span class="social-library-text-meta">${escapeHtml(item.progress)}</span>` : ''}${people.length ? `<span class="social-library-text-meta">with ${escapeHtml(people.join(', '))}</span>` : ''}</span></article>`;
+  return `<button class="library-poster-button library-text-card-button social-library-poster" ${common}><span class="library-text-card">${recommendedBadge}${subcategoryBadge}${dispositionBadge}<strong class="library-text-card-title">${escapeHtml(item?.title || 'Untitled')}</strong>${item?.subtitle ? `<span class="social-library-text-subtitle">${escapeHtml(item.subtitle)}</span>` : ''}${rating > 0 ? `<span class="library-text-card-rating">★ ${escapeHtml(formatPersonalRating(rating))} / 5</span>` : ''}${progress ? `<span class="social-library-text-meta">${escapeHtml(progress)}</span>` : ''}${people.length ? `<span class="social-library-text-meta">with ${escapeHtml(people.join(', '))}</span>` : ''}</span></button>`;
 }
 
 function socialLibrarySubgroups(items) {
   const sourceType = items?.[0]?.sourceType || '';
-  if ((sourceType === 'tv' || sourceType === 'book') && items.some(item => item.statusLabel)) {
+  const hasSharedTbr = items.some(item => item.sharedVia === 'tbr' || item.statusKey === 'not-started' && item.statusLabel === 'Not started yet');
+  if (((sourceType === 'tv' || sourceType === 'book') && items.some(item => item.statusLabel)) || hasSharedTbr) {
     const map = new Map();
     for (const item of items) {
-      const label = item.statusLabel || 'Other';
+      const label = item.sharedVia === 'tbr' ? 'Not started yet' : (item.statusLabel || (hasSharedTbr ? 'Tracked' : 'Other'));
       if (!map.has(label)) map.set(label, []);
       map.get(label).push(item);
     }
-    return [...map.entries()];
+    const preferred = ['In progress','Currently watching','Currently reading','Up to date','Finished','Tracked','Not started yet','Paused','Stopped','Not Released'];
+    return [...map.entries()].sort(([a],[b]) => {
+      const ai = preferred.indexOf(a), bi = preferred.indexOf(b);
+      return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi) || a.localeCompare(b);
+    });
   }
   if (items.some(item => cleanTypeLabel(item.subcategory || ''))) {
     const map = new Map();
@@ -13673,13 +13843,13 @@ function socialLibraryShelfMarkup(groupKey, items, profileId, scope = 'library')
   const expansionKey = `${scope}:${groupKey}`;
   const expanded = socialProfileExpandedSet(profileId).has(expansionKey);
   const label = socialProfileItemGroupLabel(items, groupKey);
-  const subgroups = expanded ? socialLibrarySubgroups(items) : [];
+  const subgroups = expanded && scope !== 'tbr' ? socialLibrarySubgroups(items) : [];
   const controls = `<div class="library-shelf-controls">${expanded ? '' : `<button class="library-carousel-button" type="button" data-social-library-carousel="prev" aria-label="Scroll ${escapeAttr(label)} left">‹</button><button class="library-carousel-button" type="button" data-social-library-carousel="next" aria-label="Scroll ${escapeAttr(label)} right">›</button>`}<button class="library-expand-button" type="button" data-social-library-expand="${escapeAttr(expansionKey)}" data-social-profile-id="${escapeAttr(profileId)}">${expanded ? 'Collapse' : 'View all'}</button></div>`;
   let content = '';
   if (expanded && subgroups.length) {
-    content = `<div class="tv-library-status-groups library-subcategory-groups">${subgroups.map(([subLabel, subItems]) => `<section class="tv-library-status-group library-subcategory-group is-expanded"><div class="tv-library-status-heading library-subcategory-heading"><div><h3 class="tv-library-status-title">${escapeHtml(subLabel)}</h3><span class="library-group-count">${subItems.length}</span></div></div><div class="library-poster-grid is-expanded">${subItems.map(socialLibraryPosterMarkup).join('')}</div></section>`).join('')}</div>`;
+    content = `<div class="tv-library-status-groups library-subcategory-groups">${subgroups.map(([subLabel, subItems]) => `<section class="tv-library-status-group library-subcategory-group is-expanded"><div class="tv-library-status-heading library-subcategory-heading"><div><h3 class="tv-library-status-title">${escapeHtml(subLabel)}</h3><span class="library-group-count">${subItems.length}</span></div></div><div class="library-poster-grid is-expanded">${subItems.map(item => socialLibraryPosterMarkup(item, profileId)).join('')}</div></section>`).join('')}</div>`;
   } else {
-    content = `<div class="library-poster-grid${expanded ? ' is-expanded' : ''}">${items.map(socialLibraryPosterMarkup).join('')}</div>`;
+    content = `<div class="library-poster-grid${expanded ? ' is-expanded' : ''}">${items.map(item => socialLibraryPosterMarkup(item, profileId)).join('')}</div>`;
   }
   return `<section class="library-group library-shelf social-library-shelf${expanded ? ' is-expanded' : ' is-collapsed'}" data-social-library-group="${escapeAttr(groupKey)}"><div class="library-group-heading-row"><div class="library-group-title-wrap"><h2 class="library-group-title">${escapeHtml(label)}</h2><span class="library-group-count">${items.length}</span></div>${controls}</div>${content}</section>`;
 }
@@ -13688,12 +13858,15 @@ function socialLibraryBrowserMarkup(profileId, payload) {
   const sections = payload?.sections || {};
   const recommended = sections.recommended || [];
   const all = sections.library || [];
+  const tbr = sections.tbr || [];
   const sharing = payload?.sharing || {};
   const recommendedAvailable = sharing.recommended ?? Boolean(recommended.length);
-  const libraryAvailable = sharing.library ?? Boolean(all.length);
+  const libraryAvailable = sharing.library ?? Boolean(all.length || tbr.length);
   if (!recommendedAvailable && !libraryAvailable) return '';
   const mode = socialProfileViewMode(profileId, payload);
-  const entries = mode === 'recommended' ? recommended : all;
+  // Shared TBR belongs inside the appropriate Library type. It is visually
+  // distinguished only when expanded, where it becomes "Not started yet".
+  const entries = mode === 'recommended' ? recommended : [...all, ...tbr];
   const tabs = recommendedAvailable && libraryAvailable ? `<div class="library-folder-tabs social-library-folder-tabs" role="tablist" aria-label="Shared library"><button class="library-folder-tab${mode === 'all' ? ' is-active' : ''}" type="button" data-social-profile-view-mode="all" data-social-profile-id="${escapeAttr(profileId)}" aria-selected="${mode === 'all'}">All</button><button class="library-folder-tab${mode === 'recommended' ? ' is-active' : ''}" type="button" data-social-profile-view-mode="recommended" data-social-profile-id="${escapeAttr(profileId)}" aria-selected="${mode === 'recommended'}">Recommended</button></div>` : '';
   const grouped = new Map();
   for (const item of entries) {
@@ -13710,32 +13883,36 @@ function socialSecondaryShelfMarkup(title, entries, profileId, scope) {
   if (!entries?.length) return '';
   const key = `${scope}:root`;
   const expanded = socialProfileExpandedSet(profileId).has(key);
-  return `<section class="social-profile-secondary-shelf library-shelf${expanded ? ' is-expanded' : ''}"><div class="library-group-heading-row"><div class="library-group-title-wrap"><h2 class="library-group-title">${escapeHtml(title)}</h2><span class="library-group-count">${entries.length}</span></div><div class="library-shelf-controls">${expanded ? '' : `<button class="library-carousel-button" type="button" data-social-library-carousel="prev">‹</button><button class="library-carousel-button" type="button" data-social-library-carousel="next">›</button>`}<button class="library-expand-button" type="button" data-social-library-expand="${escapeAttr(key)}" data-social-profile-id="${escapeAttr(profileId)}">${expanded ? 'Collapse' : 'View all'}</button></div></div><div class="library-poster-grid${expanded ? ' is-expanded' : ''}">${entries.map(socialLibraryPosterMarkup).join('')}</div></section>`;
+  return `<section class="social-profile-secondary-shelf library-shelf${expanded ? ' is-expanded' : ''}"><div class="library-group-heading-row"><div class="library-group-title-wrap"><h2 class="library-group-title">${escapeHtml(title)}</h2><span class="library-group-count">${entries.length}</span></div><div class="library-shelf-controls">${expanded ? '' : `<button class="library-carousel-button" type="button" data-social-library-carousel="prev">‹</button><button class="library-carousel-button" type="button" data-social-library-carousel="next">›</button>`}<button class="library-expand-button" type="button" data-social-library-expand="${escapeAttr(key)}" data-social-profile-id="${escapeAttr(profileId)}">${expanded ? 'Collapse' : 'View all'}</button></div></div><div class="library-poster-grid${expanded ? ' is-expanded' : ''}">${entries.map(item => socialLibraryPosterMarkup(item, profileId)).join('')}</div></section>`;
 }
 
 function socialProfileViewMarkup(profile, snapshot, relation = null, isSelf = false) {
   if (!profile) return '<p class="api-error">Profile unavailable.</p>';
-  const payload = snapshot || { totals: [], sections: {} };
+  const payload = snapshot || { totals: [], sections: {}, theme: 'blue' };
   const sections = payload.sections || {};
   const canSee = Boolean(snapshot) || isSelf;
   const profileId = profile.user_id || currentUser?.id || 'self';
+  const profileTheme = SOCIAL_PROFILE_THEME_IDS.has(String(payload.theme || '')) ? String(payload.theme) : 'blue';
   const followButton = isSelf ? '<button class="secondary-button" type="button" data-social-open-settings>Profile & sharing</button>' : socialFollowButtonMarkup(profile, relation);
   const totals = payload.totals || [];
-  const totalMarkup = totals.length ? `<div class="social-total-grid">${totals.map(total => `<div class="social-total-card"><strong>${Number(total.count || 0)}</strong><span>${escapeHtml(total.label || total.type)} tracked</span></div>`).join('')}</div>` : '';
+  const totalMarkup = totals.length ? `<div class="social-total-summary" aria-label="Shared tracked totals">${totals.map(total => `<span class="social-total-pill"><strong>${Number(total.count || 0)}</strong><span>${escapeHtml(total.label || total.type)}</span></span>`).join('')}</div>` : '';
   const privateMessage = !canSee && profile.is_private ? '<p class="social-private-message">This profile is private. Follow to see the sections they choose to share.</p>' : '';
   const streakMarkup = canSee ? socialSharedSectionMarkup('streaks', sections.streaks || []) : '';
   const upNextMarkup = canSee ? socialSecondaryShelfMarkup('Up Next', sections.upnext || [], profileId, 'upnext') : '';
   const ratingOnly = canSee ? (sections.ratings || []).filter(item => !(sections.library || []).some(lib => lib.key === item.key) && !(sections.recommended || []).some(rec => rec.key === item.key)) : [];
   const ratingMarkup = canSee ? socialSecondaryShelfMarkup('Ratings', ratingOnly, profileId, 'ratings') : '';
   const libraryMarkup = canSee ? socialLibraryBrowserMarkup(profileId, payload) : '';
-  return `<div class="social-profile-hero"><span class="social-avatar social-avatar-large">${escapeHtml(socialProfileInitial(profile))}</span><div><h2>${escapeHtml(profile.display_name || profile.username)}</h2><p>@${escapeHtml(profile.username)}${profile.is_private ? ' · private' : ''}</p>${profile.bio ? `<div class="social-profile-bio">${escapeHtml(profile.bio)}</div>` : ''}</div><div class="social-profile-hero-action">${followButton}</div></div>${privateMessage}${totalMarkup}${streakMarkup}${upNextMarkup}${ratingMarkup}${libraryMarkup}`;
+  return `<div class="social-profile-surface" data-social-profile-theme="${escapeAttr(profileTheme)}"><div class="social-profile-hero"><span class="social-avatar social-avatar-large">${escapeHtml(socialProfileInitial(profile))}</span><div><h2>${escapeHtml(profile.display_name || profile.username)}</h2><p>@${escapeHtml(profile.username)}${profile.is_private ? ' · private' : ''}</p>${profile.bio ? `<div class="social-profile-bio">${escapeHtml(profile.bio)}</div>` : ''}</div><div class="social-profile-hero-action">${followButton}</div></div>${privateMessage}${totalMarkup}${streakMarkup}${upNextMarkup}${ratingMarkup}${libraryMarkup}</div>`;
 }
 
 function socialSharedSectionMarkup(section, entries) {
   const meta = SOCIAL_SHARE_SECTION_META[section];
   if (!meta || !entries?.length) return '';
   if (section === 'streaks') {
-    return `<section class="social-shared-section social-shared-streaks"><div class="social-shared-section-heading"><h3>${escapeHtml(meta.label)}</h3></div><div class="social-streak-grid">${entries.map(entry => `<div class="social-streak-card"><strong>${Number(entry.count || 0)}</strong><span>${escapeHtml(entry.label)} streak${entry.restToday ? ' · rest day' : ''}</span></div>`).join('')}</div></section>`;
+    return `<section class="social-shared-section social-shared-streaks"><div class="social-shared-section-heading"><h3>${escapeHtml(meta.label)}</h3></div><div class="track-streak-summary social-track-streak-summary">${entries.map(entry => {
+      const representative = { type: entry.type || entry.key || 'other', typeLabel: entry.label || 'Streak' };
+      return `<div class="track-streak-card social-track-streak-card"><span class="track-streak-sticker">${calendarStickerMarkup(representative.type, representative)}</span><span class="track-streak-copy"><strong>${escapeHtml(entry.label || 'Streak')}</strong><small>${Number(entry.count || 0)} day${Number(entry.count || 0) === 1 ? '' : 's'}${entry.restToday ? ' · rest day' : ''}</small></span></div>`;
+    }).join('')}</div></section>`;
   }
   return `<section class="social-shared-section"><h3>${escapeHtml(meta.label)}</h3><div class="social-item-grid">${entries.map(entry => socialSharedItemMarkup(entry, section)).join('')}</div></section>`;
 }
@@ -13748,6 +13925,203 @@ function socialSharedItemMarkup(item, section) {
   const people = Array.isArray(item.people) ? item.people.filter(Boolean) : [];
   const withMarkup = people.length ? `<span class="social-item-with">with ${escapeHtml(people.join(', '))}</span>` : '';
   return `<article class="social-item-card">${item.image ? `<img src="${escapeAttr(item.image)}" alt="" />` : '<div class="social-item-card-placeholder"></div>'}<div><strong>${escapeHtml(item.title || 'Untitled')}</strong>${item.subtitle ? `<small>${escapeHtml(item.subtitle)}</small>` : ''}${withMarkup}${meta.length ? `<em>${escapeHtml(meta.join(' · '))}</em>` : ''}</div></article>`;
+}
+
+function socialPayloadForOwner(ownerId) {
+  const id = String(ownerId || '');
+  if (id === String(currentUser?.id || '')) return socialState.snapshot || buildSocialSnapshotPayload();
+  if (socialState.viewedProfile?.profile?.user_id === id) return socialState.viewedProfile.snapshot || null;
+  return null;
+}
+
+function socialProfileForOwner(ownerId) {
+  const id = String(ownerId || '');
+  if (id === String(currentUser?.id || '')) return socialState.profile;
+  if (socialState.viewedProfile?.profile?.user_id === id) return socialState.viewedProfile.profile;
+  return null;
+}
+
+function socialFindSnapshotItem(payload, itemKey) {
+  if (!payload || !itemKey) return null;
+  const matches = [];
+  for (const section of ['library','tbr','recommended','upnext','ratings']) {
+    for (const item of payload.sections?.[section] || []) if (item?.key === itemKey) matches.push(item);
+  }
+  if (!matches.length) return null;
+  const merged = matches.reduce((acc, item) => ({
+    ...acc,
+    ...item,
+    recommended: Boolean(acc.recommended || item.recommended),
+    rating: Number(item.rating || acc.rating || 0),
+    progress: item.progress || acc.progress || '',
+    notes: item.notes || acc.notes || '',
+    description: item.description || acc.description || '',
+    people: (item.people?.length ? item.people : acc.people) || []
+  }), {});
+  return merged;
+}
+
+function socialSharedItemToDiscoverResult(item) {
+  return {
+    sourceType: item.sourceType || item.type || 'other',
+    provider: item.provider || '',
+    providerId: item.providerId || '',
+    title: item.title || 'Untitled',
+    subtitle: item.subtitle || '',
+    image: item.image || '',
+    description: item.description || '',
+    pageCount: Number(item.pageCount || 0),
+    artistName: item.artistName || '',
+    raw: {}
+  };
+}
+
+function socialOwnItemForShared(item) {
+  if (!item) return null;
+  const sourceType = item.sourceType || item.type || '';
+  if (item.providerId) {
+    return state.items.find(candidate => getSourceType(candidate) === sourceType && String(candidate.providerId || '') === String(item.providerId)) || null;
+  }
+  const targetTitle = normalizeSearchText(item.title || '');
+  return state.items.find(candidate => getSourceType(candidate) === sourceType && normalizeSearchText(candidate.title || '') === targetTitle) || null;
+}
+
+function createOwnManualItemFromShared(item, queueStatus) {
+  const sourceType = item.sourceType || item.type || 'other';
+  const isMusicFamily = ['music','artist','song','concert'].includes(sourceType);
+  const isFoodFamily = ['food','restaurant','recipe'].includes(sourceType);
+  const own = {
+    id: makeId(),
+    sourceType,
+    type: isMusicFamily ? 'music' : isFoodFamily ? 'food' : (item.type || sourceType),
+    typeLabel: isMusicFamily ? 'Music' : isFoodFamily ? 'Food' : (item.typeLabel || getTypeLabel(sourceType)),
+    subcategory: item.subcategory || '',
+    title: item.title || 'Untitled',
+    provider: item.provider || 'manual',
+    providerId: String(item.providerId || ''),
+    image: item.image || '',
+    subtitle: item.subtitle || '',
+    description: item.description || '',
+    rating: 0,
+    notes: '',
+    recommended: false,
+    attachments: [],
+    links: [],
+    releaseDate: item.releaseDate || '',
+    queueStatus,
+    active: queueStatus === 'upnext',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    progress: {},
+    artistName: item.artistName || ''
+  };
+  if (sourceType === 'tv') own.progress = { nextSeason: 1, nextEpisode: 1 };
+  if (sourceType === 'book') own.progress = { currentPage: 0, totalPages: Number(item.pageCount || 0), readingPeriods: [] };
+  applyReleaseQueueAutomation(own);
+  state.items.push(own);
+  saveItems();
+  renderAll();
+  return own;
+}
+
+function socialSharedItemOwnActionsMarkup(item) {
+  const own = socialOwnItemForShared(item);
+  const current = own ? getQueueStatus(own) : '';
+  const completed = Boolean(own?.completedAt);
+  const trackLabel = completed ? 'Tracked' : current === 'upnext' ? 'Tracking' : 'Track';
+  const tbrLabel = current === 'tbr' ? 'In TBR' : 'TBR';
+  return `<div class="detail-actions library-detail-actions social-item-own-actions"><div class="queue-toggle-buttons" aria-label="Add to your Omni"><button class="secondary-button queue-toggle-button${completed || current === 'upnext' ? ' is-selected' : ''}" type="button" data-social-own-queue="upnext" ${completed ? 'disabled' : ''}>${trackLabel}</button><button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-social-own-queue="tbr" ${completed ? 'disabled' : ''}>${tbrLabel}</button></div></div>`;
+}
+
+function socialSharedItemDetailMarkup(item, ownerProfile) {
+  const rating = Math.max(0, Math.min(5, Number(item?.rating || 0)));
+  const ownerName = ownerProfile?.display_name || ownerProfile?.username || 'Their';
+  const people = Array.isArray(item?.people) ? item.people.filter(Boolean) : [];
+  const sourceType = item?.sourceType || item?.type || '';
+  const activeProgress = sourceType === 'tv' ? (item?.activelyWatching === true ? item?.progress : '') : item?.progress;
+  const dispositionLabel = ['paused','stopped','not-released'].includes(item?.statusKey) ? item?.statusLabel : '';
+  const badges = [
+    item?.recommended ? '<span class="social-detail-badge is-recommended">♥ Recommended</span>' : '',
+    activeProgress ? `<span class="social-detail-badge">${escapeHtml(activeProgress)}</span>` : '',
+    dispositionLabel ? `<span class="social-detail-badge">${escapeHtml(dispositionLabel)}</span>` : ''
+  ].filter(Boolean).join('');
+  const trackedDate = String(item?.trackedDate || '').slice(0, 10);
+  const dateLabel = ['tv','movie','youtube'].includes(sourceType) ? 'Watched' : sourceType === 'book' ? 'Finished' : 'Tracked';
+  const trackedDateMarkup = trackedDate ? `<div class="library-detail-date-strip social-shared-watch-date"><span>${escapeHtml(dateLabel)}</span><strong>${escapeHtml(formatLongDate(trackedDate))}</strong></div>` : '';
+  const personal = (rating || item?.notes || people.length)
+    ? `<section class="detail-section social-shared-personal-detail"><h3>${escapeHtml(ownerName)}'s details</h3>${rating ? `<div class="social-detail-rating"><span>Rating</span><strong>★ ${escapeHtml(formatPersonalRating(rating))} / 5</strong></div>` : ''}${people.length ? `<div class="library-detail-date-strip library-people-strip"><span>With</span><strong>${escapeHtml(people.join(', '))}</strong></div>` : ''}${item?.notes ? `<div class="social-detail-notes"><span>Notes</span><p>${escapeHtml(item.notes)}</p></div>` : ''}</section>`
+    : '';
+  return `${libraryDetailHero({ type: item?.typeLabel || socialTypeLabel(item?.type || item?.sourceType || 'Other'), title: item?.title || 'Untitled', image: item?.image || '', subtitle: item?.subtitle || '', overview: item?.description || '' })}${badges ? `<div class="social-detail-badges">${badges}</div>` : ''}${trackedDateMarkup}${personal}${socialSharedItemOwnActionsMarkup(item)}`;
+}
+
+async function socialFetchSynopsis(item) {
+  if (!item?.providerId) return '';
+  try {
+    const sourceType = item.sourceType || item.type || '';
+    if (sourceType === 'tv') {
+      const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
+      return details?.overview || '';
+    }
+    if (sourceType === 'movie') {
+      const details = await getCached(`movie:${item.providerId}`, () => TrackerAPI.getMovieDetails(item.providerId, state.settings));
+      return details?.overview || '';
+    }
+    if (sourceType === 'book') {
+      const details = await getCached(`book:${item.providerId}`, () => TrackerAPI.getBookDetails(item.providerId, state.settings));
+      return details?.volumeInfo?.description || '';
+    }
+    if (sourceType === 'youtube') {
+      const details = await getCached(`youtube:video:${item.providerId}`, () => TrackerAPI.getYouTubeVideo(item.providerId, state.settings));
+      return details?.snippet?.description || details?.description || '';
+    }
+  } catch (error) {
+    console.warn('[Social] synopsis lookup failed:', error);
+  }
+  return '';
+}
+
+async function openSocialSharedItemDetail(ownerId, itemKey) {
+  const payload = socialPayloadForOwner(ownerId);
+  const ownerProfile = socialProfileForOwner(ownerId);
+  const item = socialFindSnapshotItem(payload, itemKey);
+  const modal = $('#socialItemDetailModal');
+  const body = $('#socialItemDetailBody');
+  if (!item || !modal || !body) return;
+  socialState.activeSharedItem = { ownerId: String(ownerId || ''), itemKey, item, ownerProfile, payload };
+  modal.dataset.socialProfileTheme = SOCIAL_PROFILE_THEME_IDS.has(String(payload?.theme || '')) ? String(payload.theme) : 'blue';
+  body.innerHTML = socialSharedItemDetailMarkup(item, ownerProfile);
+  showDialogAtTop(modal);
+  if (!item.description) {
+    const synopsis = await socialFetchSynopsis(item);
+    if (synopsis && modal.open && socialState.activeSharedItem?.itemKey === itemKey) {
+      socialState.activeSharedItem.item = { ...item, description: synopsis };
+      body.innerHTML = socialSharedItemDetailMarkup(socialState.activeSharedItem.item, ownerProfile);
+    }
+  }
+}
+
+async function handleSocialItemDetailClick(event) {
+  const action = event.target.closest('[data-social-own-queue]');
+  if (!action || !socialState.activeSharedItem?.item) return;
+  const targetStatus = action.dataset.socialOwnQueue === 'tbr' ? 'tbr' : 'upnext';
+  const shared = socialState.activeSharedItem.item;
+  action.disabled = true;
+  try {
+    let own = socialOwnItemForShared(shared);
+    if (!own) {
+      if (shared.providerId) own = ensureDiscoverItem(socialSharedItemToDiscoverResult(shared), targetStatus);
+      else own = createOwnManualItemFromShared(shared, targetStatus);
+    } else {
+      await moveItemToQueue(own, targetStatus);
+    }
+    const body = $('#socialItemDetailBody');
+    if (body) body.innerHTML = socialSharedItemDetailMarkup(shared, socialState.activeSharedItem.ownerProfile);
+  } catch (error) {
+    console.warn('[Social] could not add shared item:', error);
+    alert(error?.message || String(error));
+  } finally {
+    if (action.isConnected) action.disabled = false;
+  }
 }
 
 function rerenderSocialProfileView(userId) {
@@ -13776,6 +14150,120 @@ async function loadAcceptedSocialConnections() {
   if (profiles.error) throw profiles.error;
   socialState.acceptedConnections = profiles.data || [];
   return socialState.acceptedConnections;
+}
+
+function ensureQuickBuddyWatchModal() {
+  let modal = $('#buddyWatchQuickModal');
+  if (modal) return modal;
+  modal = document.createElement('dialog');
+  modal.id = 'buddyWatchQuickModal';
+  modal.className = 'modal small-modal buddy-watch-create-modal buddy-watch-quick-modal';
+  modal.innerHTML = `<button class="modal-x" type="button" data-close="buddyWatchQuickModal" aria-label="Close">×</button>
+    <div class="modal-heading"><p class="modal-eyebrow">BUDDY WATCH</p><h2 id="buddyWatchQuickTitle">Watch together</h2></div>
+    <form id="buddyWatchQuickForm" class="item-form">
+      <input id="buddyWatchQuickItemId" type="hidden" />
+      <div id="buddyWatchQuickItem" class="buddy-watch-quick-item"></div>
+      <label class="field"><span>Watch with</span><select id="buddyWatchQuickFriend" required></select></label>
+      <p id="buddyWatchQuickMessage" class="form-message" hidden></p>
+      <div class="modal-actions end-only"><div class="actions-right"><button class="quiet-button" type="button" data-close="buddyWatchQuickModal">Cancel</button><button id="buddyWatchQuickSubmit" class="primary-button" type="submit">Send invite</button></div></div>
+    </form>`;
+  document.body.appendChild(modal);
+  modal.querySelector('[data-close="buddyWatchQuickModal"]')?.addEventListener('click', () => modal.close());
+  modal.querySelector('#buddyWatchQuickForm')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const item = findItem($('#buddyWatchQuickItemId')?.value || '');
+    const friendId = $('#buddyWatchQuickFriend')?.value || '';
+    const message = $('#buddyWatchQuickMessage');
+    const submit = $('#buddyWatchQuickSubmit');
+    if (!item || !friendId) return;
+    if (submit) submit.disabled = true;
+    if (message) { message.textContent = 'Creating…'; message.hidden = false; message.classList.remove('is-error'); }
+    try {
+      await createBuddyWatchForItem(item, friendId);
+      modal.close();
+    } catch (error) {
+      if (message) { message.textContent = error?.message || 'Could not create Buddy Watch.'; message.hidden = false; message.classList.add('is-error'); }
+    } finally {
+      if (submit) submit.disabled = false;
+    }
+  });
+  return modal;
+}
+
+async function openQuickBuddyWatchForItem(item) {
+  if (!item || !['tv','movie','youtube'].includes(getSourceType(item))) return;
+  const modal = ensureQuickBuddyWatchModal();
+  const title = modal.querySelector('#buddyWatchQuickTitle');
+  const itemNode = modal.querySelector('#buddyWatchQuickItem');
+  const itemId = modal.querySelector('#buddyWatchQuickItemId');
+  const friendSelect = modal.querySelector('#buddyWatchQuickFriend');
+  const message = modal.querySelector('#buddyWatchQuickMessage');
+  const submit = modal.querySelector('#buddyWatchQuickSubmit');
+  if (title) title.textContent = 'Start Buddy Watch';
+  if (itemId) itemId.value = item.id;
+  if (itemNode) itemNode.innerHTML = `${item.image ? `<img src="${escapeAttr(item.image)}" alt="" />` : '<span class="buddy-watch-quick-placeholder"></span>'}<span><strong>${escapeHtml(item.title || 'Untitled')}</strong><small>${escapeHtml(getItemTypeLabel(item))}</small></span>`;
+  if (message) { message.textContent = ''; message.hidden = true; message.classList.remove('is-error'); }
+  if (!socialState.schemaReady || !socialState.profile) {
+    if (friendSelect) { friendSelect.innerHTML = '<option value="">Social profile unavailable</option>'; friendSelect.disabled = true; }
+    if (submit) submit.disabled = true;
+    if (message) { message.textContent = 'Open Social once to finish setting up your profile.'; message.hidden = false; message.classList.add('is-error'); }
+    showDialogAtTop(modal);
+    return;
+  }
+  const connections = await loadAcceptedSocialConnections();
+  if (friendSelect) {
+    friendSelect.innerHTML = connections.length
+      ? connections.map(profile => `<option value="${escapeAttr(profile.user_id)}">${escapeHtml(profile.display_name || profile.username)} (@${escapeHtml(profile.username)})</option>`).join('')
+      : '<option value="">Follow someone first</option>';
+    friendSelect.disabled = !connections.length;
+  }
+  if (submit) submit.disabled = !connections.length;
+  if (!connections.length && message) {
+    message.textContent = 'You need an accepted connection before starting a Buddy Watch.';
+    message.hidden = false;
+  }
+  showDialogAtTop(modal);
+}
+
+function buddyWatchSharedItemSummary(item) {
+  return {
+    key: `${item.provider || 'manual'}:${item.providerId || item.id}`,
+    localItemId: item.id,
+    title: item.title || 'Untitled',
+    subtitle: item.subtitle || '',
+    image: item.image || '',
+    description: item.description || '',
+    sourceType: getSourceType(item),
+    type: item.type,
+    typeLabel: getItemTypeLabel(item),
+    provider: item.provider || '',
+    providerId: item.providerId || '',
+    pageCount: getSourceType(item) === 'book' ? Number(item.progress?.totalPages || 0) : 0
+  };
+}
+
+async function createBuddyWatchForItem(item, friendId) {
+  if (!item || !friendId || !currentUser || !supabase) throw new Error('Choose a person to start the Buddy Watch with.');
+  if (!['tv','movie','youtube'].includes(getSourceType(item))) throw new Error('Buddy Watch currently supports TV, movies, and YouTube items.');
+  const itemSummary = buddyWatchSharedItemSummary(item);
+  const watchResult = await supabase.from('buddy_watches').insert({ created_by: currentUser.id, title: item.title || 'Buddy Watch', item: itemSummary, status: 'active', updated_at: new Date().toISOString() }).select('id, created_by, title, item, status, created_at, updated_at').single();
+  if (watchResult.error) throw watchResult.error;
+  const watch = watchResult.data;
+  const membersResult = await supabase.from('buddy_watch_members').insert([
+    { buddy_watch_id: watch.id, user_id: currentUser.id, status: 'accepted', joined_at: new Date().toISOString() },
+    { buddy_watch_id: watch.id, user_id: friendId, status: 'pending' }
+  ]);
+  if (membersResult.error) {
+    await supabase.from('buddy_watches').delete().eq('id', watch.id).eq('created_by', currentUser.id);
+    throw membersResult.error;
+  }
+  const initialProgress = progressFallback(item);
+  if (initialProgress) {
+    const progressResult = await supabase.from('buddy_watch_progress').upsert({ buddy_watch_id: watch.id, user_id: currentUser.id, progress_text: initialProgress, note: '', completed: Boolean(item.completedAt), updated_at: new Date().toISOString() }, { onConflict: 'buddy_watch_id,user_id' });
+    if (progressResult.error) console.warn('[Buddy Watch] initial progress could not be saved:', progressResult.error);
+  }
+  if ($('#socialBuddyList')) await loadBuddyWatches();
+  return watch;
 }
 
 function buddyWatchableItems() {
@@ -13810,25 +14298,12 @@ async function createBuddyWatch(event) {
   const item = findItem($('#buddyWatchItem')?.value || '');
   if (!friendId || !item || !currentUser) return;
   setBuddyCreateMessage('Creating…');
-  const itemSummary = socialItemSummary(item);
-  const watchResult = await supabase.from('buddy_watches').insert({ created_by: currentUser.id, title: item.title || 'Buddy Watch', item: itemSummary, status: 'active', updated_at: new Date().toISOString() }).select('id, created_by, title, item, status, created_at, updated_at').single();
-  if (watchResult.error) { setBuddyCreateMessage(watchResult.error.message, true); return; }
-  const watch = watchResult.data;
-  const membersResult = await supabase.from('buddy_watch_members').insert([
-    { buddy_watch_id: watch.id, user_id: currentUser.id, status: 'accepted', joined_at: new Date().toISOString() },
-    { buddy_watch_id: watch.id, user_id: friendId, status: 'pending' }
-  ]);
-  if (membersResult.error) {
-    await supabase.from('buddy_watches').delete().eq('id', watch.id).eq('created_by', currentUser.id);
-    setBuddyCreateMessage(membersResult.error.message, true);
-    return;
+  try {
+    await createBuddyWatchForItem(item, friendId);
+    $('#buddyWatchCreateModal')?.close();
+  } catch (error) {
+    setBuddyCreateMessage(error?.message || 'Could not create Buddy Watch.', true);
   }
-  const initialProgress = progressFallback(item);
-  if (initialProgress) {
-    await supabase.from('buddy_watch_progress').upsert({ buddy_watch_id: watch.id, user_id: currentUser.id, progress_text: initialProgress, note: '', completed: Boolean(item.completedAt), updated_at: new Date().toISOString() }, { onConflict: 'buddy_watch_id,user_id' });
-  }
-  $('#buddyWatchCreateModal')?.close();
-  await loadBuddyWatches();
 }
 
 async function loadBuddyWatches() {

@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-social-opt-out-4" />
+  <link rel="stylesheet" href="style.css?v=omni-social-buddy-entrypoints-7" />
 </head>
 <body class="social-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -136,6 +136,11 @@
     <div id="socialViewProfileBody" class="social-profile-view"></div>
   </dialog>
 
+  <dialog id="socialItemDetailModal" class="modal detail-modal social-item-detail-modal">
+    <button class="modal-x" type="button" data-close="socialItemDetailModal" aria-label="Close">×</button>
+    <div id="socialItemDetailBody" class="detail-body"></div>
+  </dialog>
+
   <dialog id="buddyWatchCreateModal" class="modal small-modal buddy-watch-create-modal">
     <button class="modal-x" type="button" data-close="buddyWatchCreateModal" aria-label="Close">×</button>
     <div class="modal-heading"><h2>New Buddy Watch</h2></div>
@@ -165,6 +170,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-social-opt-out-4"></script>
+  <script type="module" src="app.js?v=omni-social-buddy-entrypoints-7"></script>
 </body>
 </html>
