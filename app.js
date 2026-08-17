@@ -2611,27 +2611,36 @@ function renderGenrePie(genres = []) {
   if (overflow.length) visible.push({ label:'Other', count:overflow.reduce((sum,entry) => sum + entry[1],0), labels:overflow.map(entry => entry[0]) });
   const total = visible.reduce((sum,entry) => sum + entry.count,0) || 1;
   const genreColors = {
-      Romance: '#f77390',
-  Crime: '#65151B',
-  Horror: '#17151D',
-  Comedy: '#6d9ada',
-  Drama: '#cbc0e1',
-  Thriller: '#405463',
-  Mystery: '#574566',
-  Action: '#B95032',
-  Adventure: '#355F7C',
-  Fantasy: '#6910a0',
-  'Science Fiction': '#2F6870',
-  Documentary: '#61795D',
-  Animation: '#C97891',
-  Family: '#99AA65',
-  History: '#8F6246',
-  'Other': '#aaa9a9' 
-};
+    Action: '#b45a3c',
+    Adventure: '#5d7d9d',
+    Animation: '#c88aa0',
+    Comedy: '#d9b85a',
+    Crime: '#7a2f37',
+    Documentary: '#7c8f69',
+    Drama: '#8c78a8',
+    Family: '#a9b971',
+    Fantasy: '#8f6db1',
+    History: '#91684e',
+    Horror: '#302a36',
+    Music: '#c66f66',
+    Mystery: '#5d5d78',
+    Romance: '#d78ca4',
+    'Science Fiction': '#4a8d93',
+    Thriller: '#4a6270',
+    War: '#747988',
+    Western: '#9f7041',
+    'TV Movie': '#7f8eb0',
+    Other: '#b0a79a'
+  };
   const genreAliases = {
     'Sci-Fi & Fantasy': 'Science Fiction',
     'Action & Adventure': 'Action',
-    Kids: 'Family'
+    Kids: 'Family',
+    'War & Politics': 'War',
+    Soap: 'Drama',
+    Reality: 'Documentary',
+    News: 'Documentary',
+    Talk: 'Documentary'
   };
   const genreColor = label => genreColors[genreAliases[label] || label] || genreColors.Other;
   let angle = -Math.PI / 2;
@@ -14815,6 +14824,57 @@ function libraryTextCardWidth(itemOrTitle) {
   return Math.max(132, Math.min(680, Math.ceil(fallback)));
 }
 
+function librarySubcategoryBadgeStyle(item, label = '') {
+  const sourceType = String(item?.sourceType || item?.type || getSourceType(item) || '').toLowerCase();
+  const subcategory = cleanTypeLabel(label || item?.subcategory || '');
+  const normalized = normalizeSearchText([sourceType, subcategory, ...(Array.isArray(item?.genres) ? item.genres : [])].join(' '));
+
+  const has = pattern => pattern.test(normalized);
+  let bg = 'rgba(47,61,92,.92)';
+  let color = '#fff8ea';
+  let border = 'rgba(255,248,234,.12)';
+
+  if (has(/restaurant|food|dinner|lunch|brunch|supper|salumeria|grill|bbq|barbecue|steak|indian|thai|italian|sushi|ramen|burger|taco|pizza|seafood/)) {
+    bg = 'rgba(132,84,32,.92)';
+    border = 'rgba(255,243,220,.16)';
+  } else if (has(/cafe|coffee|tea|bakery|dessert|ice cream|gelato|pastry|donut/)) {
+    bg = 'rgba(164,108,42,.92)';
+    border = 'rgba(255,244,220,.18)';
+  } else if (has(/bar|pub|cocktail|wine|brewery|beer/)) {
+    bg = 'rgba(107,65,92,.92)';
+    border = 'rgba(255,240,247,.14)';
+  } else if (has(/spin|cycle|cycling|bike|cardio|run|running/)) {
+    bg = 'rgba(55,97,121,.92)';
+    border = 'rgba(237,246,252,.14)';
+  } else if (has(/yoga|pilates|stretch|meditation|wellness|recovery/)) {
+    bg = 'rgba(88,122,96,.92)';
+    border = 'rgba(239,247,236,.14)';
+  } else if (has(/strength|gym|workout|bootcamp|hiit|training|crossfit/)) {
+    bg = 'rgba(151,40,12,.92)';
+    border = 'rgba(255,240,233,.14)';
+  } else if (has(/class|workshop|course|lesson|lecture|seminar|pottery|ceramic|art|craft|drawing|painting/)) {
+    bg = 'rgba(73,112,110,.92)';
+    border = 'rgba(236,247,245,.14)';
+  } else if (has(/concert|music|album|song|playlist|dj|opera|musical/)) {
+    bg = 'rgba(102,77,122,.92)';
+    border = 'rgba(244,239,249,.14)';
+  } else if (sourceType === 'book' || has(/book|novel|poetry|essay|memoir|reading/)) {
+    bg = 'rgba(88,104,63,.92)';
+    border = 'rgba(241,246,232,.14)';
+  } else if (sourceType === 'movie' || sourceType === 'tv' || has(/movie|film|tv|series|show|anime|documentary/)) {
+    bg = 'rgba(54,64,92,.92)';
+    border = 'rgba(238,241,248,.14)';
+  } else if (sourceType === 'event' || has(/event|festival|theatre|theater|comedy|sports|game|match|exhibit|museum/)) {
+    bg = 'rgba(122,94,35,.92)';
+    border = 'rgba(251,244,224,.16)';
+  } else if (sourceType === 'shopping' || has(/shopping|store|market|shop/)) {
+    bg = 'rgba(100,109,72,.92)';
+    border = 'rgba(243,246,234,.14)';
+  }
+
+  return `--library-badge-bg:${bg};--library-badge-color:${color};--library-badge-border:${border};`;
+}
+
 function makeLibraryPoster(item) {
   const shell = document.createElement('div');
   shell.className = 'library-card-shell';
@@ -14841,8 +14901,9 @@ function makeLibraryPoster(item) {
     ? `<span class="library-recommended-badge" aria-label="Recommended" title="Recommended">♥</span>`
     : '';
   const subcategoryLabel = cleanTypeLabel(item.subcategory || '');
+  const subcategoryBadgeStyle = subcategoryLabel ? librarySubcategoryBadgeStyle(item, subcategoryLabel) : '';
   const subcategoryBadge = subcategoryLabel
-    ? `<span class="library-subcategory-badge" title="${escapeAttr(subcategoryLabel)}">${escapeHtml(subcategoryLabel)}</span>`
+    ? `<span class="library-subcategory-badge" style="${escapeAttr(subcategoryBadgeStyle)}" title="${escapeAttr(subcategoryLabel)}">${escapeHtml(subcategoryLabel)}</span>`
     : '';
   const dispositionState = libraryDnfState(item);
   const releaseDate = itemReleaseDate(item);
@@ -14875,12 +14936,11 @@ function makeLibraryPoster(item) {
   albumButton.title = 'Add to collection';
   shell.append(poster, albumButton);
   const loggedDate = itemLastLoggedDate(item);
-  if (loggedDate) {
-    const tracked = document.createElement('span');
-    tracked.className = 'library-card-tracked-date';
-    tracked.textContent = formatShortCalendarDate(loggedDate);
-    shell.appendChild(tracked);
-  }
+  const tracked = document.createElement('span');
+  tracked.className = `library-card-tracked-date${loggedDate ? '' : ' is-empty'}`;
+  tracked.textContent = loggedDate ? formatShortCalendarDate(loggedDate) : '';
+  if (!loggedDate) tracked.setAttribute('aria-hidden', 'true');
+  shell.appendChild(tracked);
   return shell;
 }
 
@@ -16711,7 +16771,8 @@ function socialLibraryPosterMarkup(item, profileId = '') {
   // also guarded here so caught-up/paused/finished shows cannot keep stale progress.
   const progress = sourceType === 'tv' ? (item?.activelyWatching === true ? String(item?.progress || '') : '') : String(item?.progress || '');
   const recommendedBadge = item?.recommended ? '<span class="library-recommended-badge" aria-label="Recommended" title="Recommended">♥</span>' : '';
-  const subcategoryBadge = subcategory ? `<span class="library-subcategory-badge" title="${escapeAttr(subcategory)}">${escapeHtml(subcategory)}</span>` : '';
+  const subcategoryBadgeStyle = subcategory ? librarySubcategoryBadgeStyle(item, subcategory) : '';
+  const subcategoryBadge = subcategory ? `<span class="library-subcategory-badge" style="${escapeAttr(subcategoryBadgeStyle)}" title="${escapeAttr(subcategory)}">${escapeHtml(subcategory)}</span>` : '';
   // Match the user's own Library cards: state badges are reserved for exceptional
   // dispositions, not ordinary In progress / Up to date / Finished states.
   const dispositionBadge = ['paused','stopped','not-released'].includes(statusKey)

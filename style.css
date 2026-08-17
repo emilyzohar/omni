@@ -5823,8 +5823,9 @@ body.auth-locked > main {
   white-space: nowrap;
   padding: 4px 7px;
   border-radius: 999px;
-  background: rgba(21,36,58,.88);
-  color: #fff9ea;
+  background: var(--library-badge-bg, rgba(21,36,58,.88));
+  color: var(--library-badge-color, #fff9ea);
+  border: 1px solid var(--library-badge-border, rgba(255,249,234,.12));
   box-shadow: 0 2px 7px rgba(0,0,0,.12);
   backdrop-filter: blur(5px);
   font: 800 .62rem/1 var(--sans);
@@ -11373,35 +11374,41 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
   background: linear-gradient(145deg, rgba(139,153,202,.18), rgba(247,231,196,.64));
 }
 
-/* The logged date lives outside the visual card. Image and text-only cards
-   keep the same poster-height face, with a small dedicated line underneath. */
-.library-groups .library-card-shell:has(> .library-card-tracked-date) {
-  height: calc(var(--library-row-height) + 18px) !important;
-  min-height: calc(var(--library-row-height) + 18px) !important;
+/* The logged date lives outside the visual card. Every Library card keeps the
+   same overall footprint so mixed shelves stay aligned whether or not a date
+   is present. */
+.library-groups .library-poster-grid:not(.is-expanded) .library-card-shell,
+.library-groups .library-poster-grid.is-expanded .library-card-shell,
+.library-groups .library-poster-grid.is-expanded:has(.library-text-card-button) .library-card-shell {
+  height: calc(var(--library-row-height) + 22px) !important;
+  min-height: calc(var(--library-row-height) + 22px) !important;
 }
-.library-groups .library-card-shell:has(> .library-card-tracked-date) > .library-poster-button {
+.library-groups .library-card-shell > .library-poster-button {
   height: var(--library-row-height) !important;
 }
-.library-groups .library-card-shell:has(> .library-card-tracked-date) > .library-card-album-button {
-  bottom: 23px;
+.library-groups .library-card-shell > .library-card-album-button {
+  bottom: 27px;
 }
 .library-groups .library-poster-grid.is-expanded {
-  grid-auto-rows: calc(var(--library-row-height) + 18px);
+  grid-auto-rows: calc(var(--library-row-height) + 22px);
 }
 .library-card-tracked-date {
   position: absolute;
   left: 2px;
   right: 2px;
-  top: calc(var(--library-row-height) + 4px);
-  bottom: auto;
+  top: auto;
+  bottom: 0;
   z-index: 2;
   overflow: hidden;
-  color: rgba(21,36,58,.42);
+  color: rgba(21,36,58,.45);
   font: 500 .56rem/1.1 var(--sans);
   letter-spacing: .01em;
   text-overflow: ellipsis;
   white-space: nowrap;
   pointer-events: none;
+}
+.library-card-tracked-date.is-empty {
+  opacity: 0;
 }
 
 .class-history-section { margin-top: 18px; }
