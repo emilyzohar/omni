@@ -407,6 +407,7 @@ const els = {
   itemProgressMode: $('#itemProgressMode'),
   itemUseDateRange: $('#itemUseDateRange'),
   itemUsePlaylist: $('#itemUsePlaylist'),
+  itemUseRepeatLog: $('#itemUseRepeatLog'),
   catalogueQuery: $('#catalogueQuery'),
   catalogueSearchButton: $('#catalogueSearchButton'),
   searchResults: $('#searchResults'),
@@ -1362,6 +1363,7 @@ function init() {
   migrateDuplicateLibraryItems();
   migrateCustomTypesFromLibrary();
   migrateCustomTypeActionCategories();
+  migrateBuiltInActionCategories();
   seedTypeUsageFromLibrary();
   reconcileLocalProgressQueues();
   const now = new Date();
@@ -1517,6 +1519,7 @@ function bindEvents() {
   els.itemProgressMode?.addEventListener('change', updateItemFormForType);
   els.itemUseDateRange?.addEventListener('change', updateItemFormForType);
   els.itemUsePlaylist?.addEventListener('change', updateItemFormForType);
+  els.itemUseRepeatLog?.addEventListener('change', updateItemFormForType);
   els.catalogueSearchButton?.addEventListener('click', searchCatalogue);
   els.catalogueQuery?.addEventListener('keydown', event => {
     if (event.key === 'Enter') {
@@ -1908,6 +1911,25 @@ function bindEvents() {
       if (els.itemKindChoice) els.itemKindChoice.value = 'class';
       if (els.itemSourceType) els.itemSourceType.value = 'class';
       if (els.itemFindSource) els.itemFindSource.value = 'manual';
+      if (els.itemDate) els.itemDate.value = todayString();
+      updateItemFormForType();
+      return;
+    }
+
+    const addRepeatableLog = event.target.closest('[data-add-repeatable-log]');
+    if (addRepeatableLog) {
+      const group = findItem(addRepeatableLog.dataset.addRepeatableLog || state.openDetailId);
+      if (!group) return;
+      const action = ADD_ACTION_CATEGORIES.includes(group.actionCategory) ? group.actionCategory : 'completed';
+      const kind = group.type && !isBuiltInType(group.type) ? `custom:${group.type}` : 'other-item';
+      els.detailModal.close();
+      openItemModal('', 'library');
+      if (els.itemActionChoice) els.itemActionChoice.value = action;
+      refreshItemKindChoices(kind, action);
+      setUnderlyingFormTypeForKind(kind);
+      if (els.itemKindChoice) els.itemKindChoice.value = kind;
+      if (els.itemFindSource) els.itemFindSource.value = group.featureConfig?.findSource || 'manual';
+      if (els.itemUseRepeatLog) els.itemUseRepeatLog.checked = true;
       if (els.itemDate) els.itemDate.value = todayString();
       updateItemFormForType();
       return;
@@ -5210,23 +5232,28 @@ const ADD_ACTION_KIND_OPTIONS = Object.freeze({
   ],
   went: [
     { value: 'restaurant', label: 'Restaurant', parent: 'food', subtype: 'restaurant' },
-    { value: 'shopping', label: 'Shopping / store', parent: 'shopping' }
+    { value: 'shopping', label: 'Shopping / store', parent: 'shopping' },
+    { value: 'event', label: 'Event', parent: 'event' },
+    { value: 'concert', label: 'Concert', parent: 'music', subtype: 'concert' }
+  ],
+  listened: [
+    { value: 'music', label: 'Music album', parent: 'music', subtype: 'album' },
+    { value: 'artist', label: 'Artist', parent: 'music', subtype: 'artist' },
+    { value: 'song', label: 'Song', parent: 'music', subtype: 'song' }
+  ],
+  ate: [
+    { value: 'food', label: 'Food', parent: 'food', subtype: 'manual' }
+  ],
+  made: [
+    { value: 'recipe', label: 'Recipe', parent: 'food', subtype: 'recipe' }
   ],
   completed: [
     { value: 'workout', label: 'Workout', parent: 'workout' },
     { value: 'activity', label: 'Activity', parent: 'activity' },
-    { value: 'class', label: 'Class', parent: 'class' }
-  ],
-  other: [
-    { value: 'event', label: 'Event', parent: 'event' },
-    { value: 'concert', label: 'Concert', parent: 'music', subtype: 'concert' },
-    { value: 'music', label: 'Music album', parent: 'music', subtype: 'album' },
-    { value: 'artist', label: 'Artist', parent: 'music', subtype: 'artist' },
-    { value: 'song', label: 'Song', parent: 'music', subtype: 'song' },
-    { value: 'recipe', label: 'Recipe', parent: 'food', subtype: 'recipe' },
-    { value: 'food', label: 'Food', parent: 'food', subtype: 'manual' },
+    { value: 'class', label: 'Class', parent: 'class' },
     { value: 'reminder', label: 'Reminder', parent: 'reminder' }
-  ]
+  ],
+  other: []
 });
 
 const UNIVERSAL_ADD_KIND_OPTIONS = Object.freeze([
@@ -5240,7 +5267,7 @@ function addKindUsageValue(option) {
   return option.parent || option.value || '';
 }
 
-const ADD_ACTION_CATEGORIES = Object.freeze(['watched','read','played','went','completed','other']);
+const ADD_ACTION_CATEGORIES = Object.freeze(['watched','read','played','went','listened','ate','made','completed','other']);
 
 function normalizeAddActionCategory(value, fallback = 'other') {
   const clean = String(value || '').trim().toLowerCase();
@@ -5273,7 +5300,10 @@ function inferCustomTypeActionCategory(entry) {
     if (source === 'book' || findSource === 'google-books') return 'read';
     if (['video-game','board-game'].includes(source) || /igdb|boardgamegeek|bgg/.test(findSource)) return 'played';
     if (['restaurant','place','shopping','event','concert'].includes(source) || /google-places|ticketmaster/.test(findSource)) return 'went';
-    if (source === 'workout') return 'completed';
+    if (['music','artist','song'].includes(source) || /apple-albums|lastfm-artists|apple-songs/.test(findSource)) return 'listened';
+    if (source === 'food') return 'ate';
+    if (source === 'recipe') return 'made';
+    if (['workout','activity','class','reminder'].includes(source)) return 'completed';
   }
   return 'other';
 }
@@ -5365,7 +5395,7 @@ function syncAddActionControls(item = null) {
   if (!els.itemActionChoice || !els.itemKindChoice) return;
   const kind = kindForCurrentForm(item);
   const storedAction = String(item?.actionCategory || '');
-  const action = ['watched','read','played','went','completed','other'].includes(storedAction) ? storedAction : addActionForKind(kind);
+  const action = ADD_ACTION_CATEGORIES.includes(storedAction) ? storedAction : addActionForKind(kind);
   els.itemActionChoice.value = action;
   refreshItemKindChoices(kind, action);
 }
@@ -5442,6 +5472,54 @@ function migrateCustomTypeActionCategories() {
   }
 }
 
+function canonicalBuiltInActionCategory(item) {
+  if (!item) return '';
+  const source = String(getSourceType(item) || '');
+  if (['tv','movie','youtube'].includes(source)) return 'watched';
+  if (source === 'book') return 'read';
+  if (['video-game','board-game'].includes(source)) return 'played';
+  if (['restaurant','place','shopping','event','concert'].includes(source)) return 'went';
+  if (['music','artist','song'].includes(source)) return 'listened';
+  if (source === 'food') return 'ate';
+  if (source === 'recipe') return 'made';
+  if (['workout','activity','class','reminder'].includes(source)) return 'completed';
+  return '';
+}
+
+function migrateBuiltInActionCategories() {
+  let itemsChanged = false;
+  let historyChanged = false;
+  for (const item of state.items || []) {
+    const sourceType = String(getSourceType(item) || '');
+    // Reminder display labels are implemented as custom Types (for example
+    // Chores), but Reminder is still a built-in behavior and belongs under
+    // Completed. Other genuinely custom Types keep the category the user chose.
+    if (item.type && !isBuiltInType(item.type) && sourceType !== 'reminder') continue;
+    const next = canonicalBuiltInActionCategory(item);
+    if (next && item.actionCategory !== next) {
+      item.actionCategory = next;
+      itemsChanged = true;
+      if (sourceType === 'reminder' && item.type) {
+        const custom = (state.customTypes || []).find(entry => entry.type === item.type);
+        if (custom && custom.actionCategory !== 'completed') custom.actionCategory = 'completed';
+      }
+    }
+  }
+  for (const entry of state.history || []) {
+    const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
+    const next = source ? canonicalBuiltInActionCategory(source) : canonicalBuiltInActionCategory({ sourceType: entry.sourceType || entry.type, type: entry.type });
+    if (next && entry.actionCategory !== next) {
+      entry.actionCategory = next;
+      historyChanged = true;
+    }
+  }
+  if (itemsChanged) {
+    safeLocalSet(CUSTOM_TYPES_KEY, state.customTypes);
+    saveItems();
+  }
+  if (historyChanged) saveHistory();
+}
+
 function seedTypeUsageFromLibrary() {
   if (Object.keys(state.typeUsage || {}).length || !state.items.length) return;
   const seeded = {};
@@ -5490,6 +5568,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     if (els.itemProgressMode) els.itemProgressMode.value = item.featureConfig?.progressMode || 'auto';
     if (els.itemUseDateRange) els.itemUseDateRange.checked = Boolean(item.featureConfig?.dateRange || (item.activityMeta && sourceType !== 'activity'));
     if (els.itemUsePlaylist) els.itemUsePlaylist.checked = Boolean(item.featureConfig?.youtubePlaylist || (sourceType === 'youtube' && (item.type === 'workout' || item.playlistItems)));
+    if (els.itemUseRepeatLog) els.itemUseRepeatLog.checked = Boolean(item.featureConfig?.repeatableLog || sourceType === 'class');
     if (['youtube', 'reminder', 'other', 'place'].includes(sourceType) || selectedSavedTypeEntry()) els.itemDisplayType.value = getItemTypeLabel(item);
     els.provider.value = item.provider || 'manual';
     els.providerId.value = item.providerId || '';
@@ -5583,6 +5662,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.itemProgressMode) els.itemProgressMode.value = 'auto';
   if (els.itemUseDateRange) els.itemUseDateRange.checked = false;
   if (els.itemUsePlaylist) els.itemUsePlaylist.checked = false;
+  if (els.itemUseRepeatLog) els.itemUseRepeatLog.checked = false;
   if (els.itemFeaturesDisclosure) els.itemFeaturesDisclosure.open = false;
   if (els.itemBuddyWatchPerson) els.itemBuddyWatchPerson.innerHTML = '';
   if (els.itemBuddyWatchPersonField) els.itemBuddyWatchPersonField.hidden = true;
@@ -5730,17 +5810,30 @@ function defaultFindSourceForType(sourceType = automaticFormSourceType()) {
   })[sourceType] || 'manual';
 }
 
-function selectedFormSourceType() {
+function selectedLookupSourceType() {
   const automatic = automaticFormSourceType();
-  // A playlist is a behavior, not a display Type. Turning it on makes YouTube
-  // the content backend while the chosen Type/label remains whatever the user picked.
-  if (els.itemUsePlaylist?.checked) return 'youtube';
   const findSource = els.itemFindSource?.value || 'auto';
-  const editingHint = String(els.itemForm?.dataset?.sourceTypeHint || '');
-  if (findSource === 'auto' && editingHint) return editingHint;
   if (findSource === 'auto') return automatic;
   if (findSource === 'google-places' && automatic === 'restaurant') return 'restaurant';
   return FIND_SOURCE_CONFIG[findSource]?.sourceType || automatic;
+}
+
+function selectedFormSourceType() {
+  const automatic = automaticFormSourceType();
+  const findSource = els.itemFindSource?.value || 'auto';
+  const editingHint = String(els.itemForm?.dataset?.sourceTypeHint || '');
+
+  // Class, Activity, and Reminder are behaviors in their own right. A lookup
+  // source is optional enrichment for them and must not turn the item into a
+  // Place, YouTube video, Event, etc. This keeps every lookup source usable
+  // while preserving the Type/functionality the user actually selected.
+  if (['class','activity','reminder'].includes(automatic)) return automatic;
+
+  // A playlist is an explicit behavior choice. It uses YouTube as the content
+  // backend while the visible Library Type can still be anything the user chose.
+  if (els.itemUsePlaylist?.checked) return 'youtube';
+  if (findSource === 'auto' && editingHint) return editingHint;
+  return selectedLookupSourceType();
 }
 
 function effectiveItemProgressMode(sourceType = selectedFormSourceType()) {
@@ -5770,6 +5863,7 @@ function syncItemFeatureSummary() {
   if (progress === 'book') bits.push('pages');
   if (els.itemUseDateRange?.checked) bits.push('date range');
   if (els.itemUsePlaylist?.checked) bits.push('playlist');
+  if (els.itemUseRepeatLog?.checked) bits.push('repeat log');
   els.itemFeaturesSummary.textContent = bits.length ? bits.join(' · ') : 'automatic';
 }
 
@@ -5931,13 +6025,17 @@ function updateItemFormForType() {
   const findSource = els.itemFindSource?.value || 'auto';
   const isCatalogue = findSource !== 'manual';
   const isYouTube = sourceType === 'youtube';
-  const isReminder = sourceType === 'reminder';
-  const isActivity = sourceType === 'activity';
-  const isClass = sourceType === 'class';
+  const isReminder = sourceType === 'reminder' || parentType === 'reminder';
+  const isActivity = sourceType === 'activity' || parentType === 'activity';
+  const isClass = sourceType === 'class' || parentType === 'class';
   const isManual = sourceType === 'other' || Boolean(savedType);
   const isFoodManual = sourceType === 'food' || sourceType === 'recipe';
 
-  els.catalogueSearchBlock.hidden = isClass;
+  // Lookup and optional functionality are available for every Type.
+  // Choosing Class/Activity/Reminder no longer hides Find it.
+  els.catalogueSearchBlock.hidden = false;
+  if (els.itemFindSourceDisclosure) els.itemFindSourceDisclosure.hidden = false;
+  if (els.itemFeaturesDisclosure) els.itemFeaturesDisclosure.hidden = false;
   if (els.catalogueQuery) els.catalogueQuery.disabled = !isCatalogue;
   if (els.catalogueSearchButton) els.catalogueSearchButton.disabled = !isCatalogue;
   els.workoutBlock.hidden = !Boolean(els.itemUsePlaylist?.checked);
@@ -6154,7 +6252,7 @@ function renderSearchResults(results) {
     button.addEventListener('click', () => selectCatalogueResult(result));
     els.searchResults.appendChild(button);
   });
-  if (['restaurant','place'].includes(selectedFormSourceType())) {
+  if (['restaurant','place'].includes(selectedLookupSourceType())) {
     const attribution = document.createElement('div');
     attribution.className = 'gmp-attribution';
     attribution.setAttribute('translate', 'no');
@@ -6174,6 +6272,7 @@ async function selectCatalogueResult(result) {
     }
   }
   const formSourceType = selectedFormSourceType();
+  const lookupSourceType = selectedLookupSourceType();
   const existingMatch = findCanonicalLibraryItem({ ...result, sourceType: formSourceType }, els.editingId?.value || '');
   if (existingMatch) {
     openItemModal(existingMatch.id);
@@ -6181,8 +6280,8 @@ async function selectCatalogueResult(result) {
     return;
   }
   state.selectedSource = result;
-  const selectingRestaurant = formSourceType === 'restaurant' && result.provider === 'googlePlaces';
-  const selectingPlace = formSourceType === 'place' && result.provider === 'googlePlaces';
+  const selectingRestaurant = lookupSourceType === 'restaurant' && result.provider === 'googlePlaces';
+  const selectingPlace = lookupSourceType === 'place' && result.provider === 'googlePlaces';
   // Selecting a restaurant should behave like selecting a movie: use the
   // catalogue result's actual display name as the prefilled tracker title.
   if (selectingRestaurant || selectingPlace) {
@@ -6198,23 +6297,23 @@ async function selectCatalogueResult(result) {
   els.searchResults.hidden = true;
   showSelectedSource(result);
 
-  if (formSourceType === 'book' && result.pageCount && !els.bookTotalPages.value) {
+  if (lookupSourceType === 'book' && result.pageCount && !els.bookTotalPages.value) {
     els.bookTotalPages.value = result.pageCount;
   }
-  if (['event', 'concert'].includes(formSourceType) && result.eventDate && els.itemDate) {
+  if (['event', 'concert'].includes(lookupSourceType) && result.eventDate && els.itemDate) {
     els.itemDate.value = result.eventDate;
   }
-  if (els.itemReleaseDate && ['tv','movie','book','video-game','board-game','music','artist','song'].includes(formSourceType)) {
-    const releaseDate = normalizedReleaseDate(extractItemReleaseDate(formSourceType, result, null));
+  if (els.itemReleaseDate && ['tv','movie','book','video-game','board-game','music','artist','song'].includes(lookupSourceType)) {
+    const releaseDate = normalizedReleaseDate(extractItemReleaseDate(lookupSourceType, result, null));
     if (releaseDate) els.itemReleaseDate.value = releaseDate;
   }
-  if (formSourceType === 'music' && result.provider === 'itunes' && els.itemSubcategory) {
+  if (formParentType() === 'music' && lookupSourceType === 'music' && result.provider === 'itunes' && els.itemSubcategory) {
     els.itemSubcategory.value = 'Album';
     els.itemSubcategory.readOnly = true;
     els.itemSubcategory.placeholder = 'Album';
     syncItemSubcategoryDisclosure();
   }
-  if (formSourceType === 'tv' && result.providerId) {
+  if (lookupSourceType === 'tv' && effectiveItemProgressMode(formSourceType) === 'tv' && result.providerId) {
     prepareTVWatchSetup(result.providerId).catch(error => {
       if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = error.message;
       if (els.tvProgressFields) els.tvProgressFields.hidden = true;
@@ -6486,6 +6585,7 @@ async function saveItemFromForm(event) {
   const buddyFriendId = startBuddyAfterSave ? (els.itemBuddyWatchPerson?.value || '') : '';
   const sourceType = selectedFormSourceType();
   const editing = findItem(els.editingId.value);
+  const repeatableLogRequested = Boolean(els.itemUseRepeatLog?.checked) && sourceType !== 'class';
   const selectedActionCategory = normalizeAddActionCategory(els.itemActionChoice?.value || editing?.actionCategory || 'other');
   let title = els.manualTitle.value.trim();
   let provider = els.provider.value;
@@ -6620,6 +6720,10 @@ async function saveItemFromForm(event) {
     showFormMessage('Choose the date for this class.', true);
     return;
   }
+  if (repeatableLogRequested && !els.itemDate?.value) {
+    showFormMessage('Choose the date for this log.', true);
+    return;
+  }
   if (sourceType === 'reminder' && !els.reminderDueDate?.value) {
     showFormMessage(els.reminderFrequency?.value === 'none' ? 'Choose a date for the reminder.' : 'Choose a start date for the repeating reminder.', true);
     return;
@@ -6652,7 +6756,7 @@ async function saveItemFromForm(event) {
     venueName: state.selectedSource?.venueName || editing?.eventMeta?.venueName || '',
     raw: state.selectedSource?.raw || editing?.raw || {}
   };
-  const libraryCollision = findCanonicalLibraryItem(collisionCandidate, editing?.id || '');
+  const libraryCollision = repeatableLogRequested ? null : findCanonicalLibraryItem(collisionCandidate, editing?.id || '');
   if (libraryCollision) {
     if (editing) {
       showFormMessage(`“${libraryCollision.title}” is already the Library item for this content.`, true);
@@ -6706,7 +6810,8 @@ async function saveItemFromForm(event) {
       findSource: requestedFindSource,
       progressMode: effectiveItemProgressMode(sourceType),
       dateRange: Boolean(els.itemUseDateRange?.checked),
-      youtubePlaylist: Boolean(els.itemUsePlaylist?.checked)
+      youtubePlaylist: Boolean(els.itemUsePlaylist?.checked),
+      repeatableLog: Boolean(els.itemUseRepeatLog?.checked)
     },
     createdAt: editing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -6902,7 +7007,7 @@ async function saveItemFromForm(event) {
       title: 'Classes', provider: 'manual', providerId: '', image: '', subtitle: '', rating: 0,
       actionCategory: 'completed', notes: '', comment: '', people: [], recommended: false, genres: [],
       releaseDate: '', attachments: [], coverAttachmentId: '', links: [], date: '', queueStatus: 'library', active: false,
-      featureConfig: { findSource: 'manual', progressMode: 'none', dateRange: false, youtubePlaylist: false },
+      featureConfig: { findSource: 'manual', progressMode: 'none', dateRange: false, youtubePlaylist: false, repeatableLog: true },
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), completedAt: '', progress: {}, groupedClass: true
     };
 
@@ -6921,16 +7026,130 @@ async function saveItemFromForm(event) {
     setItemQueueStatus(group, 'library');
     if (!existingClassGroup) state.items.push(group);
 
+    group.featureConfig = {
+      ...(group.featureConfig || {}),
+      findSource: requestedFindSource,
+      repeatableLog: true
+    };
+
     addHistoryRecord({
       sourceItemId: group.id, sourceType: 'class', type: 'class', typeLabel: 'Classes', subcategory: 'Class',
-      date: classDate, showOnCalendar: true, kind: 'class-attended', title, subtitle: 'Class', notes: classNotes,
-      comment: classComment, people: classPeople, rating: classRating, image: '', provider: 'manual', providerId: ''
+      date: classDate, showOnCalendar: true, kind: 'class-attended', title,
+      subtitle: item.subtitle || 'Class', notes: classNotes, comment: classComment, people: classPeople,
+      rating: classRating, image: item.image || '', provider: item.provider || 'manual', providerId: item.providerId || '',
+      raw: state.selectedSource?.raw || {}
     });
 
     const classRatings = state.history
       .filter(entry => entry.sourceItemId === group.id && entry.kind === 'class-attended' && Number(entry.rating || 0) > 0)
       .map(entry => Number(entry.rating));
     group.rating = classRatings.length ? Math.round((classRatings.reduce((sum, value) => sum + value, 0) / classRatings.length) * 2) / 2 : 0;
+    recordTypeUse(group);
+    saveItems();
+    saveHistory();
+    await deleteRemovedDraftAttachments();
+    els.itemModal.close();
+    renderAll();
+    return;
+  }
+
+  if (repeatableLogRequested && !editing) {
+    const existingGroup = state.items.find(existing =>
+      existing.type === item.type &&
+      existing.groupedRepeatable === true &&
+      existing.featureConfig?.repeatableLog === true
+    ) || null;
+    const logDate = els.itemDate?.value || todayString();
+    const group = existingGroup || {
+      id: makeId(),
+      sourceType: 'other',
+      type: item.type,
+      typeLabel: item.typeLabel,
+      subcategory: item.subcategory || '',
+      title: item.typeLabel || item.title || 'Logs',
+      provider: 'manual',
+      providerId: '',
+      image: item.image || '',
+      subtitle: '',
+      rating: 0,
+      actionCategory: selectedActionCategory,
+      notes: '',
+      comment: '',
+      people: [],
+      recommended: false,
+      genres: [],
+      releaseDate: '',
+      attachments: [],
+      coverAttachmentId: '',
+      links: [],
+      date: '',
+      queueStatus: 'library',
+      active: false,
+      featureConfig: {
+        findSource: requestedFindSource,
+        progressMode: 'none',
+        dateRange: false,
+        youtubePlaylist: false,
+        repeatableLog: true
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      completedAt: '',
+      progress: {},
+      groupedRepeatable: true
+    };
+
+    group.actionCategory = selectedActionCategory;
+    group.typeLabel = item.typeLabel || group.typeLabel;
+    group.title = group.typeLabel || group.title;
+    group.subcategory ||= item.subcategory || '';
+    group.featureConfig = {
+      ...(group.featureConfig || {}),
+      findSource: requestedFindSource,
+      repeatableLog: true
+    };
+    if (!group.image && item.image) group.image = item.image;
+    group.attachments = [
+      ...(group.attachments || []),
+      ...attachmentFiles.filter(file => !(group.attachments || []).some(saved => saved.id === file.id))
+    ];
+    group.links = [
+      ...(group.links || []),
+      ...state.attachmentDraft.links.filter(link => !(group.links || []).some(saved => saved.url === link.url))
+    ];
+    if (!group.image && !group.coverAttachmentId) {
+      group.coverAttachmentId = attachmentFiles.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
+    }
+    group.updatedAt = new Date().toISOString();
+    setItemQueueStatus(group, 'library');
+    if (!existingGroup) state.items.push(group);
+
+    addHistoryRecord({
+      sourceItemId: group.id,
+      sourceType,
+      type: group.type,
+      typeLabel: group.typeLabel,
+      subcategory: item.subcategory || '',
+      actionCategory: selectedActionCategory,
+      date: logDate,
+      showOnCalendar: true,
+      kind: 'repeatable-log',
+      title: item.title,
+      subtitle: item.subtitle || SOURCE_ITEM_LABELS[sourceType] || 'Log',
+      notes: item.notes || '',
+      comment: item.comment || '',
+      people: item.people || [],
+      rating: Number(item.rating || 0),
+      image: item.image || '',
+      provider: item.provider || 'manual',
+      providerId: item.providerId || '',
+      raw: state.selectedSource?.raw || {}
+    });
+
+    const ratings = state.history
+      .filter(entry => entry.sourceItemId === group.id && entry.kind === 'repeatable-log' && Number(entry.rating || 0) > 0)
+      .map(entry => Number(entry.rating));
+    group.rating = ratings.length ? Math.round((ratings.reduce((sum, value) => sum + value, 0) / ratings.length) * 2) / 2 : 0;
     recordTypeUse(group);
     saveItems();
     saveHistory();
@@ -7212,6 +7431,7 @@ async function openDetails(id) {
     else if (sourceType === 'place') await renderPlaceDetails(item);
     else if (sourceType === 'activity') renderActivityDetails(item);
     else if (sourceType === 'class') renderClassDetails(item);
+    else if (item.featureConfig?.repeatableLog === true && item.groupedRepeatable === true) renderRepeatableLogDetails(item);
     else renderManualDetails(item);
     appendFlexibleFeatureProgress(item);
     appendLibraryReleaseDateSummary(item);
@@ -7762,6 +7982,26 @@ function renderActivityDetails(item) {
   `;
 }
 
+function repeatableLogEntries(item) {
+  return state.history
+    .filter(entry => entry.sourceItemId === item.id && entry.kind === 'repeatable-log')
+    .sort((a, b) => String(b.date || b.createdAt || '').localeCompare(String(a.date || a.createdAt || '')));
+}
+
+function renderRepeatableLogDetails(item) {
+  const entries = repeatableLogEntries(item);
+  const rows = entries.length
+    ? entries.map(entry => `<article class="class-history-row">
+        <div class="class-history-date">${escapeHtml(entry.date ? formatShortCalendarDate(entry.date) : 'Undated')}</div>
+        <div class="class-history-copy"><strong>${escapeHtml(entry.title || item.typeLabel || 'Log')}</strong>${entry.subtitle ? `<small>${escapeHtml(entry.subtitle)}</small>` : ''}${entry.notes ? `<span>${escapeHtml(entry.notes)}</span>` : ''}</div>
+        <div class="class-history-rating">${Number(entry.rating || 0) ? `★ ${escapeHtml(formatPersonalRating(entry.rating))}` : ''}</div>
+      </article>`).join('')
+    : '<p class="detail-meta">No entries logged yet.</p>';
+  els.detailBody.innerHTML = `
+    ${libraryDetailHero({ type:(item.typeLabel || 'LOGS').toUpperCase(), title:item.typeLabel || item.title || 'Logs', image:displayImageForItem(item), subtitle:`${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} logged`, overview:'' })}
+    <section class="detail-section class-history-section"><div class="detail-section-heading"><h3>History</h3><button class="secondary-button" type="button" data-add-repeatable-log="${escapeAttr(item.id)}">+ Add entry</button></div><div class="class-history-list">${rows}</div></section>`;
+}
+
 function classHistoryEntries(item) {
   return state.history
     .filter(entry => entry.sourceItemId === item.id && entry.kind === 'class-attended')
@@ -8062,6 +8302,10 @@ function libraryPersonalMetadataMarkup(item) {
   if (getSourceType(item) === 'class') {
     const count = classHistoryEntries(item).length;
     return `<div class="library-personal-meta library-class-meta" data-library-personal-meta="${escapeAttr(item.id)}"><div class="library-personal-meta-row"><span class="library-class-meta-count">${count} ${count === 1 ? 'class' : 'classes'} logged</span><button class="secondary-button library-personal-edit" type="button" data-add-class-log>+ Add class</button></div></div>`;
+  }
+  if (item.featureConfig?.repeatableLog === true && item.groupedRepeatable === true) {
+    const count = repeatableLogEntries(item).length;
+    return `<div class="library-personal-meta library-class-meta" data-library-personal-meta="${escapeAttr(item.id)}"><div class="library-personal-meta-row"><span class="library-class-meta-count">${count} ${count === 1 ? 'entry' : 'entries'} logged</span><button class="secondary-button library-personal-edit" type="button" data-add-repeatable-log="${escapeAttr(item.id)}">+ Add entry</button></div></div>`;
   }
   const rating = Math.max(0, Math.min(5, Number(item.rating || 0)));
   const calendarFootnote = libraryCalendarToggleButton(item);

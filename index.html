@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-card-date-layout-50" />
+  <link rel="stylesheet" href="style.css?v=omni-flexible-functionality-54" />
 </head>
 <body class="auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -250,6 +250,9 @@
             <option value="read">Read</option>
             <option value="played">Played</option>
             <option value="went">Went</option>
+            <option value="listened">Listened</option>
+            <option value="ate">Ate</option>
+            <option value="made">Made</option>
             <option value="completed">Completed</option>
             <option value="other">Other</option>
           </select>
@@ -311,7 +314,7 @@
           </div>
         </label>
         <details id="itemFindSourceDisclosure" class="compact-add-option find-source-disclosure">
-          <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Search source</span><small id="itemFindSourceSummary">Automatic</small></summary>
+          <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Link / search source</span><small id="itemFindSourceSummary">Automatic</small></summary>
           <label class="field compact-field compact-add-body">
             <span class="sr-only">Search source</span>
             <select id="itemFindSource" aria-label="Search source">
@@ -337,11 +340,13 @@
       </div>
 
       <details id="itemFeaturesDisclosure" class="compact-add-option item-features-disclosure">
-        <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Options</span><small id="itemFeaturesSummary">automatic</small></summary>
+        <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Add functionality</span><small id="itemFeaturesSummary">automatic</small></summary>
         <div class="compact-add-body item-feature-grid">
           <label class="field compact-field"><span>Progress</span><select id="itemProgressMode"><option value="auto">Automatic</option><option value="none">None</option><option value="tv">Episodes</option><option value="book">Pages</option></select></label>
           <label class="checkbox-field compact-feature-toggle"><input id="itemUseDateRange" type="checkbox" /><span>Multiple days</span></label>
           <label class="checkbox-field compact-feature-toggle"><input id="itemUsePlaylist" type="checkbox" /><span>YouTube playlist</span></label>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUseRepeatLog" type="checkbox" /><span>Repeatable log (Class-style)</span></label>
+          <p class="compact-feature-help">Any type can use these options. Mix progress, multiple days, YouTube playlists, or repeatable logs with any Link / search source above—including YouTube, Google Maps, Ticketmaster, books, games, TV, movies, and music.</p>
         </div>
       </details>
 
@@ -684,6 +689,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-games-51"></script>
+  <script type="module" src="app.js?v=omni-flexible-functionality-54"></script>
 </body>
 </html>
