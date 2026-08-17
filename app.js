@@ -14842,13 +14842,22 @@ function makeLibraryPoster(item) {
   albumButton.setAttribute('aria-label', `Add ${item.title} to album`);
   albumButton.title = 'Add to collection';
   shell.append(poster, albumButton);
-  const trackedDate = itemLastTrackedDate(item);
-  if (trackedDate) {
-    const tracked = document.createElement('span');
-    tracked.className = 'library-card-tracked-date';
-    tracked.textContent = `${formatShortCalendarDate(trackedDate)}`;
-    shell.appendChild(tracked);
-  }
+  const watchedDate = state.history
+  .filter(entry =>
+    entry.sourceItemId === item.id &&
+    ['episode-watched', 'movie-watched', 'series-watched'].includes(entry.kind) &&
+    entry.date
+  )
+  .map(entry => String(entry.date).slice(0, 10))
+  .sort()
+  .at(-1);
+
+if (watchedDate) {
+  const tracked = document.createElement('span');
+  tracked.className = 'library-card-tracked-date';
+  tracked.textContent = formatShortCalendarDate(watchedDate);
+  shell.appendChild(tracked);
+}
   return shell;
 }
 
