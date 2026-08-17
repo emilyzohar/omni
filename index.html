@@ -16,13 +16,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-social-friend-context-10" />
+  <link rel="stylesheet" href="style.css?v=omni-add-modal-collapse-12" />
 </head>
 <body class="auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
     <div class="auth-card">
       <div class="auth-brand">
-        <span class="auth-mark">CA</span>
+        <span class="auth-mark">omni</span>
         <div>
           <p class="eyebrow">OMNI</p>
           <h1>Your tracker</h1>
@@ -299,6 +299,19 @@
         </select>
       </label>
 
+      <details id="itemSubcategoryDisclosure" class="compact-add-option subcategory-disclosure">
+        <summary>
+          <span class="compact-add-plus" aria-hidden="true">+</span>
+          <span>Subcategory</span>
+          <small id="itemSubcategorySummary"></small>
+        </summary>
+        <label class="field compact-field compact-add-body">
+          <span class="sr-only">Subcategory</span>
+          <input id="itemSubcategory" type="text" autocomplete="off" placeholder="e.g. Documentary, Lecture, Gym" />
+          <small class="field-hint">Stays inside the main type, but can use its own calendar sticker.</small>
+        </label>
+      </details>
+
       <label id="itemSubtypeBlock" class="field" hidden>
         <span id="itemSubtypeLabel">Kind</span>
         <select id="itemSubtype"></select>
@@ -388,22 +401,6 @@
         </label>
       </div>
 
-      <div id="itemPeopleBlock">
-        <label class="field">
-          <span>With people <em>optional</em></span>
-          <input id="itemPeople" type="text" autocomplete="off" placeholder="Names, separated by commas or @username" />
-        </label>
-        <div id="itemPeopleSuggestions" class="people-tag-suggestions" hidden aria-label="Tag people you follow or who follow you"></div>
-      </div>
-
-      <div class="item-calendar-meta-fields">
-        <label class="field compact-field">
-          <span>Subcategory <em>optional</em></span>
-          <input id="itemSubcategory" type="text" autocomplete="off" placeholder="e.g. Documentary, Lecture, Gym" />
-          <small class="field-hint">Stays inside the main type, but can use its own calendar sticker.</small>
-        </label>
-      </div>
-
       <div id="tvProgressFields" class="progress-fields tv-watch-history-setup" hidden>
         <input id="nextSeason" type="hidden" value="1" />
         <input id="nextEpisode" type="hidden" value="1" />
@@ -465,25 +462,56 @@
         <textarea id="itemNote" rows="3" placeholder="Anything you want to remember"></textarea>
       </label>
 
-      <section class="attachment-editor">
-        <div class="attachment-editor-heading">
-          <span>Files, images & links <em>optional</em></span>
-          <small>Images and viewable files open inside the site.</small>
-        </div>
+      <div id="itemSocialMetaRow" class="item-social-meta-row">
+        <details id="itemPeopleDisclosure" class="compact-add-option people-disclosure">
+          <summary>
+            <span class="compact-add-plus" aria-hidden="true">+</span>
+            <span>With people</span>
+            <small id="itemPeopleSummary"></small>
+          </summary>
+          <div id="itemPeopleBlock" class="compact-add-body">
+            <label class="field">
+              <span class="sr-only">With people</span>
+              <input id="itemPeople" type="text" autocomplete="off" placeholder="Names, separated by commas or @username" />
+            </label>
+            <div id="itemPeopleSuggestions" class="people-tag-suggestions" hidden aria-label="Tag people you follow or who follow you"></div>
+          </div>
+        </details>
 
-        <label class="attachment-upload-button">
-          <input id="itemFiles" type="file" multiple />
-          <span>+ Add files or images</span>
-        </label>
-        <div id="attachmentEditorList" class="attachment-editor-list"></div>
-
-        <div class="link-editor">
-          <input id="itemLinkLabel" type="text" placeholder="Link label (optional)" />
-          <input id="itemLinkUrl" type="url" inputmode="url" placeholder="https://…" />
-          <button id="addItemLink" class="secondary-button" type="button">Add link</button>
+        <div id="itemBuddyWatchField" class="buddy-watch-inline" hidden>
+          <label class="buddy-watch-toggle">
+            <input id="itemBuddyWatchToggle" type="checkbox" />
+            <span class="buddy-watch-switch" aria-hidden="true"></span>
+            <span>Buddy Watch</span>
+          </label>
+          <label id="itemBuddyWatchPersonField" class="buddy-watch-person-field" hidden>
+            <span class="sr-only">Buddy Watch with</span>
+            <select id="itemBuddyWatchPerson" aria-label="Buddy Watch with"></select>
+          </label>
         </div>
-        <div id="linkEditorList" class="attachment-editor-list"></div>
-      </section>
+      </div>
+
+      <details id="itemAttachmentsDisclosure" class="attachment-editor attachment-editor-collapsible">
+        <summary class="attachment-editor-heading">
+          <span><span class="compact-add-plus" aria-hidden="true">+</span> Files, images & links</span>
+          <small id="itemAttachmentsSummary">optional</small>
+        </summary>
+        <div class="attachment-editor-content">
+          <small class="attachment-editor-note">Images and viewable files open inside the site.</small>
+          <label class="attachment-upload-button">
+            <input id="itemFiles" type="file" multiple />
+            <span>+ Add files or images</span>
+          </label>
+          <div id="attachmentEditorList" class="attachment-editor-list"></div>
+
+          <div class="link-editor">
+            <input id="itemLinkLabel" type="text" placeholder="Link label (optional)" />
+            <input id="itemLinkUrl" type="url" inputmode="url" placeholder="https://…" />
+            <button id="addItemLink" class="secondary-button" type="button">Add link</button>
+          </div>
+          <div id="linkEditorList" class="attachment-editor-list"></div>
+        </div>
+      </details>
 
       <input id="itemRecommended" type="checkbox" hidden />
 
@@ -507,7 +535,6 @@
         <button id="deleteItem" class="delete-button" type="button" hidden>Delete</button>
         <div class="actions-right">
           <button class="quiet-button" type="button" data-close="itemModal">Cancel</button>
-          <button id="saveBuddyWatchItem" class="secondary-button save-buddy-watch-item" type="submit" data-save-buddy-watch hidden>Save &amp; Buddy Watch</button>
           <button class="primary-button" type="submit">Save</button>
         </div>
       </div>
@@ -644,6 +671,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-social-friend-context-10"></script>
+  <script type="module" src="app.js?v=omni-book-progress-loaded-13"></script>
 </body>
 </html>

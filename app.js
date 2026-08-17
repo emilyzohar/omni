@@ -365,6 +365,8 @@ const els = {
   displayTypeBlock: $('#displayTypeBlock'),
   itemDisplayType: $('#itemDisplayType'),
   itemSubcategory: $('#itemSubcategory'),
+  itemSubcategoryDisclosure: $('#itemSubcategoryDisclosure'),
+  itemSubcategorySummary: $('#itemSubcategorySummary'),
   displayTypeLabel: $('#displayTypeLabel'),
   displayTypeHint: $('#displayTypeHint'),
   catalogueSearchBlock: $('#catalogueSearchBlock'),
@@ -390,6 +392,13 @@ const els = {
   activityStartDate: $('#activityStartDate'),
   activityEndDate: $('#activityEndDate'),
   itemPeopleBlock: $('#itemPeopleBlock'),
+  itemPeopleDisclosure: $('#itemPeopleDisclosure'),
+  itemPeopleSummary: $('#itemPeopleSummary'),
+  itemSocialMetaRow: $('#itemSocialMetaRow'),
+  itemBuddyWatchField: $('#itemBuddyWatchField'),
+  itemBuddyWatchToggle: $('#itemBuddyWatchToggle'),
+  itemBuddyWatchPersonField: $('#itemBuddyWatchPersonField'),
+  itemBuddyWatchPerson: $('#itemBuddyWatchPerson'),
   itemPeople: $('#itemPeople'),
   itemPeopleSuggestions: $('#itemPeopleSuggestions'),
   manualTitleBlock: $('#manualTitleBlock'),
@@ -411,6 +420,8 @@ const els = {
   clearRating: $('#clearRating'),
   itemNote: $('#itemNote'),
   itemFiles: $('#itemFiles'),
+  itemAttachmentsDisclosure: $('#itemAttachmentsDisclosure'),
+  itemAttachmentsSummary: $('#itemAttachmentsSummary'),
   attachmentEditorList: $('#attachmentEditorList'),
   itemLinkLabel: $('#itemLinkLabel'),
   itemLinkUrl: $('#itemLinkUrl'),
@@ -435,7 +446,6 @@ const els = {
   itemModalEyebrow: $('#itemModalEyebrow'),
   itemModalTitle: $('#itemModalTitle'),
   deleteItem: $('#deleteItem'),
-  saveBuddyWatchItem: $('#saveBuddyWatchItem'),
   formMessage: $('#formMessage'),
   bookProgressForm: $('#bookProgressForm'),
   bookProgressId: $('#bookProgressId'),
@@ -927,7 +937,12 @@ function bindEvents() {
   els.tvClearWatched?.addEventListener('click', () => { state.tvDraftBulkBaseline = null; setAllTVDraftEpisodes(false); });
   els.itemForm?.addEventListener('submit', saveItemFromForm);
   els.itemPeopleSuggestions?.addEventListener('click', handleItemPeopleSuggestionClick);
-  els.itemPeople?.addEventListener('input', renderItemPeopleSuggestions);
+  els.itemPeople?.addEventListener('input', () => {
+    renderItemPeopleSuggestions();
+    syncItemPeopleDisclosure();
+  });
+  els.itemSubcategory?.addEventListener('input', syncItemSubcategoryDisclosure);
+  els.itemBuddyWatchToggle?.addEventListener('change', syncItemBuddyWatchToggle);
   els.deleteItem?.addEventListener('click', deleteEditingItem);
   document.addEventListener('click', event => {
     const shortcut = event.target.closest('[data-buddy-watch-item]');
@@ -3529,11 +3544,14 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
   }
 
   updateItemFormForType();
+  syncItemOptionalDisclosures();
   showDialogAtTop(els.itemModal);
   refreshItemPeopleSuggestions().catch(error => console.warn('[Social] people tags unavailable:', error));
+  refreshItemBuddyWatchOptions().catch(error => console.warn('[Buddy Watch] people unavailable:', error));
   if (item && getSourceType(item) === 'tv' && item.providerId) {
     prepareTVWatchSetup(item.providerId, item.id).catch(error => {
       if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = error.message;
+      if (els.tvProgressFields) els.tvProgressFields.hidden = true;
     });
   }
 }
@@ -3545,6 +3563,12 @@ function resetItemForm(defaultQueueStatus = 'library') {
   configureItemSubtype(true);
   els.itemDisplayType.value = 'Workout';
   if (els.itemSubcategory) els.itemSubcategory.value = '';
+  if (els.itemSubcategoryDisclosure) els.itemSubcategoryDisclosure.open = false;
+  if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.open = false;
+  if (els.itemAttachmentsDisclosure) els.itemAttachmentsDisclosure.open = false;
+  if (els.itemBuddyWatchToggle) els.itemBuddyWatchToggle.checked = false;
+  if (els.itemBuddyWatchPerson) els.itemBuddyWatchPerson.innerHTML = '';
+  if (els.itemBuddyWatchPersonField) els.itemBuddyWatchPersonField.hidden = true;
   if (els.activityStartDate) els.activityStartDate.value = todayString();
   if (els.activityEndDate) els.activityEndDate.value = '';
   if (els.itemPeople) els.itemPeople.value = '';
@@ -3583,6 +3607,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.itemLinkLabel) els.itemLinkLabel.value = '';
   if (els.itemLinkUrl) els.itemLinkUrl.value = '';
   renderAttachmentEditor();
+  syncItemOptionalDisclosures();
   const draftBookComplete = document.querySelector('[data-book-mark-complete-draft]');
   if (draftBookComplete) {
     draftBookComplete.dataset.bulkActive = 'false';
@@ -3677,6 +3702,87 @@ function clearSourceSelectionForTypeChange() {
   els.playlistPreview.hidden = true;
 }
 
+
+function syncItemSubcategoryDisclosure() {
+  if (!els.itemSubcategoryDisclosure) return;
+  const value = cleanTypeLabel(els.itemSubcategory?.value || '');
+  if (els.itemSubcategorySummary) els.itemSubcategorySummary.textContent = value ? `· ${value}` : 'optional';
+  els.itemSubcategoryDisclosure.classList.toggle('has-value', Boolean(value));
+}
+
+function syncItemPeopleDisclosure() {
+  if (!els.itemPeopleDisclosure) return;
+  const people = parseItemPeople(els.itemPeople?.value || '');
+  if (els.itemPeopleSummary) {
+    els.itemPeopleSummary.textContent = people.length ? `· ${people.length} ${people.length === 1 ? 'person' : 'people'}` : 'optional';
+  }
+  els.itemPeopleDisclosure.classList.toggle('has-value', people.length > 0);
+}
+
+function syncItemAttachmentsDisclosure() {
+  if (!els.itemAttachmentsDisclosure) return;
+  const removed = state.attachmentDraft?.removedFileIds || new Set();
+  const existingCount = (state.attachmentDraft?.existingFiles || []).filter(file => !removed.has(file.id)).length;
+  const newCount = (state.attachmentDraft?.newFiles || []).length;
+  const linkCount = (state.attachmentDraft?.links || []).length;
+  const total = existingCount + newCount + linkCount;
+  if (els.itemAttachmentsSummary) els.itemAttachmentsSummary.textContent = total ? `${total} ${total === 1 ? 'item' : 'items'}` : 'optional';
+  els.itemAttachmentsDisclosure.classList.toggle('has-value', total > 0);
+}
+
+function syncItemOptionalDisclosures() {
+  syncItemSubcategoryDisclosure();
+  syncItemPeopleDisclosure();
+  syncItemAttachmentsDisclosure();
+  syncItemBuddyWatchToggle();
+}
+
+function syncItemBuddyWatchToggle() {
+  const enabled = Boolean(els.itemBuddyWatchToggle?.checked);
+  if (els.itemBuddyWatchPersonField) els.itemBuddyWatchPersonField.hidden = !enabled;
+  els.itemBuddyWatchField?.classList.toggle('is-enabled', enabled);
+}
+
+async function refreshItemBuddyWatchOptions() {
+  if (!els.itemBuddyWatchField || !els.itemBuddyWatchPerson || !els.itemBuddyWatchToggle) return;
+  const sourceType = selectedFormSourceType();
+  const supported = ['tv','movie','youtube'].includes(sourceType);
+  const available = supported && socialState.schemaReady && socialState.profile && currentUser && supabase;
+  els.itemBuddyWatchField.hidden = !available;
+  if (!available) {
+    els.itemBuddyWatchToggle.checked = false;
+    els.itemBuddyWatchPerson.innerHTML = '';
+    els.itemBuddyWatchToggle.disabled = true;
+    syncItemBuddyWatchToggle();
+    return;
+  }
+
+  const previous = els.itemBuddyWatchPerson.value;
+  const connections = await loadAcceptedSocialConnections();
+  els.itemBuddyWatchPerson.innerHTML = connections.length
+    ? `<option value="">Choose person…</option>${connections.map(profile => `<option value="${escapeAttr(profile.user_id)}">${escapeHtml(profile.display_name || profile.username)} (@${escapeHtml(profile.username)})</option>`).join('')}`
+    : '<option value="">No connections yet</option>';
+  els.itemBuddyWatchPerson.disabled = !connections.length;
+  els.itemBuddyWatchToggle.disabled = !connections.length;
+  if (previous && connections.some(profile => String(profile.user_id) === String(previous))) {
+    els.itemBuddyWatchPerson.value = previous;
+  }
+  if (!connections.length) els.itemBuddyWatchToggle.checked = false;
+  syncItemBuddyWatchToggle();
+}
+
+function syncTVDraftHistoryVisibility(sourceType = selectedFormSourceType()) {
+  if (!els.tvProgressFields) return;
+  const loaded = sourceType === 'tv' && Boolean(state.tvDraftDetails) && state.tvDraftSeasons.length > 0;
+  els.tvProgressFields.hidden = !loaded;
+}
+
+function syncBookProgressVisibility(sourceType = selectedFormSourceType()) {
+  if (!els.bookProgressFields) return;
+  const loaded = sourceType === 'book' && Boolean(state.selectedSource?.providerId);
+  els.bookProgressFields.hidden = !loaded;
+}
+
 function updateItemFormForType() {
   configureItemSubtype(false);
   const parentType = els.itemSourceType.value;
@@ -3696,23 +3802,24 @@ function updateItemFormForType() {
   els.workoutBlock.hidden = !isYouTube;
   if (els.reminderBlock) els.reminderBlock.hidden = !isReminder;
   if (els.activityFields) els.activityFields.hidden = !isActivity;
+  if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.hidden = sourceType === 'book';
   if (els.itemPeopleBlock) els.itemPeopleBlock.hidden = sourceType === 'book';
   if (els.itemPeopleSuggestions && sourceType === 'book') els.itemPeopleSuggestions.hidden = true;
   else if (els.itemPeopleSuggestions && els.itemModal?.open) refreshItemPeopleSuggestions().catch(() => {});
   els.displayTypeBlock.hidden = !(isYouTube || isReminder || isManual);
   els.manualTitleBlock.hidden = false;
-  els.tvProgressFields.hidden = sourceType !== 'tv';
-  els.bookProgressFields.hidden = sourceType !== 'book';
+  syncTVDraftHistoryVisibility(sourceType);
+  syncBookProgressVisibility(sourceType);
   if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder || isActivity;
   if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = !['tv','movie','book','music','artist','song'].includes(sourceType);
-  if (sourceType === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
+  if (sourceType === 'book' && state.selectedSource?.providerId && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
     els.bookStartDate.value = todayString();
   }
   if (isActivity && !els.editingId.value && els.activityStartDate && !els.activityStartDate.value) {
     els.activityStartDate.value = todayString();
   }
   if (els.queueStatusField) els.queueStatusField.hidden = isReminder || isActivity || ['music','artist','song','concert','food','recipe'].includes(sourceType);
-  if (els.saveBuddyWatchItem) els.saveBuddyWatchItem.hidden = !(socialState.schemaReady && socialState.profile && ['tv','movie','youtube'].includes(sourceType));
+  refreshItemBuddyWatchOptions().catch(() => {});
   if (isActivity && els.itemQueueStatus) els.itemQueueStatus.value = 'library';
 
   const upNextOption = els.itemQueueStatus?.querySelector('option[value="upnext"]');
@@ -3736,6 +3843,7 @@ function updateItemFormForType() {
       els.itemSubcategory.placeholder = isActivity ? 'e.g. Trip, Outing, Social' : 'e.g. Documentary, Lecture, Gym';
     }
   }
+  syncItemSubcategoryDisclosure();
 
   if (isYouTube) {
     els.displayTypeLabel.textContent = 'Display as';
@@ -3900,8 +4008,10 @@ function selectCatalogueResult(result) {
   els.searchResults.hidden = true;
   showSelectedSource(result);
 
-  if (formSourceType === 'book' && result.pageCount && !els.bookTotalPages.value) {
-    els.bookTotalPages.value = result.pageCount;
+  if (formSourceType === 'book') {
+    if (result.pageCount && !els.bookTotalPages.value) els.bookTotalPages.value = result.pageCount;
+    if (!els.editingId.value && els.bookStartDate && !els.bookStartDate.value) els.bookStartDate.value = todayString();
+    syncBookProgressVisibility(formSourceType);
   }
   if (['event', 'concert'].includes(formSourceType) && result.eventDate && els.itemDate) {
     els.itemDate.value = result.eventDate;
@@ -3914,10 +4024,12 @@ function selectCatalogueResult(result) {
     els.itemSubcategory.value = 'Album';
     els.itemSubcategory.readOnly = true;
     els.itemSubcategory.placeholder = 'Album';
+    syncItemSubcategoryDisclosure();
   }
   if (formSourceType === 'tv' && result.providerId) {
     prepareTVWatchSetup(result.providerId).catch(error => {
       if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = error.message;
+      if (els.tvProgressFields) els.tvProgressFields.hidden = true;
     });
   }
 }
@@ -3933,6 +4045,7 @@ function resetTVDraftSetup() {
   state.tvDraftDetails = null;
   if (els.tvWatchSetupList) els.tvWatchSetupList.innerHTML = '';
   if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = 'Choose a TV search result to load its seasons and episodes.';
+  if (els.tvProgressFields) els.tvProgressFields.hidden = true;
 }
 
 function tvDraftEpisodeKey(seasonNumber, episodeNumber) {
@@ -3941,6 +4054,7 @@ function tvDraftEpisodeKey(seasonNumber, episodeNumber) {
 
 async function prepareTVWatchSetup(providerId, itemId = '') {
   if (!providerId || !els.tvWatchSetupList) return;
+  if (els.tvProgressFields) els.tvProgressFields.hidden = true;
   state.tvDraftProviderId = String(providerId);
   state.tvDraftWatched = new Set();
   state.tvDraftInitialWatched = new Set();
@@ -3990,9 +4104,11 @@ function renderTVWatchSetup() {
   if (!state.tvDraftSeasons.length) {
     els.tvWatchSetupList.innerHTML = '<p class="tv-watch-loading">No seasons found.</p>';
     if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = 'No episode list is available for this show.';
+    if (els.tvProgressFields) els.tvProgressFields.hidden = true;
     return;
   }
 
+  if (els.tvProgressFields) els.tvProgressFields.hidden = false;
   let airedCount = 0;
   let selectedCount = 0;
   const html = state.tvDraftSeasons.map((season, seasonIndex) => {
@@ -4178,7 +4294,8 @@ async function loadPlaylistPreview() {
 
 async function saveItemFromForm(event) {
   event.preventDefault();
-  const startBuddyAfterSave = Boolean(event.submitter?.matches?.('[data-save-buddy-watch]'));
+  const startBuddyAfterSave = Boolean(els.itemBuddyWatchToggle?.checked);
+  const buddyFriendId = startBuddyAfterSave ? (els.itemBuddyWatchPerson?.value || '') : '';
   const sourceType = selectedFormSourceType();
   const editing = findItem(els.editingId.value);
   let title = els.manualTitle.value.trim();
@@ -4303,6 +4420,10 @@ async function saveItemFromForm(event) {
   }
   if (sourceType === 'reminder' && els.reminderFrequency?.value === 'custom' && Number(els.reminderInterval?.value || 0) < 1) {
     showFormMessage('Custom repeats must be at least every 1 day, week, or month.', true);
+    return;
+  }
+  if (startBuddyAfterSave && !buddyFriendId) {
+    showFormMessage('Choose a person for Buddy Watch.', true);
     return;
   }
   if (sourceType === 'activity') {
@@ -4565,10 +4686,21 @@ async function saveItemFromForm(event) {
 
   saveItems();
   await deleteRemovedDraftAttachments();
+
+  let buddyWatchError = null;
+  if (startBuddyAfterSave && buddyFriendId && ['tv','movie','youtube'].includes(getSourceType(item))) {
+    try {
+      await createBuddyWatchForItem(item, buddyFriendId);
+    } catch (error) {
+      buddyWatchError = error;
+      console.warn('[Buddy Watch] could not start after save:', error);
+    }
+  }
+
   els.itemModal.close();
   renderAll();
-  if (startBuddyAfterSave && ['tv','movie','youtube'].includes(getSourceType(item))) {
-    openQuickBuddyWatchForItem(item).catch(error => console.warn('[Buddy Watch] could not open after save:', error));
+  if (buddyWatchError) {
+    alert(`“${item.title}” was saved, but Buddy Watch could not be started: ${buddyWatchError?.message || 'Unknown error'}`);
   }
 }
 
@@ -5619,6 +5751,7 @@ function renderAttachmentEditor() {
       <span class="attachment-size">${escapeHtml(domainLabel(link.url))}</span>
       <button class="attachment-remove" type="button" data-remove-link="${escapeAttr(link.id)}" aria-label="Remove ${escapeAttr(link.label)}">×</button>
     </div>`).join('');
+  syncItemAttachmentsDisclosure();
 }
 
 async function persistDraftAttachments() {
@@ -11863,6 +11996,7 @@ function handleItemPeopleSuggestionClick(event) {
   else values.push(tag);
   els.itemPeople.value = values.join(', ');
   renderItemPeopleSuggestions();
+  syncItemPeopleDisclosure();
 }
 
 function extractItemGenres(sourceType, source, editing) {
