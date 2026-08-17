@@ -224,6 +224,7 @@ const $$ = selector => [...document.querySelectorAll(selector)];
 
 const els = {
   authScreen: $('#authScreen'),
+  authMark: $('.auth-mark'),
   authForm: $('#authForm'),
   authEmail: $('#authEmail'),
   authPassword: $('#authPassword'),
@@ -449,6 +450,7 @@ const els = {
 bootstrapAuth();
 
 async function bootstrapAuth() {
+  if (els.authMark) els.authMark.textContent = 'omni';
   bindAuthEvents();
 
   if (!hasSupabaseConfig) {
@@ -2134,15 +2136,8 @@ function queueCardMarkup(item, info) {
     action = `<button class="check-button" type="button" data-action="complete" data-id="${item.id}" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}">✓</button>`;
   }
 
-  const buddyAction = !isTBR && socialState.schemaReady && socialState.profile && ['tv','movie','youtube'].includes(sourceType)
-    ? `<button class="queue-buddy-button queue-buddy-inline-button" type="button" data-action="buddy" data-id="${escapeAttr(item.id)}" aria-label="Start Buddy Watch">Buddy Watch</button>`
-    : '';
-
   return `
-    <div class="upnext-art-wrap${buddyAction ? ' has-buddy-watch' : ''}">
-      ${art}
-      ${buddyAction ? `<div class="upnext-card-buddy-slot">${buddyAction}</div>` : ''}
-    </div>
+    ${art}
     <div class="upnext-main">
       <div>
         <p class="upnext-title">${escapeHtml(info.title || item.title)}</p>
@@ -2359,9 +2354,11 @@ async function handleUpNextClick(event) {
           setItemQueueStatus(item, 'upnext');
         }
       }
+      const shouldPromptBuddyWatch = getSourceType(item) === 'tv' && Boolean(completed);
       saveItems();
       saveHistory();
       renderAll();
+      if (shouldPromptBuddyWatch) await maybePromptBuddyWatchForTVOverlap(item);
     } catch (error) {
       alert(error.message);
       button.disabled = false;
@@ -2948,6 +2945,7 @@ async function toggleSpecificTVEpisode(item, seasonNumber, episodeNumber) {
   const wasEpisodeDetail = Boolean(els.detailBody?.querySelector('.detail-back-button[data-tv-season]'));
   const wasSeasonDetail = Boolean(els.detailBody?.querySelector('.detail-back-button[data-tv-series]'));
   const alreadyWatched = isTVEpisodeLogged(item, seasonNumber, episodeNumber);
+  const loggedNow = !alreadyWatched;
 
   if (alreadyWatched) {
     removeTVEpisodeHistory(item, seasonNumber, episodeNumber);
@@ -2971,6 +2969,7 @@ async function toggleSpecificTVEpisode(item, seasonNumber, episodeNumber) {
     else if (wasSeasonDetail) await renderTVSeasonDetail(item, seasonNumber);
     else await renderTVDetails(item);
   }
+  if (loggedNow) await maybePromptBuddyWatchForTVOverlap(item);
 }
 
 async function getEarlierUnwatchedTVEpisodes(item, seasonNumber) {
@@ -10612,8 +10611,10 @@ async function logDiscoverTVEpisode(key, seasonNumber, episodeNumber) {
   const result = state.discoverResults.get(key);
   if (!result) return;
   const item = ensureDiscoverItem(result, 'library');
+  const alreadyWatched = isTVEpisodeLogged(item, seasonNumber, episodeNumber);
+  const loggedNow = !alreadyWatched;
 
-  if (isTVEpisodeLogged(item, seasonNumber, episodeNumber)) {
+  if (alreadyWatched) {
     removeTVEpisodeHistory(item, seasonNumber, episodeNumber);
   } else {
     const episode = await getTVEpisodeFromSeason(item, seasonNumber, episodeNumber);
@@ -10631,6 +10632,7 @@ async function logDiscoverTVEpisode(key, seasonNumber, episodeNumber) {
   } else {
     await renderDiscoverTVDetail(key, seasonNumber);
   }
+  if (loggedNow) await maybePromptBuddyWatchForTVOverlap(item);
 }
 
 async function markDiscoverSeasonWatched(key, seasonNumber) {
@@ -13017,7 +13019,8 @@ const socialState = {
   followingContextPromise: null,
   followingContextProfiles: [],
   followingContextSnapshots: new Map(),
-  followingContextLoadedAt: 0
+  followingContextLoadedAt: 0,
+  buddyOverlapPrompted: new Set()
 };
 
 function emptySocialShareSettings() {
@@ -14363,6 +14366,58 @@ function socialItemsRepresentSameTitle(shared, target) {
   return Boolean(normalizeSearchText(shared.title || '') && normalizeSearchText(shared.title || '') === normalizeSearchText(target.title || ''));
 }
 
+async function socialOverlappingWatchersForItem(target) {
+  if (!target || getSourceType(target) !== 'tv' || !currentUser || !supabase || !socialState.schemaReady || !socialState.profile) return [];
+  const connections = await loadAcceptedSocialConnections();
+  if (!connections.length) return [];
+  const ids = connections.map(profile => profile.user_id).filter(Boolean);
+  if (!ids.length) return [];
+
+  const snapshotsResult = await supabase
+    .from('social_snapshots')
+    .select('user_id, payload, updated_at')
+    .in('user_id', ids);
+  if (snapshotsResult.error) {
+    if (socialSchemaMissing(snapshotsResult.error)) return [];
+    throw snapshotsResult.error;
+  }
+
+  const profileMap = new Map(connections.map(profile => [String(profile.user_id), profile]));
+  const rows = [];
+  for (const snapshot of (snapshotsResult.data || [])) {
+    const shared = (snapshot.payload?.sections?.upnext || []).find(entry =>
+      entry?.activelyWatching === true && socialItemsRepresentSameTitle(entry, target)
+    );
+    if (!shared) continue;
+    const profile = profileMap.get(String(snapshot.user_id));
+    if (profile) rows.push({ profile, item: shared });
+  }
+  return rows;
+}
+
+async function maybePromptBuddyWatchForTVOverlap(item) {
+  if (!item || getSourceType(item) !== 'tv') return;
+  try {
+    const overlaps = await socialOverlappingWatchersForItem(item);
+    if (!overlaps.length) return;
+    const friendIds = overlaps.map(row => String(row.profile.user_id));
+    const promptKey = `${item.provider || 'manual'}:${item.providerId || item.id}:${friendIds.slice().sort().join(',')}`;
+    if (socialState.buddyOverlapPrompted.has(promptKey)) return;
+    socialState.buddyOverlapPrompted.add(promptKey);
+    const firstName = overlaps[0]?.profile?.display_name || overlaps[0]?.profile?.username || 'Someone you know';
+    const promptTitle = overlaps.length === 1
+      ? `${firstName} is also watching ${item.title} — Buddy Watch?`
+      : `${overlaps.length} people are also watching ${item.title} — Buddy Watch?`;
+    await openQuickBuddyWatchForItem(item, {
+      title: promptTitle,
+      friendIds,
+      preferredFriendId: friendIds[0]
+    });
+  } catch (error) {
+    console.warn('[Buddy Watch] overlap prompt could not load:', error);
+  }
+}
+
 async function socialFollowerContextForItem(target) {
   if (!target || !currentUser || !socialState.schemaReady) return [];
   try {
@@ -14492,7 +14547,7 @@ function ensureQuickBuddyWatchModal() {
   return modal;
 }
 
-async function openQuickBuddyWatchForItem(item) {
+async function openQuickBuddyWatchForItem(item, options = {}) {
   if (!item || !['tv','movie','youtube'].includes(getSourceType(item))) return;
   const modal = ensureQuickBuddyWatchModal();
   const title = modal.querySelector('#buddyWatchQuickTitle');
@@ -14501,7 +14556,7 @@ async function openQuickBuddyWatchForItem(item) {
   const friendSelect = modal.querySelector('#buddyWatchQuickFriend');
   const message = modal.querySelector('#buddyWatchQuickMessage');
   const submit = modal.querySelector('#buddyWatchQuickSubmit');
-  if (title) title.textContent = 'Start Buddy Watch';
+  if (title) title.textContent = options.title || 'Start Buddy Watch';
   if (itemId) itemId.value = item.id;
   if (itemNode) itemNode.innerHTML = `${item.image ? `<img src="${escapeAttr(item.image)}" alt="" />` : '<span class="buddy-watch-quick-placeholder"></span>'}<span><strong>${escapeHtml(item.title || 'Untitled')}</strong><small>${escapeHtml(getItemTypeLabel(item))}</small></span>`;
   if (message) { message.textContent = ''; message.hidden = true; message.classList.remove('is-error'); }
@@ -14512,12 +14567,21 @@ async function openQuickBuddyWatchForItem(item) {
     showDialogAtTop(modal);
     return;
   }
-  const connections = await loadAcceptedSocialConnections();
+  const allConnections = await loadAcceptedSocialConnections();
+  const allowedFriendIds = Array.isArray(options.friendIds) && options.friendIds.length
+    ? new Set(options.friendIds.map(String))
+    : null;
+  const connections = allowedFriendIds
+    ? allConnections.filter(profile => allowedFriendIds.has(String(profile.user_id)))
+    : allConnections;
   if (friendSelect) {
     friendSelect.innerHTML = connections.length
       ? connections.map(profile => `<option value="${escapeAttr(profile.user_id)}">${escapeHtml(profile.display_name || profile.username)} (@${escapeHtml(profile.username)})</option>`).join('')
       : '<option value="">Follow someone first</option>';
     friendSelect.disabled = !connections.length;
+    if (options.preferredFriendId && connections.some(profile => String(profile.user_id) === String(options.preferredFriendId))) {
+      friendSelect.value = String(options.preferredFriendId);
+    }
   }
   if (submit) submit.disabled = !connections.length;
   if (!connections.length && message) {

@@ -1903,8 +1903,10 @@ body.auth-locked > main {
   margin-bottom: 22px;
 }
 .auth-mark {
-  width: 58px;
+  width: auto;
+  min-width: 74px;
   height: 58px;
+  padding: 0 12px;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
@@ -1912,7 +1914,8 @@ body.auth-locked > main {
   background: var(--maroon);
   color: #fff8e8;
   font-family: var(--serif);
-  font-size: 1.35rem;
+  font-size: 1.05rem;
+  text-transform: lowercase;
 }
 .auth-brand h1 { font-size: clamp(2rem, 6vw, 3.25rem); }
 .auth-copy {
@@ -2160,7 +2163,7 @@ body.auth-locked > main {
   .auth-screen { padding: 18px; }
   .auth-card { padding: 26px 20px; border-radius: 20px; }
   .auth-brand { align-items: flex-start; }
-  .auth-mark { width: 50px; height: 50px; }
+  .auth-mark { width: auto; min-width: 68px; height: 50px; padding-inline: 10px; }
   .auth-actions { grid-template-columns: 1fr; }
 }
 
@@ -9806,22 +9809,6 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
 .upnext-actions {
   gap: 7px;
 }
-.queue-buddy-button {
-  min-height: 34px;
-  padding: 6px 9px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(21,36,58,.055);
-  color: var(--ink);
-  font-size: .68rem;
-  font-weight: 750;
-  cursor: pointer;
-}
-.queue-buddy-button:hover,
-.queue-buddy-button:focus-visible {
-  background: rgba(21,36,58,.10);
-  outline: none;
-}
 .buddy-watch-item-action { white-space: nowrap; }
 .save-buddy-watch-item[hidden] { display: none !important; }
 .buddy-watch-quick-item {
@@ -9856,7 +9843,6 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
 
 @media (max-width: 620px) {
   .upnext-actions { flex-direction: column; gap: 4px; }
-  .queue-buddy-button { min-height: 28px; padding: 4px 7px; font-size: .62rem; }
   .save-buddy-watch-item { order: -1; }
 }
 
@@ -9920,25 +9906,6 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
   background: var(--profile-accent, var(--ink)) !important;
   color: #fff9ea !important;
   box-shadow: 0 2px 7px color-mix(in srgb, var(--profile-accent, var(--ink)) 28%, transparent);
-}
-
-/* Buddy Watch belongs inside the Up Next card copy; the completion/log control
-   remains the only control in the far-right action column. */
-.upnext-card-social-actions {
-  display: flex;
-  align-items: center;
-  margin-top: 7px;
-}
-.queue-buddy-inline-button {
-  min-height: 27px;
-  padding: 5px 9px;
-  border: 1px solid rgba(21,36,58,.11);
-  background: rgba(139,153,202,.11);
-  font-size: .62rem;
-}
-.queue-buddy-inline-button:hover,
-.queue-buddy-inline-button:focus-visible {
-  background: rgba(139,153,202,.19);
 }
 
 /* Connected people are optional shortcuts into the existing comma-separated
@@ -10010,8 +9977,6 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
     min-height: 40px;
     padding: 7px 12px;
   }
-  .upnext-card-social-actions { margin-top: 5px; }
-  .queue-buddy-inline-button { min-height: 25px; padding: 4px 8px; }
   .people-tag-suggestions {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -10126,57 +10091,3 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
   .social-follower-item-head { align-items: flex-start; flex-direction: column; gap: 2px; }
 }
 
-/* =========================================================
-   Buddy Watch placement v11 — poster/card action, never log column
-   ========================================================= */
-.upnext-art-wrap {
-  position: relative;
-  width: 82px;
-  height: 88px;
-  align-self: center;
-}
-.upnext-art-wrap .upnext-art {
-  width: 100% !important;
-  height: 100% !important;
-}
-.upnext-card-buddy-slot {
-  position: absolute;
-  left: 5px;
-  right: 5px;
-  bottom: 5px;
-  z-index: 2;
-  display: flex;
-}
-.upnext-card-buddy-slot .queue-buddy-inline-button {
-  width: 100%;
-  min-height: 25px;
-  padding: 4px 5px;
-  border: 1px solid rgba(21,36,58,.12);
-  background: rgba(251,250,245,.92);
-  box-shadow: 0 2px 7px rgba(21,36,58,.12);
-  backdrop-filter: blur(4px);
-  font-size: .56rem;
-  line-height: 1.05;
-}
-.upnext-card-buddy-slot .queue-buddy-inline-button:hover,
-.upnext-card-buddy-slot .queue-buddy-inline-button:focus-visible {
-  background: rgba(251,250,245,.98);
-}
-/* The right-hand Up Next action column is reserved for the ordinary log/check action. */
-.upnext-actions .queue-buddy-button,
-.upnext-actions .queue-buddy-inline-button {
-  display: none !important;
-}
-
-@media (max-width: 620px) {
-  .upnext-art-wrap {
-    width: 72px;
-    height: 92px;
-  }
-  .upnext-card-buddy-slot { left: 4px; right: 4px; bottom: 4px; }
-  .upnext-card-buddy-slot .queue-buddy-inline-button {
-    min-height: 23px;
-    padding: 3px 4px;
-    font-size: .52rem;
-  }
-}
