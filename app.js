@@ -1,4 +1,4 @@
-import { TrackerAPI } from './api.js?v=omni-games-discover-31';
+import { TrackerAPI } from './api.js?v=omni-game-health-32';
 import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
@@ -2550,12 +2550,17 @@ function watchedTitleHasConsumption(item) {
 function canonicalStatsGenreLabels(value) {
   const label = cleanTypeLabel(value || '');
   if (!label) return [];
-  // TMDB uses combined TV labels that do not match its movie taxonomy. Normalize
-  // them before Stats so the same genre never appears under two names.
-  if (label === 'Sci-Fi & Fantasy') return ['Science Fiction', 'Fantasy'];
-  if (label === 'Action & Adventure') return ['Action', 'Adventure'];
-  if (label === 'Kids') return ['Family'];
-  if (label === 'War & Politics') return ['War'];
+  const key = label.toLowerCase().replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
+  // Normalize TMDB's combined TV taxonomy and common stored/API synonyms so a
+  // genre never splits into multiple Stats slices.
+  if (['sci-fi & fantasy', 'science fiction & fantasy', 'sci fi & fantasy'].includes(key)) return ['Science Fiction', 'Fantasy'];
+  if (['science fiction', 'sci-fi', 'sci fi', 'scifi'].includes(key)) return ['Science Fiction'];
+  if (key === 'action & adventure') return ['Action', 'Adventure'];
+  if (key === 'kids') return ['Family'];
+  if (key === 'war & politics') return ['War'];
+  if (['reality', 'reality tv', 'reality television'].includes(key)) return ['Reality'];
+  if (['horror', 'supernatural horror', 'psychological horror'].includes(key)) return ['Horror'];
+  if (['thriller', 'suspense', 'psychological thriller', 'crime thriller'].includes(key)) return ['Thriller'];
   return [label];
 }
 
@@ -2770,20 +2775,6 @@ function renderGenrePie(genres = []) {
     return;
   }
 
-  // Keep the main nine genre memberships visible. "Other" is deliberately
-  // exclusive: a title is counted there only when it belongs to an overflow
-  // genre AND to none of the visible primary genres.
-  const primary = genres.slice(0, 9);
-  const visible = primary.map(([label,count]) => ({ label, count, labels:[label], excludeLabels:[] }));
-  const overflow = genres.slice(9);
-  if (overflow.length) {
-    const primaryLabels = primary.map(entry => entry[0]);
-    const overflowLabels = overflow.map(entry => entry[0]);
-    const otherCount = statsGenreItems(overflowLabels, primaryLabels).length;
-    if (otherCount) visible.push({ label:'Other', count:otherCount, labels:overflowLabels, excludeLabels:primaryLabels });
-  }
-
-  const total = visible.reduce((sum,entry) => sum + entry.count,0) || 1;
   const genreColors = {
     Action: '#307351',
     Adventure: '#648767',
@@ -2807,11 +2798,33 @@ function renderGenrePie(genres = []) {
     Reality: '#F786AA',
     Other: '#b0a79a'
   };
+
+  // Every genre Omni explicitly recognizes gets its own slice. "Other" is only
+  // for genuinely unrecognized/overflow labels; it never swallows Reality,
+  // Horror, Thriller, Science Fiction, or another known genre just because that
+  // genre is less common in the user's library.
+  const recognized = new Set(Object.keys(genreColors).filter(label => label !== 'Other'));
+  const visible = genres
+    .filter(([label]) => recognized.has(label))
+    .map(([label, count]) => ({ label, count, labels: [label], excludeLabels: [] }));
+  const unknownLabels = genres.filter(([label]) => !recognized.has(label)).map(([label]) => label);
+  if (unknownLabels.length) {
+    const recognizedLabels = visible.map(entry => entry.label);
+    const otherCount = statsGenreItems(unknownLabels, recognizedLabels).length;
+    if (otherCount) visible.push({ label: 'Other', count: otherCount, labels: unknownLabels, excludeLabels: recognizedLabels });
+  }
+
+  if (!visible.length) {
+    els.statsGenres.innerHTML = '<p class="empty-state">No watched genres yet.</p>';
+    return;
+  }
+
+  const total = visible.reduce((sum, entry) => sum + entry.count, 0) || 1;
   const genreColor = label => genreColors[label] || genreColors.Other;
   let angle = -Math.PI / 2;
   const paths = visible.map(entry => {
     const next = angle + (entry.count / total) * Math.PI * 2;
-    const d = statsPiePath(100,100,82,angle,next);
+    const d = statsPiePath(100, 100, 82, angle, next);
     angle = next;
     const labels = escapeAttr(JSON.stringify(entry.labels));
     const excludes = escapeAttr(JSON.stringify(entry.excludeLabels || []));
@@ -5865,18 +5878,9 @@ function syncItemFeatureSummary() {
 
 
 
-function repeatEntryRatingOptions(value = 0) {
-  const current = Math.max(0, Math.min(5, Number(value || 0)));
-  const options = ['<option value="0">No rating</option>'];
-  for (let rating = 0.5; rating <= 5; rating += 0.5) {
-    const clean = Number(rating.toFixed(1));
-    options.push(`<option value="${clean}"${clean === current ? ' selected' : ''}>★ ${clean}</option>`);
-  }
-  return options.join('');
-}
-
 function repeatDraftEntryElement(values = {}, index = 0) {
   const row = document.createElement('article');
+  const initialRating = normalizeStarRating(values.rating || 0);
   row.className = 'repeat-draft-entry';
   row.dataset.repeatDraftEntry = '';
   row.innerHTML = `
@@ -5886,10 +5890,33 @@ function repeatDraftEntryElement(values = {}, index = 0) {
     </div>
     <div class="repeat-draft-entry-grid">
       <label class="field compact-field repeat-draft-title"><span>Entry name <em>optional</em></span><input type="text" data-repeat-entry-title placeholder="e.g. Evening spin" value="${escapeAttr(values.title || '')}" /></label>
-      <label class="field compact-field"><span>Date</span><input type="date" data-repeat-entry-date value="${escapeAttr(values.date || '')}" required /></label>
-      <label class="field compact-field"><span>Rating <em>optional</em></span><select data-repeat-entry-rating>${repeatEntryRatingOptions(values.rating)}</select></label>
+      <label class="field compact-field repeat-draft-date"><span>Date</span><input type="date" data-repeat-entry-date value="${escapeAttr(values.date || '')}" required /></label>
+      <fieldset class="rating-fieldset repeat-draft-rating">
+        <legend>Rating <span>optional</span></legend>
+        <input type="hidden" data-repeat-entry-rating value="${escapeAttr(String(initialRating))}" />
+        <div class="star-picker repeat-draft-star-picker" aria-label="Rating out of five stars">
+          ${[1,2,3,4,5].map(value => `<button type="button" data-repeat-entry-rating-star="${value}" class="${starFillClass(value, initialRating)}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
+          <button class="clear-rating" type="button" data-repeat-entry-rating-clear${initialRating ? '' : ' hidden'}>clear</button>
+        </div>
+      </fieldset>
       <label class="field compact-field repeat-draft-note"><span>Note <em>optional</em></span><textarea rows="2" data-repeat-entry-note placeholder="Anything about this entry">${escapeHtml(values.note || '')}</textarea></label>
     </div>`;
+  const ratingInput = row.querySelector('[data-repeat-entry-rating]');
+  const ratingRoot = row.querySelector('.repeat-draft-star-picker');
+  const clearRating = row.querySelector('[data-repeat-entry-rating-clear]');
+  const setEntryRating = value => {
+    const rating = normalizeStarRating(value);
+    if (ratingInput) ratingInput.value = String(rating);
+    syncStarPicker(ratingRoot, '[data-repeat-entry-rating-star]', 'data-repeat-entry-rating-star', rating);
+    if (clearRating) clearRating.hidden = rating <= 0;
+  };
+  ratingRoot?.addEventListener('click', event => {
+    const button = event.target.closest('[data-repeat-entry-rating-star]');
+    if (!button) return;
+    const selected = ratingFromStarPointer(event, button, 'data-repeat-entry-rating-star');
+    setEntryRating(toggledStarRating(ratingInput?.value, selected));
+  });
+  clearRating?.addEventListener('click', () => setEntryRating(0));
   row.querySelector('[data-repeat-remove-entry]')?.addEventListener('click', () => {
     row.remove();
     renumberRepeatDraftEntries();

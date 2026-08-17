@@ -1103,13 +1103,54 @@ export const TrackerAPI = (() => {
     return required(settings.gameCatalogueProxyUrl, 'Game catalogue proxy URL');
   }
 
-  async function gameCatalogueProxy(settings, payload) {
+  let gameCatalogueHealthPromise = null;
+
+  async function gameCatalogueFetchOnce(settings, payload) {
     const url = gameCatalogueProxyUrl(settings);
-    return fetchJson(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload || {})
     });
+    let data = null;
+    try { data = await response.json(); } catch {}
+    if (!response.ok) {
+      const message = data?.error?.message || data?.message || `${response.status} ${response.statusText || 'Game catalogue request failed'}`.trim();
+      throw new Error(message);
+    }
+    return data || {};
+  }
+
+  async function gameCatalogueHealth(settings) {
+    if (!gameCatalogueHealthPromise) {
+      gameCatalogueHealthPromise = gameCatalogueFetchOnce(settings, { provider: 'health', action: 'health' })
+        .catch(error => {
+          gameCatalogueHealthPromise = null;
+          throw error;
+        });
+    }
+    return gameCatalogueHealthPromise;
+  }
+
+  async function gameCatalogueProxy(settings, payload) {
+    const provider = String(payload?.provider || '').toLowerCase();
+    if (provider === 'igdb' || provider === 'bgg') {
+      // New deployments expose a lightweight health response. If an older
+      // function is still deployed, fall through and preserve compatibility.
+      try {
+        const health = await gameCatalogueHealth(settings);
+        if (health?.providers?.[provider]?.configured === false) {
+          const label = provider === 'igdb' ? 'IGDB' : 'BoardGameGeek';
+          const secrets = provider === 'igdb' ? 'IGDB_CLIENT_ID and IGDB_CLIENT_SECRET' : 'BGG_APPLICATION_TOKEN';
+          throw new Error(`${label} is not configured in the Supabase game-catalogue function. Sync ${secrets} and redeploy the function.`);
+        }
+      } catch (error) {
+        if (/is not configured in the Supabase game-catalogue function/i.test(error?.message || '')) throw error;
+      }
+    }
+    // Do not use the generic 5xx retry loop here: a bad function deployment or
+    // credential should fail once, not generate several identical 500 requests.
+    return gameCatalogueFetchOnce(settings, payload);
   }
 
   function igdbCoverUrl(imageId, size = 't_cover_big') {
