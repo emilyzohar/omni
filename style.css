@@ -12039,3 +12039,36 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
   .repeat-draft-rating,
   .repeat-draft-note { grid-column: 1; }
 }
+
+/* =========================================================
+   Stats proportions + two-column genre legend v65
+   ========================================================= */
+@media (min-width: 961px) {
+  /* Give the genre visualization most of the Stats width. */
+  .stats-breakdowns {
+    grid-template-columns: minmax(250px, .62fr) minmax(0, 1.38fr);
+    gap: 28px;
+  }
+
+  .stats-genre-pie-layout {
+    grid-template-columns: minmax(310px, .9fr) minmax(0, 1.4fr);
+    gap: 24px;
+    align-items: center;
+  }
+
+  .stats-genre-pie {
+    width: min(100%, 380px);
+  }
+
+  .stats-genre-legend {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 10px;
+    row-gap: 2px;
+    align-content: center;
+  }
+
+  .stats-genre-legend-row {
+    min-height: 32px;
+    padding: 4px 6px;
+  }
+}
