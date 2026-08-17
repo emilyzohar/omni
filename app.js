@@ -871,7 +871,7 @@ function showOnboardingGuideStep(user = currentUser) {
         2: {
           selector: '.add-intent-grid',
           title: 'Pick the type',
-          body: 'Choose what you did, then choose what it was.'
+          body: 'Choose the Type you want to add.'
         },
         3: {
           selector: '#catalogueSearchBlock',
@@ -1224,10 +1224,7 @@ function mergeLibraryItemRecords(primary, duplicate) {
     ...(primary.attachments || []),
     ...(duplicate.attachments || []).filter(file => !(primary.attachments || []).some(saved => saved.id === file.id))
   ];
-  if (!primary.image && !primary.coverAttachmentId) {
-    const preferredCover = [primary, duplicate].map(candidate => candidate.coverAttachmentId).find(id => id && primary.attachments.some(file => file.id === id && String(file.mime || '').startsWith('image/')));
-    primary.coverAttachmentId = preferredCover || primary.attachments.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
-  }
+  primary.coverAttachmentId = '';
   primary.links = [
     ...(primary.links || []),
     ...(duplicate.links || []).filter(link => !(primary.links || []).some(saved => saved.url === link.url))
@@ -1902,27 +1899,64 @@ function bindEvents() {
       if (!group) return;
       els.detailModal.close();
       openItemModal('', 'library');
-      if (els.itemForm) els.itemForm.dataset.repeatGroupId = group.id;
+      if (els.itemForm) {
+        els.itemForm.dataset.repeatGroupId = group.id;
+        els.itemForm.classList.add('is-repeat-log-entry');
+      }
       setItemFormSourceType(getSourceType(group), group);
       if (els.itemUseRepeatLog) els.itemUseRepeatLog.checked = true;
       if (els.itemUseReminder) els.itemUseReminder.checked = false;
       if (els.itemFindSource) els.itemFindSource.value = group.featureConfig?.findSource || 'auto';
-      if (els.itemProgressMode) els.itemProgressMode.value = group.featureConfig?.progressMode || 'auto';
+      if (els.itemProgressMode) els.itemProgressMode.value = 'none';
       if (els.itemUseDateRange) els.itemUseDateRange.checked = false;
       if (els.itemUsePlaylist) els.itemUsePlaylist.checked = false;
-      if (els.manualTitle) els.manualTitle.value = group.title || '';
+      if (els.manualTitle) {
+        els.manualTitle.value = '';
+        els.manualTitle.required = false;
+        els.manualTitle.placeholder = 'Log title (optional)';
+      }
       if (els.itemSubcategory) els.itemSubcategory.value = group.subcategory || '';
       if (els.itemDate) els.itemDate.value = todayString();
+      if (els.itemPeople) els.itemPeople.value = '';
       if (els.itemNote) els.itemNote.value = '';
       if (els.itemComment) els.itemComment.value = '';
+      if (els.itemRecommended) els.itemRecommended.checked = false;
       setRating(0);
-      state.selectedSource = group.providerId ? { provider: group.provider, providerId: group.providerId, title: group.title, subtitle: group.subtitle, image: group.image } : null;
-      els.provider.value = group.provider || 'manual';
-      els.providerId.value = group.providerId || '';
-      els.providerImage.value = group.image || '';
-      els.providerSubtitle.value = group.subtitle || '';
+      state.selectedSource = null;
+      state.loadedPlaylist = null;
+      els.provider.value = 'manual';
+      els.providerId.value = '';
+      els.providerImage.value = '';
+      els.providerSubtitle.value = '';
+      els.itemModalEyebrow.hidden = false;
+      els.itemModalEyebrow.textContent = 'ADD LOG';
+      els.itemModalTitle.textContent = group.title || 'Add log';
+      els.deleteItem.hidden = true;
       updateItemFormForType();
       syncItemFeatureSummary();
+      return;
+    }
+
+    const editRepeatLog = event.target.closest('[data-edit-repeat-log]');
+    if (editRepeatLog) {
+      els.detailModal.close();
+      openHistoryEdit(editRepeatLog.dataset.editRepeatLog || '');
+      return;
+    }
+
+    const deleteRepeatLog = event.target.closest('[data-delete-repeat-log]');
+    if (deleteRepeatLog) {
+      const entry = state.history.find(record => record.id === (deleteRepeatLog.dataset.deleteRepeatLog || ''));
+      if (!entry) return;
+      if (!confirm(`Delete log “${entry.title || 'Untitled'}”?`)) return;
+      const sourceItemId = entry.sourceItemId || '';
+      state.history = state.history.filter(record => record.id !== entry.id);
+      syncRepeatLogGroupRating(sourceItemId);
+      saveHistory();
+      saveItems();
+      renderAll();
+      if (sourceItemId && els.detailModal?.open) await openDetails(sourceItemId);
+      else if (sourceItemId) await openDetails(sourceItemId);
       return;
     }
 
@@ -5199,7 +5233,7 @@ function addActionForKind(kind) {
     const entry = (state.customTypes || []).find(candidate => candidate.type === type);
     return inferCustomTypeActionCategory(entry);
   }
-  return 'other';
+  return 'completed';
 }
 
 function kindForCurrentForm(item = null) {
@@ -5216,17 +5250,8 @@ function kindForCurrentForm(item = null) {
 function refreshItemKindChoices(preferredKind = '', preferredAction = '') {
   if (!els.itemKindChoice) return;
   const requestedKind = preferredKind || els.itemKindChoice.value || '';
-  const inferredAction = requestedKind && requestedKind !== 'new-type' ? addActionForKind(requestedKind) : '';
-  const action = normalizeAddActionCategory(preferredAction || els.itemActionChoice?.value || inferredAction || 'completed', 'completed');
-  const fixed = OVERALL_ADD_KIND_OPTIONS.filter(option => option.actionCategory === action);
-  const allCustom = customAddKindOptions();
-  const custom = allCustom.filter(option => option.actionCategory === action);
-  // While editing a custom Type, keep that Type selected if the user changes I…
-  // so saving can move the Type into its new action group instead of switching items.
-  if (String(requestedKind).startsWith('custom:') && !custom.some(option => option.value === requestedKind)) {
-    const currentCustom = allCustom.find(option => option.value === requestedKind);
-    if (currentCustom) custom.unshift(currentCustom);
-  }
+  const fixed = [...OVERALL_ADD_KIND_OPTIONS];
+  const custom = customAddKindOptions();
   const options = [
     ...fixed,
     ...custom,
@@ -5469,6 +5494,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
 
 function resetItemForm(defaultQueueStatus = 'library') {
   els.itemForm.reset();
+  els.itemForm.classList.remove('is-repeat-log-entry');
   delete els.itemForm.dataset.sourceTypeHint;
   delete els.itemForm.dataset.repeatGroupId;
   els.editingId.value = '';
@@ -5478,6 +5504,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   refreshItemKindChoices(preferredAdd.kind, preferredAdd.action);
   setUnderlyingFormTypeForKind(preferredAdd.kind);
   els.itemDisplayType.value = 'Workout';
+  if (els.manualTitle) els.manualTitle.required = true;
   if (els.itemSubcategory) els.itemSubcategory.value = '';
   if (els.itemSubcategoryDisclosure) els.itemSubcategoryDisclosure.open = false;
   if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.open = false;
@@ -5516,6 +5543,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.providerImage.value = '';
   els.providerSubtitle.value = '';
   els.itemModalEyebrow.textContent = 'ADD';
+  els.itemModalEyebrow.hidden = true;
   els.itemModalTitle.textContent = 'Add';
   if (els.itemRecommended) els.itemRecommended.checked = false;
   syncItemRecommendHeart();
@@ -5697,19 +5725,29 @@ function itemHasRepeatLog(item) {
   return Boolean(item?.featureConfig?.repeatableLog) || getSourceType(item) === 'class' || item?.groupedClass === true;
 }
 
+function syncRepeatLogGroupRating(sourceItemId) {
+  const group = sourceItemId ? findItem(sourceItemId) : null;
+  if (!group || !itemHasRepeatLog(group)) return;
+  const ratings = repeatLogHistoryEntries(group).map(entry => Number(entry.rating || 0)).filter(value => value > 0);
+  group.rating = ratings.length
+    ? Math.round((ratings.reduce((sum, value) => sum + value, 0) / ratings.length) * 2) / 2
+    : 0;
+  group.updatedAt = new Date().toISOString();
+}
+
 function syncItemFeatureSummary() {
   if (!els.itemFeaturesSummary) return;
   const bits = [];
-  const progress = effectiveItemProgressMode();
+  const progress = els.itemProgressMode?.value || 'auto';
   if (progress === 'tv') bits.push('episodes');
   if (progress === 'book') bits.push('pages');
   if (els.itemUseReminder?.checked) bits.push('reminder');
-  if (els.itemUseRepeatLog?.checked) bits.push('class');
-  if (els.itemUseDateRange?.checked) bits.push('date range');
-  if (els.itemUsePlaylist?.checked) bits.push('YouTube playlist');
+  if (els.itemUseRepeatLog?.checked) bits.push('repeat logs');
+  if (els.itemUseDateRange?.checked) bits.push('dates');
+  if (els.itemUsePlaylist?.checked) bits.push('playlist');
   const linked = els.itemFindSource?.value || 'auto';
   if (linked !== 'auto' && linked !== 'manual') {
-    const sourceLabel = els.itemFindSource?.options?.[els.itemFindSource.selectedIndex]?.textContent || 'linked source';
+    const sourceLabel = els.itemFindSource?.options?.[els.itemFindSource.selectedIndex]?.textContent || 'search';
     bits.push(String(sourceLabel).replace(/\s*·.*$/, ''));
   }
   els.itemFeaturesSummary.textContent = bits.length ? bits.join(' · ') : 'None';
@@ -5869,6 +5907,7 @@ function syncTVDraftHistoryVisibility(sourceType = selectedFormSourceType()) {
 
 function updateItemFormForType() {
   configureItemSubtype(false);
+  const repeatEntryMode = Boolean(els.itemForm?.dataset?.repeatGroupId);
   const savedType = selectedSavedTypeEntry();
   const parentType = formParentType();
   const subtype = els.itemSubtype?.value || '';
@@ -6010,6 +6049,20 @@ function updateItemFormForType() {
           : 'Anything you want to remember';
   }
   if (els.itemLinkLabel) els.itemLinkLabel.placeholder = sourceType === 'recipe' ? 'Recipe source (optional)' : 'Link label (optional)';
+
+  if (repeatEntryMode) {
+    // Adding one occurrence to an existing repeatable item is intentionally a
+    // small log form, not a second chance to reconfigure the Library item.
+    if (els.itemDateField) els.itemDateField.hidden = false;
+    if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = true;
+    if (els.queueStatusField) els.queueStatusField.hidden = true;
+    if (els.tvProgressFields) els.tvProgressFields.hidden = true;
+    if (els.bookProgressFields) els.bookProgressFields.hidden = true;
+    if (els.workoutBlock) els.workoutBlock.hidden = true;
+    if (els.reminderBlock) els.reminderBlock.hidden = true;
+    if (els.activityFields) els.activityFields.hidden = true;
+    if (els.manualTitle) els.manualTitle.placeholder = 'Log title (optional)';
+  }
 }
 
 function updateReminderFormFields() {
@@ -6443,7 +6496,10 @@ async function saveItemFromForm(event) {
   const selectedActionCategory = normalizeAddActionCategory(els.itemActionChoice?.value || editing?.actionCategory || addActionForKind(els.itemKindChoice?.value || kindForCurrentForm(editing)) || 'completed', 'completed');
   const reminderFeature = formUsesReminder();
   const repeatLogFeature = formUsesRepeatLog();
+  const repeatGroupId = String(els.itemForm?.dataset?.repeatGroupId || '');
+  const repeatGroup = repeatGroupId ? findItem(repeatGroupId) : null;
   let title = els.manualTitle.value.trim();
+  if (!title && repeatGroup) title = repeatGroup.title || 'Log';
   let provider = els.provider.value;
   let providerId = els.providerId.value;
   let image = els.providerImage.value;
@@ -6459,8 +6515,7 @@ async function saveItemFromForm(event) {
   if (savedDisplayType) {
     type = savedDisplayType.type;
     typeLabel = savedDisplayType.label || getTypeLabel(savedDisplayType.type);
-    // If the user changes I… while editing a custom Type, remember the new home
-    // category so that Type appears under the same choice next time.
+    // Preserve the custom Type's internal action category for older synced data.
     registerCustomType(type, typeLabel, selectedActionCategory);
   } else if (displayParent === 'game') {
     type = 'game';
@@ -6534,7 +6589,7 @@ async function saveItemFromForm(event) {
     showFormMessage('Add a title.', true);
     return;
   }
-  if (sourceType === 'youtube' && (provider !== 'youtube' || !providerId)) {
+  if (!repeatGroup && sourceType === 'youtube' && (provider !== 'youtube' || !providerId)) {
     showFormMessage(els.itemUsePlaylist?.checked ? 'Load a playlist first.' : 'Choose a YouTube video first.', true);
     return;
   }
@@ -6564,8 +6619,8 @@ async function saveItemFromForm(event) {
                   : sourceType === 'youtube'
                     ? provider === 'youtube'
                     : true;
-  const requiresCatalogueSelection = !manualLookup && ['tv','book','movie','video-game','board-game','artist','song','event','restaurant','place','youtube'].includes(sourceType);
-  if ((requiresCatalogueSelection && !providerId) || !validProvider) {
+  const requiresCatalogueSelection = !repeatGroup && !manualLookup && ['tv','book','movie','video-game','board-game','artist','song','event','restaurant','place','youtube'].includes(sourceType);
+  if (!repeatGroup && ((requiresCatalogueSelection && !providerId) || !validProvider)) {
     showFormMessage('Choose a Find it result first, or switch Find it to Manual.', true);
     return;
   }
@@ -6649,9 +6704,7 @@ async function saveItemFromForm(event) {
       ? (normalizedReleaseDate(els.itemReleaseDate?.value) || normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)))
       : normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)),
     attachments: attachmentFiles,
-    coverAttachmentId: image ? '' : ((editing?.coverAttachmentId && attachmentFiles.some(file => file.id === editing.coverAttachmentId) && String(attachmentFiles.find(file => file.id === editing.coverAttachmentId)?.mime || '').startsWith('image/'))
-      ? editing.coverAttachmentId
-      : (attachmentFiles.find(file => String(file.mime || '').startsWith('image/'))?.id || '')),
+    coverAttachmentId: '',
     links: state.attachmentDraft.links.map(link => ({ ...link })),
     date: reminderFeature || repeatLogFeature ? '' : (sourceType === 'activity' || els.itemUseDateRange?.checked) ? (els.activityStartDate?.value || '') : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
     queueStatus: reminderFeature ? 'upnext' : (repeatLogFeature || ['activity','class'].includes(sourceType)) ? 'library' : (sourceType === 'restaurant' ? (els.itemQueueStatus.value === 'tbr' ? 'tbr' : 'library') : (['music','artist','song','concert','food','recipe'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'))),
@@ -6772,20 +6825,23 @@ async function saveItemFromForm(event) {
   }
 
   if (repeatLogFeature) {
-    const repeatGroupId = String(els.itemForm?.dataset?.repeatGroupId || '');
     const normalizeRepeatIdentity = value => normalizeSearchText([value?.type || '', value?.title || '', value?.providerId || ''].join(' '));
-    let group = editing || (repeatGroupId ? findItem(repeatGroupId) : null);
+    let group = repeatGroup || editing;
     if (!group) {
       const identity = normalizeRepeatIdentity(item);
       group = state.items.find(existing => itemHasRepeatLog(existing) && normalizeRepeatIdentity(existing) === identity) || null;
     }
 
+    const addingEntryToExistingGroup = Boolean(repeatGroup && group);
     const wasRepeatable = Boolean(editing && itemHasRepeatLog(editing));
-    const shouldCreateLog = !editing || !wasRepeatable || Boolean(repeatGroupId);
+    const shouldCreateLog = addingEntryToExistingGroup || !editing || !wasRepeatable;
+
     if (!group) {
       group = { ...item, id: item.id, date: '', completedAt: '', featureConfig: { ...(item.featureConfig || {}), repeatableLog: true } };
       state.items.push(group);
-    } else {
+    } else if (!addingEntryToExistingGroup) {
+      // Editing the repeatable Library item may update the group itself. Adding a
+      // new log must never rename or otherwise overwrite that group.
       const preservedReminder = group.reminder;
       Object.assign(group, {
         ...group,
@@ -6814,21 +6870,19 @@ async function saveItemFromForm(event) {
         date: repeatLogDate || todayString(),
         showOnCalendar: true,
         kind: 'repeat-log',
-        title: title || group.title,
+        title: els.manualTitle.value.trim() || group.title || 'Log',
         subtitle: group.subcategory || 'Log',
         notes: item.notes || '',
         comment: item.comment || '',
         people: item.people || [],
         rating: Number(item.rating || 0),
         image: item.image || group.image || '',
-        provider: item.provider || group.provider || 'manual',
+        provider: item.providerId ? (item.provider || 'manual') : (group.provider || 'manual'),
         providerId: item.providerId || group.providerId || ''
       });
     }
 
-    const ratings = repeatLogHistoryEntries(group).map(entry => Number(entry.rating || 0)).filter(value => value > 0);
-    if (ratings.length) group.rating = Math.round((ratings.reduce((sum, value) => sum + value, 0) / ratings.length) * 2) / 2;
-    group.updatedAt = new Date().toISOString();
+    syncRepeatLogGroupRating(group.id);
     if (itemHasReminder(group)) setItemQueueStatus(group, 'upnext');
     else setItemQueueStatus(group, 'library');
     recordTypeUse(group);
@@ -6870,9 +6924,7 @@ async function saveItemFromForm(event) {
       ...(existingRestaurant.attachments || []),
       ...attachmentFiles.filter(file => !(existingRestaurant.attachments || []).some(saved => saved.id === file.id))
     ];
-    if (!existingRestaurant.image && !existingRestaurant.coverAttachmentId) {
-      existingRestaurant.coverAttachmentId = attachmentFiles.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
-    }
+    existingRestaurant.coverAttachmentId = '';
     existingRestaurant.links = [
       ...(existingRestaurant.links || []),
       ...state.attachmentDraft.links.filter(link => !(existingRestaurant.links || []).some(saved => saved.url === link.url))
@@ -6939,9 +6991,7 @@ async function saveItemFromForm(event) {
       ...(group.links || []),
       ...state.attachmentDraft.links.filter(link => !(group.links || []).some(saved => saved.url === link.url))
     ];
-    if (!group.image && !group.coverAttachmentId) {
-      group.coverAttachmentId = attachmentFiles.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
-    }
+    group.coverAttachmentId = '';
     group.updatedAt = new Date().toISOString();
     setItemQueueStatus(group, 'library');
     if (!existingClassGroup) state.items.push(group);
@@ -7149,18 +7199,24 @@ function showFormMessage(message, error = false) {
 }
 
 function attachmentCoverIdForItem(item) {
-  if (!item || String(item.image || '').trim()) return '';
-  const attachments = Array.isArray(item.attachments) ? item.attachments : [];
-  const preferredId = String(item.coverAttachmentId || '');
-  const preferred = attachments.find(file => file.id === preferredId && String(file.mime || '').startsWith('image/'));
-  return preferred?.id || attachments.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
+  // Attachments are detail content, not poster art. Only catalogue/provider images
+  // are allowed to become the Library/detail cover.
+  return '';
 }
 
 function displayImageForItem(item) {
-  const direct = String(item?.image || '').trim();
-  if (direct) return direct;
-  const id = attachmentCoverIdForItem(item);
-  return id ? (attachmentCoverObjectUrls.get(id) || '') : '';
+  return String(item?.image || '').trim();
+}
+
+async function ensureAttachmentObjectUrl(id) {
+  const key = String(id || '');
+  if (!key) return '';
+  if (attachmentCoverObjectUrls.has(key)) return attachmentCoverObjectUrls.get(key);
+  const record = await getAttachmentBlob(key);
+  if (!record?.blob) return '';
+  const url = URL.createObjectURL(record.blob);
+  attachmentCoverObjectUrls.set(key, url);
+  return url;
 }
 
 async function ensureAttachmentCoverUrl(item) {
@@ -7247,7 +7303,7 @@ async function openDetails(id) {
     appendReminderFunctionality(item);
     await appendSocialFollowerContext(item, () => state.openDetailId === item.id && Boolean(els.detailModal?.open));
     await appendLibrarySimilarRecommendations(item);
-    appendItemResources(item);
+    await appendItemResources(item);
   } catch (error) {
     els.detailBody.innerHTML = `${basicDetailHero(item)}<div class="api-error">${escapeHtml(error.message)}</div>${detailEditButton(item)}`;
     appendFlexibleFeatureProgress(item);
@@ -7257,7 +7313,7 @@ async function openDetails(id) {
     appendLibraryPersonalMetadata(item);
     appendReminderFunctionality(item);
     await appendSocialFollowerContext(item, () => state.openDetailId === item.id && Boolean(els.detailModal?.open));
-    appendItemResources(item);
+    await appendItemResources(item);
   }
 }
 
@@ -7789,7 +7845,7 @@ function repeatLogFunctionalityMarkup(item) {
   if (!itemHasRepeatLog(item) || getSourceType(item) === 'class') return '';
   const entries = repeatLogHistoryEntries(item);
   const rows = entries.length
-    ? entries.map(entry => `<article class="class-history-row"><div class="class-history-date">${escapeHtml(entry.date ? formatShortCalendarDate(entry.date) : 'Undated')}</div><div class="class-history-copy"><strong>${escapeHtml(entry.title || item.title || 'Log')}</strong>${entry.notes ? `<span>${escapeHtml(entry.notes)}</span>` : ''}</div><div class="class-history-rating">${Number(entry.rating || 0) ? `★ ${escapeHtml(formatPersonalRating(entry.rating))}` : ''}</div></article>`).join('')
+    ? entries.map(entry => `<article class="class-history-row"><div class="class-history-date">${escapeHtml(entry.date ? formatShortCalendarDate(entry.date) : 'Undated')}</div><div class="class-history-copy"><strong>${escapeHtml(entry.title || item.title || 'Log')}</strong>${entry.notes ? `<span>${escapeHtml(entry.notes)}</span>` : ''}</div><div class="class-history-actions"><span class="class-history-rating">${Number(entry.rating || 0) ? `★ ${escapeHtml(formatPersonalRating(entry.rating))}` : ''}</span><button class="quiet-button class-history-edit" type="button" data-edit-repeat-log="${escapeAttr(entry.id)}">Edit</button><button class="quiet-button class-history-delete" type="button" data-delete-repeat-log="${escapeAttr(entry.id)}">Delete</button></div></article>`).join('')
     : '<p class="detail-meta">No logs yet.</p>';
   return `<section class="detail-section class-history-section repeat-log-section"><div class="detail-section-heading"><h3>History</h3><button class="secondary-button" type="button" data-add-repeat-log="${escapeAttr(item.id)}">+ Add log</button></div><div class="class-history-list">${rows}</div></section>`;
 }
@@ -7803,7 +7859,7 @@ function appendRepeatLogFunctionality(item) {
 function renderClassDetails(item) {
   const entries = repeatLogHistoryEntries(item);
   const rows = entries.length
-    ? entries.map(entry => `<article class="class-history-row"><div class="class-history-date">${escapeHtml(entry.date ? formatShortCalendarDate(entry.date) : 'Undated')}</div><div class="class-history-copy"><strong>${escapeHtml(entry.title || 'Class')}</strong>${entry.notes ? `<span>${escapeHtml(entry.notes)}</span>` : ''}</div><div class="class-history-rating">${Number(entry.rating || 0) ? `★ ${escapeHtml(formatPersonalRating(entry.rating))}` : ''}</div></article>`).join('')
+    ? entries.map(entry => `<article class="class-history-row"><div class="class-history-date">${escapeHtml(entry.date ? formatShortCalendarDate(entry.date) : 'Undated')}</div><div class="class-history-copy"><strong>${escapeHtml(entry.title || item.title || 'Log')}</strong>${entry.notes ? `<span>${escapeHtml(entry.notes)}</span>` : ''}</div><div class="class-history-actions"><span class="class-history-rating">${Number(entry.rating || 0) ? `★ ${escapeHtml(formatPersonalRating(entry.rating))}` : ''}</span><button class="quiet-button class-history-edit" type="button" data-edit-repeat-log="${escapeAttr(entry.id)}">Edit</button><button class="quiet-button class-history-delete" type="button" data-delete-repeat-log="${escapeAttr(entry.id)}">Delete</button></div></article>`).join('')
     : '<p class="detail-meta">No logs yet.</p>';
   els.detailBody.innerHTML = `${libraryDetailHero({ type:getItemTypeLabel(item).toUpperCase(), title:item.title || 'Classes', image:displayImageForItem(item), subtitle:`${entries.length} ${entries.length === 1 ? 'log' : 'logs'}`, overview:'' })}<section class="detail-section class-history-section"><div class="detail-section-heading"><h3>History</h3><button class="secondary-button" type="button" data-add-repeat-log="${escapeAttr(item.id)}">+ Add log</button></div><div class="class-history-list">${rows}</div></section>`;
 }
@@ -8303,16 +8359,33 @@ async function deleteRemovedDraftAttachments() {
   state.attachmentDraft.removedFileIds.clear();
 }
 
-function appendItemResources(item) {
+async function appendItemResources(item) {
   const attachments = item.attachments || [];
   const links = item.links || [];
   if (!attachments.length && !links.length) return;
 
+  const imageFiles = attachments.filter(file => String(file.mime || '').startsWith('image/'));
+  const otherFiles = attachments.filter(file => !String(file.mime || '').startsWith('image/'));
+  const imagePreviews = await Promise.all(imageFiles.map(async file => ({
+    file,
+    url: await ensureAttachmentObjectUrl(file.id).catch(() => '')
+  })));
+
   const section = document.createElement('section');
   section.className = 'detail-section resources-section';
   section.innerHTML = `
-    <h3>Files & links</h3>
-    ${attachments.length ? `<div class="resource-grid">${attachments.map(file => `
+    <h3>${imageFiles.length && !otherFiles.length && !links.length ? 'Photos' : 'Files & links'}</h3>
+    ${imagePreviews.length ? `<div class="resource-image-grid">${imagePreviews.map(({ file, url }) => url ? `
+      <button class="resource-image-card" type="button" data-attachment-id="${escapeAttr(file.id)}" aria-label="Open ${escapeAttr(file.name || 'photo')}">
+        <img src="${escapeAttr(url)}" alt="${escapeAttr(file.name || '')}" loading="lazy" />
+        <span>${escapeHtml(file.name || 'Photo')}</span>
+      </button>` : `
+      <button class="resource-card" type="button" data-attachment-id="${escapeAttr(file.id)}">
+        <span class="resource-icon">${attachmentKindIcon(file.mime)}</span>
+        <span><strong>${escapeHtml(file.name)}</strong><small>IMAGE · ${formatBytes(file.size)}</small></span>
+        <span class="resource-arrow">↗</span>
+      </button>`).join('')}</div>` : ''}
+    ${otherFiles.length ? `<div class="resource-grid">${otherFiles.map(file => `
       <button class="resource-card" type="button" data-attachment-id="${escapeAttr(file.id)}">
         <span class="resource-icon">${attachmentKindIcon(file.mime)}</span>
         <span><strong>${escapeHtml(file.name)}</strong><small>${escapeHtml(attachmentKindLabel(file.mime))} · ${formatBytes(file.size)}</small></span>
@@ -9330,6 +9403,16 @@ function openHistoryEdit(id) {
   const entry = state.history.find(record => record.id === id);
   if (!entry || !els.historyEditModal) return;
   const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
+  const repeatEntry = ['repeat-log','class-attended'].includes(entry.kind);
+  els.historyEditModal.classList.toggle('is-repeat-entry-edit', repeatEntry);
+  const typeField = els.historyEditType?.closest('label');
+  const subcategoryField = els.historyEditSubcategory?.closest('label');
+  const subtitleField = els.historyEditSubtitle?.closest('label');
+  if (typeField) typeField.hidden = repeatEntry;
+  if (subcategoryField) subcategoryField.hidden = repeatEntry;
+  if (subtitleField) subtitleField.hidden = repeatEntry;
+  const typeDateRow = els.historyEditType?.closest('.two-column-fields');
+  typeDateRow?.classList.toggle('is-single-field', repeatEntry);
   els.historyEditId.value = entry.id;
   els.historyEditTitle.value = entry.title || '';
   els.historyEditType.value = entry.typeLabel || getTypeLabel(entry.type) || '';
@@ -9387,22 +9470,27 @@ function saveHistoryEdit(event) {
   const entry = state.history.find(record => record.id === id);
   if (!entry) return;
 
-  const typeLabel = cleanTypeLabel(els.historyEditType.value) || entry.typeLabel || getTypeLabel(entry.type);
-  const type = editableTypeFromLabel(typeLabel, entry.type);
-  registerCustomType(type, typeLabel);
+  const repeatEntry = ['repeat-log','class-attended'].includes(entry.kind);
+  if (!repeatEntry) {
+    const typeLabel = cleanTypeLabel(els.historyEditType.value) || entry.typeLabel || getTypeLabel(entry.type);
+    const type = editableTypeFromLabel(typeLabel, entry.type);
+    registerCustomType(type, typeLabel);
+    entry.type = type;
+    entry.typeLabel = typeLabel;
+    entry.subcategory = cleanTypeLabel(els.historyEditSubcategory?.value || '');
+    entry.subtitle = els.historyEditSubtitle.value.trim();
+  }
 
   entry.title = els.historyEditTitle.value.trim() || entry.title;
-  entry.type = type;
-  entry.typeLabel = typeLabel;
-  entry.subcategory = cleanTypeLabel(els.historyEditSubcategory?.value || '');
-  entry.subtitle = els.historyEditSubtitle.value.trim();
   entry.date = els.historyEditDate.value || '';
   entry.rating = Number(els.historyEditRating.value || 0);
   entry.notes = els.historyEditNote.value.trim();
   entry.showOnCalendar = Boolean(els.historyEditShowCalendar.checked && entry.date);
   entry.updatedAt = new Date().toISOString();
+  if (repeatEntry) syncRepeatLogGroupRating(entry.sourceItemId);
 
   saveHistory();
+  if (repeatEntry) saveItems();
   els.historyEditModal.close();
   renderAll();
 }
@@ -9428,8 +9516,11 @@ function deleteHistoryEdit() {
   const entry = state.history.find(record => record.id === id);
   if (!entry) return;
   if (!confirm(`Delete tracked entry “${entry.title}”?`)) return;
+  const repeatEntry = ['repeat-log','class-attended'].includes(entry.kind);
   state.history = state.history.filter(record => record.id !== id);
+  if (repeatEntry) syncRepeatLogGroupRating(entry.sourceItemId);
   saveHistory();
+  if (repeatEntry) saveItems();
   els.historyEditModal.close();
   renderAll();
 }
