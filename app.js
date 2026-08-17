@@ -2493,6 +2493,48 @@ function watchedGenreCounts() {
   return [...counts.entries()].sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
+async function enrichWatchedTVHorrorThrillerGenres() {
+  if (!state.settings.tmdbToken || !TrackerAPI.getTMDBKeywordIds || !TrackerAPI.getTMDBItemKeywords) return false;
+  const watchedTV = state.items.filter(item => getSourceType(item) === 'tv' && watchedTitleHasConsumption(item) && item.providerId);
+  if (!watchedTV.length) return false;
+
+  let horrorIds = [];
+  let thrillerIds = [];
+  try {
+    [horrorIds, thrillerIds] = await Promise.all([
+      TrackerAPI.getTMDBKeywordIds(['horror', 'supernatural horror', 'psychological horror', 'slasher', 'zombie'], state.settings),
+      TrackerAPI.getTMDBKeywordIds(['thriller', 'suspense', 'psychological thriller', 'crime thriller'], state.settings)
+    ]);
+  } catch {
+    return false;
+  }
+
+  const horrorSet = new Set((horrorIds || []).map(String));
+  const thrillerSet = new Set((thrillerIds || []).map(String));
+  let changed = false;
+
+  await Promise.allSettled(watchedTV.map(async item => {
+    let keywords = [];
+    try {
+      keywords = await getCached(`tmdb:stats-keywords:tv:${item.providerId}`, () => TrackerAPI.getTMDBItemKeywords('tv', item.providerId, state.settings));
+    } catch {
+      return;
+    }
+    const keywordIds = new Set((keywords || []).map(keyword => String(keyword.id || '')).filter(Boolean));
+    const genres = new Set((item.genres || []).map(value => String(value || '').trim()).filter(Boolean));
+    const before = genres.size;
+    if ([...horrorSet].some(id => keywordIds.has(id))) genres.add('Horror');
+    if ([...thrillerSet].some(id => keywordIds.has(id))) genres.add('Thriller');
+    if (genres.size !== before) {
+      item.genres = [...genres];
+      changed = true;
+    }
+  }));
+
+  if (changed) saveItems();
+  return changed;
+}
+
 function iso8601DurationMinutes(value) {
   const match = String(value || '').match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
   if (!match) return 0;
@@ -2647,7 +2689,7 @@ function renderGenrePie(genres = []) {
   const genreColors = {
     Action: '#307351',
     Adventure: '#648767',
-    Animation: '#F786AA',
+    Animation: '#f7e186',
     Comedy: '#669bbc',
     Crime: '#c1121f',
     Documentary: '#2C4251',
@@ -2664,6 +2706,7 @@ function renderGenrePie(genres = []) {
     Western: '#9c7450',
     'TV Movie': '#8fa8bc',
     Politics: '#9a4353',
+    Reality: '#F786AA',
     Other: '#b0a79a'
   };
   const genreAliases = {
@@ -2912,7 +2955,10 @@ async function renderStats() {
       .map(group => `<button class="stat-type-row" type="button" data-stats-type-key="${escapeAttr(group.key)}" data-stats-label="${escapeAttr(group.label)}"><span>${escapeHtml(group.label)}</span><strong>${group.items.length}</strong></button>`).join('');
   }
   renderGenrePie(genres);
-  const minutes = await estimatedWatchMinutes();
+  const [minutes] = await Promise.all([
+    estimatedWatchMinutes(),
+    enrichWatchedTVHorrorThrillerGenres()
+  ]);
   if (els.statsSummary?.dataset.renderToken !== requestToken) return;
   const hours = formatWatchHours(minutes);
   const cards = [...els.statsSummary.querySelectorAll('.stat-card')];
@@ -7780,7 +7826,7 @@ function libraryAssociatedDateInfo(item) {
       const latest = periods[periods.length - 1];
       const start = latest.startDate ? formatLongDate(latest.startDate) : '';
       const end = latest.endDate ? formatLongDate(latest.endDate) : '';
-      return { label: 'Reading', values: [start && end ? `${start} – ${end}` : start || end].filter(Boolean), extra: Math.max(0, periods.length - 1) };
+      return { label: 'Reading', values: [start && end ? `${start} – ${end}` : start || end].filter(Boolean), rawDates: [latest.endDate || latest.startDate].filter(Boolean), extra: Math.max(0, periods.length - 1) };
     }
   }
 
@@ -7791,14 +7837,17 @@ function libraryAssociatedDateInfo(item) {
       const value = endDate && endDate !== startDate
         ? `${formatLongDate(startDate)} – ${formatLongDate(endDate)}`
         : formatLongDate(startDate);
-      return { label: 'Date', values: [value], extra: 0 };
+      return { label: 'Date', values: [value], rawDates: [endDate || startDate].filter(Boolean), extra: 0 };
     }
   }
 
   const historyDates = state.history
     .filter(entry => entry.sourceItemId === item.id && entry.date)
-    .map(entry => entry.date);
-  const dates = [...new Set([item.date, ...historyDates].filter(Boolean))].sort((a, b) => String(b).localeCompare(String(a)));
+    .map(entry => String(entry.date).slice(0, 10));
+  const dates = [...new Set([item.date, ...historyDates]
+    .filter(Boolean)
+    .map(date => String(date).slice(0, 10)))]
+    .sort((a, b) => String(b).localeCompare(String(a)));
   if (!dates.length) return null;
 
   let label = 'Tracked';
@@ -7809,6 +7858,7 @@ function libraryAssociatedDateInfo(item) {
   return {
     label,
     values: dates.slice(0, 3).map(formatLongDate),
+    rawDates: dates,
     extra: Math.max(0, dates.length - 3)
   };
 }
@@ -9234,14 +9284,14 @@ const DISCOVER_GENRES = [
   { value: 'family', label: 'Family', tmdb: ['Family'], keywords: ['family'], book: ['family'] },
   { value: 'fantasy', label: 'Fantasy', tmdb: ['Fantasy', 'Sci-Fi & Fantasy'], keywords: ['fantasy'], book: ['fantasy'] },
   { value: 'history', label: 'History', tmdb: ['History', 'War & Politics'], keywords: ['history', 'historical'], book: ['history'] },
-  { value: 'horror', label: 'Horror', tmdb: ['Horror'], keywords: ['horror'], book: ['horror'] },
+  { value: 'horror', label: 'Horror', tmdb: ['Horror'], keywords: ['horror', 'supernatural horror', 'psychological horror', 'slasher', 'zombie'], book: ['horror'] },
   { value: 'mystery', label: 'Mystery', tmdb: ['Mystery'], keywords: ['mystery'], book: ['mystery'] },
   { value: 'philosophy', label: 'Philosophy', tmdb: [], keywords: ['philosophy'], book: ['philosophy'] },
   { value: 'psychology', label: 'Psychology', tmdb: [], keywords: ['psychology'], book: ['psychology'] },
   { value: 'romance', label: 'Romance', tmdb: ['Romance'], keywords: ['romance'], book: ['romance'] },
   { value: 'science', label: 'Science', tmdb: [], keywords: ['science'], book: ['science'] },
   { value: 'science-fiction', label: 'Science Fiction', tmdb: ['Science Fiction', 'Sci-Fi & Fantasy'], keywords: ['science fiction'], book: ['science fiction'] },
-  { value: 'thriller', label: 'Thriller', tmdb: ['Thriller'], keywords: ['thriller', 'suspense'], book: ['thriller', 'suspense'] }
+  { value: 'thriller', label: 'Thriller', tmdb: ['Thriller'], keywords: ['thriller', 'suspense', 'psychological thriller', 'crime thriller'], book: ['thriller', 'suspense'] }
 ]
 
 function selectedDiscoverGenre() {
@@ -14906,11 +14956,16 @@ function makeLibraryPoster(item) {
   albumButton.setAttribute('aria-label', `Add ${item.title} to album`);
   albumButton.title = 'Add to collection';
   shell.append(poster, albumButton);
-  const trackedDate = itemLastTrackedDate(item);
-  if (trackedDate) {
+  // Use the exact same underlying date as the date strip shown when this
+  // Library card is opened. Do not use completedAt/createdAt: those can reflect
+  // when Omni was updated rather than when the item was actually watched/logged.
+  // Books intentionally have no date footer.
+  const associatedDateInfo = getSourceType(item) === 'book' ? null : libraryAssociatedDateInfo(item);
+  const cardDate = associatedDateInfo?.rawDates?.[0] || '';
+  if (cardDate) {
     const tracked = document.createElement('span');
     tracked.className = 'library-card-tracked-date';
-    tracked.textContent = `Tracked ${formatShortCalendarDate(trackedDate)}`;
+    tracked.textContent = formatShortCalendarDate(cardDate);
     shell.appendChild(tracked);
   }
   return shell;
