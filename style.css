@@ -6006,7 +6006,8 @@ body.auth-locked > main {
 
 /* Google Places restaurant results are intentionally text-first. No empty
    poster placeholder is reserved when the result has no artwork. */
-.discover-text-card.discover-restaurant-card {
+.discover-text-card.discover-restaurant-card,
+.discover-text-card.discover-no-image-card {
   display: flex;
   flex-direction: column;
   align-self: start;
@@ -6052,6 +6053,9 @@ body.auth-locked > main {
   overflow-wrap: anywhere;
   color: #6b6d68;
   font: 500 .74rem/1.4 var(--sans);
+}
+.discover-text-card-subtitle {
+  margin-top: 4px;
 }
 .discover-text-card-actions {
   margin-top: 12px;
@@ -6102,7 +6106,8 @@ body.auth-locked > main {
 }
 
 @media (max-width: 760px) {
-  .discover-text-card.discover-restaurant-card {
+  .discover-text-card.discover-restaurant-card,
+  .discover-text-card.discover-no-image-card {
     padding: 10px;
   }
   .discover-text-card-title { font-size: .86rem; }

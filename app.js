@@ -9646,19 +9646,34 @@ function discoverCardMarkup(result, key, fallbackType) {
   const queueStatus = item ? getQueueStatus(item) : '';
   const plusLabel = queueStatus === 'upnext' ? '+ Queue' : queueStatus === 'tbr' ? '+ TBR' : '+ Add';
   const libraryOnly = ['music','artist','song','restaurant'].includes(type);
+  const noImage = !String(result.image || '').trim();
+  const completeAction = ['tv','movie','book'].includes(type)
+    ? `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo watched / read' : 'Mark watched / read'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>`
+    : '';
+  const queueAction = ['tv','movie','book'].includes(type)
+    ? `<button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>`
+    : '';
+  const libraryAction = libraryOnly && type !== 'restaurant'
+    ? `<button class="discover-add-button${item ? ' is-added' : ''}" type="button" data-discover-library-add="${escapeAttr(key)}" ${item ? 'disabled' : ''}>${item ? 'In Library' : '+ Library'}</button>`
+    : '';
+  const restaurantAction = type === 'restaurant'
+    ? `<button class="discover-add-button${item ? ' is-added' : ''}" type="button" data-discover-restaurant-add="${escapeAttr(key)}">${item ? (getQueueStatus(item) === 'tbr' ? 'In TBR' : '+ Visit') : '+ Add'}</button>`
+    : '';
 
-  // Restaurants from Google Places generally do not provide a useful poster-style
-  // image in this tracker. Render them as compact text cards instead of reserving
-  // a large empty 2:3 thumbnail area.
-  if (type === 'restaurant') {
-    return `<article class="discover-card discover-text-card discover-restaurant-card">
-      <button class="discover-text-card-open" type="button" data-discover-detail="${escapeAttr(key)}" aria-label="Open ${escapeAttr(result.title || 'restaurant details')}">
+  // Discover results without artwork should be content-sized text cards. Do not
+  // reserve an empty poster area or render an image placeholder. Restaurants use
+  // the same treatment because their source often has no poster-style artwork.
+  if (type === 'restaurant' || noImage) {
+    const cardClass = type === 'restaurant' ? 'discover-restaurant-card' : 'discover-no-image-card';
+    return `<article class="discover-card discover-text-card ${cardClass}">
+      <button class="discover-text-card-open" type="button" data-discover-detail="${escapeAttr(key)}" aria-label="Open ${escapeAttr(result.title || 'details')}">
         <span class="discover-text-type-chip">${escapeHtml(getTypeLabel(type))}</span>
         <strong class="discover-text-card-title">${escapeHtml(result.title || 'Untitled')}</strong>
         ${meta ? `<span class="discover-text-card-meta">${escapeHtml(meta)}</span>` : ''}
+        ${result.subtitle && ['book','music'].includes(type) ? `<span class="discover-text-card-meta discover-text-card-subtitle">${escapeHtml(result.subtitle)}</span>` : ''}
       </button>
-      <div class="discover-card-actions no-complete discover-text-card-actions">
-        <button class="discover-add-button${item ? ' is-added' : ''}" type="button" data-discover-restaurant-add="${escapeAttr(key)}">${item ? (getQueueStatus(item) === 'tbr' ? 'In TBR' : '+ Visit') : '+ Add'}</button>
+      <div class="discover-card-actions${['event','concert','music','artist','song','restaurant'].includes(type) ? ' no-complete' : ''} discover-text-card-actions">
+        ${restaurantAction || `${completeAction}${queueAction}${libraryAction}`}
       </div>
     </article>`;
   }
@@ -9666,7 +9681,7 @@ function discoverCardMarkup(result, key, fallbackType) {
   return `<article class="discover-card">
     <button class="discover-card-open" type="button" data-discover-detail="${escapeAttr(key)}" aria-label="Open ${escapeAttr(result.title || 'details')}">
       <div class="discover-poster-wrap">
-        ${result.image ? `<img class="discover-poster" src="${escapeAttr(result.image)}" alt="" />` : '<div class="discover-poster placeholder"></div>'}
+        <img class="discover-poster" src="${escapeAttr(result.image)}" alt="" />
         <span class="discover-type-chip">${escapeHtml(getTypeLabel(type))}</span>
       </div>
     </button>
@@ -9675,9 +9690,7 @@ function discoverCardMarkup(result, key, fallbackType) {
       ${meta ? `<p class="discover-card-meta">${escapeHtml(meta)}</p>` : ''}
       ${result.subtitle && ['book','music'].includes(type) ? `<p class="discover-card-subtitle">${escapeHtml(result.subtitle)}</p>` : ''}
       <div class="discover-card-actions${['event','concert','music','artist','song','restaurant'].includes(type) ? ' no-complete' : ''}">
-        ${['tv','movie','book'].includes(type) ? `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo watched / read' : 'Mark watched / read'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>` : ''}
-        ${['tv','movie','book'].includes(type) ? `<button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>` : ''}
-        ${libraryOnly ? `<button class="discover-add-button${item ? ' is-added' : ''}" type="button" data-discover-library-add="${escapeAttr(key)}" ${item ? 'disabled' : ''}>${item ? 'In Library' : '+ Library'}</button>` : ''}
+        ${completeAction}${queueAction}${libraryAction}
       </div>
     </div>
   </article>`;
