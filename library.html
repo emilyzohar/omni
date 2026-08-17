@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-repeat-stars-genres-games-64" />
+  <link rel="stylesheet" href="style.css?v=omni-collections-library-70" />
 </head>
 <body class="library-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -112,6 +112,17 @@
 
         <div id="libraryGroups" class="library-groups"></div>
         <p id="libraryEmpty" class="empty-state library-empty">Nothing saved yet.</p>
+      </div>
+    </section>
+
+    <section id="albums" class="albums-section">
+      <div class="shell">
+        <div class="albums-heading">
+          <h1>Collections</h1>
+          <button id="openAlbumCreate" class="library-icon-button" type="button" aria-label="Create collection" title="Create collection">+</button>
+        </div>
+        <div id="albumsGrid" class="albums-grid"></div>
+        <p id="albumsEmpty" class="empty-state">Group anything together.</p>
       </div>
     </section>
 
@@ -643,6 +654,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-repeat-stars-genres-games-64"></script>
+  <script type="module" src="app.js?v=omni-collections-library-70"></script>
 </body>
 </html>

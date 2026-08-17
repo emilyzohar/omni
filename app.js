@@ -1,5 +1,5 @@
 import { TrackerAPI } from './api.js?v=omni-game-health-32';
-import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
+import { API_CONFIG } from './config.js?v=omni-collections-library-70';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -2304,7 +2304,7 @@ function ensureAlbumEditorModal() {
     <form id="albumEditorForm" class="item-form album-editor-form">
       <input id="albumEditingId" type="hidden"/>
       <div class="album-editor-toolbar">
-        <label class="album-toolbar-name"><span class="sr-only">Collection name</span><input id="albumName" type="text" maxlength="80" placeholder="Collection name" aria-label="Collection name" required/></label>
+        <label class="album-toolbar-name"><span class="sr-only">Collection name</span><input id="albumName" type="text" maxlength="80" placeholder="Collection title *" aria-label="Collection title (required)" required/></label>
         <label class="album-toolbar-search"><span class="sr-only">Search your Library</span><input id="albumItemSearch" type="search" autocomplete="off" placeholder="Search Library…" aria-label="Search your Library" /></label>
         <details id="albumTypeFilter" class="library-type-filter album-type-filter">
           <summary id="albumTypeFilterSummary">All types</summary>
@@ -2338,9 +2338,18 @@ function ensureAlbumEditorModal() {
   });
   modal.querySelector('#albumItemChoices')?.addEventListener('change', event => {
     if (!event.target.matches('[data-album-item]')) return;
+    // Keep selection entirely in-place. The hidden checkbox is anchored inside its
+    // card (see CSS), so focusing/toggling it cannot make the collection browser
+    // jump to a distant scroll position.
+    const browser = $('#albumItemChoices');
+    const scrollTop = browser?.scrollTop || 0;
+    const scrollLeft = event.target.closest('.album-library-shelf')?.scrollLeft || 0;
+    const shelf = event.target.closest('.album-library-shelf');
     if (event.target.checked) albumEditorSelectedIds.add(event.target.value);
     else albumEditorSelectedIds.delete(event.target.value);
     renderAlbumSelectedSummary();
+    if (browser) browser.scrollTop = scrollTop;
+    if (shelf) shelf.scrollLeft = scrollLeft;
   });
   modal.querySelector('#albumEditorForm')?.addEventListener('submit', event => {
     event.preventDefault();
@@ -2360,7 +2369,10 @@ function ensureAlbumEditorModal() {
   modal.querySelector('#albumDelete')?.addEventListener('click', () => {
     const id = $('#albumEditingId')?.value || '';
     if (!id) return;
-    state.albums = state.albums.filter(album => album.id !== id);
+    const album = state.albums.find(entry => entry.id === id);
+    const label = album?.title || 'this collection';
+    if (!window.confirm(`Delete “${label}”? This removes the collection only; its Library items will stay.`)) return;
+    state.albums = state.albums.filter(entry => entry.id !== id);
     saveAlbums(); renderAlbums(); modal.close(); scheduleCloudSync();
   });
   return modal;
@@ -2511,17 +2523,16 @@ function ensureAlbumDetailModal() {
   document.body.appendChild(modal);
   modal.querySelector('[data-close="albumDetailModal"]')?.addEventListener('click', () => modal.close());
   modal.addEventListener('click', event => {
-    const itemButton = event.target.closest('[data-album-open-item]');
-    if (itemButton) { modal.close(); openDetails(itemButton.dataset.albumOpenItem); return; }
+    const itemButton = event.target.closest('[data-album-open-item], [data-details-id]');
+    if (itemButton) {
+      const itemId = itemButton.dataset.albumOpenItem || itemButton.dataset.detailsId || '';
+      if (itemId) { modal.close(); openDetails(itemId); }
+      return;
+    }
     const edit = event.target.closest('[data-album-edit]');
     if (edit) { modal.close(); openAlbumEditor(edit.dataset.albumEdit); }
   });
   return modal;
-}
-
-function appleMusicSearchUrl(item) {
-  const term = [item.title, item.artistName || item.subtitle || ''].filter(Boolean).join(' ');
-  return `https://music.apple.com/ca/search?term=${encodeURIComponent(term)}`;
 }
 
 function openAlbumDetail(id) {
@@ -2529,8 +2540,36 @@ function openAlbumDetail(id) {
   if (!album) return;
   const modal = ensureAlbumDetailModal();
   const items = (album.itemIds || []).map(findItem).filter(Boolean);
-  const allSongs = items.length > 0 && items.every(item => getSourceType(item) === 'song');
-  $('#albumDetailBody').innerHTML = `<div class="modal-heading"><h2>${escapeHtml(album.title)}</h2>${album.description ? `<p>${escapeHtml(album.description)}</p>` : ''}</div><div class="album-detail-actions"><button class="secondary-button" type="button" data-album-edit="${escapeAttr(album.id)}">Edit</button></div><div class="album-detail-items">${items.map(item => `<article class="album-detail-item"><button type="button" data-album-open-item="${escapeAttr(item.id)}">${item.image ? `<img src="${escapeAttr(item.image)}" alt=""/>` : '<span class="album-choice-placeholder"></span>'}<span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(getItemTypeLabel(item))}</small></span></button>${getSourceType(item) === 'song' ? `<a href="${escapeAttr(appleMusicSearchUrl(item))}" target="_blank" rel="noopener">Apple Music ↗</a>` : ''}</article>`).join('') || '<p class="empty-state">Empty collection.</p>'}</div>${allSongs ? '<p class="album-apple-note">This song collection can become one Apple Music playlist after Apple Music is connected. Until then, songs open individually.</p>' : ''}`;
+
+  $('#albumDetailBody').innerHTML = `<div class="album-detail-header">
+    <div class="modal-heading album-detail-heading">
+      <h2>${escapeHtml(album.title)}</h2>
+      ${album.description ? `<p class="album-detail-note">${escapeHtml(album.description)}</p>` : ''}
+    </div>
+    <div class="album-detail-actions"><button class="secondary-button" type="button" data-album-edit="${escapeAttr(album.id)}">Edit</button></div>
+  </div>
+  <div id="albumDetailLibrary" class="album-detail-library library-groups"></div>`;
+
+  const host = $('#albumDetailLibrary');
+  if (!items.length) {
+    host.innerHTML = '<p class="empty-state">Empty collection.</p>';
+  } else {
+    const grouped = new Map();
+    for (const item of items) {
+      const key = libraryTypeGroupKey(item);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(item);
+    }
+    for (const [key, groupItems] of grouped.entries()) {
+      const section = document.createElement('section');
+      section.className = 'library-group library-shelf album-detail-library-group';
+      const label = libraryTypeGroupLabel(groupItems, key);
+      section.innerHTML = `<div class="library-group-heading-row album-detail-library-heading"><div class="library-group-title-wrap"><h3 class="library-group-title">${escapeHtml(label)}</h3><span class="library-group-count">${groupItems.length}</span></div></div><div class="library-poster-grid is-expanded album-detail-poster-grid"></div>`;
+      const grid = section.querySelector('.album-detail-poster-grid');
+      for (const item of groupItems) grid.appendChild(makeLibraryPoster(item));
+      host.appendChild(section);
+    }
+  }
   showDialogAtTop(modal);
 }
 

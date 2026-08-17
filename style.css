@@ -10426,7 +10426,6 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
 .album-detail-item button > span:last-child { display:grid; gap:2px; }
 .album-detail-item small { color:var(--muted); }
 .album-detail-item > a { font-size:.78rem; text-decoration:underline; text-underline-offset:3px; }
-.album-apple-note { margin:16px 0 0; color:var(--muted); font-size:.78rem; }
 
 .library-page .library-section { padding-top:58px; }
 .stats-section { background:var(--paper); padding:64px 0 88px; }
@@ -11880,6 +11879,10 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
    ========================================================= */
 .stats-catalogue-grid {
   align-items: flex-start !important;
+  /* The date footer is outside the visual card, so each grid track must
+     reserve room for it instead of letting it spill into the next row. */
+  grid-auto-rows: calc(var(--library-row-height) + 22px) !important;
+  row-gap: 16px !important;
 }
 
 .stats-catalogue-grid .library-card-shell,
@@ -12070,5 +12073,103 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
   .stats-genre-legend-row {
     min-height: 32px;
     padding: 4px 6px;
+  }
+}
+
+
+/* =========================================================
+   Collection polish v67
+   ========================================================= */
+/* Keep the hidden checkbox physically inside its card. Without a positioned
+   parent, focusing the absolute checkbox can make the modal/browser jump. */
+.album-library-choice {
+  position: relative;
+}
+.album-library-choice > input[data-album-item] {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* The collection title is required, so it gets the stronger visual treatment.
+   Search is deliberately quieter and secondary. */
+.album-editor-toolbar .album-toolbar-name input {
+  background: rgba(243,213,106,.22);
+  border-color: rgba(114,0,20,.28);
+  font-weight: 700;
+}
+.album-editor-toolbar .album-toolbar-name input::placeholder {
+  color: rgba(21,36,58,.68);
+  opacity: 1;
+}
+.album-editor-toolbar .album-toolbar-search input {
+  background: rgba(139,153,202,.09);
+  border-color: rgba(21,36,58,.11);
+  color: rgba(21,36,58,.82);
+}
+.album-editor-toolbar .album-toolbar-search input::placeholder {
+  color: rgba(21,36,58,.46);
+  opacity: 1;
+}
+
+/* Open collections should read as a miniature Library, not a settings list. */
+.album-detail-modal {
+  width: min(1120px, calc(100% - 30px));
+  max-height: min(90vh, 900px);
+}
+.album-detail-header {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  align-items: start;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+.album-detail-heading {
+  margin-bottom: 0 !important;
+}
+.album-detail-heading h2 {
+  margin-bottom: 7px;
+}
+.album-detail-note {
+  margin: 0;
+  max-width: 760px;
+  color: var(--muted);
+  font-size: .92rem;
+  line-height: 1.45;
+}
+.album-detail-actions {
+  margin: 2px 0 0 !important;
+}
+.album-detail-library {
+  display: grid;
+  gap: 30px;
+}
+.album-detail-library-group {
+  min-width: 0;
+}
+.album-detail-library-heading {
+  margin-bottom: 10px;
+}
+.album-detail-library-heading .library-group-title {
+  font-size: 1.55rem;
+}
+.album-detail-poster-grid {
+  width: 100%;
+}
+.album-detail-poster-grid .library-card-album-button {
+  display: none !important;
+}
+
+@media (max-width: 620px) {
+  .album-detail-header {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .album-detail-actions {
+    justify-content: flex-start;
   }
 }
