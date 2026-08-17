@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-streak-subcategories-71" />
+  <link rel="stylesheet" href="style.css?v=omni-track-cleanup-73" />
 </head>
 <body class="library-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -149,6 +149,10 @@
         <button class="track-settings-tab" type="button" data-track-settings-tab="streaks" role="tab" aria-selected="false">Streaks</button>
       </div>
     </div>
+    <div class="track-settings-maintenance">
+      <small id="trackSettingsCleanupStatus" class="track-settings-cleanup-status" aria-live="polite"></small>
+      <button id="cleanUnusedTrackTypes" class="quiet-button track-settings-cleanup-button" type="button">Clean up unused types</button>
+    </div>
 
     <section class="track-settings-panel" data-track-settings-panel="stickers">
       <form id="stickerSettingsForm" class="sticker-settings-form">
@@ -189,9 +193,9 @@
 
     <section class="track-settings-panel" data-track-settings-panel="streaks" hidden>
       <form id="streakSettingsForm" class="streak-settings-form">
-        <p class="streak-settings-intro">Make a streak for a whole type, one subcategory, or a group of subcategories.</p>
+        <p class="streak-settings-intro">Make a streak for a whole type, one subcategory, or a group of subcategories. Give each streak its own name and sticker.</p>
         <div class="streak-settings-head" aria-hidden="true">
-          <span>Streak</span><span>On</span><span>Rest days</span><span>Current</span>
+          <span>Name & sticker</span><span>On</span><span>Rest days</span><span>Current</span>
         </div>
         <div id="streakSettingsRows" class="streak-settings-rows"></div>
         <div class="modal-actions">
@@ -655,6 +659,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-streak-subcategories-71"></script>
+  <script type="module" src="app.js?v=omni-track-cleanup-73"></script>
 </body>
 </html>
