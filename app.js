@@ -598,6 +598,7 @@ async function startForUser(user) {
     await hydrateCloudProfile(user.id);
     unlockApp();
     startAppOnce();
+    initializeSocialForUser().catch(error => console.warn('[Social] background initialization failed:', error));
     setSyncStatus('Synced');
     window.addEventListener('focus', refreshCloudProfile);
     document.addEventListener('visibilitychange', () => {
@@ -773,6 +774,7 @@ function init() {
   state.calendarWeekStart = startOfWeek(now);
 
   bindEvents();
+  initSocialPage();
   renderAll();
 }
 
@@ -12631,6 +12633,7 @@ function scheduleCloudSync() {
   clearTimeout(cloudSyncTimer);
   setSyncStatus('Saving…');
   cloudSyncTimer = setTimeout(pushCloudState, 350);
+  scheduleSocialSnapshotPublish();
 }
 
 async function pushCloudState() {
@@ -12880,3 +12883,959 @@ function escapeHtml(value) {
     .replaceAll("'",'&#039;');
 }
 function escapeAttr(value) { return escapeHtml(value); }
+// =========================================================
+// SOCIAL — profiles, sharing snapshots, following, Buddy Watch
+// =========================================================
+const SOCIAL_SNAPSHOT_VERSION = 2;
+const SOCIAL_SHARE_SECTION_META = Object.freeze({
+  recommended: { label: 'Recommended', description: 'Share items you have recommended.', items: true },
+  upnext: { label: 'Up Next', description: 'Share selected items currently in Up Next.', items: true },
+  ratings: { label: 'Ratings', description: 'Share your ratings without sharing private notes.', items: true },
+  streaks: { label: 'Streaks', description: 'Share selected active Track streaks.', items: false, streaks: true },
+  library: { label: 'Library', description: 'Share selected Library types. Totals for the selected types remain visible even if individual items are hidden.', items: true }
+});
+
+const socialState = {
+  schemaReady: null,
+  profile: null,
+  shareSettings: null,
+  snapshot: null,
+  activeTab: 'following',
+  publishTimer: null,
+  publishing: false,
+  publishQueued: false,
+  initializedPage: false,
+  peopleResults: [],
+  followingProfiles: [],
+  acceptedConnections: [],
+  buddyWatches: []
+};
+
+function emptySocialShareSettings() {
+  return {
+    shareWithPeople: false,
+    recommended: { enabled: false, types: [], hiddenItemIds: [] },
+    upnext: { enabled: false, types: [], hiddenItemIds: [] },
+    ratings: { enabled: false, types: [], hiddenItemIds: [] },
+    streaks: { enabled: false, types: [] },
+    library: { enabled: false, types: [], hiddenItemIds: [] }
+  };
+}
+
+function normalizeSocialShareSettings(raw = {}) {
+  const base = emptySocialShareSettings();
+  base.shareWithPeople = Boolean(raw?.shareWithPeople);
+  for (const key of Object.keys(SOCIAL_SHARE_SECTION_META)) {
+    const incoming = raw?.[key] && typeof raw[key] === 'object' ? raw[key] : {};
+    base[key] = {
+      ...base[key],
+      enabled: Boolean(incoming.enabled),
+      types: [...new Set((Array.isArray(incoming.types) ? incoming.types : []).map(value => String(value || '').trim()).filter(Boolean))]
+    };
+    if ('hiddenItemIds' in base[key]) {
+      base[key].hiddenItemIds = [...new Set((Array.isArray(incoming.hiddenItemIds) ? incoming.hiddenItemIds : []).map(value => String(value || '').trim()).filter(Boolean))];
+    }
+  }
+  return base;
+}
+
+function socialSchemaMissing(error) {
+  const code = String(error?.code || '');
+  const message = String(error?.message || '');
+  return code === '42P01' || code === 'PGRST205' || /relation .* does not exist/i.test(message) || /could not find the table/i.test(message);
+}
+
+function setSocialSchemaReady(ready, error = null) {
+  socialState.schemaReady = Boolean(ready);
+  const notice = $('#socialSetupNotice');
+  if (notice) notice.hidden = Boolean(ready);
+  if (!ready && error && !socialSchemaMissing(error)) console.warn('[Social] unavailable:', error);
+}
+
+function socialDefaultUsername(user = currentUser) {
+  const emailBase = String(user?.email || 'omni').split('@')[0].toLowerCase().replace(/[^a-z0-9._-]+/g, '').replace(/^[^a-z0-9]+/, '').slice(0, 20) || 'omni';
+  const suffix = String(user?.id || makeId()).replaceAll('-', '').slice(0, 6).toLowerCase();
+  let base = emailBase.length >= 3 ? emailBase : `${emailBase}user`;
+  base = base.slice(0, Math.max(3, 23 - suffix.length));
+  return `${base}-${suffix}`.slice(0, 30);
+}
+
+async function ensureSocialProfile() {
+  if (!supabase || !currentUser || localOnlyMode) return null;
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('user_id, username, display_name, bio, avatar_url, is_private, updated_at')
+    .eq('user_id', currentUser.id)
+    .maybeSingle();
+  if (error) {
+    setSocialSchemaReady(false, error);
+    if (socialSchemaMissing(error)) return null;
+    throw error;
+  }
+  setSocialSchemaReady(true);
+  if (data) {
+    const prefsResult = await supabase.from('social_preferences').select('share_settings').eq('user_id', currentUser.id).maybeSingle();
+    if (prefsResult.error) throw prefsResult.error;
+    return { ...data, share_settings: prefsResult.data?.share_settings || emptySocialShareSettings() };
+  }
+  if (!$('#socialRoot')) return null;
+
+  const candidate = socialDefaultUsername(currentUser);
+  const display = String(currentUser.email || '').split('@')[0] || 'Omni user';
+  const insert = {
+    user_id: currentUser.id,
+    username: candidate,
+    display_name: display,
+    bio: '',
+    avatar_url: '',
+    is_private: false,
+    updated_at: new Date().toISOString()
+  };
+  const { data: created, error: createError } = await supabase
+    .from('profiles')
+    .insert(insert)
+    .select('user_id, username, display_name, bio, avatar_url, is_private, updated_at')
+    .single();
+  if (createError) {
+    setSocialSchemaReady(false, createError);
+    throw createError;
+  }
+  const defaultPrefs = emptySocialShareSettings();
+  const prefsCreate = await supabase.from('social_preferences').upsert({ user_id: currentUser.id, share_settings: defaultPrefs, updated_at: new Date().toISOString() });
+  if (prefsCreate.error) throw prefsCreate.error;
+  return { ...created, share_settings: defaultPrefs };
+}
+
+async function initializeSocialForUser() {
+  if (!supabase || !currentUser || localOnlyMode) {
+    if ($('#socialRoot')) {
+      setSocialSchemaReady(false);
+      $('#socialSetupNotice')?.querySelector('span')?.replaceChildren(document.createTextNode('Social requires a signed-in Supabase account; local-only mode keeps all social features disabled.'));
+    }
+    return;
+  }
+  try {
+    const profile = await ensureSocialProfile();
+    if (!profile) return;
+    socialState.profile = profile;
+    socialState.shareSettings = normalizeSocialShareSettings(profile.share_settings);
+    scheduleSocialSnapshotPublish(80);
+    if ($('#socialRoot')) await loadSocialPage();
+  } catch (error) {
+    if (socialSchemaMissing(error)) setSocialSchemaReady(false, error);
+    else console.warn('[Social] initialization failed:', error);
+  }
+}
+
+function scheduleSocialSnapshotPublish(delay = 900) {
+  if (!socialState.profile || !socialState.schemaReady || !supabase || !currentUser || localOnlyMode) return;
+  clearTimeout(socialState.publishTimer);
+  socialState.publishTimer = setTimeout(() => publishSocialSnapshot().catch(error => console.warn('[Social] snapshot publish failed:', error)), delay);
+}
+
+function socialTypeLabel(type) {
+  return getRecognizedTypes().find(entry => entry.type === type)?.label || getTypeLabel(type) || type;
+}
+
+function socialShareCandidates(section) {
+  if (section === 'recommended') return state.items.filter(item => Boolean(item.recommended));
+  if (section === 'upnext') return state.items.filter(item => getQueueStatus(item) === 'upnext');
+  if (section === 'ratings') return state.items.filter(item => Number(item.rating || 0) > 0);
+  if (section === 'library') return [...state.items];
+  return [];
+}
+
+function socialItemIsAllowed(section, item, settings = socialState.shareSettings) {
+  const prefs = settings?.[section];
+  if (!prefs?.enabled || !item) return false;
+  if (!prefs.types.includes(item.type)) return false;
+  if (prefs.hiddenItemIds?.includes(item.id)) return false;
+  return true;
+}
+
+function socialItemSummary(item, settings = null) {
+  const sourceType = getSourceType(item);
+  const progress = progressFallback(item);
+  const shareWithPeople = Boolean(settings?.shareWithPeople);
+  return {
+    key: `${item.provider || 'manual'}:${item.providerId || item.id}`,
+    title: item.title || 'Untitled',
+    subtitle: item.subtitle || '',
+    image: item.image || '',
+    sourceType,
+    type: item.type,
+    typeLabel: getItemTypeLabel(item),
+    provider: item.provider || '',
+    providerId: item.providerId || '',
+    rating: Number(item.rating || 0),
+    progress: progress || '',
+    people: shareWithPeople ? getItemPeople(item) : []
+  };
+}
+
+function buildSocialSnapshotPayload(settings = socialState.shareSettings || emptySocialShareSettings()) {
+  const normalized = normalizeSocialShareSettings(settings);
+  const libraryTypes = normalized.library.enabled ? normalized.library.types : [];
+  const totals = libraryTypes.map(type => ({
+    type,
+    label: socialTypeLabel(type),
+    count: state.items.filter(item => item.type === type).length
+  })).sort((a,b) => a.label.localeCompare(b.label));
+
+  const sections = {};
+  for (const section of ['recommended','upnext','ratings','library']) {
+    sections[section] = socialShareCandidates(section)
+      .filter(item => socialItemIsAllowed(section, item, normalized))
+      .map(item => socialItemSummary(item, normalized));
+  }
+
+  const streakPrefs = normalized.streaks;
+  sections.streaks = streakPrefs.enabled
+    ? getRecognizedStreakGroups()
+        .filter(group => streakPrefs.types.includes(group.key))
+        .map(group => {
+          const result = calculateTypeStreak(group.key);
+          return { key: group.key, label: group.label, count: result.count, restToday: Boolean(result.restToday), enabled: Boolean(result.enabled) };
+        })
+        .filter(entry => entry.enabled)
+    : [];
+
+  return {
+    version: SOCIAL_SNAPSHOT_VERSION,
+    totals,
+    sections,
+    publishedAt: new Date().toISOString()
+  };
+}
+
+async function publishSocialSnapshot() {
+  if (!socialState.profile || !socialState.schemaReady || !currentUser || !supabase || localOnlyMode) return;
+  if (socialState.publishing) {
+    socialState.publishQueued = true;
+    return;
+  }
+  socialState.publishing = true;
+  try {
+    const payload = buildSocialSnapshotPayload();
+    const { error } = await supabase.from('social_snapshots').upsert({
+      user_id: currentUser.id,
+      payload,
+      updated_at: new Date().toISOString()
+    });
+    if (error) {
+      if (socialSchemaMissing(error)) setSocialSchemaReady(false, error);
+      throw error;
+    }
+    socialState.snapshot = payload;
+    if ($('#socialMyProfile')) renderSocialMyProfile();
+  } finally {
+    socialState.publishing = false;
+    if (socialState.publishQueued) {
+      socialState.publishQueued = false;
+      scheduleSocialSnapshotPublish(150);
+    }
+  }
+}
+
+function initSocialPage() {
+  if (socialState.initializedPage || !$('#socialRoot')) return;
+  socialState.initializedPage = true;
+
+  $$('.social-tab[data-social-tab]').forEach(tab => tab.addEventListener('click', () => setSocialTab(tab.dataset.socialTab)));
+  $('#socialEditProfile')?.addEventListener('click', openSocialProfileSettings);
+  $('#socialProfileSettingsForm')?.addEventListener('submit', saveSocialProfileSettings);
+  $('#socialShareSettings')?.addEventListener('change', handleSocialShareFormChange);
+  $('#socialPeopleSearchForm')?.addEventListener('submit', handleSocialPeopleSearch);
+  $('#socialPeopleResults')?.addEventListener('click', handleSocialActionClick);
+  $('#socialFollowingList')?.addEventListener('click', handleSocialActionClick);
+  $('#socialFollowRequests')?.addEventListener('click', handleSocialActionClick);
+  $('#socialViewProfileBody')?.addEventListener('click', handleSocialActionClick);
+  $('#socialCreateBuddyWatch')?.addEventListener('click', openBuddyWatchCreate);
+  $('#buddyWatchCreateForm')?.addEventListener('submit', createBuddyWatch);
+  $('#socialBuddyList')?.addEventListener('click', handleBuddyWatchClick);
+  $('#buddyWatchProgressForm')?.addEventListener('submit', saveBuddyWatchProgress);
+}
+
+function setSocialTab(tabName) {
+  socialState.activeTab = ['following','people','buddy','me'].includes(tabName) ? tabName : 'following';
+  $$('.social-tab[data-social-tab]').forEach(tab => {
+    const active = tab.dataset.socialTab === socialState.activeTab;
+    tab.classList.toggle('is-active', active);
+    tab.setAttribute('aria-selected', String(active));
+  });
+  $$('[data-social-panel]').forEach(panel => { panel.hidden = panel.dataset.socialPanel !== socialState.activeTab; });
+  if (!socialState.schemaReady) return;
+  if (socialState.activeTab === 'following') loadSocialFollowing().catch(handleSocialLoadError);
+  if (socialState.activeTab === 'buddy') loadBuddyWatches().catch(handleSocialLoadError);
+  if (socialState.activeTab === 'me') renderSocialMyProfile();
+}
+
+async function loadSocialPage() {
+  initSocialPage();
+  if (!socialState.schemaReady) return;
+  await Promise.allSettled([loadSocialFollowing(), loadBuddyWatches()]);
+  renderSocialMyProfile();
+}
+
+function handleSocialLoadError(error) {
+  if (socialSchemaMissing(error)) setSocialSchemaReady(false, error);
+  else console.warn('[Social] load failed:', error);
+}
+
+function openSocialProfileSettings() {
+  if (!socialState.profile || !socialState.schemaReady) return;
+  $('#socialUsername').value = socialState.profile.username || '';
+  $('#socialDisplayName').value = socialState.profile.display_name || '';
+  $('#socialBio').value = socialState.profile.bio || '';
+  $('#socialPrivateProfile').checked = Boolean(socialState.profile.is_private);
+  renderSocialShareSettingsEditor();
+  setSocialProfileSettingsMessage('');
+  showDialogAtTop($('#socialProfileSettingsModal'));
+}
+
+function socialTypeCheckboxes(section, selectedTypes) {
+  if (section === 'streaks') {
+    return getRecognizedStreakGroups().map(group => `
+      <label class="social-type-choice"><input type="checkbox" data-social-share-type="${escapeAttr(group.key)}" ${selectedTypes.includes(group.key) ? 'checked' : ''} /><span>${escapeHtml(group.label)}</span></label>`).join('');
+  }
+  return getRecognizedTypes().map(entry => `
+    <label class="social-type-choice"><input type="checkbox" data-social-share-type="${escapeAttr(entry.type)}" ${selectedTypes.includes(entry.type) ? 'checked' : ''} /><span>${escapeHtml(entry.label)}</span></label>`).join('');
+}
+
+function socialItemChoiceMarkup(item, prefs) {
+  const hidden = prefs.hiddenItemIds?.includes(item.id);
+  const typeSelected = prefs.types.includes(item.type);
+  const visible = typeSelected && !hidden;
+  return `<label class="social-item-choice${typeSelected ? '' : ' is-type-disabled'}" data-social-item-type="${escapeAttr(item.type)}">
+    <input type="checkbox" data-social-share-item="${escapeAttr(item.id)}" ${visible ? 'checked' : ''} ${typeSelected ? '' : 'disabled'} />
+    ${item.image ? `<img src="${escapeAttr(item.image)}" alt="" />` : '<span class="social-item-choice-placeholder"></span>'}
+    <span><strong>${escapeHtml(item.title || 'Untitled')}</strong><small>${escapeHtml(getItemTypeLabel(item))}</small></span>
+  </label>`;
+}
+
+function renderSocialShareSettingsEditor() {
+  const host = $('#socialShareSettings');
+  if (!host) return;
+  const settings = normalizeSocialShareSettings(socialState.shareSettings);
+  const withPeopleCard = `<article class="social-share-card social-with-people-share-card">
+    <div class="social-share-card-head">
+      <label class="social-share-enable"><input type="checkbox" data-social-share-with-people ${settings.shareWithPeople ? 'checked' : ''} /><span><strong>With people</strong><small>Show the “with” names attached to an item whenever that item is shared elsewhere on your profile.</small></span></label>
+    </div>
+  </article>`;
+  host.innerHTML = withPeopleCard + Object.entries(SOCIAL_SHARE_SECTION_META).map(([section, meta]) => {
+    const prefs = settings[section];
+    const candidates = meta.items ? socialShareCandidates(section) : [];
+    return `<article class="social-share-card" data-social-share-section="${escapeAttr(section)}">
+      <div class="social-share-card-head">
+        <label class="social-share-enable"><input type="checkbox" data-social-share-enabled ${prefs.enabled ? 'checked' : ''} /><span><strong>${escapeHtml(meta.label)}</strong><small>${escapeHtml(meta.description)}</small></span></label>
+      </div>
+      <div class="social-share-card-body" ${prefs.enabled ? '' : 'hidden'}>
+        <div class="social-type-choices">${socialTypeCheckboxes(section, prefs.types)}</div>
+        ${meta.items ? `<details class="social-item-picker"><summary>Choose individual items <span>${candidates.length}</span></summary><div class="social-item-choice-list">${candidates.length ? candidates.map(item => socialItemChoiceMarkup(item, prefs)).join('') : '<p class="social-sharing-empty">No matching items yet.</p>'}</div></details>` : ''}
+      </div>
+    </article>`;
+  }).join('');
+}
+
+function handleSocialShareFormChange(event) {
+  const card = event.target.closest('[data-social-share-section]');
+  if (!card) return;
+  if (event.target.matches('[data-social-share-enabled]')) {
+    const body = card.querySelector('.social-share-card-body');
+    if (body) body.hidden = !event.target.checked;
+    return;
+  }
+  if (event.target.matches('[data-social-share-type]')) {
+    const type = event.target.dataset.socialShareType;
+    card.querySelectorAll(`[data-social-item-type="${CSS.escape(type)}"]`).forEach(label => {
+      const input = label.querySelector('[data-social-share-item]');
+      label.classList.toggle('is-type-disabled', !event.target.checked);
+      if (input) {
+        input.disabled = !event.target.checked;
+        if (event.target.checked && !input.checked) input.checked = true;
+      }
+    });
+  }
+}
+
+function readSocialShareSettingsEditor() {
+  const next = emptySocialShareSettings();
+  next.shareWithPeople = Boolean($('#socialShareSettings [data-social-share-with-people]')?.checked);
+  $$('#socialShareSettings [data-social-share-section]').forEach(card => {
+    const section = card.dataset.socialShareSection;
+    if (!next[section]) return;
+    next[section].enabled = Boolean(card.querySelector('[data-social-share-enabled]')?.checked);
+    next[section].types = [...card.querySelectorAll('[data-social-share-type]:checked')].map(input => input.dataset.socialShareType).filter(Boolean);
+    if ('hiddenItemIds' in next[section]) {
+      const candidates = socialShareCandidates(section);
+      const candidateIds = new Set(candidates.map(item => item.id));
+      const visibleIds = new Set([...card.querySelectorAll('[data-social-share-item]:checked')].map(input => input.dataset.socialShareItem));
+      const preservedHidden = (socialState.shareSettings?.[section]?.hiddenItemIds || []).filter(id => !candidateIds.has(id));
+      next[section].hiddenItemIds = [...new Set([
+        ...preservedHidden,
+        ...candidates.filter(item => next[section].types.includes(item.type) && !visibleIds.has(item.id)).map(item => item.id)
+      ])];
+    }
+  });
+  return next;
+}
+
+function setSocialProfileSettingsMessage(message, error = false) {
+  const node = $('#socialProfileSettingsMessage');
+  if (!node) return;
+  node.textContent = message || '';
+  node.hidden = !message;
+  node.classList.toggle('is-error', Boolean(error));
+}
+
+async function saveSocialProfileSettings(event) {
+  event.preventDefault();
+  if (!supabase || !currentUser || !socialState.schemaReady) return;
+  const username = String($('#socialUsername')?.value || '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9._-]{2,29}$/.test(username)) {
+    setSocialProfileSettingsMessage('Username must be 3–30 characters and use only letters, numbers, periods, underscores, or hyphens.', true);
+    return;
+  }
+  const shareSettings = readSocialShareSettingsEditor();
+  for (const section of Object.keys(SOCIAL_SHARE_SECTION_META)) {
+    const prefs = shareSettings[section];
+    if (prefs.enabled && prefs.types.length === 0) {
+      setSocialProfileSettingsMessage(`Choose at least one type for ${SOCIAL_SHARE_SECTION_META[section].label}, or turn that section off.`, true);
+      return;
+    }
+  }
+  setSocialProfileSettingsMessage('Saving…');
+  const update = {
+    user_id: currentUser.id,
+    username,
+    display_name: String($('#socialDisplayName')?.value || '').trim(),
+    bio: String($('#socialBio')?.value || '').trim(),
+    is_private: Boolean($('#socialPrivateProfile')?.checked),
+    updated_at: new Date().toISOString()
+  };
+  const { data, error } = await supabase.from('profiles').upsert(update).select('user_id, username, display_name, bio, avatar_url, is_private, updated_at').single();
+  if (error) {
+    const message = error.code === '23505' ? 'That username is already taken.' : error.message;
+    setSocialProfileSettingsMessage(message, true);
+    return;
+  }
+  const prefsResult = await supabase.from('social_preferences').upsert({ user_id: currentUser.id, share_settings: shareSettings, updated_at: new Date().toISOString() });
+  if (prefsResult.error) { setSocialProfileSettingsMessage(prefsResult.error.message, true); return; }
+  socialState.profile = { ...data, share_settings: shareSettings };
+  socialState.shareSettings = normalizeSocialShareSettings(shareSettings);
+  await publishSocialSnapshot();
+  $('#socialProfileSettingsModal')?.close();
+  renderSocialMyProfile();
+  loadSocialFollowing().catch(handleSocialLoadError);
+}
+
+function socialProfileInitial(profile) {
+  return String(profile?.display_name || profile?.username || '?').trim().slice(0,1).toUpperCase() || '?';
+}
+
+function socialProfileCardMarkup(profile, snapshot = null, relation = null) {
+  const totals = snapshot?.payload?.totals || snapshot?.totals || [];
+  const totalText = totals.slice(0,3).map(entry => `${entry.count} ${String(entry.label || '').toLowerCase()}`).join(' · ');
+  const relationButton = profile.user_id === currentUser?.id ? '' : socialFollowButtonMarkup(profile, relation);
+  return `<article class="social-profile-card" data-social-profile-id="${escapeAttr(profile.user_id)}">
+    <button class="social-profile-card-main" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}">
+      <span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span>
+      <span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}${profile.is_private ? ' · private' : ''}</small>${totalText ? `<em>${escapeHtml(totalText)}</em>` : ''}</span>
+    </button>
+    ${relationButton}
+  </article>`;
+}
+
+function socialFollowButtonMarkup(profile, relation = null) {
+  if (!profile || profile.user_id === currentUser?.id) return '';
+  const status = relation?.status || '';
+  const label = status === 'accepted' ? 'Following' : status === 'pending' ? 'Requested' : 'Follow';
+  const cls = status ? ' is-active' : '';
+  return `<button class="social-follow-button${cls}" type="button" data-social-follow="${escapeAttr(profile.user_id)}" data-follow-status="${escapeAttr(status)}" data-profile-private="${profile.is_private ? 'true' : 'false'}">${label}</button>`;
+}
+
+async function loadSocialFollowing() {
+  if (!socialState.schemaReady || !supabase || !currentUser) return;
+  const [outgoingResult, incomingResult] = await Promise.all([
+    supabase.from('follows').select('follower_id, following_id, status, created_at').eq('follower_id', currentUser.id),
+    supabase.from('follows').select('follower_id, following_id, status, created_at').eq('following_id', currentUser.id).eq('status','pending')
+  ]);
+  if (outgoingResult.error) throw outgoingResult.error;
+  if (incomingResult.error) throw incomingResult.error;
+
+  const accepted = (outgoingResult.data || []).filter(row => row.status === 'accepted');
+  const ids = accepted.map(row => row.following_id);
+  let profiles = [];
+  let snapshots = [];
+  if (ids.length) {
+    const [profileResult, snapshotResult] = await Promise.all([
+      supabase.from('profiles').select('user_id, username, display_name, bio, avatar_url, is_private').in('user_id', ids),
+      supabase.from('social_snapshots').select('user_id, payload, updated_at').in('user_id', ids)
+    ]);
+    if (profileResult.error) throw profileResult.error;
+    if (snapshotResult.error && !socialSchemaMissing(snapshotResult.error)) throw snapshotResult.error;
+    profiles = profileResult.data || [];
+    snapshots = snapshotResult.data || [];
+  }
+  socialState.followingProfiles = profiles;
+  const snapshotMap = new Map(snapshots.map(row => [row.user_id, row]));
+  const relationMap = new Map(accepted.map(row => [row.following_id, row]));
+  const host = $('#socialFollowingList');
+  if (host) host.innerHTML = profiles.map(profile => socialProfileCardMarkup(profile, snapshotMap.get(profile.user_id), relationMap.get(profile.user_id))).join('');
+  if ($('#socialFollowingEmpty')) $('#socialFollowingEmpty').hidden = profiles.length > 0;
+
+  const requests = incomingResult.data || [];
+  const requestHost = $('#socialFollowRequests');
+  if (requestHost) {
+    if (!requests.length) requestHost.innerHTML = '';
+    else {
+      const requestIds = requests.map(row => row.follower_id);
+      const { data: requestProfiles, error } = await supabase.from('profiles').select('user_id, username, display_name, avatar_url, is_private').in('user_id', requestIds);
+      if (error) throw error;
+      requestHost.innerHTML = `<div class="social-request-heading">Follow requests</div>${(requestProfiles || []).map(profile => `<article class="social-request-row"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}</small></span><div><button class="primary-button social-small-button" type="button" data-social-accept-follow="${escapeAttr(profile.user_id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-social-decline-follow="${escapeAttr(profile.user_id)}">Decline</button></div></article>`).join('')}`;
+    }
+  }
+  await loadAcceptedSocialConnections();
+}
+
+async function handleSocialPeopleSearch(event) {
+  event.preventDefault();
+  const query = String($('#socialPeopleSearchInput')?.value || '').trim().toLowerCase();
+  const host = $('#socialPeopleResults');
+  if (!host || !socialState.schemaReady || !query) return;
+  host.innerHTML = '<p class="loading-detail">Searching…</p>';
+  const { data: profiles, error } = await supabase
+    .from('profiles')
+    .select('user_id, username, display_name, bio, avatar_url, is_private')
+    .ilike('username', `%${query.replace(/[%_]/g, '')}%`)
+    .neq('user_id', currentUser.id)
+    .limit(30);
+  if (error) { host.innerHTML = `<p class="api-error">${escapeHtml(error.message)}</p>`; return; }
+  const ids = (profiles || []).map(profile => profile.user_id);
+  let relations = [];
+  if (ids.length) {
+    const result = await supabase.from('follows').select('following_id, status').eq('follower_id', currentUser.id).in('following_id', ids);
+    if (!result.error) relations = result.data || [];
+  }
+  const relationMap = new Map(relations.map(row => [row.following_id, row]));
+  socialState.peopleResults = profiles || [];
+  host.innerHTML = profiles?.length ? profiles.map(profile => socialProfileCardMarkup(profile, null, relationMap.get(profile.user_id))).join('') : '<p class="empty-state">No matching usernames.</p>';
+}
+
+async function handleSocialActionClick(event) {
+  const view = event.target.closest('[data-social-view-profile]');
+  if (view) { await openSocialProfileView(view.dataset.socialViewProfile); return; }
+  const follow = event.target.closest('[data-social-follow]');
+  if (follow) { await toggleSocialFollow(follow); return; }
+  const accept = event.target.closest('[data-social-accept-follow]');
+  if (accept) { await respondToFollowRequest(accept.dataset.socialAcceptFollow, true); return; }
+  const decline = event.target.closest('[data-social-decline-follow]');
+  if (decline) { await respondToFollowRequest(decline.dataset.socialDeclineFollow, false); return; }
+}
+
+async function toggleSocialFollow(button) {
+  const targetId = button.dataset.socialFollow;
+  const status = button.dataset.followStatus || '';
+  if (!targetId || !currentUser) return;
+  button.disabled = true;
+  try {
+    if (status) {
+      const { error } = await supabase.from('follows').delete().eq('follower_id', currentUser.id).eq('following_id', targetId);
+      if (error) throw error;
+    } else {
+      const nextStatus = button.dataset.profilePrivate === 'true' ? 'pending' : 'accepted';
+      const { error } = await supabase.from('follows').insert({ follower_id: currentUser.id, following_id: targetId, status: nextStatus, updated_at: new Date().toISOString() });
+      if (error) throw error;
+    }
+    await loadSocialFollowing();
+    if ($('#socialPeopleSearchInput')?.value) await handleSocialPeopleSearch(new Event('submit'));
+    const modal = $('#socialViewProfileModal');
+    if (modal?.open) await openSocialProfileView(targetId, false);
+  } catch (error) {
+    console.warn('[Social] follow failed:', error);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function respondToFollowRequest(followerId, accept) {
+  if (!followerId || !currentUser) return;
+  const query = supabase.from('follows');
+  const result = accept
+    ? await query.update({ status: 'accepted', updated_at: new Date().toISOString() }).eq('follower_id', followerId).eq('following_id', currentUser.id)
+    : await query.delete().eq('follower_id', followerId).eq('following_id', currentUser.id);
+  if (result.error) throw result.error;
+  await loadSocialFollowing();
+}
+
+async function getSocialFollowRelation(targetId) {
+  if (!targetId || !currentUser) return null;
+  const { data, error } = await supabase.from('follows').select('follower_id, following_id, status').eq('follower_id', currentUser.id).eq('following_id', targetId).maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function openSocialProfileView(userId, openModal = true) {
+  if (!userId || !socialState.schemaReady) return;
+  const [profileResult, snapshotResult, relation] = await Promise.all([
+    supabase.from('profiles').select('user_id, username, display_name, bio, avatar_url, is_private').eq('user_id', userId).single(),
+    supabase.from('social_snapshots').select('user_id, payload, updated_at').eq('user_id', userId).maybeSingle(),
+    getSocialFollowRelation(userId)
+  ]);
+  if (profileResult.error) throw profileResult.error;
+  const profile = profileResult.data;
+  const snapshot = snapshotResult.error ? null : snapshotResult.data;
+  const body = $('#socialViewProfileBody');
+  if (body) body.innerHTML = socialProfileViewMarkup(profile, snapshot?.payload || null, relation, false);
+  if (openModal) showDialogAtTop($('#socialViewProfileModal'));
+}
+
+function socialProfileViewMarkup(profile, snapshot, relation = null, isSelf = false) {
+  if (!profile) return '<p class="api-error">Profile unavailable.</p>';
+  const payload = snapshot || { totals: [], sections: {} };
+  const sections = payload.sections || {};
+  const canSee = Boolean(snapshot) || isSelf;
+  const followButton = isSelf ? '<button class="secondary-button" type="button" data-social-open-settings>Profile & sharing</button>' : socialFollowButtonMarkup(profile, relation);
+  const totals = payload.totals || [];
+  const totalMarkup = totals.length ? `<div class="social-total-grid">${totals.map(total => `<div class="social-total-card"><strong>${Number(total.count || 0)}</strong><span>${escapeHtml(total.label || total.type)} tracked</span></div>`).join('')}</div>` : '';
+  const privateMessage = !canSee && profile.is_private ? '<p class="social-private-message">This profile is private. Follow to see the sections they choose to share.</p>' : '';
+  const sectionMarkup = canSee ? ['recommended','upnext','ratings','streaks','library'].map(section => socialSharedSectionMarkup(section, sections[section] || [])).join('') : '';
+  return `<div class="social-profile-hero"><span class="social-avatar social-avatar-large">${escapeHtml(socialProfileInitial(profile))}</span><div><h2>${escapeHtml(profile.display_name || profile.username)}</h2><p>@${escapeHtml(profile.username)}${profile.is_private ? ' · private' : ''}</p>${profile.bio ? `<div class="social-profile-bio">${escapeHtml(profile.bio)}</div>` : ''}</div><div class="social-profile-hero-action">${followButton}</div></div>${privateMessage}${totalMarkup}${sectionMarkup}`;
+}
+
+function socialSharedSectionMarkup(section, entries) {
+  const meta = SOCIAL_SHARE_SECTION_META[section];
+  if (!meta || !entries?.length) return '';
+  if (section === 'streaks') {
+    return `<section class="social-shared-section"><h3>${escapeHtml(meta.label)}</h3><div class="social-streak-grid">${entries.map(entry => `<div class="social-streak-card"><strong>${Number(entry.count || 0)}</strong><span>${escapeHtml(entry.label)} streak</span></div>`).join('')}</div></section>`;
+  }
+  return `<section class="social-shared-section"><h3>${escapeHtml(meta.label)}</h3><div class="social-item-grid">${entries.map(entry => socialSharedItemMarkup(entry, section)).join('')}</div></section>`;
+}
+
+function socialSharedItemMarkup(item, section) {
+  const meta = [];
+  if (section === 'ratings' && Number(item.rating || 0)) meta.push(`${Number(item.rating).toFixed(Number(item.rating) % 1 ? 1 : 0)}★`);
+  if (section === 'upnext' && item.progress) meta.push(item.progress);
+  if (item.typeLabel) meta.push(item.typeLabel);
+  const people = Array.isArray(item.people) ? item.people.filter(Boolean) : [];
+  const withMarkup = people.length ? `<span class="social-item-with">with ${escapeHtml(people.join(', '))}</span>` : '';
+  return `<article class="social-item-card">${item.image ? `<img src="${escapeAttr(item.image)}" alt="" />` : '<div class="social-item-card-placeholder"></div>'}<div><strong>${escapeHtml(item.title || 'Untitled')}</strong>${item.subtitle ? `<small>${escapeHtml(item.subtitle)}</small>` : ''}${withMarkup}${meta.length ? `<em>${escapeHtml(meta.join(' · '))}</em>` : ''}</div></article>`;
+}
+
+function renderSocialMyProfile() {
+  const host = $('#socialMyProfile');
+  if (!host || !socialState.profile) return;
+  const snapshot = socialState.snapshot || buildSocialSnapshotPayload();
+  host.innerHTML = socialProfileViewMarkup(socialState.profile, snapshot, null, true);
+  host.querySelector('[data-social-open-settings]')?.addEventListener('click', openSocialProfileSettings);
+}
+
+async function loadAcceptedSocialConnections() {
+  if (!currentUser || !socialState.schemaReady) return [];
+  const { data, error } = await supabase.from('follows').select('follower_id, following_id, status').or(`follower_id.eq.${currentUser.id},following_id.eq.${currentUser.id}`).eq('status','accepted');
+  if (error) throw error;
+  const otherIds = [...new Set((data || []).map(row => row.follower_id === currentUser.id ? row.following_id : row.follower_id).filter(id => id && id !== currentUser.id))];
+  if (!otherIds.length) { socialState.acceptedConnections = []; return []; }
+  const profiles = await supabase.from('profiles').select('user_id, username, display_name, avatar_url, is_private').in('user_id', otherIds);
+  if (profiles.error) throw profiles.error;
+  socialState.acceptedConnections = profiles.data || [];
+  return socialState.acceptedConnections;
+}
+
+function buddyWatchableItems() {
+  return state.items.filter(item => ['tv','movie','youtube'].includes(getSourceType(item))).sort((a,b) => String(a.title || '').localeCompare(String(b.title || '')));
+}
+
+async function openBuddyWatchCreate() {
+  if (!socialState.schemaReady) return;
+  const connections = await loadAcceptedSocialConnections();
+  const items = buddyWatchableItems();
+  const friendSelect = $('#buddyWatchFriend');
+  const itemSelect = $('#buddyWatchItem');
+  if (friendSelect) friendSelect.innerHTML = connections.length ? connections.map(profile => `<option value="${escapeAttr(profile.user_id)}">${escapeHtml(profile.display_name || profile.username)} (@${escapeHtml(profile.username)})</option>`).join('') : '<option value="">Follow someone first</option>';
+  if (itemSelect) itemSelect.innerHTML = items.length ? items.map(item => `<option value="${escapeAttr(item.id)}">${escapeHtml(item.title)} · ${escapeHtml(getItemTypeLabel(item))}</option>`).join('') : '<option value="">No TV, movies, or YouTube items in Library</option>';
+  if (friendSelect) friendSelect.disabled = !connections.length;
+  if (itemSelect) itemSelect.disabled = !items.length;
+  setBuddyCreateMessage('');
+  showDialogAtTop($('#buddyWatchCreateModal'));
+}
+
+function setBuddyCreateMessage(message, error = false) {
+  const node = $('#buddyWatchCreateMessage');
+  if (!node) return;
+  node.textContent = message || '';
+  node.hidden = !message;
+  node.classList.toggle('is-error', Boolean(error));
+}
+
+async function createBuddyWatch(event) {
+  event.preventDefault();
+  const friendId = $('#buddyWatchFriend')?.value || '';
+  const item = findItem($('#buddyWatchItem')?.value || '');
+  if (!friendId || !item || !currentUser) return;
+  setBuddyCreateMessage('Creating…');
+  const itemSummary = socialItemSummary(item);
+  const watchResult = await supabase.from('buddy_watches').insert({ created_by: currentUser.id, title: item.title || 'Buddy Watch', item: itemSummary, status: 'active', updated_at: new Date().toISOString() }).select('id, created_by, title, item, status, created_at, updated_at').single();
+  if (watchResult.error) { setBuddyCreateMessage(watchResult.error.message, true); return; }
+  const watch = watchResult.data;
+  const membersResult = await supabase.from('buddy_watch_members').insert([
+    { buddy_watch_id: watch.id, user_id: currentUser.id, status: 'accepted', joined_at: new Date().toISOString() },
+    { buddy_watch_id: watch.id, user_id: friendId, status: 'pending' }
+  ]);
+  if (membersResult.error) {
+    await supabase.from('buddy_watches').delete().eq('id', watch.id).eq('created_by', currentUser.id);
+    setBuddyCreateMessage(membersResult.error.message, true);
+    return;
+  }
+  const initialProgress = progressFallback(item);
+  if (initialProgress) {
+    await supabase.from('buddy_watch_progress').upsert({ buddy_watch_id: watch.id, user_id: currentUser.id, progress_text: initialProgress, note: '', completed: Boolean(item.completedAt), updated_at: new Date().toISOString() }, { onConflict: 'buddy_watch_id,user_id' });
+  }
+  $('#buddyWatchCreateModal')?.close();
+  await loadBuddyWatches();
+}
+
+async function loadBuddyWatches() {
+  if (!socialState.schemaReady || !currentUser) return;
+  const memberResult = await supabase.from('buddy_watch_members').select('buddy_watch_id, user_id, status, joined_at').eq('user_id', currentUser.id);
+  if (memberResult.error) throw memberResult.error;
+  const mine = memberResult.data || [];
+  const watchIds = mine.map(row => row.buddy_watch_id);
+  if (!watchIds.length) {
+    socialState.buddyWatches = [];
+    if ($('#socialBuddyList')) $('#socialBuddyList').innerHTML = '';
+    if ($('#socialBuddyEmpty')) $('#socialBuddyEmpty').hidden = false;
+    return;
+  }
+  const [watchResult, membersResult, progressResult, updatesResult] = await Promise.all([
+    supabase.from('buddy_watches').select('id, created_by, title, item, status, created_at, updated_at').in('id', watchIds).order('updated_at', { ascending: false }),
+    supabase.from('buddy_watch_members').select('buddy_watch_id, user_id, status, joined_at').in('buddy_watch_id', watchIds),
+    supabase.from('buddy_watch_progress').select('buddy_watch_id, user_id, progress_text, note, completed, updated_at').in('buddy_watch_id', watchIds),
+    supabase.from('buddy_watch_updates').select('id, buddy_watch_id, user_id, progress_text, note, completed, created_at').in('buddy_watch_id', watchIds).order('created_at', { ascending: false }).limit(100)
+  ]);
+  for (const result of [watchResult,membersResult,progressResult,updatesResult]) if (result.error) throw result.error;
+  const memberIds = [...new Set((membersResult.data || []).map(row => row.user_id))];
+  let profiles = [];
+  if (memberIds.length) {
+    const profileResult = await supabase.from('profiles').select('user_id, username, display_name, avatar_url').in('user_id', memberIds);
+    if (profileResult.error) throw profileResult.error;
+    profiles = profileResult.data || [];
+  }
+  const profileMap = new Map(profiles.map(profile => [profile.user_id, profile]));
+  const mineMap = new Map(mine.map(row => [row.buddy_watch_id, row]));
+  socialState.buddyWatches = (watchResult.data || []).map(watch => ({
+    ...watch,
+    myMembership: mineMap.get(watch.id),
+    members: (membersResult.data || []).filter(row => row.buddy_watch_id === watch.id).map(row => ({ ...row, profile: profileMap.get(row.user_id) })),
+    progress: (progressResult.data || []).filter(row => row.buddy_watch_id === watch.id).map(row => ({ ...row, profile: profileMap.get(row.user_id) })),
+    updates: (updatesResult.data || []).filter(row => row.buddy_watch_id === watch.id).slice(0,8).map(row => ({ ...row, profile: profileMap.get(row.user_id) }))
+  }));
+  renderBuddyWatches();
+}
+
+function renderBuddyWatches() {
+  const host = $('#socialBuddyList');
+  if (!host) return;
+  host.innerHTML = socialState.buddyWatches.map(buddyWatchMarkup).join('');
+  if ($('#socialBuddyEmpty')) $('#socialBuddyEmpty').hidden = socialState.buddyWatches.length > 0;
+}
+
+function buddyWatchMarkup(watch) {
+  const item = watch.item || {};
+  const pending = watch.myMembership?.status === 'pending';
+  const memberText = watch.members.map(member => member.profile?.display_name || member.profile?.username || 'Omni user').join(' + ');
+  const progressRows = watch.progress.length ? watch.progress.map(row => `<div class="buddy-progress-row"><span class="social-avatar">${escapeHtml(socialProfileInitial(row.profile || {}))}</span><div><strong>${escapeHtml(row.profile?.display_name || row.profile?.username || 'Omni user')}</strong><span>${escapeHtml(row.progress_text || 'No update yet')}${row.completed ? ' · finished' : ''}</span>${row.note ? `<small>${escapeHtml(row.note)}</small>` : ''}</div></div>`).join('') : '<p class="buddy-no-progress">No progress updates yet.</p>';
+  const history = watch.updates.length ? `<details class="buddy-update-history"><summary>Recent updates</summary>${watch.updates.map(update => `<div class="buddy-update-row"><strong>${escapeHtml(update.profile?.display_name || update.profile?.username || 'Omni user')}</strong><span>${escapeHtml(update.progress_text)}${update.completed ? ' · finished' : ''}</span>${update.note ? `<small>${escapeHtml(update.note)}</small>` : ''}</div>`).join('')}</details>` : '';
+  return `<article class="buddy-watch-card" data-buddy-watch-id="${escapeAttr(watch.id)}">
+    <div class="buddy-watch-head">${item.image ? `<img src="${escapeAttr(item.image)}" alt="" />` : '<div class="buddy-watch-placeholder"></div>'}<div><h3>${escapeHtml(watch.title)}</h3><p>${escapeHtml(memberText)}</p></div>${pending ? '<span class="buddy-invite-badge">Invite</span>' : ''}</div>
+    ${pending ? `<div class="buddy-invite-actions"><button class="primary-button" type="button" data-buddy-accept="${escapeAttr(watch.id)}">Accept Buddy Watch</button><button class="quiet-button" type="button" data-buddy-decline="${escapeAttr(watch.id)}">Decline</button></div>` : `<div class="buddy-progress-list">${progressRows}</div><div class="buddy-watch-actions"><button class="secondary-button" type="button" data-buddy-update="${escapeAttr(watch.id)}">Update my progress</button></div>${history}`}
+  </article>`;
+}
+
+async function handleBuddyWatchClick(event) {
+  const accept = event.target.closest('[data-buddy-accept]');
+  if (accept) { await respondBuddyInvite(accept.dataset.buddyAccept, true); return; }
+  const decline = event.target.closest('[data-buddy-decline]');
+  if (decline) { await respondBuddyInvite(decline.dataset.buddyDecline, false); return; }
+  const update = event.target.closest('[data-buddy-update]');
+  if (update) { openBuddyProgress(update.dataset.buddyUpdate); }
+}
+
+async function respondBuddyInvite(watchId, accept) {
+  if (!watchId || !currentUser) return;
+  const result = accept
+    ? await supabase.from('buddy_watch_members').update({ status:'accepted', joined_at:new Date().toISOString() }).eq('buddy_watch_id', watchId).eq('user_id', currentUser.id)
+    : await supabase.from('buddy_watch_members').delete().eq('buddy_watch_id', watchId).eq('user_id', currentUser.id);
+  if (result.error) throw result.error;
+  await loadBuddyWatches();
+}
+
+function findLocalItemForBuddy(watch) {
+  const shared = watch?.item || {};
+  return state.items.find(item => shared.provider && shared.providerId && item.provider === shared.provider && String(item.providerId || '') === String(shared.providerId || ''))
+    || state.items.find(item => String(item.title || '').toLowerCase() === String(watch?.title || '').toLowerCase() && getSourceType(item) === shared.sourceType)
+    || null;
+}
+
+function ensureLocalItemForBuddyWatch(watch) {
+  const existing = findLocalItemForBuddy(watch);
+  if (existing) return existing;
+  const shared = watch?.item || {};
+  const sourceType = shared.sourceType || shared.type || '';
+  if (!sourceType) return null;
+  const type = shared.type || sourceType;
+  const now = new Date().toISOString();
+  const item = {
+    id: makeId(),
+    type,
+    typeLabel: shared.typeLabel || socialTypeLabel(type),
+    sourceType,
+    provider: shared.provider || '',
+    providerId: shared.providerId || '',
+    title: shared.title || watch?.title || 'Buddy Watch',
+    subtitle: shared.subtitle || '',
+    image: shared.image || '',
+    notes: '',
+    people: [],
+    rating: 0,
+    recommended: false,
+    createdAt: now,
+    updatedAt: now
+  };
+  if (sourceType === 'tv') {
+    item.progress = { nextSeason: 1, nextEpisode: 1 };
+    item.watchDisposition = 'following';
+    setItemQueueStatus(item, 'upnext');
+  } else {
+    setItemQueueStatus(item, 'library');
+  }
+  state.items.push(item);
+  return item;
+}
+
+function parseBuddyTVProgress(value) {
+  const text = String(value || '');
+  const compact = text.match(/\bS(?:eason)?\s*(\d+)\D+E(?:pisode)?\s*(\d+)\b/i);
+  if (compact) return { seasonNumber: Number(compact[1]), episodeNumber: Number(compact[2]) };
+  const long = text.match(/\bSeason\s*(\d+)\D+Episode\s*(\d+)\b/i);
+  if (long) return { seasonNumber: Number(long[1]), episodeNumber: Number(long[2]) };
+  return null;
+}
+
+async function markBuddyTVEpisodeWatched(watch, seasonNumber, episodeNumber) {
+  const item = ensureLocalItemForBuddyWatch(watch);
+  if (!item || getSourceType(item) !== 'tv') throw new Error('This Buddy Watch is not linked to a TV show in Omni.');
+  const season = Math.max(1, Number(seasonNumber || 0));
+  const episodeNo = Math.max(1, Number(episodeNumber || 0));
+  if (!season || !episodeNo) throw new Error('Choose a valid season and episode.');
+
+  if (!isTVEpisodeLogged(item, season, episodeNo)) {
+    let episode = null;
+    if (item.providerId) {
+      try { episode = await getTVEpisodeFromSeason(item, season, episodeNo); } catch {}
+    }
+    episode ||= { name: 'Episode', still_path: '' };
+    addHistoryRecord(tvHistoryRecord(item, episode, season, episodeNo));
+  }
+
+  if (getTVWatchDisposition(item) === 'watch-later') item.watchDisposition = 'following';
+
+  if (item.providerId) {
+    try {
+      await recalculateTVProgress(item);
+    } catch {
+      item.progress = { ...(item.progress || {}), nextSeason: season, nextEpisode: episodeNo + 1 };
+      item.completedAt = '';
+      setItemQueueStatus(item, 'upnext');
+    }
+  } else {
+    item.progress = { ...(item.progress || {}), nextSeason: season, nextEpisode: episodeNo + 1 };
+    item.completedAt = '';
+    setItemQueueStatus(item, 'upnext');
+  }
+
+  item.updatedAt = new Date().toISOString();
+  saveItems();
+  saveHistory();
+  renderAll();
+  return item;
+}
+
+function openBuddyProgress(watchId) {
+  const watch = socialState.buddyWatches.find(entry => entry.id === watchId);
+  if (!watch) return;
+  const existing = watch.progress.find(row => row.user_id === currentUser.id);
+  const localItem = findLocalItemForBuddy(watch);
+  const sourceType = watch?.item?.sourceType || getSourceType(localItem);
+  const isTV = sourceType === 'tv';
+  const parsedExisting = parseBuddyTVProgress(existing?.progress_text || '');
+  const nextSeason = Number(localItem?.progress?.nextSeason || parsedExisting?.seasonNumber || 1);
+  const nextEpisode = Number(localItem?.progress?.nextEpisode || parsedExisting?.episodeNumber || 1);
+
+  $('#buddyWatchProgressId').value = watchId;
+  $('#buddyWatchProgressTitle').textContent = watch.title;
+  $('#buddyWatchProgressText').value = existing?.progress_text || (localItem ? progressFallback(localItem) : '') || '';
+  $('#buddyWatchProgressNote').value = existing?.note || '';
+  $('#buddyWatchProgressComplete').checked = Boolean(existing?.completed || localItem?.completedAt);
+  if ($('#buddyWatchTextProgressField')) $('#buddyWatchTextProgressField').hidden = isTV;
+  if ($('#buddyWatchEpisodeFields')) $('#buddyWatchEpisodeFields').hidden = !isTV;
+  if ($('#buddyWatchTVSyncNote')) $('#buddyWatchTVSyncNote').hidden = !isTV;
+  if ($('#buddyWatchSeasonNumber')) $('#buddyWatchSeasonNumber').value = String(Math.max(1, nextSeason));
+  if ($('#buddyWatchEpisodeNumber')) $('#buddyWatchEpisodeNumber').value = String(Math.max(1, nextEpisode));
+  if ($('#buddyWatchProgressSubmit')) $('#buddyWatchProgressSubmit').textContent = isTV ? 'Mark watched & post' : 'Post update';
+  setBuddyProgressMessage('');
+  showDialogAtTop($('#buddyWatchProgressModal'));
+}
+
+function setBuddyProgressMessage(message, error = false) {
+  const node = $('#buddyWatchProgressMessage');
+  if (!node) return;
+  node.textContent = message || '';
+  node.hidden = !message;
+  node.classList.toggle('is-error', Boolean(error));
+}
+
+async function saveBuddyWatchProgress(event) {
+  event.preventDefault();
+  const watchId = $('#buddyWatchProgressId')?.value || '';
+  const watch = socialState.buddyWatches.find(entry => entry.id === watchId);
+  if (!watchId || !watch || !currentUser) return;
+
+  const note = String($('#buddyWatchProgressNote')?.value || '').trim();
+  const sourceType = watch?.item?.sourceType || getSourceType(findLocalItemForBuddy(watch));
+  let progressText = String($('#buddyWatchProgressText')?.value || '').trim();
+  let completed = Boolean($('#buddyWatchProgressComplete')?.checked);
+
+  setBuddyProgressMessage(sourceType === 'tv' ? 'Marking watched…' : 'Posting…');
+
+  if (sourceType === 'tv') {
+    const seasonNumber = Number($('#buddyWatchSeasonNumber')?.value || 0);
+    const episodeNumber = Number($('#buddyWatchEpisodeNumber')?.value || 0);
+    if (!Number.isInteger(seasonNumber) || seasonNumber < 1 || !Number.isInteger(episodeNumber) || episodeNumber < 1) {
+      setBuddyProgressMessage('Choose a valid season and episode.', true);
+      return;
+    }
+    try {
+      const localItem = await markBuddyTVEpisodeWatched(watch, seasonNumber, episodeNumber);
+      progressText = `Watched S${seasonNumber} E${episodeNumber}`;
+      completed = Boolean(completed || localItem?.completedAt);
+    } catch (error) {
+      setBuddyProgressMessage(error.message || 'Could not mark that episode watched.', true);
+      return;
+    }
+  }
+
+  if (!progressText) {
+    setBuddyProgressMessage('Add a progress update.', true);
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const progressResult = await supabase.from('buddy_watch_progress').upsert({ buddy_watch_id: watchId, user_id: currentUser.id, progress_text: progressText, note, completed, updated_at: now }, { onConflict:'buddy_watch_id,user_id' });
+  if (progressResult.error) { setBuddyProgressMessage(progressResult.error.message, true); return; }
+  const updateResult = await supabase.from('buddy_watch_updates').insert({ buddy_watch_id: watchId, user_id: currentUser.id, progress_text: progressText, note, completed, created_at: now });
+  if (updateResult.error) { setBuddyProgressMessage(updateResult.error.message, true); return; }
+  $('#buddyWatchProgressModal')?.close();
+  await loadBuddyWatches();
+}
+

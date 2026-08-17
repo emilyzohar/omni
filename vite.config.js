@@ -9,7 +9,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(process.cwd(), 'index.html'),
-        discover: resolve(process.cwd(), 'discover.html')
+        discover: resolve(process.cwd(), 'discover.html'),
+        social: resolve(process.cwd(), 'social.html')
       }
     }
   }
