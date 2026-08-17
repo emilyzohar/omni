@@ -1,4 +1,4 @@
-import { TrackerAPI } from './api.js?v=omni-social-buddy-card-placement-11';
+import { TrackerAPI } from './api.js?v=omni-restaurant-api-restore-17';
 import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
@@ -9646,7 +9646,11 @@ function discoverCardMarkup(result, key, fallbackType) {
   const queueStatus = item ? getQueueStatus(item) : '';
   const plusLabel = queueStatus === 'upnext' ? '+ Queue' : queueStatus === 'tbr' ? '+ TBR' : '+ Add';
   const libraryOnly = ['music','artist','song','restaurant'].includes(type);
-  const noImage = !String(result.image || '').trim();
+  const artworkUrl = String(result.image || '').trim();
+  const isLastFmGenericArtwork = /2a96cbd8b46e442fc41c2b86b821562f/i.test(artworkUrl);
+  // Last.fm currently supplies a generic star for many artists. It is a fallback
+  // asset, not actual artist artwork, so render those results as no-image cards.
+  const noImage = !artworkUrl || isLastFmGenericArtwork;
   const completeAction = ['tv','movie','book'].includes(type)
     ? `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo watched / read' : 'Mark watched / read'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>`
     : '';

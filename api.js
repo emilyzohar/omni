@@ -238,7 +238,10 @@ export const TrackerAPI = (() => {
 
   function lastFmImage(value) {
     const images = Array.isArray(value?.image) ? value.image : [];
-    return [...images].reverse().map(entry => String(entry?.['#text'] || '')).find(Boolean) || '';
+    const url = [...images].reverse().map(entry => String(entry?.['#text'] || '')).find(Boolean) || '';
+    // Last.fm's generic white-star image is missing artwork, not real cover/artist art.
+    if (/2a96cbd8b46e442fc41c2b86b821562f/i.test(url)) return '';
+    return url;
   }
 
   function mapLastFmArtist(artist) {
@@ -935,6 +938,92 @@ export const TrackerAPI = (() => {
     });
   }
 
+  function mapGoogleRestaurant(place) {
+    if (!place?.id || !place?.displayName?.text) return null;
+    const typeLabel = place.primaryTypeDisplayName?.text || '';
+    return {
+      sourceType: 'restaurant',
+      provider: 'googlePlaces',
+      providerId: String(place.id),
+      title: place.displayName.text,
+      subtitle: place.formattedAddress || typeLabel || '',
+      image: '',
+      description: typeLabel,
+      formattedAddress: place.formattedAddress || '',
+      primaryType: place.primaryType || '',
+      primaryTypeDisplayName: typeLabel,
+      rating: Number(place.rating || 0),
+      userRatingCount: Number(place.userRatingCount || 0),
+      googleMapsUrl: place.googleMapsUri || '',
+      websiteUrl: place.websiteUri || '',
+      raw: place
+    };
+  }
+
+  async function searchRestaurants(query, settings, options = {}) {
+    const key = required(settings.googlePlacesKey, 'Google Places API key');
+    const rawQuery = String(query || '').trim();
+    if (!rawQuery) return [];
+
+    const city = String(options.city || settings.homeCity || '').trim();
+    const region = String(options.region || options.countryCode || settings.homeCountry || settings.tmdbWatchRegion || '').trim().toUpperCase();
+    // Include the city in the text query because it is reliable even when no
+    // latitude/longitude has been configured for the user's home location.
+    const textQuery = city && !rawQuery.toLowerCase().includes(city.toLowerCase())
+      ? `${rawQuery} in ${city}`
+      : rawQuery;
+    const requestedSize = Number(options.pageSize || options.maxResultCount || 20);
+    const pageSize = Math.max(1, Math.min(20, Number.isFinite(requestedSize) ? requestedSize : 20));
+
+    const body = {
+      textQuery,
+      pageSize,
+      languageCode: 'en'
+    };
+    if (/^[A-Z]{2}$/.test(region)) body.regionCode = region;
+
+    const lat = Number(options.lat ?? settings.homeLat);
+    const lng = Number(options.lng ?? options.lon ?? settings.homeLon);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
+      body.locationBias = {
+        circle: {
+          center: { latitude: lat, longitude: lng },
+          radius: Math.max(1000, Math.min(50000, Number(options.radiusMeters || 25000)))
+        }
+      };
+    }
+
+    const data = await fetchJson('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': key,
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.googleMapsUri,places.websiteUri'
+      },
+      body: JSON.stringify(body)
+    });
+
+    const minRating = Math.max(0, Number(options.minRating || 0));
+    return (data.places || [])
+      .map(mapGoogleRestaurant)
+      .filter(Boolean)
+      .filter(place => !minRating || Number(place.rating || 0) >= minRating);
+  }
+
+  async function getRestaurantDetails(placeId, settings) {
+    const key = required(settings.googlePlacesKey, 'Google Places API key');
+    const id = String(placeId || '').trim().replace(/^places\//, '');
+    if (!id) throw new Error('Google Place ID is missing.');
+    const place = await fetchJson(`https://places.googleapis.com/v1/places/${encodeURIComponent(id)}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': key,
+        'X-Goog-FieldMask': 'id,displayName,formattedAddress,primaryType,primaryTypeDisplayName,rating,userRatingCount,googleMapsUri,websiteUri'
+      }
+    });
+    return mapGoogleRestaurant(place);
+  }
+
   async function searchCatalogue(query, type, settings, options = {}) {
     if (!query.trim()) return [];
     if (type === 'tv' || type === 'movie') return searchTMDB(query, type, settings);
@@ -944,11 +1033,14 @@ export const TrackerAPI = (() => {
     if (type === 'song') return searchSongs(query, settings);
     if (type === 'concert') return searchTicketmasterCatalogue(query, settings, { ...options, classificationName: 'Music' });
     if (type === 'event') return searchTicketmasterCatalogue(query, settings, options);
+    if (type === 'restaurant') return searchRestaurants(query, settings, options);
     return [];
   }
 
   return {
     searchCatalogue,
+    searchRestaurants,
+    getRestaurantDetails,
     searchTMDB,
     getTVDetails,
     getTVSeason,
