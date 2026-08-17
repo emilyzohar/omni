@@ -1577,6 +1577,7 @@ function bindEvents() {
   els.libraryGroups?.addEventListener('click', handleLibraryClick);
   els.openAlbumCreate?.addEventListener('click', () => openAlbumEditor());
   els.albumsGrid?.addEventListener('click', handleAlbumsClick);
+  els.statsSummary?.addEventListener('click', handleStatsBreakdownClick);
   els.statsTypes?.addEventListener('click', handleStatsBreakdownClick);
   els.statsGenres?.addEventListener('click', handleStatsBreakdownClick);
   els.statsGenres?.addEventListener('keydown', event => {
@@ -2300,21 +2301,21 @@ function renderAlbumItemChoices() {
     grouped.get(key).push(item);
   }
   for (const items of grouped.values()) items.sort((a,b) => {
-    const aSelected = checkedIds.has(a.id) ? 1 : 0;
-    const bSelected = checkedIds.has(b.id) ? 1 : 0;
-    if (aSelected !== bSelected) return bSelected - aSelected;
     if (albumEditorSort === 'rating') {
       return Number(b.rating || 0) - Number(a.rating || 0)
-        || String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''))
+        || String(itemLastTrackedDate(b)).localeCompare(String(itemLastTrackedDate(a)))
         || String(a.title || '').localeCompare(String(b.title || ''));
     }
     if (albumEditorSort === 'title') {
       return String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' })
-        || String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''));
+        || String(itemLastTrackedDate(b)).localeCompare(String(itemLastTrackedDate(a)));
     }
-    return String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''))
-      || Number(b.rating || 0) - Number(a.rating || 0)
-      || String(a.title || '').localeCompare(String(b.title || ''));
+    const aDate = itemLastTrackedDate(a);
+    const bDate = itemLastTrackedDate(b);
+    if (aDate && bDate) return String(bDate).localeCompare(String(aDate)) || String(a.title || '').localeCompare(String(b.title || ''));
+    if (aDate) return -1;
+    if (bDate) return 1;
+    return String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' });
   });
 
   const groups = [...grouped.entries()].sort((a,b) => libraryTypeGroupLabel(a[1], a[0]).localeCompare(libraryTypeGroupLabel(b[1], b[0])));
@@ -2484,6 +2485,34 @@ async function watchedYouTubeMinutes() {
   return minutes;
 }
 
+function estimatedWatchMinutesStored() {
+  let total = 0;
+  for (const item of state.items) {
+    const type = getSourceType(item);
+    if (type === 'movie') {
+      const logs = state.history.filter(entry => entry.sourceItemId === item.id && entry.kind === 'movie-watched').length;
+      const plays = logs || (item.completedAt ? 1 : 0);
+      if (!plays) continue;
+      const runtime = Number(item.runtimeMinutes || item.raw?.runtime || 0);
+      total += Math.max(0, runtime) * plays;
+      continue;
+    }
+    if (type === 'tv') {
+      const episodes = state.history.filter(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched').length;
+      if (!episodes) continue;
+      const runtime = Number(item.tvMeta?.episodeRuntimeMinutes || item.raw?.episode_run_time?.[0] || 0);
+      total += Math.max(0, runtime) * episodes;
+    }
+  }
+  return total;
+}
+
+function formatWatchHours(minutes) {
+  const value = Number(minutes || 0);
+  if (!(value > 0)) return '—';
+  return `≈ ${(value / 60).toFixed(value >= 600 ? 0 : 1)} h`;
+}
+
 async function estimatedWatchMinutes() {
   let total = 0;
   let changed = false;
@@ -2560,7 +2589,7 @@ function renderGenrePie(genres = []) {
   if (overflow.length) visible.push({ label:'Other', count:overflow.reduce((sum,entry) => sum + entry[1],0), labels:overflow.map(entry => entry[0]) });
   const total = visible.reduce((sum,entry) => sum + entry.count,0) || 1;
   const genreColors = {
-  Romance: '#f77390',
+      Romance: '#f77390',
   Crime: '#65151B',
   Horror: '#17151D',
   Comedy: '#EFD98B',
@@ -2634,6 +2663,11 @@ function openStatsCatalogue(title, items = []) {
 }
 
 function handleStatsBreakdownClick(event) {
+  const recentButton = event.target.closest('[data-stats-recent]');
+  if (recentButton) {
+    openStatsRecentHistory(Number(recentButton.dataset.statsRecent || 30));
+    return;
+  }
   const typeButton = event.target.closest('[data-stats-type-key]');
   if (typeButton) {
     const key = typeButton.dataset.statsTypeKey || '';
@@ -2650,21 +2684,157 @@ function handleStatsBreakdownClick(event) {
   }
 }
 
+function recentTrackedEntries(days = 30) {
+  const span = Math.max(1, Number(days || 30));
+  const today = todayString();
+  const cutoffDate = localDateString(addDays(parseLocalDate(today), -(span - 1)));
+  const historyDates = new Set(state.history
+    .filter(entry => entry.sourceItemId && entry.date)
+    .map(entry => `${entry.sourceItemId}|${String(entry.date).slice(0,10)}`));
+  return getCalendarEntries({ respectVisibility: false })
+    .filter(entry => {
+      const date = String(entry.date || '').slice(0, 10);
+      if (!date || date < cutoffDate || date > today) return false;
+      if (entry.kind === 'dated-item' && entry.sourceItemId && historyDates.has(`${entry.sourceItemId}|${date}`)) return false;
+      return true;
+    })
+    .sort((a,b) => String(b.date || '').localeCompare(String(a.date || ''))
+      || String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+      || String(a.title || '').localeCompare(String(b.title || '')));
+}
+
+function statsDayHeading(date) {
+  const value = String(date || '').slice(0, 10);
+  if (!value) return '';
+  const parsed = parseLocalDate(value);
+  const today = todayString();
+  const yesterday = localDateString(addDays(parseLocalDate(today), -1));
+  const formatted = new Intl.DateTimeFormat('en-CA', {
+    weekday: 'long', month: 'long', day: 'numeric',
+    ...(parsed.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {})
+  }).format(parsed);
+  if (value === today) return `Today · ${formatted}`;
+  if (value === yesterday) return `Yesterday · ${formatted}`;
+  return formatted;
+}
+
+function makeRecentTrackedPoster(entry) {
+  const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
+  const display = source
+    ? {
+        ...source,
+        image: entry.image || source.image || '',
+        title: entry.title || source.title || 'Untitled',
+        notes: String(entry.notes || source.notes || '').trim(),
+        rating: Number(entry.rating || source.rating || 0),
+        subcategory: entry.subcategory || source.subcategory || ''
+      }
+    : {
+        id: `history:${entry.id || makeId()}`,
+        type: entry.type || 'other',
+        typeLabel: entry.typeLabel || 'Other',
+        title: entry.title || 'Untitled',
+        image: entry.image || '',
+        notes: entry.notes || '',
+        rating: Number(entry.rating || 0),
+        subcategory: entry.subcategory || ''
+      };
+  const shell = makeLibraryPoster(display);
+  shell.classList.add('stats-recent-card');
+  const poster = shell.querySelector('.library-poster-button');
+  if (poster) {
+    poster.title = [entry.title || display.title, entry.subtitle || '', getItemTypeLabel(source || display)].filter(Boolean).join(' · ');
+    if (!source) {
+      delete poster.dataset.detailsId;
+      if (entry.id) poster.dataset.recentHistoryEdit = entry.id;
+    }
+    const episode = String(entry.subtitle || '').match(/^(S\d+\s+E\d+)/i)?.[1];
+    if (episode) {
+      const badge = document.createElement('span');
+      badge.className = 'stats-recent-context-badge';
+      badge.textContent = episode;
+      poster.appendChild(badge);
+    }
+  }
+  if (!source) shell.querySelector('.library-card-album-button')?.remove();
+  return shell;
+}
+
+function ensureStatsRecentModal() {
+  let modal = $('#statsRecentModal');
+  if (modal) return modal;
+  modal = document.createElement('dialog');
+  modal.id = 'statsRecentModal';
+  modal.className = 'modal stats-recent-modal';
+  modal.innerHTML = `<button class="modal-x" type="button" data-close="statsRecentModal" aria-label="Close">×</button><div class="modal-heading"><h2 id="statsRecentTitle">Last 30 days</h2><p id="statsRecentCount"></p></div><div id="statsRecentDays" class="stats-recent-days"></div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('[data-close="statsRecentModal"]')?.addEventListener('click', () => modal.close());
+  modal.addEventListener('click', event => {
+    const addCollection = event.target.closest('[data-library-add-album]');
+    if (addCollection) {
+      event.preventDefault();
+      event.stopPropagation();
+      openLibraryAddToAlbum(addCollection.dataset.libraryAddAlbum);
+      return;
+    }
+    const historyEdit = event.target.closest('[data-recent-history-edit]');
+    if (historyEdit) {
+      modal.close();
+      openHistoryEdit(historyEdit.dataset.recentHistoryEdit);
+      return;
+    }
+    const open = event.target.closest('[data-details-id]');
+    if (open) {
+      modal.close();
+      openDetails(open.dataset.detailsId);
+    }
+  });
+  return modal;
+}
+
+function openStatsRecentHistory(days = 30) {
+  const span = Math.max(1, Number(days || 30));
+  const entries = recentTrackedEntries(span);
+  const modal = ensureStatsRecentModal();
+  $('#statsRecentTitle').textContent = span === 30 ? 'Last 30 days' : `Last ${span} days`;
+  $('#statsRecentCount').textContent = `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`;
+  const groups = new Map();
+  for (const entry of entries) {
+    const date = String(entry.date || '').slice(0,10);
+    if (!groups.has(date)) groups.set(date, []);
+    groups.get(date).push(entry);
+  }
+  const host = $('#statsRecentDays');
+  host.innerHTML = '';
+  for (const [date, dayEntries] of groups) {
+    const section = document.createElement('section');
+    section.className = 'stats-recent-day';
+    section.innerHTML = `<div class="stats-recent-day-heading"><h3>${escapeHtml(statsDayHeading(date))}</h3><span>${dayEntries.length}</span></div><div class="library-poster-grid is-expanded stats-recent-day-grid"></div>`;
+    const grid = section.querySelector('.stats-recent-day-grid');
+    dayEntries.forEach(entry => grid.appendChild(makeRecentTrackedPoster(entry)));
+    host.appendChild(section);
+  }
+  if (!entries.length) host.innerHTML = '<p class="empty-state">Nothing tracked in the last 30 days.</p>';
+  showDialogAtTop(modal);
+}
+
 async function renderStats() {
   if (!els.statsSummary) return;
-  const now = new Date();
-  const cutoff = new Date(now); cutoff.setDate(cutoff.getDate() - 30);
-  const cutoffDate = cutoff.toISOString().slice(0,10);
-  const logged30 = state.history.filter(entry => String(entry.date || '').slice(0,10) >= cutoffDate).length;
+  const recent30 = recentTrackedEntries(30);
+  const logged30 = recent30.length;
   const rated = state.items.filter(item => Number(item.rating || 0) > 0);
   const avg = rated.length ? rated.reduce((sum,item) => sum + Number(item.rating || 0),0) / rated.length : 0;
   const repeats = state.history.filter(entry => entry.rewatch).length;
   const genres = watchedGenreCounts();
+  const storedMinutes = estimatedWatchMinutesStored();
   const requestToken = `${state.items.length}:${state.history.length}:${Date.now()}`;
   els.statsSummary.dataset.renderToken = requestToken;
-  els.statsSummary.innerHTML = [
-    ['Library', state.items.length], ['Last 30 days', logged30], ['Average rating', avg ? avg.toFixed(1) : '—'], ['Rewatches / rereads', repeats], ['Watch hours', '…']
-  ].map(([label,value]) => `<div class="stat-card"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`).join('');
+  els.statsSummary.innerHTML = `
+    <div class="stat-card"><strong>${escapeHtml(String(state.items.length))}</strong><span>Library</span></div>
+    <button class="stat-card stat-card-action" type="button" data-stats-recent="30" aria-label="Open activity from the last 30 days"><strong>${escapeHtml(String(logged30))}</strong><span>Last 30 days</span></button>
+    <div class="stat-card"><strong>${escapeHtml(avg ? avg.toFixed(1) : '—')}</strong><span>Average rating</span></div>
+    <div class="stat-card"><strong>${escapeHtml(String(repeats))}</strong><span>Rewatches / rereads</span></div>
+    <div class="stat-card"><strong>${escapeHtml(formatWatchHours(storedMinutes))}</strong><span>Watch hours</span></div>`;
   if (els.statsTypes) {
     const groups = new Map();
     state.items.forEach(item => {
@@ -2680,7 +2850,7 @@ async function renderStats() {
   renderGenrePie(genres);
   const minutes = await estimatedWatchMinutes();
   if (els.statsSummary?.dataset.renderToken !== requestToken) return;
-  const hours = minutes > 0 ? `≈ ${(minutes / 60).toFixed(minutes >= 600 ? 0 : 1)} h` : '—';
+  const hours = formatWatchHours(minutes);
   const cards = [...els.statsSummary.querySelectorAll('.stat-card')];
   const watchCard = cards.find(card => card.querySelector('span')?.textContent === 'Watch hours');
   if (watchCard) watchCard.querySelector('strong').textContent = hours;
@@ -8080,11 +8250,12 @@ function saveBookProgress(event) {
 // ---------------------------
 // TRACKER / CALENDAR HISTORY
 // ---------------------------
-function getCalendarEntries() {
+function getCalendarEntries(options = {}) {
+  const respectVisibility = options?.respectVisibility !== false;
   const savedItems = state.items
     .filter(item => {
       const sourceType = getSourceType(item);
-      if (!item.date || ['book','activity'].includes(sourceType) || item.calendarHidden) return false;
+      if (!item.date || ['book','activity'].includes(sourceType) || (respectVisibility && item.calendarHidden)) return false;
       // + Calendar schedules a live event in Up Next first. The tracked Calendar
       // only receives it after the explicit check in that Up Next calendar row.
       if (['event', 'concert'].includes(sourceType) && item.queueCalendarScheduled === true && item.calendarTracked !== true) return false;
@@ -8108,17 +8279,17 @@ function getCalendarEntries() {
     }));
 
   const bookRanges = state.items
-    .filter(item => getSourceType(item) === 'book' && !item.calendarHidden)
+    .filter(item => getSourceType(item) === 'book' && (!respectVisibility || !item.calendarHidden))
     .flatMap(item => bookReadingCalendarEntries(item));
 
   const activityRanges = state.items
-    .filter(item => getSourceType(item) === 'activity' && !item.calendarHidden)
+    .filter(item => getSourceType(item) === 'activity' && (!respectVisibility || !item.calendarHidden))
     .flatMap(item => activityCalendarEntries(item));
 
   const historyEntries = state.history.filter(entry => {
-    if (entry.showOnCalendar === false) return false;
+    if (respectVisibility && entry.showOnCalendar === false) return false;
     const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
-    if (source?.calendarHidden) return false;
+    if (respectVisibility && source?.calendarHidden) return false;
     if (entry.kind === 'book-finished') {
       const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
       if (source && getBookReadingPeriods(source).length) return false;
@@ -8133,7 +8304,7 @@ function getCalendarEntries() {
   });
 
   return [...savedItems, ...historyEntries, ...bookRanges, ...activityRanges]
-    .filter(entry => isCalendarTypeVisible(entry.type));
+    .filter(entry => !respectVisibility || isCalendarTypeVisible(entry.type));
 }
 
 function activityCalendarEntries(item) {
@@ -14114,6 +14285,31 @@ function itemLibraryDate(item) {
   return dates.sort().at(-1) || '';
 }
 
+function itemLastTrackedDate(item) {
+  if (!item) return '';
+  const dates = state.history
+    .filter(entry => entry.sourceItemId === item.id && entry.date)
+    .map(entry => String(entry.date).slice(0,10))
+    .filter(Boolean);
+
+  if (item.date) dates.push(String(item.date).slice(0,10));
+  if (item.completedAt) dates.push(String(item.completedAt).slice(0,10));
+
+  if (getSourceType(item) === 'activity') {
+    const end = item.activityMeta?.endDate || item.activityMeta?.startDate || '';
+    if (end) dates.push(String(end).slice(0,10));
+  }
+  if (getSourceType(item) === 'book') {
+    for (const period of getBookReadingPeriods(item)) {
+      const start = String(period?.startDate || '').slice(0,10);
+      if (!start) continue;
+      const end = String(period?.endDate || start).slice(0,10);
+      if (end >= start) dates.push(end);
+    }
+  }
+  return dates.sort().at(-1) || '';
+}
+
 function normalizeLibraryPrefs(value) {
   const keys = Array.isArray(value?.defaultTypeKeys)
     ? [...new Set(value.defaultTypeKeys.map(key => slugifyType(key)).filter(Boolean))]
@@ -14388,17 +14584,28 @@ function normalizeSearchText(value) {
   return String(value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-function libraryTextCardWidth(title) {
-  const text = String(title || 'Untitled').trim() || 'Untitled';
+function libraryTextCardWidth(itemOrTitle) {
+  const item = itemOrTitle && typeof itemOrTitle === 'object' ? itemOrTitle : null;
+  const title = String(item?.title || itemOrTitle || 'Untitled').trim() || 'Untitled';
+  const notes = String(item?.notes || '').trim();
   try {
     const canvas = libraryTextCardWidth.canvas || (libraryTextCardWidth.canvas = document.createElement('canvas'));
     const context = canvas.getContext('2d');
     if (context) {
-      context.font = '700 14.4px \"DM Sans\", system-ui, sans-serif';
-      return Math.max(118, Math.min(460, Math.ceil(context.measureText(text).width + 34)));
+      context.font = '700 14.4px "DM Sans", system-ui, sans-serif';
+      const titleWidth = context.measureText(title).width + 34;
+      let noteWidth = 0;
+      if (notes) {
+        context.font = '500 11.5px "DM Sans", system-ui, sans-serif';
+        // Aim to fit the note in roughly three lines so the fixed-height text
+        // card can show the full note instead of truncating it.
+        noteWidth = context.measureText(notes.replace(/\s+/g, ' ')).width / 3 + 34;
+      }
+      return Math.max(132, Math.min(680, Math.ceil(Math.max(titleWidth, noteWidth))));
     }
   } catch {}
-  return Math.max(118, Math.min(460, 34 + text.length * 8));
+  const fallback = Math.max(title.length * 8, notes.length * 2.2) + 34;
+  return Math.max(132, Math.min(680, Math.ceil(fallback)));
 }
 
 function makeLibraryPoster(item) {
@@ -14415,7 +14622,7 @@ function makeLibraryPoster(item) {
   const hasThumbnail = Boolean(String(item.image || '').trim());
   if (!hasThumbnail) {
     poster.classList.add('library-text-card-button');
-    const textCardWidth = libraryTextCardWidth(item.title);
+    const textCardWidth = libraryTextCardWidth(item);
     shell.classList.add('is-text-card');
     shell.style.setProperty('--library-text-card-width', `${textCardWidth}px`);
     poster.style.setProperty('--library-text-card-width', `${textCardWidth}px`);

@@ -11223,3 +11223,122 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
     white-space: nowrap;
   }
 }
+
+/* =========================================================
+   Tracked recency + readable text cards + recent Stats v42
+   ========================================================= */
+
+/* Text-only cards stay poster-height, but can become wide enough for both
+   their title and note. The JS width calculation targets roughly three lines
+   of note copy rather than sizing from the title alone. */
+.library-poster-grid:not(.is-expanded) .library-card-shell.is-text-card,
+.library-poster-grid.is-expanded:has(.library-text-card-button) .library-card-shell.is-text-card {
+  max-width: min(680px, 88vw) !important;
+}
+.library-card-shell.is-text-card .library-text-card-notes {
+  display: block !important;
+  -webkit-line-clamp: unset !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
+  overflow-wrap: break-word !important;
+}
+
+/* Last 30 days is a real drill-down, so the summary tile behaves like the
+   other interactive controls without changing the Stats card styling. */
+.stat-card-action {
+  width: 100%;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.stat-card-action:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(27,31,24,.11);
+}
+.stat-card-action:active { transform: translateY(0) scale(.985); }
+.stat-card-action:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+.stats-recent-modal {
+  width: min(1080px, calc(100% - 30px));
+  max-height: min(90vh, 920px);
+}
+.stats-recent-days {
+  display: grid;
+  gap: 30px;
+  max-height: min(70vh, 690px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 5px 14px 2px;
+}
+.stats-recent-day { min-width: 0; }
+.stats-recent-day-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(21,36,58,.14);
+}
+.stats-recent-day-heading h3 {
+  margin: 0;
+  font-size: 1.42rem;
+  font-weight: 400;
+}
+.stats-recent-day-heading > span {
+  color: var(--muted);
+  font: 600 .7rem/1 var(--sans);
+}
+.stats-recent-day-grid {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: stretch !important;
+  gap: 11px !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+.stats-recent-day-grid .library-card-shell {
+  flex: 0 0 var(--library-poster-width) !important;
+  width: var(--library-poster-width) !important;
+  height: var(--library-row-height) !important;
+}
+.stats-recent-day-grid .library-card-shell.is-text-card {
+  flex-basis: var(--library-text-card-width, var(--library-poster-width)) !important;
+  width: var(--library-text-card-width, var(--library-poster-width)) !important;
+  max-width: min(680px, 88vw) !important;
+}
+.stats-recent-context-badge {
+  position: absolute;
+  left: 7px;
+  top: 7px;
+  z-index: 3;
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: rgba(251,250,245,.92);
+  color: var(--ink);
+  font: 700 .58rem/1 var(--sans);
+  box-shadow: 0 2px 8px rgba(0,0,0,.10);
+}
+
+@media (max-width: 620px) {
+  .library-poster-grid:not(.is-expanded) .library-card-shell.is-text-card,
+  .library-poster-grid.is-expanded:has(.library-text-card-button) .library-card-shell.is-text-card,
+  .stats-recent-day-grid .library-card-shell.is-text-card {
+    max-width: 92vw !important;
+  }
+  .stats-recent-modal { width: 100%; }
+  .stats-recent-days { max-height: 72dvh; gap: 24px; }
+  .stats-recent-day-grid {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0,1fr)) !important;
+    gap: 8px !important;
+  }
+  .stats-recent-day-grid .library-card-shell,
+  .stats-recent-day-grid .library-card-shell.is-text-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    flex-basis: auto !important;
+  }
+  .stats-recent-day-heading h3 { font-size: 1.2rem; }
+}
