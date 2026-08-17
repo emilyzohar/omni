@@ -12886,13 +12886,13 @@ function escapeAttr(value) { return escapeHtml(value); }
 // =========================================================
 // SOCIAL — profiles, sharing snapshots, following, Buddy Watch
 // =========================================================
-const SOCIAL_SNAPSHOT_VERSION = 2;
+const SOCIAL_SNAPSHOT_VERSION = 4;
 const SOCIAL_SHARE_SECTION_META = Object.freeze({
-  recommended: { label: 'Recommended', description: 'Share items you have recommended.', items: true },
-  upnext: { label: 'Up Next', description: 'Share selected items currently in Up Next.', items: true },
-  ratings: { label: 'Ratings', description: 'Share your ratings without sharing private notes.', items: true },
-  streaks: { label: 'Streaks', description: 'Share selected active Track streaks.', items: false, streaks: true },
-  library: { label: 'Library', description: 'Share selected Library types. Totals for the selected types remain visible even if individual items are hidden.', items: true }
+  recommended: { label: 'Recommended', description: 'Share all recommended types by default; uncheck anything you want private.', items: true },
+  upnext: { label: 'Up Next', description: 'Share all Up Next types by default; uncheck anything you want private.', items: true },
+  ratings: { label: 'Ratings', description: 'Share all rated types by default; uncheck anything you want private.', items: true },
+  streaks: { label: 'Streaks', description: 'Share all active streak types by default; uncheck any you want private.', items: false, streaks: true },
+  library: { label: 'Library', description: 'Share all Library types by default; uncheck types or individual items to hide them while shared-type totals remain visible.', items: true }
 });
 
 const socialState = {
@@ -12908,17 +12908,20 @@ const socialState = {
   peopleResults: [],
   followingProfiles: [],
   acceptedConnections: [],
-  buddyWatches: []
+  buddyWatches: [],
+  viewedProfile: null,
+  profileViewModes: new Map(),
+  profileExpandedGroups: new Map()
 };
 
 function emptySocialShareSettings() {
   return {
     shareWithPeople: false,
-    recommended: { enabled: false, types: [], hiddenItemIds: [] },
-    upnext: { enabled: false, types: [], hiddenItemIds: [] },
-    ratings: { enabled: false, types: [], hiddenItemIds: [] },
-    streaks: { enabled: false, types: [] },
-    library: { enabled: false, types: [], hiddenItemIds: [] }
+    recommended: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
+    upnext: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
+    ratings: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
+    streaks: { enabled: false, excludedTypes: [] },
+    library: { enabled: false, excludedTypes: [], hiddenItemIds: [] }
   };
 }
 
@@ -12927,10 +12930,20 @@ function normalizeSocialShareSettings(raw = {}) {
   base.shareWithPeople = Boolean(raw?.shareWithPeople);
   for (const key of Object.keys(SOCIAL_SHARE_SECTION_META)) {
     const incoming = raw?.[key] && typeof raw[key] === 'object' ? raw[key] : {};
+    const enabled = Boolean(incoming.enabled);
+    let excludedTypes = [];
+    if (Array.isArray(incoming.excludedTypes)) {
+      excludedTypes = incoming.excludedTypes;
+    } else if (enabled && Array.isArray(incoming.types)) {
+      // One-time compatibility with the original opt-in model: preserve anything
+      // that was already private, then save future edits as exclusions.
+      const legacySelected = new Set(incoming.types.map(value => String(value || '').trim()).filter(Boolean));
+      excludedTypes = socialSectionTypeKeys(key).filter(type => !legacySelected.has(type));
+    }
     base[key] = {
       ...base[key],
-      enabled: Boolean(incoming.enabled),
-      types: [...new Set((Array.isArray(incoming.types) ? incoming.types : []).map(value => String(value || '').trim()).filter(Boolean))]
+      enabled,
+      excludedTypes: [...new Set(excludedTypes.map(value => String(value || '').trim()).filter(Boolean))]
     };
     if ('hiddenItemIds' in base[key]) {
       base[key].hiddenItemIds = [...new Set((Array.isArray(incoming.hiddenItemIds) ? incoming.hiddenItemIds : []).map(value => String(value || '').trim()).filter(Boolean))];
@@ -13045,18 +13058,47 @@ function socialShareCandidates(section) {
   return [];
 }
 
+function socialSectionTypeKeys(section) {
+  if (section === 'streaks') return socialShareableStreakGroups().map(group => group.key);
+  return [...new Set(socialShareCandidates(section).map(item => item.type).filter(Boolean))]
+    .sort((a, b) => socialTypeLabel(a).localeCompare(socialTypeLabel(b)));
+}
+
+function socialTypeIsAllowed(section, type, settings = socialState.shareSettings) {
+  const prefs = settings?.[section];
+  return Boolean(prefs?.enabled && type && !prefs.excludedTypes?.includes(type));
+}
+
 function socialItemIsAllowed(section, item, settings = socialState.shareSettings) {
   const prefs = settings?.[section];
   if (!prefs?.enabled || !item) return false;
-  if (!prefs.types.includes(item.type)) return false;
+  if (!socialTypeIsAllowed(section, item.type, settings)) return false;
   if (prefs.hiddenItemIds?.includes(item.id)) return false;
   return true;
 }
 
-function socialItemSummary(item, settings = null) {
+function socialItemSummary(item, settings = null, section = '') {
   const sourceType = getSourceType(item);
-  const progress = progressFallback(item);
   const shareWithPeople = Boolean(settings?.shareWithPeople);
+  const libraryAllowed = socialItemIsAllowed('library', item, settings);
+  const recommendedAllowed = socialItemIsAllowed('recommended', item, settings);
+  const ratingAllowed = socialItemIsAllowed('ratings', item, settings);
+  const upNextAllowed = socialItemIsAllowed('upnext', item, settings);
+  let statusKey = '';
+  let statusLabel = '';
+  if (libraryAllowed && sourceType === 'tv') {
+    statusKey = tvLibraryStatusKey(item);
+    statusLabel = tvLibraryStatusLabel(statusKey);
+  } else if (libraryAllowed && sourceType === 'book') {
+    statusKey = bookLibraryStatusKey(item);
+    statusLabel = bookLibraryStatusLabel(statusKey);
+  } else if (libraryAllowed && libraryDnfState(item)) {
+    statusKey = libraryDnfState(item);
+    statusLabel = statusKey === 'paused' ? 'Paused' : 'Stopped';
+  } else if (libraryAllowed && isItemNotReleased(item)) {
+    statusKey = 'not-released';
+    statusLabel = 'Not Released';
+  }
   return {
     key: `${item.provider || 'manual'}:${item.providerId || item.id}`,
     title: item.title || 'Untitled',
@@ -13065,17 +13107,24 @@ function socialItemSummary(item, settings = null) {
     sourceType,
     type: item.type,
     typeLabel: getItemTypeLabel(item),
+    libraryGroup: libraryTypeGroupKey(item),
+    libraryGroupLabel: libraryTypeGroupLabel([item], libraryTypeGroupKey(item)),
+    subcategory: libraryAllowed ? cleanTypeLabel(item.subcategory || '') : '',
     provider: item.provider || '',
     providerId: item.providerId || '',
-    rating: Number(item.rating || 0),
-    progress: progress || '',
-    people: shareWithPeople ? getItemPeople(item) : []
+    rating: ratingAllowed ? Number(item.rating || 0) : 0,
+    progress: upNextAllowed ? (progressFallback(item) || '') : '',
+    recommended: Boolean(recommendedAllowed),
+    statusKey,
+    statusLabel,
+    people: shareWithPeople ? getItemPeople(item) : [],
+    sharedVia: section || ''
   };
 }
 
 function buildSocialSnapshotPayload(settings = socialState.shareSettings || emptySocialShareSettings()) {
   const normalized = normalizeSocialShareSettings(settings);
-  const libraryTypes = normalized.library.enabled ? normalized.library.types : [];
+  const libraryTypes = normalized.library.enabled ? socialSectionTypeKeys('library').filter(type => !normalized.library.excludedTypes.includes(type)) : [];
   const totals = libraryTypes.map(type => ({
     type,
     label: socialTypeLabel(type),
@@ -13086,23 +13135,30 @@ function buildSocialSnapshotPayload(settings = socialState.shareSettings || empt
   for (const section of ['recommended','upnext','ratings','library']) {
     sections[section] = socialShareCandidates(section)
       .filter(item => socialItemIsAllowed(section, item, normalized))
-      .map(item => socialItemSummary(item, normalized));
+      .map(item => socialItemSummary(item, normalized, section));
   }
 
   const streakPrefs = normalized.streaks;
   sections.streaks = streakPrefs.enabled
-    ? getRecognizedStreakGroups()
-        .filter(group => streakPrefs.types.includes(group.key))
+    ? socialShareableStreakGroups()
+        .filter(group => !streakPrefs.excludedTypes.includes(group.key))
         .map(group => {
           const result = calculateTypeStreak(group.key);
           return { key: group.key, label: group.label, count: result.count, restToday: Boolean(result.restToday), enabled: Boolean(result.enabled) };
         })
-        .filter(entry => entry.enabled)
     : [];
 
   return {
     version: SOCIAL_SNAPSHOT_VERSION,
     totals,
+    sharing: {
+      recommended: Boolean(normalized.recommended.enabled),
+      upnext: Boolean(normalized.upnext.enabled),
+      ratings: Boolean(normalized.ratings.enabled),
+      streaks: Boolean(normalized.streaks.enabled),
+      library: Boolean(normalized.library.enabled),
+      withPeople: Boolean(normalized.shareWithPeople)
+    },
     sections,
     publishedAt: new Date().toISOString()
   };
@@ -13150,6 +13206,7 @@ function initSocialPage() {
   $('#socialFollowingList')?.addEventListener('click', handleSocialActionClick);
   $('#socialFollowRequests')?.addEventListener('click', handleSocialActionClick);
   $('#socialViewProfileBody')?.addEventListener('click', handleSocialActionClick);
+  $('#socialMyProfile')?.addEventListener('click', handleSocialActionClick);
   $('#socialCreateBuddyWatch')?.addEventListener('click', openBuddyWatchCreate);
   $('#buddyWatchCreateForm')?.addEventListener('submit', createBuddyWatch);
   $('#socialBuddyList')?.addEventListener('click', handleBuddyWatchClick);
@@ -13193,18 +13250,26 @@ function openSocialProfileSettings() {
   showDialogAtTop($('#socialProfileSettingsModal'));
 }
 
-function socialTypeCheckboxes(section, selectedTypes) {
+function socialShareableStreakGroups() {
+  return getRecognizedStreakGroups().filter(group => getStreakConfig(group.key).enabled);
+}
+
+function socialTypeCheckboxes(section, prefs) {
   if (section === 'streaks') {
-    return getRecognizedStreakGroups().map(group => `
-      <label class="social-type-choice"><input type="checkbox" data-social-share-type="${escapeAttr(group.key)}" ${selectedTypes.includes(group.key) ? 'checked' : ''} /><span>${escapeHtml(group.label)}</span></label>`).join('');
+    const groups = socialShareableStreakGroups();
+    if (!groups.length) return '<p class="social-sharing-empty">No streak types are currently enabled in Track.</p>';
+    return groups.map(group => `
+      <label class="social-type-choice"><input type="checkbox" data-social-share-type="${escapeAttr(group.key)}" ${prefs.excludedTypes?.includes(group.key) ? '' : 'checked'} /><span>${escapeHtml(group.label)}</span></label>`).join('');
   }
-  return getRecognizedTypes().map(entry => `
-    <label class="social-type-choice"><input type="checkbox" data-social-share-type="${escapeAttr(entry.type)}" ${selectedTypes.includes(entry.type) ? 'checked' : ''} /><span>${escapeHtml(entry.label)}</span></label>`).join('');
+  const available = socialSectionTypeKeys(section);
+  if (!available.length) return '<p class="social-sharing-empty">No matching types yet. New types will be shared automatically unless you exclude them later.</p>';
+  return available.map(type => `
+    <label class="social-type-choice"><input type="checkbox" data-social-share-type="${escapeAttr(type)}" ${prefs.excludedTypes?.includes(type) ? '' : 'checked'} /><span>${escapeHtml(socialTypeLabel(type))}</span></label>`).join('');
 }
 
 function socialItemChoiceMarkup(item, prefs) {
   const hidden = prefs.hiddenItemIds?.includes(item.id);
-  const typeSelected = prefs.types.includes(item.type);
+  const typeSelected = !prefs.excludedTypes?.includes(item.type);
   const visible = typeSelected && !hidden;
   return `<label class="social-item-choice${typeSelected ? '' : ' is-type-disabled'}" data-social-item-type="${escapeAttr(item.type)}">
     <input type="checkbox" data-social-share-item="${escapeAttr(item.id)}" ${visible ? 'checked' : ''} ${typeSelected ? '' : 'disabled'} />
@@ -13225,13 +13290,14 @@ function renderSocialShareSettingsEditor() {
   host.innerHTML = withPeopleCard + Object.entries(SOCIAL_SHARE_SECTION_META).map(([section, meta]) => {
     const prefs = settings[section];
     const candidates = meta.items ? socialShareCandidates(section) : [];
+    const noStreaks = section === 'streaks' && socialShareableStreakGroups().length === 0;
     return `<article class="social-share-card" data-social-share-section="${escapeAttr(section)}">
       <div class="social-share-card-head">
-        <label class="social-share-enable"><input type="checkbox" data-social-share-enabled ${prefs.enabled ? 'checked' : ''} /><span><strong>${escapeHtml(meta.label)}</strong><small>${escapeHtml(meta.description)}</small></span></label>
+        <label class="social-share-enable"><input type="checkbox" data-social-share-enabled ${prefs.enabled && !noStreaks ? 'checked' : ''} ${noStreaks ? 'disabled' : ''} /><span><strong>${escapeHtml(meta.label)}</strong><small>${escapeHtml(meta.description)}</small></span></label>
       </div>
-      <div class="social-share-card-body" ${prefs.enabled ? '' : 'hidden'}>
-        <div class="social-type-choices">${socialTypeCheckboxes(section, prefs.types)}</div>
-        ${meta.items ? `<details class="social-item-picker"><summary>Choose individual items <span>${candidates.length}</span></summary><div class="social-item-choice-list">${candidates.length ? candidates.map(item => socialItemChoiceMarkup(item, prefs)).join('') : '<p class="social-sharing-empty">No matching items yet.</p>'}</div></details>` : ''}
+      <div class="social-share-card-body" ${prefs.enabled && !noStreaks ? '' : 'hidden'}>
+        <div class="social-type-choices">${socialTypeCheckboxes(section, prefs)}</div>
+        ${meta.items ? `<details class="social-item-picker"><summary>Individual items <span>${candidates.length}</span></summary><div class="social-item-choice-list">${candidates.length ? candidates.map(item => socialItemChoiceMarkup(item, prefs)).join('') : '<p class="social-sharing-empty">No matching items yet.</p>'}</div></details>` : ''}
       </div>
     </article>`;
   }).join('');
@@ -13243,6 +13309,12 @@ function handleSocialShareFormChange(event) {
   if (event.target.matches('[data-social-share-enabled]')) {
     const body = card.querySelector('.social-share-card-body');
     if (body) body.hidden = !event.target.checked;
+    if (event.target.checked) {
+      const choices = [...card.querySelectorAll('[data-social-share-type]')];
+      // First opt-in shares everything. Existing exclusions stay intact unless
+      // every currently available type had been excluded.
+      if (choices.length && !choices.some(input => input.checked)) choices.forEach(input => { input.checked = true; });
+    }
     return;
   }
   if (event.target.matches('[data-social-share-type]')) {
@@ -13265,7 +13337,7 @@ function readSocialShareSettingsEditor() {
     const section = card.dataset.socialShareSection;
     if (!next[section]) return;
     next[section].enabled = Boolean(card.querySelector('[data-social-share-enabled]')?.checked);
-    next[section].types = [...card.querySelectorAll('[data-social-share-type]:checked')].map(input => input.dataset.socialShareType).filter(Boolean);
+    next[section].excludedTypes = [...card.querySelectorAll('[data-social-share-type]:not(:checked)')].map(input => input.dataset.socialShareType).filter(Boolean);
     if ('hiddenItemIds' in next[section]) {
       const candidates = socialShareCandidates(section);
       const candidateIds = new Set(candidates.map(item => item.id));
@@ -13273,7 +13345,7 @@ function readSocialShareSettingsEditor() {
       const preservedHidden = (socialState.shareSettings?.[section]?.hiddenItemIds || []).filter(id => !candidateIds.has(id));
       next[section].hiddenItemIds = [...new Set([
         ...preservedHidden,
-        ...candidates.filter(item => next[section].types.includes(item.type) && !visibleIds.has(item.id)).map(item => item.id)
+        ...candidates.filter(item => !next[section].excludedTypes.includes(item.type) && !visibleIds.has(item.id)).map(item => item.id)
       ])];
     }
   });
@@ -13297,13 +13369,6 @@ async function saveSocialProfileSettings(event) {
     return;
   }
   const shareSettings = readSocialShareSettingsEditor();
-  for (const section of Object.keys(SOCIAL_SHARE_SECTION_META)) {
-    const prefs = shareSettings[section];
-    if (prefs.enabled && prefs.types.length === 0) {
-      setSocialProfileSettingsMessage(`Choose at least one type for ${SOCIAL_SHARE_SECTION_META[section].label}, or turn that section off.`, true);
-      return;
-    }
-  }
   setSocialProfileSettingsMessage('Saving…');
   const update = {
     user_id: currentUser.id,
@@ -13333,16 +13398,33 @@ function socialProfileInitial(profile) {
   return String(profile?.display_name || profile?.username || '?').trim().slice(0,1).toUpperCase() || '?';
 }
 
+function socialProfileWindowPosterMarkup(item) {
+  const rating = Number(item?.rating || 0);
+  return `<span class="social-window-poster">
+    ${item?.image ? `<img src="${escapeAttr(item.image)}" alt="" loading="lazy" />` : `<span class="social-window-poster-text">${escapeHtml(item?.title || 'Untitled')}</span>`}
+    ${item?.recommended ? '<span class="social-window-heart" aria-hidden="true">♥</span>' : ''}
+    ${rating > 0 ? `<span class="social-window-rating">★ ${escapeHtml(formatPersonalRating(rating))}</span>` : ''}
+  </span>`;
+}
+
 function socialProfileCardMarkup(profile, snapshot = null, relation = null) {
-  const totals = snapshot?.payload?.totals || snapshot?.totals || [];
-  const totalText = totals.slice(0,3).map(entry => `${entry.count} ${String(entry.label || '').toLowerCase()}`).join(' · ');
+  const payload = snapshot?.payload || snapshot || {};
+  const totals = payload.totals || [];
+  const sections = payload.sections || {};
+  const previewEntries = (sections.recommended?.length ? sections.recommended : sections.library || []).slice(0, 7);
+  const previewLabel = sections.recommended?.length ? 'Recommended' : 'Library';
+  const totalText = totals.slice(0,4).map(entry => `${entry.count} ${String(entry.label || '').toLowerCase()}`).join(' · ');
   const relationButton = profile.user_id === currentUser?.id ? '' : socialFollowButtonMarkup(profile, relation);
-  return `<article class="social-profile-card" data-social-profile-id="${escapeAttr(profile.user_id)}">
-    <button class="social-profile-card-main" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}">
-      <span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span>
-      <span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}${profile.is_private ? ' · private' : ''}</small>${totalText ? `<em>${escapeHtml(totalText)}</em>` : ''}</span>
-    </button>
-    ${relationButton}
+  const hasSnapshot = Boolean(snapshot);
+  return `<article class="social-profile-card${hasSnapshot ? ' social-profile-library-window' : ''}" data-social-profile-id="${escapeAttr(profile.user_id)}">
+    <div class="social-profile-card-head">
+      <button class="social-profile-card-main" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}">
+        <span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span>
+        <span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}${profile.is_private ? ' · private' : ''}</small>${totalText ? `<em>${escapeHtml(totalText)}</em>` : ''}</span>
+      </button>
+      ${relationButton}
+    </div>
+    ${hasSnapshot ? `<button class="social-library-window-preview" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-library-window-label">${escapeHtml(previewLabel)}</span><span class="social-library-window-posters">${previewEntries.length ? previewEntries.map(socialProfileWindowPosterMarkup).join('') : '<span class="social-library-window-empty">No shared items yet</span>'}</span><span class="social-library-window-open">Open profile →</span></button>` : ''}
   </article>`;
 }
 
@@ -13423,6 +13505,29 @@ async function handleSocialPeopleSearch(event) {
 }
 
 async function handleSocialActionClick(event) {
+  const viewMode = event.target.closest('[data-social-profile-view-mode]');
+  if (viewMode) {
+    const userId = viewMode.dataset.socialProfileId || currentUser?.id || '';
+    socialState.profileViewModes.set(userId, viewMode.dataset.socialProfileViewMode === 'recommended' ? 'recommended' : 'all');
+    rerenderSocialProfileView(userId);
+    return;
+  }
+  const expand = event.target.closest('[data-social-library-expand]');
+  if (expand) {
+    const userId = expand.dataset.socialProfileId || currentUser?.id || '';
+    const key = expand.dataset.socialLibraryExpand || '';
+    const expanded = socialProfileExpandedSet(userId);
+    if (expanded.has(key)) expanded.delete(key); else expanded.add(key);
+    rerenderSocialProfileView(userId);
+    return;
+  }
+  const carousel = event.target.closest('[data-social-library-carousel]');
+  if (carousel) {
+    const shelf = carousel.closest('.social-library-shelf, .social-profile-secondary-shelf');
+    const grid = shelf?.querySelector('.library-poster-grid:not(.is-expanded)');
+    if (grid) grid.scrollBy({ left: (carousel.dataset.socialLibraryCarousel === 'prev' ? -1 : 1) * Math.max(260, grid.clientWidth * .75), behavior: 'smooth' });
+    return;
+  }
   const view = event.target.closest('[data-social-view-profile]');
   if (view) { await openSocialProfileView(view.dataset.socialViewProfile); return; }
   const follow = event.target.closest('[data-social-follow]');
@@ -13485,9 +13590,127 @@ async function openSocialProfileView(userId, openModal = true) {
   if (profileResult.error) throw profileResult.error;
   const profile = profileResult.data;
   const snapshot = snapshotResult.error ? null : snapshotResult.data;
+  socialState.viewedProfile = { profile, snapshot: snapshot?.payload || null, relation };
   const body = $('#socialViewProfileBody');
   if (body) body.innerHTML = socialProfileViewMarkup(profile, snapshot?.payload || null, relation, false);
   if (openModal) showDialogAtTop($('#socialViewProfileModal'));
+}
+
+function socialProfileExpandedSet(userId) {
+  const key = String(userId || 'self');
+  if (!socialState.profileExpandedGroups.has(key)) socialState.profileExpandedGroups.set(key, new Set());
+  return socialState.profileExpandedGroups.get(key);
+}
+
+function socialProfileViewMode(userId, payload) {
+  const available = payload?.sections || {};
+  const sharing = payload?.sharing || {};
+  const recommendedAvailable = sharing.recommended ?? Boolean(available.recommended?.length);
+  const libraryAvailable = sharing.library ?? Boolean(available.library?.length);
+  const saved = socialState.profileViewModes.get(String(userId || 'self'));
+  if (saved === 'recommended' && recommendedAvailable) return 'recommended';
+  if (saved === 'all' && libraryAvailable) return 'all';
+  if (libraryAvailable) return 'all';
+  if (recommendedAvailable) return 'recommended';
+  return 'all';
+}
+
+function socialProfileItemGroupKey(item) {
+  return item?.libraryGroup || slugifyType(item?.typeLabel || item?.type || 'Other');
+}
+
+function socialProfileItemGroupLabel(items, key) {
+  return items?.find(item => item.libraryGroupLabel)?.libraryGroupLabel || items?.find(item => item.typeLabel)?.typeLabel || socialTypeLabel(key);
+}
+
+function socialLibraryPosterMarkup(item) {
+  const rating = Math.max(0, Math.min(5, Number(item?.rating || 0)));
+  const subcategory = cleanTypeLabel(item?.subcategory || '');
+  const statusLabel = cleanTypeLabel(item?.statusLabel || '');
+  const hasImage = Boolean(String(item?.image || '').trim());
+  const people = Array.isArray(item?.people) ? item.people.filter(Boolean) : [];
+  const recommendedBadge = item?.recommended ? '<span class="library-recommended-badge" aria-label="Recommended" title="Recommended">♥</span>' : '';
+  const subcategoryBadge = subcategory ? `<span class="library-subcategory-badge" title="${escapeAttr(subcategory)}">${escapeHtml(subcategory)}</span>` : '';
+  const statusBadge = statusLabel ? `<span class="library-disposition-badge social-library-status-badge ${escapeAttr(item.statusKey || '')}">${escapeHtml(statusLabel)}</span>` : '';
+  const ratingBadge = rating > 0 ? `<span class="library-rating-badge">★ ${escapeHtml(formatPersonalRating(rating))}</span>` : '';
+  const progressBadge = item?.progress ? `<span class="social-library-progress-badge">${escapeHtml(item.progress)}</span>` : '';
+  const peopleBadge = people.length ? `<span class="social-library-people-badge">with ${escapeHtml(people.join(', '))}</span>` : '';
+  if (hasImage) {
+    return `<article class="library-poster-button social-library-poster" title="${escapeAttr([item.title, item.subtitle, rating ? `${formatPersonalRating(rating)}/5` : '', item.progress || '', people.length ? `with ${people.join(', ')}` : ''].filter(Boolean).join(' · '))}"><img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title || '')}" loading="lazy" />${recommendedBadge}${subcategoryBadge}${statusBadge}${ratingBadge}${progressBadge}${peopleBadge}</article>`;
+  }
+  return `<article class="library-poster-button library-text-card-button social-library-poster"><span class="library-text-card">${recommendedBadge}${subcategoryBadge}${statusBadge}<strong class="library-text-card-title">${escapeHtml(item?.title || 'Untitled')}</strong>${item?.subtitle ? `<span class="social-library-text-subtitle">${escapeHtml(item.subtitle)}</span>` : ''}${rating > 0 ? `<span class="library-text-card-rating">★ ${escapeHtml(formatPersonalRating(rating))} / 5</span>` : ''}${item?.progress ? `<span class="social-library-text-meta">${escapeHtml(item.progress)}</span>` : ''}${people.length ? `<span class="social-library-text-meta">with ${escapeHtml(people.join(', '))}</span>` : ''}</span></article>`;
+}
+
+function socialLibrarySubgroups(items) {
+  const sourceType = items?.[0]?.sourceType || '';
+  if ((sourceType === 'tv' || sourceType === 'book') && items.some(item => item.statusLabel)) {
+    const map = new Map();
+    for (const item of items) {
+      const label = item.statusLabel || 'Other';
+      if (!map.has(label)) map.set(label, []);
+      map.get(label).push(item);
+    }
+    return [...map.entries()];
+  }
+  if (items.some(item => cleanTypeLabel(item.subcategory || ''))) {
+    const map = new Map();
+    for (const item of items) {
+      const label = cleanTypeLabel(item.subcategory || '') || 'General';
+      if (!map.has(label)) map.set(label, []);
+      map.get(label).push(item);
+    }
+    const preferred = ['Album','Artist','Song','Concert','General'];
+    return [...map.entries()].sort(([a],[b]) => {
+      const ai = preferred.indexOf(a), bi = preferred.indexOf(b);
+      if (ai >= 0 || bi >= 0) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi) || a.localeCompare(b);
+      return a.localeCompare(b);
+    });
+  }
+  return [];
+}
+
+function socialLibraryShelfMarkup(groupKey, items, profileId, scope = 'library') {
+  const expansionKey = `${scope}:${groupKey}`;
+  const expanded = socialProfileExpandedSet(profileId).has(expansionKey);
+  const label = socialProfileItemGroupLabel(items, groupKey);
+  const subgroups = expanded ? socialLibrarySubgroups(items) : [];
+  const controls = `<div class="library-shelf-controls">${expanded ? '' : `<button class="library-carousel-button" type="button" data-social-library-carousel="prev" aria-label="Scroll ${escapeAttr(label)} left">‹</button><button class="library-carousel-button" type="button" data-social-library-carousel="next" aria-label="Scroll ${escapeAttr(label)} right">›</button>`}<button class="library-expand-button" type="button" data-social-library-expand="${escapeAttr(expansionKey)}" data-social-profile-id="${escapeAttr(profileId)}">${expanded ? 'Collapse' : 'View all'}</button></div>`;
+  let content = '';
+  if (expanded && subgroups.length) {
+    content = `<div class="tv-library-status-groups library-subcategory-groups">${subgroups.map(([subLabel, subItems]) => `<section class="tv-library-status-group library-subcategory-group is-expanded"><div class="tv-library-status-heading library-subcategory-heading"><div><h3 class="tv-library-status-title">${escapeHtml(subLabel)}</h3><span class="library-group-count">${subItems.length}</span></div></div><div class="library-poster-grid is-expanded">${subItems.map(socialLibraryPosterMarkup).join('')}</div></section>`).join('')}</div>`;
+  } else {
+    content = `<div class="library-poster-grid${expanded ? ' is-expanded' : ''}">${items.map(socialLibraryPosterMarkup).join('')}</div>`;
+  }
+  return `<section class="library-group library-shelf social-library-shelf${expanded ? ' is-expanded' : ' is-collapsed'}" data-social-library-group="${escapeAttr(groupKey)}"><div class="library-group-heading-row"><div class="library-group-title-wrap"><h2 class="library-group-title">${escapeHtml(label)}</h2><span class="library-group-count">${items.length}</span></div>${controls}</div>${content}</section>`;
+}
+
+function socialLibraryBrowserMarkup(profileId, payload) {
+  const sections = payload?.sections || {};
+  const recommended = sections.recommended || [];
+  const all = sections.library || [];
+  const sharing = payload?.sharing || {};
+  const recommendedAvailable = sharing.recommended ?? Boolean(recommended.length);
+  const libraryAvailable = sharing.library ?? Boolean(all.length);
+  if (!recommendedAvailable && !libraryAvailable) return '';
+  const mode = socialProfileViewMode(profileId, payload);
+  const entries = mode === 'recommended' ? recommended : all;
+  const tabs = recommendedAvailable && libraryAvailable ? `<div class="library-folder-tabs social-library-folder-tabs" role="tablist" aria-label="Shared library"><button class="library-folder-tab${mode === 'all' ? ' is-active' : ''}" type="button" data-social-profile-view-mode="all" data-social-profile-id="${escapeAttr(profileId)}" aria-selected="${mode === 'all'}">All</button><button class="library-folder-tab${mode === 'recommended' ? ' is-active' : ''}" type="button" data-social-profile-view-mode="recommended" data-social-profile-id="${escapeAttr(profileId)}" aria-selected="${mode === 'recommended'}">Recommended</button></div>` : '';
+  const grouped = new Map();
+  for (const item of entries) {
+    const key = socialProfileItemGroupKey(item);
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(item);
+  }
+  const shelves = [...grouped.entries()].sort((a,b) => socialProfileItemGroupLabel(a[1],a[0]).localeCompare(socialProfileItemGroupLabel(b[1],b[0]))).map(([key,items]) => socialLibraryShelfMarkup(key, items, profileId, mode)).join('');
+  const empty = entries.length ? '' : `<p class="empty-state">Nothing shared in ${mode === 'recommended' ? 'Recommended' : 'Library'}.</p>`;
+  return `<section class="social-profile-library-browser"><div class="social-profile-library-heading"><h3>Library</h3>${tabs}</div><div class="social-profile-library-groups">${shelves || empty}</div></section>`;
+}
+
+function socialSecondaryShelfMarkup(title, entries, profileId, scope) {
+  if (!entries?.length) return '';
+  const key = `${scope}:root`;
+  const expanded = socialProfileExpandedSet(profileId).has(key);
+  return `<section class="social-profile-secondary-shelf library-shelf${expanded ? ' is-expanded' : ''}"><div class="library-group-heading-row"><div class="library-group-title-wrap"><h2 class="library-group-title">${escapeHtml(title)}</h2><span class="library-group-count">${entries.length}</span></div><div class="library-shelf-controls">${expanded ? '' : `<button class="library-carousel-button" type="button" data-social-library-carousel="prev">‹</button><button class="library-carousel-button" type="button" data-social-library-carousel="next">›</button>`}<button class="library-expand-button" type="button" data-social-library-expand="${escapeAttr(key)}" data-social-profile-id="${escapeAttr(profileId)}">${expanded ? 'Collapse' : 'View all'}</button></div></div><div class="library-poster-grid${expanded ? ' is-expanded' : ''}">${entries.map(socialLibraryPosterMarkup).join('')}</div></section>`;
 }
 
 function socialProfileViewMarkup(profile, snapshot, relation = null, isSelf = false) {
@@ -13495,31 +13718,44 @@ function socialProfileViewMarkup(profile, snapshot, relation = null, isSelf = fa
   const payload = snapshot || { totals: [], sections: {} };
   const sections = payload.sections || {};
   const canSee = Boolean(snapshot) || isSelf;
+  const profileId = profile.user_id || currentUser?.id || 'self';
   const followButton = isSelf ? '<button class="secondary-button" type="button" data-social-open-settings>Profile & sharing</button>' : socialFollowButtonMarkup(profile, relation);
   const totals = payload.totals || [];
   const totalMarkup = totals.length ? `<div class="social-total-grid">${totals.map(total => `<div class="social-total-card"><strong>${Number(total.count || 0)}</strong><span>${escapeHtml(total.label || total.type)} tracked</span></div>`).join('')}</div>` : '';
   const privateMessage = !canSee && profile.is_private ? '<p class="social-private-message">This profile is private. Follow to see the sections they choose to share.</p>' : '';
-  const sectionMarkup = canSee ? ['recommended','upnext','ratings','streaks','library'].map(section => socialSharedSectionMarkup(section, sections[section] || [])).join('') : '';
-  return `<div class="social-profile-hero"><span class="social-avatar social-avatar-large">${escapeHtml(socialProfileInitial(profile))}</span><div><h2>${escapeHtml(profile.display_name || profile.username)}</h2><p>@${escapeHtml(profile.username)}${profile.is_private ? ' · private' : ''}</p>${profile.bio ? `<div class="social-profile-bio">${escapeHtml(profile.bio)}</div>` : ''}</div><div class="social-profile-hero-action">${followButton}</div></div>${privateMessage}${totalMarkup}${sectionMarkup}`;
+  const streakMarkup = canSee ? socialSharedSectionMarkup('streaks', sections.streaks || []) : '';
+  const upNextMarkup = canSee ? socialSecondaryShelfMarkup('Up Next', sections.upnext || [], profileId, 'upnext') : '';
+  const ratingOnly = canSee ? (sections.ratings || []).filter(item => !(sections.library || []).some(lib => lib.key === item.key) && !(sections.recommended || []).some(rec => rec.key === item.key)) : [];
+  const ratingMarkup = canSee ? socialSecondaryShelfMarkup('Ratings', ratingOnly, profileId, 'ratings') : '';
+  const libraryMarkup = canSee ? socialLibraryBrowserMarkup(profileId, payload) : '';
+  return `<div class="social-profile-hero"><span class="social-avatar social-avatar-large">${escapeHtml(socialProfileInitial(profile))}</span><div><h2>${escapeHtml(profile.display_name || profile.username)}</h2><p>@${escapeHtml(profile.username)}${profile.is_private ? ' · private' : ''}</p>${profile.bio ? `<div class="social-profile-bio">${escapeHtml(profile.bio)}</div>` : ''}</div><div class="social-profile-hero-action">${followButton}</div></div>${privateMessage}${totalMarkup}${streakMarkup}${upNextMarkup}${ratingMarkup}${libraryMarkup}`;
 }
 
 function socialSharedSectionMarkup(section, entries) {
   const meta = SOCIAL_SHARE_SECTION_META[section];
   if (!meta || !entries?.length) return '';
   if (section === 'streaks') {
-    return `<section class="social-shared-section"><h3>${escapeHtml(meta.label)}</h3><div class="social-streak-grid">${entries.map(entry => `<div class="social-streak-card"><strong>${Number(entry.count || 0)}</strong><span>${escapeHtml(entry.label)} streak</span></div>`).join('')}</div></section>`;
+    return `<section class="social-shared-section social-shared-streaks"><div class="social-shared-section-heading"><h3>${escapeHtml(meta.label)}</h3></div><div class="social-streak-grid">${entries.map(entry => `<div class="social-streak-card"><strong>${Number(entry.count || 0)}</strong><span>${escapeHtml(entry.label)} streak${entry.restToday ? ' · rest day' : ''}</span></div>`).join('')}</div></section>`;
   }
   return `<section class="social-shared-section"><h3>${escapeHtml(meta.label)}</h3><div class="social-item-grid">${entries.map(entry => socialSharedItemMarkup(entry, section)).join('')}</div></section>`;
 }
 
 function socialSharedItemMarkup(item, section) {
   const meta = [];
-  if (section === 'ratings' && Number(item.rating || 0)) meta.push(`${Number(item.rating).toFixed(Number(item.rating) % 1 ? 1 : 0)}★`);
-  if (section === 'upnext' && item.progress) meta.push(item.progress);
+  if (Number(item.rating || 0)) meta.push(`${Number(item.rating).toFixed(Number(item.rating) % 1 ? 1 : 0)}★`);
+  if (item.progress) meta.push(item.progress);
   if (item.typeLabel) meta.push(item.typeLabel);
   const people = Array.isArray(item.people) ? item.people.filter(Boolean) : [];
   const withMarkup = people.length ? `<span class="social-item-with">with ${escapeHtml(people.join(', '))}</span>` : '';
   return `<article class="social-item-card">${item.image ? `<img src="${escapeAttr(item.image)}" alt="" />` : '<div class="social-item-card-placeholder"></div>'}<div><strong>${escapeHtml(item.title || 'Untitled')}</strong>${item.subtitle ? `<small>${escapeHtml(item.subtitle)}</small>` : ''}${withMarkup}${meta.length ? `<em>${escapeHtml(meta.join(' · '))}</em>` : ''}</div></article>`;
+}
+
+function rerenderSocialProfileView(userId) {
+  const id = String(userId || '');
+  if (socialState.viewedProfile?.profile?.user_id === id && $('#socialViewProfileModal')?.open) {
+    $('#socialViewProfileBody').innerHTML = socialProfileViewMarkup(socialState.viewedProfile.profile, socialState.viewedProfile.snapshot, socialState.viewedProfile.relation, false);
+  }
+  if (id === currentUser?.id) renderSocialMyProfile();
 }
 
 function renderSocialMyProfile() {

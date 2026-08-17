@@ -50,3 +50,8 @@ Buddy Watch is shared progress/status, not synchronized streaming playback.
 - Invite an accepted social connection.
 - Each member has their own progress row and update history.
 - Buddy Watch progress does not write into the other member's private Library/history.
+
+
+## Current profile UI
+
+The social snapshot is version 3. Profiles now render shared content with Omni Library-style shelves and an All/Recommended toggle. Streak sharing lists only Track streaks that are actually enabled. These changes use the existing JSON snapshot columns and do not require another SQL migration after the original social setup. See `SOCIAL_LIBRARY_PROFILE_UPDATE.md`.
