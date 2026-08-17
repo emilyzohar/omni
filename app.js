@@ -2559,7 +2559,25 @@ function renderGenrePie(genres = []) {
   const overflow = genres.slice(9);
   if (overflow.length) visible.push({ label:'Other', count:overflow.reduce((sum,entry) => sum + entry[1],0), labels:overflow.map(entry => entry[0]) });
   const total = visible.reduce((sum,entry) => sum + entry.count,0) || 1;
-  const palette = ['#720014','#8b99ca','#97280c','#80916d','#c98598','#c8b9df','#c59315','#586a7d','#8a6a4f','#6d725f'];
+const genreColors = {
+  Romance: '#f77390',
+  Crime: '#65151B',
+  Horror: '#17151D',
+  Comedy: '#EFD98B',
+  Drama: '#907bb9',
+  Thriller: '#405463',
+  Mystery: '#4D4566',
+  Action: '#B95032',
+  Adventure: '#355F7C',
+  Fantasy: '#79558F',
+  'Science Fiction': '#2F6870',
+  Documentary: '#61795D',
+  Animation: '#C97891',
+  Family: '#99AA65',
+  History: '#8F6246',
+  'Other': '#aaa9a9' 
+};
+
   let angle = -Math.PI / 2;
   const paths = visible.map((entry,index) => {
     const next = angle + (entry.count / total) * Math.PI * 2;
