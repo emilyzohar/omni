@@ -2520,17 +2520,33 @@ async function enrichWatchedTVHorrorThrillerGenres() {
 
   await Promise.allSettled(watchedTV.map(async item => {
     let keywords = [];
+    let details = null;
     try {
-      keywords = await getCached(`tmdb:stats-keywords:tv:${item.providerId}`, () => TrackerAPI.getTMDBItemKeywords('tv', item.providerId, state.settings));
+      [keywords, details] = await Promise.all([
+        getCached(`tmdb:stats-keywords:tv:${item.providerId}`, () => TrackerAPI.getTMDBItemKeywords('tv', item.providerId, state.settings)),
+        getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings))
+      ]);
     } catch {
       return;
     }
     const keywordIds = new Set((keywords || []).map(keyword => String(keyword.id || '')).filter(Boolean));
     const genres = new Set((item.genres || []).map(value => String(value || '').trim()).filter(Boolean));
-    const before = genres.size;
+    const before = [...genres].sort().join('|');
+
+    // TMDB's TV genre list includes Reality explicitly. Merge the current official
+    // genres even when an older saved item already has a partially populated list.
+    for (const genre of details?.genres || []) {
+      const name = String(genre?.name || '').trim();
+      if (name) genres.add(name);
+    }
+
+    // Horror and Thriller are not official TMDB TV genres, so supplement them
+    // from keywords while preserving the official genres above (including Reality).
     if ([...horrorSet].some(id => keywordIds.has(id))) genres.add('Horror');
     if ([...thrillerSet].some(id => keywordIds.has(id))) genres.add('Thriller');
-    if (genres.size !== before) {
+
+    const after = [...genres].sort().join('|');
+    if (after !== before) {
       item.genres = [...genres];
       changed = true;
     }
@@ -2698,7 +2714,7 @@ function renderGenrePie(genres = []) {
     Comedy: '#669bbc',
     Crime: '#c1121f',
     Documentary: '#2C4251',
-    Drama: '#003049',
+    Drama: '#031D44',
     Family: '#21A179',
     Fantasy: '#297373',
     History: '#595A4A',
@@ -2706,7 +2722,7 @@ function renderGenrePie(genres = []) {
     Mystery: '#67597A',
     Romance: '#780000',
     'Science Fiction': '#A09BE7',
-    Thriller: '#031D44', 
+    Thriller: '#003049', 
     War: '#6d7480',
     Western: '#9c7450',
     'TV Movie': '#8fa8bc',
@@ -9418,6 +9434,7 @@ const DISCOVER_GENRES = [
   { value: 'philosophy', label: 'Philosophy', tmdb: [], keywords: ['philosophy'], book: ['philosophy'] },
   { value: 'psychology', label: 'Psychology', tmdb: [], keywords: ['psychology'], book: ['psychology'] },
   { value: 'romance', label: 'Romance', tmdb: ['Romance'], keywords: ['romance'], book: ['romance'] },
+  { value: 'reality', label: 'Reality', tmdb: ['Reality'], keywords: ['reality television', 'reality tv'], book: [] },
   { value: 'science', label: 'Science', tmdb: [], keywords: ['science'], book: ['science'] },
   { value: 'science-fiction', label: 'Science Fiction', tmdb: ['Science Fiction', 'Sci-Fi & Fantasy'], keywords: ['science fiction'], book: ['science fiction'] },
   { value: 'thriller', label: 'Thriller', tmdb: ['Thriller'], keywords: ['thriller', 'suspense', 'psychological thriller', 'crime thriller'], book: ['thriller', 'suspense'] }
@@ -14794,9 +14811,10 @@ function refreshTypeFilter() {
       <span>${escapeHtml(label)}</span>
     </label>`).join('');
   els.typeFilterOptions.innerHTML = `${options}
-    <div class="library-type-filter-actions" aria-label="Filter defaults">
+    <div class="library-type-filter-actions" aria-label="Type options">
       <button type="button" data-library-filter-action="save-default">Make current default</button>
       <button type="button" data-library-filter-action="reset-default">Reset default</button>
+      <button type="button" data-library-filter-action="cleanup-unused">Clean up unused types</button>
       <small class="library-type-filter-status" aria-live="polite"></small>
     </div>`;
   if (els.typeFilterSummary) els.typeFilterSummary.textContent = libraryTypeFilterSummary();
@@ -14836,6 +14854,93 @@ function resetLibraryFilterDefault() {
   libraryFilterStatus('Default reset');
 }
 
+function unusedCustomTypeEntries() {
+  const custom = Array.isArray(state.customTypes) ? state.customTypes : [];
+  return custom.filter(entry => {
+    const type = String(entry?.type || '').trim();
+    const labelKey = slugifyType(entry?.label || getTypeLabel(type));
+    if (!type) return false;
+    const itemUsesType = state.items.some(item => {
+      if (String(item?.type || '') === type) return true;
+      return labelKey && slugifyType(getItemTypeLabel(item)) === labelKey;
+    });
+    if (itemUsesType) return false;
+    const historyUsesType = state.history.some(record => {
+      if (String(record?.type || '') === type) return true;
+      return labelKey && slugifyType(record?.typeLabel || getTypeLabel(record?.type || '')) === labelKey;
+    });
+    return !historyUsesType;
+  });
+}
+
+function cleanupUnusedCustomTypes() {
+  const unused = unusedCustomTypeEntries();
+  if (!unused.length) {
+    libraryFilterStatus('No unused types');
+    return;
+  }
+
+  const labels = unused.map(entry => cleanTypeLabel(entry.label || getTypeLabel(entry.type)) || entry.type);
+  const preview = labels.slice(0, 10).join(', ');
+  const remaining = labels.length > 10 ? `, +${labels.length - 10} more` : '';
+  const message = `Remove ${labels.length} unused ${labels.length === 1 ? 'type' : 'types'}?\n\n${preview}${remaining}\n\nNo Library items or tracked history will be deleted.`;
+  if (!confirm(message)) return;
+
+  const removedTypes = new Set(unused.map(entry => String(entry.type || '').trim()).filter(Boolean));
+  const removedGroupKeys = new Set(unused.map(entry => slugifyType(entry.label || getTypeLabel(entry.type))).filter(Boolean));
+
+  state.customTypes = (state.customTypes || []).filter(entry => !removedTypes.has(String(entry?.type || '').trim()));
+
+  const survivingGroupKeys = new Set();
+  Object.keys(TYPE_LABELS).forEach(type => survivingGroupKeys.add(slugifyType(getTypeLabel(type))));
+  for (const entry of state.customTypes) survivingGroupKeys.add(slugifyType(entry.label || getTypeLabel(entry.type)));
+  for (const item of state.items) survivingGroupKeys.add(slugifyType(getItemTypeLabel(item)));
+  for (const record of state.history) survivingGroupKeys.add(slugifyType(record.typeLabel || getTypeLabel(record.type || '')));
+
+  state.typeUsage = { ...(state.typeUsage || {}) };
+  for (const type of removedTypes) {
+    delete state.typeUsage[`custom:${type}`];
+    delete state.typeUsage[type];
+    delete state.typeUsage[`builtin:${type}`];
+  }
+
+  const nextStickerPrefs = { ...(state.stickerPrefs || {}) };
+  for (const key of Object.keys(nextStickerPrefs)) {
+    if (key === '__calendar') continue;
+    if ([...removedTypes].some(type => key === type || key.startsWith(`${type}::subcategory::`))) delete nextStickerPrefs[key];
+  }
+  state.stickerPrefs = nextStickerPrefs;
+
+  const nextStreakPrefs = { ...(state.streakPrefs || {}) };
+  for (const type of removedTypes) delete nextStreakPrefs[type];
+  for (const key of removedGroupKeys) if (!survivingGroupKeys.has(key)) delete nextStreakPrefs[key];
+  state.streakPrefs = nextStreakPrefs;
+
+  const prefs = normalizeLibraryPrefs(state.libraryPrefs);
+  if (Array.isArray(prefs.defaultTypeKeys)) {
+    prefs.defaultTypeKeys = prefs.defaultTypeKeys.filter(key => !removedGroupKeys.has(key) || survivingGroupKeys.has(key));
+  }
+  state.libraryPrefs = prefs;
+  if (state.libraryVisibleTypes instanceof Set) {
+    for (const key of removedGroupKeys) if (!survivingGroupKeys.has(key)) state.libraryVisibleTypes.delete(key);
+  }
+
+  safeLocalSet(CUSTOM_TYPES_KEY, state.customTypes);
+  safeLocalSet(TYPE_USAGE_KEY, state.typeUsage);
+  safeLocalSet(STICKER_PREFS_KEY, state.stickerPrefs);
+  safeLocalSet(STREAK_PREFS_KEY, state.streakPrefs);
+  safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
+  scheduleCloudSync();
+
+  refreshItemTypeOptions?.();
+  refreshItemKindChoices?.('', els.itemActionChoice?.value || 'other');
+  refreshTypeFilter();
+  renderLibrary();
+  if (els.trackerGrid) renderTracker();
+  if (els.trackStreakSummary) renderTrackStreakSummary();
+  libraryFilterStatus(`${labels.length} unused ${labels.length === 1 ? 'type' : 'types'} removed`);
+}
+
 function handleLibraryTypeFilterAction(event) {
   const button = event.target.closest?.('[data-library-filter-action]');
   if (!button) return;
@@ -14843,6 +14948,7 @@ function handleLibraryTypeFilterAction(event) {
   event.stopPropagation();
   if (button.dataset.libraryFilterAction === 'save-default') saveCurrentLibraryFilterAsDefault();
   if (button.dataset.libraryFilterAction === 'reset-default') resetLibraryFilterDefault();
+  if (button.dataset.libraryFilterAction === 'cleanup-unused') cleanupUnusedCustomTypes();
 }
 
 function renderLibraryDefaultTypeOptions(selectedKeys = new Set(libraryDefaultTypeKeys())) {
