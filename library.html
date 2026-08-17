@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-collections-29" />
+  <link rel="stylesheet" href="style.css?v=omni-rewatch-onboarding-35" />
 </head>
 <body class="library-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -83,7 +83,6 @@
                 <span class="sr-only">Search Library</span>
                 <input id="librarySearch" type="search" autocomplete="off" placeholder="Search Library…" />
               </label>
-              <button id="openLibraryMap" class="library-map-button library-icon-button" type="button" aria-label="View places on map" title="Map">⌖</button>
               <button id="openLibraryAdd" class="library-add-button library-icon-button" type="button" aria-label="Add item" title="Add item">+</button>
             </div>
             <div class="library-filter-row">
@@ -98,7 +97,7 @@
                 <button class="library-folder-tab is-active" type="button" data-library-view="all" role="tab" aria-selected="true">All</button>
                 <button class="library-folder-tab" type="button" data-library-view="recommended" role="tab" aria-selected="false">Recommended</button>
               </div>
-              <button id="openLibrarySettings" class="library-settings-button library-icon-button" type="button" aria-label="Library display settings" title="Library settings"><span class="text-gear-icon" aria-hidden="true">⚙︎</span></button>
+              <button id="openLibraryMap" class="library-map-button library-icon-button" type="button" aria-label="View places on map" title="View places on map">⌖</button>
               <label class="filter-control library-sort-control">
                 <span>Sort</span>
                 <select id="librarySort">
@@ -127,25 +126,6 @@
       </div>
     </section>
   </main>
-
-  <!-- LIBRARY DISPLAY SETTINGS -->
-  <dialog id="librarySettingsModal" class="modal small-modal library-settings-modal">
-    <button class="modal-x" type="button" data-close="librarySettingsModal" aria-label="Close">×</button>
-    <div class="modal-heading">
-      <p class="modal-eyebrow">LIBRARY</p>
-      <h2>Default visible types</h2>
-    </div>
-    <form id="librarySettingsForm" class="settings-form">
-      <div id="libraryDefaultTypeOptions" class="library-default-type-options"></div>
-      <div class="modal-actions">
-        <button id="resetLibraryDefaults" class="quiet-button" type="button">Movie, TV &amp; Book</button>
-        <div class="actions-right">
-          <button class="quiet-button" type="button" data-close="librarySettingsModal">Cancel</button>
-          <button class="primary-button" type="submit">Save defaults</button>
-        </div>
-      </div>
-    </form>
-  </dialog>
 
   <!-- TRACK SETTINGS -->
   <dialog id="stickerSettingsModal" class="modal sticker-settings-modal track-settings-modal">
@@ -668,6 +648,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-collections-29"></script>
+  <script type="module" src="app.js?v=omni-rewatch-onboarding-35"></script>
 </body>
 </html>

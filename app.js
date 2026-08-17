@@ -1,4 +1,4 @@
-import { TrackerAPI } from './api.js?v=omni-collections-29';
+import { TrackerAPI } from './api.js?v=omni-library-stats-30';
 import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
@@ -14,6 +14,7 @@ const ALBUMS_KEY = 'zoharTracker.albums.v1';
 const TYPE_USAGE_KEY = 'zoharTracker.typeUsage.v1';
 const PHOTO_UPLOAD_LOG_KEY = 'zoharTracker.photoUploadLog.v1';
 const ONBOARDING_KEY = 'zoharTracker.onboarding.v1';
+const ONBOARDING_STEP_KEY = 'zoharTracker.onboardingStep.v2';
 const PHOTO_WEEKLY_LIMIT = 20;
 const ATTACHMENT_DB_NAME = 'zoharTracker.attachments.v1';
 const ATTACHMENT_STORE_NAME = 'files';
@@ -571,9 +572,16 @@ async function handleAuthSubmit(event) {
         return;
       }
 
-      if (data.user?.id) localStorage.setItem(`${ONBOARDING_KEY}.${data.user.id}`, 'pending');
+      if (data.user?.id) {
+        localStorage.setItem(`${ONBOARDING_KEY}.${data.user.id}`, 'pending');
+        localStorage.setItem(`${ONBOARDING_STEP_KEY}.${data.user.id}`, '0');
+      }
       if (data.session?.user) {
-        await startForUser(data.session.user);
+        // New accounts always begin onboarding from Home, regardless of which
+        // page the account was created on. The tour then intentionally moves
+        // between pages and persists its step in localStorage.
+        window.location.assign('index.html');
+        return;
       } else if (data.user) {
         setAuthMessage('Account created. Check your email for the confirmation link, then return here and sign in.', false);
       } else {
@@ -635,6 +643,13 @@ async function handleSignOut() {
 
 async function startForUser(user) {
   if (!user || currentUser?.id === user.id) return;
+  const onboardingPending = localStorage.getItem(`${ONBOARDING_KEY}.${user.id}`) === 'pending';
+  const onboardingStep = Number(localStorage.getItem(`${ONBOARDING_STEP_KEY}.${user.id}`) || 0);
+  const pageName = String(window.location.pathname || '').split('/').pop() || 'index.html';
+  if (onboardingPending && onboardingStep <= 0 && pageName !== 'index.html') {
+    window.location.assign('index.html');
+    return;
+  }
   currentUser = user;
   if (els.userEmail) els.userEmail.textContent = user.email || '';
   setAuthMessage('Loading your profile…', false);
@@ -643,8 +658,8 @@ async function startForUser(user) {
     await hydrateCloudProfile(user.id);
     unlockApp();
     startAppOnce();
-    maybeShowOnboarding(user);
     initializeSocialForUser().catch(error => console.warn('[Social] background initialization failed:', error));
+    maybeShowOnboarding(user);
     setSyncStatus('Synced');
     window.addEventListener('focus', refreshCloudProfile);
     document.addEventListener('visibilitychange', () => {
@@ -657,36 +672,284 @@ async function startForUser(user) {
   }
 }
 
-function ensureOnboardingModal() {
-  let modal = $('#onboardingModal');
+function onboardingStatusKey(userId) {
+  return `${ONBOARDING_KEY}.${userId}`;
+}
+
+function onboardingStepKey(userId) {
+  return `${ONBOARDING_STEP_KEY}.${userId}`;
+}
+
+function onboardingStep(user = currentUser) {
+  if (!user?.id) return 0;
+  return Math.max(0, Number(localStorage.getItem(onboardingStepKey(user.id)) || 0));
+}
+
+function setOnboardingStep(step, user = currentUser) {
+  if (!user?.id) return;
+  localStorage.setItem(onboardingStepKey(user.id), String(Math.max(0, Number(step) || 0)));
+}
+
+function finishOnboarding(user = currentUser) {
+  if (!user?.id) return;
+  localStorage.setItem(onboardingStatusKey(user.id), 'done');
+  localStorage.removeItem(onboardingStepKey(user.id));
+  clearOnboardingGuide();
+  const modal = $('#onboardingColorModal');
+  if (modal?.open) modal.close();
+}
+
+function validCalendarThemeId(themeId) {
+  return CALENDAR_THEMES.some(theme => theme.id === themeId) ? themeId : 'blue';
+}
+
+function setCalendarThemeNow(themeId) {
+  const valid = validCalendarThemeId(themeId);
+  const current = state.stickerPrefs && typeof state.stickerPrefs === 'object' ? state.stickerPrefs : {};
+  state.stickerPrefs = {
+    ...current,
+    __calendar: { ...(current.__calendar || {}), theme: valid }
+  };
+  safeLocalSet(STICKER_PREFS_KEY, state.stickerPrefs);
+  calendarThemeDraft = valid;
+  applyCalendarTheme(valid);
+  renderCalendarThemePicker();
+  if (els.trackerGrid && els.monthPicker?.value) renderTracker();
+  scheduleCloudSync();
+  scheduleSocialSnapshotPublish(100);
+  return valid;
+}
+
+function ensureOnboardingColorModal() {
+  let modal = $('#onboardingColorModal');
   if (modal) return modal;
   modal = document.createElement('dialog');
-  modal.id = 'onboardingModal';
-  modal.className = 'modal small-modal onboarding-modal';
-  modal.innerHTML = `<div class="onboarding-pages"><section data-onboarding-page="0"><p class="modal-eyebrow">WELCOME</p><h2>Omni</h2><p>Add what you watch, read, do, visit, or want to remember.</p></section><section data-onboarding-page="1" hidden><h2>Add</h2><p>Use +. Pick a type, or make your own. Find it can pull details from the source you choose.</p></section><section data-onboarding-page="2" hidden><h2>Track</h2><p>Log progress and dates. Your calendar, Library, and Stats update together.</p></section><section data-onboarding-page="3" hidden><h2>Discover + Social</h2><p>Browse Discover, follow people, and use Buddy Watch when you want to stay in sync.</p></section></div><div class="onboarding-dots" aria-hidden="true"></div><div class="modal-actions"><button id="onboardingSkip" class="quiet-button" type="button">Skip</button><div class="actions-right"><button id="onboardingNext" class="primary-button" type="button">Next</button></div></div>`;
+  modal.id = 'onboardingColorModal';
+  modal.className = 'modal small-modal onboarding-color-modal';
+  modal.innerHTML = `<div class="modal-heading"><p class="modal-eyebrow">WELCOME TO OMNI</p><h2>Pick your colour</h2><p class="onboarding-color-copy">This sets your Track calendar and your profile colour. You can change it later in Track settings.</p></div><div class="onboarding-color-picker" role="radiogroup" aria-label="Choose your Omni colour"></div><div class="modal-actions"><button class="quiet-button" type="button" data-onboarding-skip>Skip tour</button><div class="actions-right"><button class="primary-button" type="button" data-onboarding-colour-continue>Continue</button></div></div>`;
   document.body.appendChild(modal);
-  let page = 0;
-  const show = next => {
-    page = Math.max(0, Math.min(3, next));
-    modal.querySelectorAll('[data-onboarding-page]').forEach(section => section.hidden = Number(section.dataset.onboardingPage) !== page);
-    modal.querySelector('.onboarding-dots').textContent = '•'.repeat(page + 1) + '○'.repeat(3 - page);
-    modal.querySelector('#onboardingNext').textContent = page === 3 ? 'Done' : 'Next';
+  const picker = modal.querySelector('.onboarding-color-picker');
+  const render = () => {
+    const selected = savedCalendarThemeId();
+    picker.innerHTML = CALENDAR_THEMES.map(theme => `<button class="onboarding-color-choice${selected === theme.id ? ' is-selected' : ''}" type="button" role="radio" aria-checked="${selected === theme.id ? 'true' : 'false'}" data-onboarding-theme="${escapeAttr(theme.id)}"><span class="onboarding-color-dot" data-theme-dot="${escapeAttr(theme.id)}" aria-hidden="true"></span><span>${escapeHtml(theme.label)}</span></button>`).join('');
   };
-  const finish = () => {
-    if (currentUser?.id) localStorage.setItem(`${ONBOARDING_KEY}.${currentUser.id}`, 'done');
+  picker.addEventListener('click', event => {
+    const button = event.target.closest('[data-onboarding-theme]');
+    if (!button) return;
+    setCalendarThemeNow(button.dataset.onboardingTheme || 'blue');
+    render();
+  });
+  modal.querySelector('[data-onboarding-colour-continue]').addEventListener('click', () => {
+    setOnboardingStep(1);
     modal.close();
-  };
-  modal.querySelector('#onboardingSkip').addEventListener('click', finish);
-  modal.querySelector('#onboardingNext').addEventListener('click', () => page === 3 ? finish() : show(page + 1));
-  modal.addEventListener('close', () => { if (currentUser?.id) localStorage.setItem(`${ONBOARDING_KEY}.${currentUser.id}`, 'done'); });
-  show(0);
+    showOnboardingGuideStep();
+  });
+  modal.querySelector('[data-onboarding-skip]').addEventListener('click', () => finishOnboarding());
+  modal.addEventListener('cancel', event => event.preventDefault());
+  render();
   return modal;
+}
+
+let onboardingGuideCleanup = null;
+
+function clearOnboardingGuide() {
+  if (typeof onboardingGuideCleanup === 'function') onboardingGuideCleanup();
+  onboardingGuideCleanup = null;
+  document.querySelectorAll('.onboarding-target').forEach(node => node.classList.remove('onboarding-target'));
+  $('#onboardingGuide')?.remove();
+}
+
+function currentPageName() {
+  return String(window.location.pathname || '').split('/').pop() || 'index.html';
+}
+
+function onboardingTargetFor(selector) {
+  try { return document.querySelector(selector); } catch { return null; }
+}
+
+function positionOnboardingGuide(guide, target) {
+  if (!guide || !target) return;
+  const rect = target.getBoundingClientRect();
+  const gap = 14;
+  const width = Math.min(330, Math.max(260, window.innerWidth - 28));
+  guide.style.width = `${width}px`;
+  guide.style.left = `${Math.max(14, Math.min(window.innerWidth - width - 14, rect.left + rect.width / 2 - width / 2))}px`;
+  const guideHeight = guide.offsetHeight || 160;
+  const roomBelow = window.innerHeight - rect.bottom;
+  const top = roomBelow >= guideHeight + gap
+    ? rect.bottom + gap
+    : Math.max(14, rect.top - guideHeight - gap);
+  guide.style.top = `${Math.max(14, Math.min(window.innerHeight - guideHeight - 14, top))}px`;
+}
+
+function showOnboardingGuide({ target, eyebrow = 'GETTING STARTED', title, body, actionLabel = '', onAction = null, waitForClick = false }) {
+  clearOnboardingGuide();
+  if (!target) return false;
+  target.classList.add('onboarding-target');
+  target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+
+  const guide = document.createElement('aside');
+  guide.id = 'onboardingGuide';
+  guide.className = 'onboarding-guide';
+  guide.setAttribute('role', 'dialog');
+  guide.setAttribute('aria-live', 'polite');
+  guide.innerHTML = `<p class="modal-eyebrow">${escapeHtml(eyebrow)}</p><h3>${escapeHtml(title)}</h3><p>${escapeHtml(body)}</p><div class="onboarding-guide-actions"><button class="quiet-button" type="button" data-onboarding-guide-skip>Skip tour</button>${actionLabel ? `<button class="primary-button" type="button" data-onboarding-guide-action>${escapeHtml(actionLabel)}</button>` : ''}</div>${waitForClick ? '<p class="onboarding-wait-note">Use the highlighted control to continue.</p>' : ''}`;
+  document.body.appendChild(guide);
+
+  const reposition = () => positionOnboardingGuide(guide, target);
+  const timer = setTimeout(reposition, 280);
+  requestAnimationFrame(reposition);
+  window.addEventListener('resize', reposition);
+  window.addEventListener('scroll', reposition, true);
+
+  const cleanup = () => {
+    clearTimeout(timer);
+    window.removeEventListener('resize', reposition);
+    window.removeEventListener('scroll', reposition, true);
+    target.classList.remove('onboarding-target');
+    guide.remove();
+  };
+  onboardingGuideCleanup = cleanup;
+
+  guide.querySelector('[data-onboarding-guide-skip]')?.addEventListener('click', () => finishOnboarding());
+  if (actionLabel && typeof onAction === 'function') {
+    guide.querySelector('[data-onboarding-guide-action]')?.addEventListener('click', onAction);
+  }
+  return true;
+}
+
+function routeOnboardingClick(target, nextStep) {
+  if (!target) return;
+  const handler = () => {
+    setOnboardingStep(nextStep);
+    clearOnboardingGuide();
+  };
+  target.addEventListener('click', handler, { once: true, capture: true });
+  const previousCleanup = onboardingGuideCleanup;
+  onboardingGuideCleanup = () => {
+    target.removeEventListener('click', handler, { capture: true });
+    if (typeof previousCleanup === 'function') previousCleanup();
+  };
+}
+
+function closeItemModalForTour() {
+  if (els.itemModal?.open) els.itemModal.close();
+}
+
+function showOnboardingGuideStep(user = currentUser) {
+  if (!user?.id || localStorage.getItem(onboardingStatusKey(user.id)) !== 'pending') return;
+  const step = onboardingStep(user);
+  const page = currentPageName();
+
+  if (step <= 0) {
+    if (page !== 'index.html') { window.location.assign('index.html'); return; }
+    requestAnimationFrame(() => showDialogAtTop(ensureOnboardingColorModal()));
+    return;
+  }
+
+  if (step === 1) {
+    if (page !== 'index.html') { window.location.assign('index.html'); return; }
+    const target = onboardingTargetFor('#openAddModal');
+    if (showOnboardingGuide({ target, title: 'Add something', body: 'Press + to open Add. Omni starts with a small “I…” choice so you only see the options that fit.', waitForClick: true })) {
+      routeOnboardingClick(target, 2);
+      target.addEventListener('click', () => setTimeout(() => showOnboardingGuideStep(user), 180), { once: true });
+    }
+    return;
+  }
+
+  if (step === 2) {
+    if (page !== 'index.html') { window.location.assign('index.html'); return; }
+    if (!els.itemModal?.open) { openItemModal(); }
+    setTimeout(() => {
+      const target = onboardingTargetFor('#itemActionChoice') || onboardingTargetFor('#itemForm');
+      showOnboardingGuide({
+        target,
+        title: 'Add stays contextual',
+        body: 'Choose what you did, then what it was. Search, progress, dates, notes, and other features only appear when they are useful.',
+        actionLabel: 'Continue',
+        onAction: () => { closeItemModalForTour(); setOnboardingStep(3); showOnboardingGuideStep(user); }
+      });
+    }, 80);
+    return;
+  }
+
+  if (step === 3) {
+    if (page !== 'index.html') { window.location.assign('index.html'); return; }
+    const target = onboardingTargetFor('#track');
+    showOnboardingGuide({
+      target,
+      title: 'Track is your history',
+      body: 'Anything you log appears here. Use the + to log directly from the calendar, and the gear later if you want to change rows, stickers, or colour.',
+      actionLabel: 'Next',
+      onAction: () => { setOnboardingStep(4); showOnboardingGuideStep(user); }
+    });
+    return;
+  }
+
+  if (step === 4) {
+    if (page !== 'index.html') { window.location.assign('index.html'); return; }
+    const target = onboardingTargetFor('.site-header a[href="library.html"]');
+    if (showOnboardingGuide({ target, title: 'Go to Library', body: 'Library is where everything you have saved or completed lives. Press Library.', waitForClick: true })) routeOnboardingClick(target, 5);
+    return;
+  }
+
+  if (step === 5) {
+    if (page !== 'library.html') { window.location.assign('library.html'); return; }
+    const target = onboardingTargetFor('.library-controls') || onboardingTargetFor('#library');
+    showOnboardingGuide({
+      target,
+      title: 'Browse your Library',
+      body: 'Search, select multiple Types, sort, or open saved Places on the map. Stats below are clickable too.',
+      actionLabel: 'Next',
+      onAction: () => { setOnboardingStep(6); showOnboardingGuideStep(user); }
+    });
+    return;
+  }
+
+  if (step === 6) {
+    if (page !== 'library.html') { window.location.assign('library.html'); return; }
+    const target = onboardingTargetFor('.site-header a[href="discover.html"]');
+    if (showOnboardingGuide({ target, title: 'Try Discover', body: 'Press Discover to browse things you might want to track next.', waitForClick: true })) routeOnboardingClick(target, 7);
+    return;
+  }
+
+  if (step === 7) {
+    if (page !== 'discover.html') { window.location.assign('discover.html'); return; }
+    const target = onboardingTargetFor('#discover');
+    showOnboardingGuide({
+      target,
+      title: 'Discover from here',
+      body: 'Open a card for details, add it to a queue or Library, and use the filters when you want to narrow the feed.',
+      actionLabel: 'Next',
+      onAction: () => { setOnboardingStep(8); showOnboardingGuideStep(user); }
+    });
+    return;
+  }
+
+  if (step === 8) {
+    if (page !== 'discover.html') { window.location.assign('discover.html'); return; }
+    const target = onboardingTargetFor('.site-header a[href="social.html"]');
+    if (showOnboardingGuide({ target, title: 'Finish in Social', body: 'Press Social to see your feed, people you follow, and your own profile.', waitForClick: true })) routeOnboardingClick(target, 9);
+    return;
+  }
+
+  if (step >= 9) {
+    if (page !== 'social.html') { window.location.assign('social.html'); return; }
+    const target = onboardingTargetFor('.social-tabs') || onboardingTargetFor('#socialRoot');
+    showOnboardingGuide({
+      target,
+      title: 'You are set',
+      body: 'Feed shows recent activity from people you follow. Profile controls what you share. Your profile colour follows the Track colour you chose.',
+      actionLabel: 'Finish',
+      onAction: () => finishOnboarding(user)
+    });
+  }
 }
 
 function maybeShowOnboarding(user = currentUser) {
   if (!user?.id) return;
-  if (localStorage.getItem(`${ONBOARDING_KEY}.${user.id}`) !== 'pending') return;
-  requestAnimationFrame(() => showDialogAtTop(ensureOnboardingModal()));
+  if (localStorage.getItem(onboardingStatusKey(user.id)) !== 'pending') return;
+  requestAnimationFrame(() => showOnboardingGuideStep(user));
 }
 
 function startAppOnce() {
@@ -1263,6 +1526,7 @@ function bindEvents() {
     if (els.upNextList && state.queueView === 'tbr') renderUpNext();
   });
   els.typeFilterOptions?.addEventListener('change', handleLibraryTypeFilterChange);
+  els.typeFilterOptions?.addEventListener('click', handleLibraryTypeFilterAction);
   els.librarySort?.addEventListener('change', renderLibrary);
   els.librarySearch?.addEventListener('input', () => { state.librarySearchQuery = els.librarySearch.value || ''; renderLibrary(); });
   els.openLibrarySettings?.addEventListener('click', openLibrarySettings);
@@ -1274,6 +1538,14 @@ function bindEvents() {
   els.libraryGroups?.addEventListener('click', handleLibraryClick);
   els.openAlbumCreate?.addEventListener('click', () => openAlbumEditor());
   els.albumsGrid?.addEventListener('click', handleAlbumsClick);
+  els.statsTypes?.addEventListener('click', handleStatsBreakdownClick);
+  els.statsGenres?.addEventListener('click', handleStatsBreakdownClick);
+  els.statsGenres?.addEventListener('keydown', event => {
+    const slice = event.target.closest?.('[data-stats-genre-list]');
+    if (!slice || !['Enter',' '].includes(event.key)) return;
+    event.preventDefault();
+    slice.click();
+  });
   els.openLibraryMap?.addEventListener('click', () => openLibraryMap().catch(error => alert(error?.message || 'Could not load map.')));
   els.refreshDiscover?.addEventListener('click', () => renderDiscover(true));
   els.discoverCalendarPrevious?.addEventListener('click', () => shiftDiscoverCalendarMonth(-1));
@@ -1836,6 +2108,35 @@ function renderAlbums() {
 }
 
 let albumEditorSelectedIds = new Set();
+let albumEditorTypeFilters = new Set();
+let albumEditorSort = 'recent';
+
+function albumAvailableTypeGroups() {
+  const groups = new Map();
+  for (const item of state.items) {
+    const key = libraryTypeGroupKey(item);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  return [...groups.entries()]
+    .map(([key, items]) => ({ key, label: libraryTypeGroupLabel(items, key), count: items.length }))
+    .sort((a,b) => a.label.localeCompare(b.label));
+}
+
+function renderAlbumTypeFilterOptions() {
+  const modal = $('#albumEditorModal');
+  const options = $('#albumTypeFilterOptions');
+  const summary = $('#albumTypeFilterSummary');
+  if (!modal || !options || !summary) return;
+  const groups = albumAvailableTypeGroups();
+  const available = new Set(groups.map(group => group.key));
+  albumEditorTypeFilters = new Set([...albumEditorTypeFilters].filter(key => available.has(key)));
+  if (!albumEditorTypeFilters.size && groups.length) albumEditorTypeFilters = new Set(groups.map(group => group.key));
+  options.innerHTML = groups.map(group => `<label><input type="checkbox" value="${escapeAttr(group.key)}" ${albumEditorTypeFilters.has(group.key) ? 'checked' : ''} /> <span>${escapeHtml(group.label)}</span><small>${group.count}</small></label>`).join('');
+  summary.textContent = albumEditorTypeFilters.size === groups.length
+    ? 'All types'
+    : groups.filter(group => albumEditorTypeFilters.has(group.key)).map(group => group.label).slice(0,3).join(', ') + (albumEditorTypeFilters.size > 3 ? ` +${albumEditorTypeFilters.size - 3}` : '');
+}
 
 function ensureAlbumEditorModal() {
   let modal = $('#albumEditorModal');
@@ -1849,7 +2150,14 @@ function ensureAlbumEditorModal() {
       <input id="albumEditingId" type="hidden"/>
       <label class="field"><span>Name</span><input id="albumName" type="text" maxlength="80" required/></label>
       <div class="album-picker-tools album-library-tools">
-        <input id="albumItemSearch" type="search" autocomplete="off" placeholder="Search your Library" />
+        <input id="albumItemSearch" type="search" autocomplete="off" placeholder="Search your Library" aria-label="Search your Library" />
+        <div class="album-library-filter-row">
+          <details id="albumTypeFilter" class="library-type-filter album-type-filter">
+            <summary id="albumTypeFilterSummary">All types</summary>
+            <div id="albumTypeFilterOptions" class="library-type-options album-type-options" role="group" aria-label="Collection item types"></div>
+          </details>
+          <label class="album-sort-control"><span>Sort</span><select id="albumSort" aria-label="Sort collection Library"><option value="recent">Recent</option><option value="rating">Rating</option></select></label>
+        </div>
       </div>
       <div id="albumSelectedSummary" class="album-selected-summary"></div>
       <div id="albumItemChoices" class="album-library-browser"></div>
@@ -1859,6 +2167,22 @@ function ensureAlbumEditorModal() {
   document.body.appendChild(modal);
   modal.querySelector('[data-close="albumEditorModal"]')?.addEventListener('click', () => modal.close());
   modal.querySelector('#albumItemSearch')?.addEventListener('input', renderAlbumItemChoices);
+  modal.querySelector('#albumSort')?.addEventListener('change', event => {
+    albumEditorSort = event.target.value === 'rating' ? 'rating' : 'recent';
+    renderAlbumItemChoices();
+  });
+  modal.querySelector('#albumTypeFilterOptions')?.addEventListener('change', event => {
+    const input = event.target.closest('input[type="checkbox"][value]');
+    if (!input) return;
+    if (input.checked) albumEditorTypeFilters.add(input.value);
+    else albumEditorTypeFilters.delete(input.value);
+    if (!albumEditorTypeFilters.size) {
+      input.checked = true;
+      albumEditorTypeFilters.add(input.value);
+    }
+    renderAlbumTypeFilterOptions();
+    renderAlbumItemChoices();
+  });
   modal.querySelector('#albumItemChoices')?.addEventListener('change', event => {
     if (!event.target.matches('[data-album-item]')) return;
     if (event.target.checked) albumEditorSelectedIds.add(event.target.value);
@@ -1921,6 +2245,7 @@ function renderAlbumItemChoices() {
   const checkedIds = albumEditorSelectedIds;
   const filtered = state.items
     .slice()
+    .filter(item => albumEditorTypeFilters.has(libraryTypeGroupKey(item)))
     .filter(item => !search || normalizeSearchText([item.title, item.subtitle, getItemTypeLabel(item), item.subcategory, ...(item.genres || [])].filter(Boolean).join(' ')).includes(search));
 
   const grouped = new Map();
@@ -1932,7 +2257,15 @@ function renderAlbumItemChoices() {
   for (const items of grouped.values()) items.sort((a,b) => {
     const aSelected = checkedIds.has(a.id) ? 1 : 0;
     const bSelected = checkedIds.has(b.id) ? 1 : 0;
-    return bSelected - aSelected || String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''));
+    if (aSelected !== bSelected) return bSelected - aSelected;
+    if (albumEditorSort === 'rating') {
+      return Number(b.rating || 0) - Number(a.rating || 0)
+        || String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''))
+        || String(a.title || '').localeCompare(String(b.title || ''));
+    }
+    return String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''))
+      || Number(b.rating || 0) - Number(a.rating || 0)
+      || String(a.title || '').localeCompare(String(b.title || ''));
   });
 
   const groups = [...grouped.entries()].sort((a,b) => libraryTypeGroupLabel(a[1], a[0]).localeCompare(libraryTypeGroupLabel(b[1], b[0])));
@@ -1957,6 +2290,10 @@ function openAlbumEditor(id = '', preselectItemId = '') {
   albumEditorSelectedIds = new Set(album?.itemIds || []);
   if (!album && preselectItemId && findItem(preselectItemId)) albumEditorSelectedIds.add(preselectItemId);
   $('#albumItemSearch').value = '';
+  albumEditorSort = 'recent';
+  $('#albumSort').value = albumEditorSort;
+  albumEditorTypeFilters = new Set(albumAvailableTypeGroups().map(group => group.key));
+  renderAlbumTypeFilterOptions();
   renderAlbumItemChoices();
   showDialogAtTop(modal);
 }
@@ -2141,6 +2478,106 @@ async function estimatedWatchMinutes() {
   return total;
 }
 
+function statsGenreItems(labels = []) {
+  const wanted = new Set((labels || []).map(value => cleanTypeLabel(value).toLowerCase()).filter(Boolean));
+  if (!wanted.size) return [];
+  return state.items.filter(item => watchedTitleHasConsumption(item) && (item.genres || []).some(genre => {
+    const label = cleanTypeLabel(typeof genre === 'string' ? genre : genre?.name || '').toLowerCase();
+    return wanted.has(label);
+  }));
+}
+
+function statsPiePath(cx, cy, radius, startAngle, endAngle) {
+  const sweep = endAngle - startAngle;
+  if (sweep >= Math.PI * 2 - 0.0001) {
+    return `M ${cx} ${cy-radius} A ${radius} ${radius} 0 1 1 ${cx} ${cy+radius} A ${radius} ${radius} 0 1 1 ${cx} ${cy-radius} Z`;
+  }
+  const startX = cx + radius * Math.cos(startAngle);
+  const startY = cy + radius * Math.sin(startAngle);
+  const endX = cx + radius * Math.cos(endAngle);
+  const endY = cy + radius * Math.sin(endAngle);
+  const largeArc = sweep > Math.PI ? 1 : 0;
+  return `M ${cx} ${cy} L ${startX.toFixed(3)} ${startY.toFixed(3)} A ${radius} ${radius} 0 ${largeArc} 1 ${endX.toFixed(3)} ${endY.toFixed(3)} Z`;
+}
+
+function renderGenrePie(genres = []) {
+  if (!els.statsGenres) return;
+  if (!genres.length) {
+    els.statsGenres.innerHTML = '<p class="empty-state">No watched genres yet.</p>';
+    return;
+  }
+  const visible = genres.slice(0, 9).map(([label,count]) => ({ label, count, labels:[label] }));
+  const overflow = genres.slice(9);
+  if (overflow.length) visible.push({ label:'Other', count:overflow.reduce((sum,entry) => sum + entry[1],0), labels:overflow.map(entry => entry[0]) });
+  const total = visible.reduce((sum,entry) => sum + entry.count,0) || 1;
+  const palette = ['#720014','#8b99ca','#97280c','#80916d','#c98598','#c8b9df','#c59315','#586a7d','#8a6a4f','#6d725f'];
+  let angle = -Math.PI / 2;
+  const paths = visible.map((entry,index) => {
+    const next = angle + (entry.count / total) * Math.PI * 2;
+    const d = statsPiePath(100,100,82,angle,next);
+    angle = next;
+    const encoded = escapeAttr(JSON.stringify(entry.labels));
+    return `<path class="stats-genre-slice" d="${d}" fill="${palette[index % palette.length]}" tabindex="0" role="button" data-stats-genre-list="${encoded}" aria-label="${escapeAttr(`${entry.label}: ${entry.count}`)}"><title>${escapeHtml(entry.label)} · ${entry.count}</title></path>`;
+  }).join('');
+  const legend = visible.map((entry,index) => `<button class="stats-genre-legend-row" type="button" data-stats-genre-list="${escapeAttr(JSON.stringify(entry.labels))}"><span class="stats-genre-swatch" style="--genre-color:${palette[index % palette.length]}"></span><span>${escapeHtml(entry.label)}</span><strong>${entry.count}</strong></button>`).join('');
+  els.statsGenres.innerHTML = `<div class="stats-genre-pie-layout"><svg class="stats-genre-pie" viewBox="0 0 200 200" role="img" aria-label="Genres watched pie chart">${paths}</svg><div class="stats-genre-legend">${legend}</div></div>`;
+}
+
+function ensureStatsCatalogueModal() {
+  let modal = $('#statsCatalogueModal');
+  if (modal) return modal;
+  modal = document.createElement('dialog');
+  modal.id = 'statsCatalogueModal';
+  modal.className = 'modal stats-catalogue-modal';
+  modal.innerHTML = `<button class="modal-x" type="button" data-close="statsCatalogueModal" aria-label="Close">×</button><div class="modal-heading"><h2 id="statsCatalogueTitle">Library</h2><p id="statsCatalogueCount"></p></div><div id="statsCatalogueGrid" class="library-poster-grid is-expanded stats-catalogue-grid"></div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('[data-close="statsCatalogueModal"]')?.addEventListener('click', () => modal.close());
+  modal.addEventListener('click', event => {
+    const addCollection = event.target.closest('[data-library-add-album]');
+    if (addCollection) {
+      event.preventDefault();
+      event.stopPropagation();
+      openLibraryAddToAlbum(addCollection.dataset.libraryAddAlbum);
+      return;
+    }
+    const open = event.target.closest('[data-details-id]');
+    if (open) {
+      modal.close();
+      openDetails(open.dataset.detailsId);
+    }
+  });
+  return modal;
+}
+
+function openStatsCatalogue(title, items = []) {
+  const modal = ensureStatsCatalogueModal();
+  const unique = [...new Map((items || []).map(item => [item.id,item])).values()];
+  $('#statsCatalogueTitle').textContent = title || 'Library';
+  $('#statsCatalogueCount').textContent = `${unique.length} ${unique.length === 1 ? 'item' : 'items'}`;
+  const grid = $('#statsCatalogueGrid');
+  grid.innerHTML = '';
+  for (const item of unique) grid.appendChild(makeLibraryPoster(item));
+  if (!unique.length) grid.innerHTML = '<p class="empty-state">No items.</p>';
+  showDialogAtTop(modal);
+}
+
+function handleStatsBreakdownClick(event) {
+  const typeButton = event.target.closest('[data-stats-type-key]');
+  if (typeButton) {
+    const key = typeButton.dataset.statsTypeKey || '';
+    const items = state.items.filter(item => libraryTypeGroupKey(item) === key);
+    openStatsCatalogue(typeButton.dataset.statsLabel || libraryTypeGroupLabel(items,key), items);
+    return;
+  }
+  const genreTarget = event.target.closest('[data-stats-genre-list]');
+  if (genreTarget) {
+    let labels = [];
+    try { labels = JSON.parse(genreTarget.dataset.statsGenreList || '[]'); } catch {}
+    const title = labels.length === 1 ? labels[0] : 'Other genres';
+    openStatsCatalogue(title, statsGenreItems(labels));
+  }
+}
+
 async function renderStats() {
   if (!els.statsSummary) return;
   const now = new Date();
@@ -2157,15 +2594,18 @@ async function renderStats() {
     ['Library', state.items.length], ['Last 30 days', logged30], ['Average rating', avg ? avg.toFixed(1) : '—'], ['Rewatches / rereads', repeats], ['Watch hours', '…']
   ].map(([label,value]) => `<div class="stat-card"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`).join('');
   if (els.statsTypes) {
-    const counts = new Map();
-    state.items.forEach(item => counts.set(getItemTypeLabel(item), (counts.get(getItemTypeLabel(item)) || 0) + 1));
-    els.statsTypes.innerHTML = [...counts.entries()].sort((a,b) => b[1]-a[1]).slice(0,12).map(([label,count]) => `<div class="stat-type-row"><span>${escapeHtml(label)}</span><strong>${count}</strong></div>`).join('');
+    const groups = new Map();
+    state.items.forEach(item => {
+      const key = libraryTypeGroupKey(item);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(item);
+    });
+    els.statsTypes.innerHTML = [...groups.entries()]
+      .map(([key,items]) => ({ key, items, label:libraryTypeGroupLabel(items,key) }))
+      .sort((a,b) => b.items.length - a.items.length || a.label.localeCompare(b.label))
+      .map(group => `<button class="stat-type-row" type="button" data-stats-type-key="${escapeAttr(group.key)}" data-stats-label="${escapeAttr(group.label)}"><span>${escapeHtml(group.label)}</span><strong>${group.items.length}</strong></button>`).join('');
   }
-  if (els.statsGenres) {
-    els.statsGenres.innerHTML = genres.length
-      ? genres.slice(0,16).map(([label,count]) => `<div class="stat-type-row"><span>${escapeHtml(label)}</span><strong>${count}</strong></div>`).join('')
-      : '<p class="empty-state">No watched genres yet.</p>';
-  }
+  renderGenrePie(genres);
   const minutes = await estimatedWatchMinutes();
   if (els.statsSummary?.dataset.renderToken !== requestToken) return;
   const hours = minutes > 0 ? `≈ ${(minutes / 60).toFixed(minutes >= 600 ? 0 : 1)} h` : '—';
@@ -2173,12 +2613,7 @@ async function renderStats() {
   const watchCard = cards.find(card => card.querySelector('span')?.textContent === 'Watch hours');
   if (watchCard) watchCard.querySelector('strong').textContent = hours;
   // Runtime lookups can also fill missing genre metadata.
-  if (els.statsGenres) {
-    const refreshedGenres = watchedGenreCounts();
-    els.statsGenres.innerHTML = refreshedGenres.length
-      ? refreshedGenres.slice(0,16).map(([label,count]) => `<div class="stat-type-row"><span>${escapeHtml(label)}</span><strong>${count}</strong></div>`).join('')
-      : '<p class="empty-state">No watched genres yet.</p>';
-  }
+  renderGenrePie(watchedGenreCounts());
 }
 
 function isPlaceBackedItem(item) {
@@ -2200,7 +2635,7 @@ function ensureLibraryMapModal() {
   let modal = $('#libraryMapModal');
   if (modal) return modal;
   modal = document.createElement('dialog'); modal.id = 'libraryMapModal'; modal.className = 'modal library-map-modal';
-  modal.innerHTML = `<button class="modal-x" type="button" data-close="libraryMapModal" aria-label="Close">×</button><div class="modal-heading"><h2 id="libraryMapTitle">Places</h2></div><div id="libraryMapCanvas" class="library-map-canvas"></div><div id="libraryMapList" class="library-map-list"></div>`;
+  modal.innerHTML = `<button class="modal-x" type="button" data-close="libraryMapModal" aria-label="Close">×</button><div class="modal-heading"><h2 id="libraryMapTitle">Places</h2></div><div id="libraryMapLegend" class="library-map-legend" hidden></div><div id="libraryMapCanvas" class="library-map-canvas"></div><div id="libraryMapList" class="library-map-list"></div>`;
   document.body.appendChild(modal);
   modal.querySelector('[data-close="libraryMapModal"]')?.addEventListener('click', () => modal.close());
   return modal;
@@ -2220,13 +2655,35 @@ function loadLeaflet() {
   return leafletPromise;
 }
 
+const LIBRARY_MAP_TYPE_COLORS = ['#720014','#7889c2','#677b53','#97280c','#756091','#b86982','#263852','#9b7513','#5f7284','#8a5f45'];
+
+function libraryMapTypeLabel(item) {
+  return cleanTypeLabel(getItemTypeLabel(item)) || cleanTypeLabel(item?.subcategory || '') || 'Place';
+}
+
+function libraryMapTypeColorMap(items = []) {
+  const labels = [...new Set(items.map(libraryMapTypeLabel).filter(Boolean))].sort((a,b) => a.localeCompare(b));
+  return new Map(labels.map((label,index) => [label, LIBRARY_MAP_TYPE_COLORS[index % LIBRARY_MAP_TYPE_COLORS.length]]));
+}
+
 async function openLibraryMap(groupKey = '', groupLabel = '', subcategory = '') {
   const modal = ensureLibraryMapModal();
   const canvas = $('#libraryMapCanvas'); const list = $('#libraryMapList');
-  const title = $('#libraryMapTitle');
+  const title = $('#libraryMapTitle'); const legend = $('#libraryMapLegend');
   if (title) title.textContent = groupLabel ? `${groupLabel} map` : 'Places';
   const items = state.items.filter(item => isPlaceBackedItem(item) && (!groupKey || libraryTypeGroupKey(item) === groupKey) && (!subcategory || (cleanTypeLabel(item.subcategory || '') || 'General') === subcategory));
-  if (!items.length) { canvas.innerHTML='<p class="empty-state">No saved places.</p>'; list.innerHTML=''; showDialogAtTop(modal); return; }
+  if (!items.length) {
+    canvas.innerHTML='<p class="empty-state">No saved places.</p>'; list.innerHTML='';
+    if (legend) { legend.hidden = true; legend.innerHTML = ''; }
+    showDialogAtTop(modal); return;
+  }
+  const typeColors = libraryMapTypeColorMap(items);
+  if (legend) {
+    if (typeColors.size > 1) {
+      legend.hidden = false;
+      legend.innerHTML = [...typeColors.entries()].map(([label,color]) => `<span class="library-map-legend-item"><i style="--library-pin-color:${color}"></i>${escapeHtml(label)}</span>`).join('');
+    } else { legend.hidden = true; legend.innerHTML = ''; }
+  }
   canvas.innerHTML='<p class="loading-detail">Loading map…</p>'; list.innerHTML=''; showDialogAtTop(modal);
   const details = [];
   for (const item of items) {
@@ -2240,7 +2697,11 @@ async function openLibraryMap(groupKey = '', groupLabel = '', subcategory = '') 
     }
   }
   saveItems();
-  list.innerHTML = details.map(entry => `<button type="button" data-map-open-item="${escapeAttr(entry.item.id)}"><strong>${escapeHtml(entry.item.title)}</strong><span>${entry.item.rating ? `★ ${escapeHtml(formatPersonalRating(entry.item.rating))} · ` : ''}${escapeHtml(entry.formattedAddress || '')}</span></button>`).join('');
+  list.innerHTML = details.map(entry => {
+    const typeLabel = libraryMapTypeLabel(entry.item);
+    const typeColor = typeColors.get(typeLabel) || LIBRARY_MAP_TYPE_COLORS[0];
+    return `<button type="button" data-map-open-item="${escapeAttr(entry.item.id)}"><span class="library-map-list-heading"><i style="--library-pin-color:${typeColor}"></i><strong>${escapeHtml(entry.item.title)}</strong></span><span>${escapeHtml(typeLabel)}${entry.item.rating ? ` · ★ ${escapeHtml(formatPersonalRating(entry.item.rating))}` : ''}${entry.formattedAddress ? ` · ${escapeHtml(entry.formattedAddress)}` : ''}</span></button>`;
+  }).join('');
   list.onclick = event => { const b=event.target.closest('[data-map-open-item]'); if (b) { modal.close(); openDetails(b.dataset.mapOpenItem); } };
   const points = details.filter(entry => Number.isFinite(Number(entry.location?.latitude)) && Number.isFinite(Number(entry.location?.longitude)));
   if (!points.length) { canvas.innerHTML='<p class="empty-state">Saved places do not have map coordinates yet.</p>'; return; }
@@ -2255,13 +2716,15 @@ async function openLibraryMap(groupKey = '', groupLabel = '', subcategory = '') 
     const latlng=[entry.location.latitude,entry.location.longitude];
     bounds.push(latlng);
     const rating = Number(entry.item.rating || 0);
+    const typeLabel = libraryMapTypeLabel(entry.item);
+    const typeColor = typeColors.get(typeLabel) || LIBRARY_MAP_TYPE_COLORS[0];
     const icon = L.divIcon({
       className: 'library-rating-map-marker',
-      html: `<span>${rating ? `★${escapeHtml(formatPersonalRating(rating))}` : '•'}</span>`,
+      html: `<span style="--library-pin-color:${typeColor}" title="${escapeAttr(typeLabel)}">${rating ? `★${escapeHtml(formatPersonalRating(rating))}` : '•'}</span>`,
       iconSize: [42, 28],
       iconAnchor: [21, 14]
     });
-    L.marker(latlng, { icon }).addTo(map).bindPopup(`<strong>${escapeHtml(entry.item.title)}</strong>${rating ? `<br>★ ${escapeHtml(formatPersonalRating(rating))} / 5` : ''}`);
+    L.marker(latlng, { icon }).addTo(map).bindPopup(`<strong>${escapeHtml(entry.item.title)}</strong><br><span>${escapeHtml(typeLabel)}</span>${rating ? `<br>★ ${escapeHtml(formatPersonalRating(rating))} / 5` : ''}`);
   });
   if (bounds.length > 1) map.fitBounds(bounds,{padding:[28,28]});
   setTimeout(()=>map.invalidateSize(),100);
@@ -3609,14 +4072,16 @@ async function applyTVWatchAction(item, action) {
   await renderTVDetails(item);
 }
 
-async function markWholeTVSeriesComplete(item) {
+async function markWholeTVSeriesComplete(item, options = {}) {
   if (!item || getSourceType(item) !== 'tv') return;
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
 
   const activeToken = item.seriesCompletionToken || state.history.find(entry =>
     entry.kind === 'series-watched' && entry.sourceItemId === item.id && entry.bulkCompletionToken
   )?.bulkCompletionToken || '';
 
   if (activeToken) {
+    onProgress?.({ phase: 'undo', completed: 0, total: 1 });
     state.history = state.history.filter(entry => !(
       entry.sourceItemId === item.id &&
       ((entry.kind === 'episode-watched' && entry.bulkCompletionToken === activeToken) || entry.kind === 'series-watched')
@@ -3627,15 +4092,36 @@ async function markWholeTVSeriesComplete(item) {
     saveItems();
     saveHistory();
     renderAll();
+    onProgress?.({ phase: 'done', completed: 1, total: 1 });
     if (els.detailModal?.open && state.openDetailId === item.id) await renderTVDetails(item);
     return;
   }
 
   const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
-  const seasons = (details.seasons || []).filter(season => season.season_number > 0 && season.episode_count > 0);
+  const seasons = (details.seasons || [])
+    .filter(season => Number(season.season_number) > 0 && Number(season.episode_count) > 0)
+    .sort((a,b) => Number(a.season_number) - Number(b.season_number));
+  if (!seasons.length) throw new Error('No seasons were available to mark complete.');
+
+  // Load every season first, in small batches. This makes Discover's series action
+  // much faster than the old sequential loop while avoiding a burst of TMDB calls.
+  // Nothing is written until all requested season data has loaded successfully.
+  const loadedSeasons = [];
+  const batchSize = 4;
+  for (let offset = 0; offset < seasons.length; offset += batchSize) {
+    const batch = seasons.slice(offset, offset + batchSize);
+    const settled = await Promise.allSettled(batch.map(info =>
+      getCached(`season:${item.providerId}:${info.season_number}`, () => TrackerAPI.getTVSeason(item.providerId, info.season_number, state.settings))
+        .then(data => ({ info, data }))
+    ));
+    const failed = settled.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason || new Error('Could not load every season.');
+    loadedSeasons.push(...settled.map(result => result.value));
+    onProgress?.({ phase: 'load', completed: Math.min(offset + batch.length, seasons.length), total: seasons.length });
+  }
+
   const token = `series-${makeId()}`;
-  for (const info of seasons) {
-    const season = await getCached(`season:${item.providerId}:${info.season_number}`, () => TrackerAPI.getTVSeason(item.providerId, info.season_number, state.settings));
+  for (const { info, data: season } of loadedSeasons) {
     for (const episode of (season.episodes || []).filter(ep => Number(ep.episode_number) > 0 && isEpisodeAvailable(ep))) {
       addImportedTVEpisode(item, episode, info.season_number, { bulkCompletionToken: token, bulkCompletionScope: 'series' });
     }
@@ -3654,6 +4140,7 @@ async function markWholeTVSeriesComplete(item) {
   saveItems();
   saveHistory();
   renderAll();
+  onProgress?.({ phase: 'done', completed: seasons.length, total: seasons.length });
   if (els.detailModal?.open && state.openDetailId === item.id) await renderTVDetails(item);
 }
 
@@ -3793,18 +4280,28 @@ function addImportedTVEpisode(item, episode, seasonNumber, metadata = {}) {
 
 async function maybeMarkEarlierTVSeasonsWatched(item, seasonNumber) {
   const missing = await getEarlierUnwatchedTVEpisodes(item, seasonNumber);
-  if (!missing.length) return false;
+  if (!missing.length) return { includedEarlier: false, missingCount: 0 };
 
   const highestPrior = Math.max(...missing.map(entry => entry.seasonNumber));
-  const okay = confirm(
-    `You are marking Season ${seasonNumber} watched. Also mark all previously aired episodes through Season ${highestPrior} as watched?`
+  const includeEarlier = confirm(
+    `You are marking Season ${seasonNumber} watched.\n\n` +
+    `Also mark previously aired episodes through Season ${highestPrior} as watched?\n\n` +
+    `OK = Yes, include earlier seasons.\n` +
+    `Cancel = No, mark only Season ${seasonNumber}. You can still mark any other season or episode manually later.`
   );
-  if (!okay) return false;
+
+  // Declining the backfill never cancels the season the person actually chose.
+  // It also never records a lock/skip flag: every other season and episode stays
+  // independently editable from the TV detail UI afterward.
+  if (!includeEarlier) {
+    showActionFeedback(`Season ${seasonNumber} only — earlier seasons were left unchanged.`);
+    return { includedEarlier: false, missingCount: missing.length };
+  }
 
   for (const { seasonNumber: priorSeasonNumber, episode } of missing) {
     addImportedTVEpisode(item, episode, priorSeasonNumber);
   }
-  return true;
+  return { includedEarlier: true, missingCount: missing.length };
 }
 
 async function markTVSeasonWatched(item, seasonNumber) {
@@ -12142,11 +12639,16 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
     </div>
     ${discoverTVPersonalMetadataMarkup(existing, key)}
     <section class="detail-section streaming-detail"><h3>Streaming</h3><p>${escapeHtml(providerText)}</p>${availability.link ? `<a href="${escapeAttr(availability.link)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}</section>
-    <section class="detail-section" data-tv-watch-picker>
-      <div class="detail-section-heading"><h3>Seasons</h3><span class="discover-history-note compact-note">✓ marks the whole season · → opens episodes</span></div>
-      <p class="discover-history-note">Watched selections here go to Library history only and never create calendar stickers.</p>
-      <div class="season-list season-list-rows">${seasonRows || 'No seasons found.'}</div>
-    </section>
+    <details class="detail-section discover-seasons-details" data-tv-watch-picker>
+      <summary class="discover-seasons-summary">
+        <span>Seasons</span>
+        <small>${seasons.length} season${seasons.length === 1 ? '' : 's'} · tap to browse</small>
+      </summary>
+      <div class="discover-seasons-panel">
+        <p class="discover-history-note">✓ marks the whole season · → opens episodes. Watched selections go to Library history only.</p>
+        <div class="season-list season-list-rows">${seasonRows || 'No seasons found.'}</div>
+      </div>
+    </details>
     <section class="detail-section">
       <h3>Season ${seasonNumber} episodes</h3>
       <div class="episode-list">${episodeRows || 'No episodes found.'}</div>
@@ -12241,19 +12743,29 @@ async function markDiscoverSeriesWatched(key, triggerButton = null) {
   if (triggerButton) {
     triggerButton.disabled = true;
     triggerButton.setAttribute('aria-busy', 'true');
-    triggerButton.textContent = undoing ? 'Undoing series…' : 'Marking series…';
+    triggerButton.dataset.originalLabel = triggerButton.textContent || '';
+    triggerButton.textContent = undoing ? 'Undoing series…' : 'Loading seasons…';
   }
 
   try {
     // Reuse the provenance-aware bulk completion routine so undo removes only
     // episodes added by this bulk action and preserves episodes checked manually.
-    await markWholeTVSeriesComplete(item);
+    await markWholeTVSeriesComplete(item, {
+      onProgress: ({ phase, completed, total }) => {
+        if (!triggerButton?.isConnected) return;
+        if (phase === 'load') triggerButton.textContent = `Loading seasons ${completed}/${total}…`;
+        else if (phase === 'undo') triggerButton.textContent = 'Undoing series…';
+        else if (phase === 'done') triggerButton.textContent = undoing ? 'Series restored' : '✓ Series complete';
+      }
+    });
     renderDiscoverCardInPlace(key);
+    showActionFeedback(undoing ? 'Series completion undone.' : 'Series marked complete.');
     if (els.detailModal?.open && state.openDiscoverKey === key) {
       await renderDiscoverTVDetail(key);
     }
   } catch (error) {
     console.error('Could not update Discover series completion:', error);
+    showActionFeedback(error?.message ? `Could not mark series complete: ${error.message}` : 'Could not mark series complete. Try again.', true);
     if (triggerButton?.isConnected) {
       triggerButton.disabled = false;
       triggerButton.removeAttribute('aria-busy');
@@ -13597,11 +14109,17 @@ function refreshTypeFilter() {
   if (!els.typeFilterOptions) return;
   const selected = ensureLibraryVisibleTypes();
   const groups = libraryAvailableTypeGroups();
-  els.typeFilterOptions.innerHTML = groups.map(([key,label]) => `
+  const options = groups.map(([key,label]) => `
     <label class="library-type-option">
       <input type="checkbox" value="${escapeAttr(key)}" ${selected.has(key) ? 'checked' : ''}>
       <span>${escapeHtml(label)}</span>
     </label>`).join('');
+  els.typeFilterOptions.innerHTML = `${options}
+    <div class="library-type-filter-actions" aria-label="Filter defaults">
+      <button type="button" data-library-filter-action="save-default">Make current default</button>
+      <button type="button" data-library-filter-action="reset-default">Reset default</button>
+      <small class="library-type-filter-status" aria-live="polite"></small>
+    </div>`;
   if (els.typeFilterSummary) els.typeFilterSummary.textContent = libraryTypeFilterSummary();
 }
 
@@ -13611,6 +14129,41 @@ function handleLibraryTypeFilterChange() {
   );
   if (els.typeFilterSummary) els.typeFilterSummary.textContent = libraryTypeFilterSummary();
   renderLibrary();
+}
+
+function libraryFilterStatus(message = '') {
+  const status = els.typeFilterOptions?.querySelector('.library-type-filter-status');
+  if (!status) return;
+  status.textContent = message;
+  if (message) setTimeout(() => { if (status.textContent === message) status.textContent = ''; }, 1800);
+}
+
+function saveCurrentLibraryFilterAsDefault() {
+  const selected = [...ensureLibraryVisibleTypes()];
+  state.libraryPrefs = { ...normalizeLibraryPrefs(state.libraryPrefs), defaultTypeKeys: [...new Set(selected)] };
+  safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
+  scheduleCloudSync();
+  libraryFilterStatus('Default saved');
+}
+
+function resetLibraryFilterDefault() {
+  const core = libraryAvailableTypeGroups().map(([key]) => key).filter(isCoreLibraryGroupKey);
+  state.libraryPrefs = { ...normalizeLibraryPrefs(state.libraryPrefs), defaultTypeKeys: core };
+  state.libraryVisibleTypes = new Set(core);
+  safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
+  scheduleCloudSync();
+  refreshTypeFilter();
+  renderLibrary();
+  libraryFilterStatus('Default reset');
+}
+
+function handleLibraryTypeFilterAction(event) {
+  const button = event.target.closest?.('[data-library-filter-action]');
+  if (!button) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (button.dataset.libraryFilterAction === 'save-default') saveCurrentLibraryFilterAsDefault();
+  if (button.dataset.libraryFilterAction === 'reset-default') resetLibraryFilterDefault();
 }
 
 function renderLibraryDefaultTypeOptions(selectedKeys = new Set(libraryDefaultTypeKeys())) {
@@ -14654,7 +15207,7 @@ const socialState = {
 
 function emptySocialShareSettings() {
   return {
-    profileTheme: 'blue',
+    profileTheme: savedCalendarThemeId(),
     shareWithPeople: false,
     activity: { enabled: true, excludedTypes: [], hiddenItemIds: [] },
     notes: { enabled: true, excludedTypes: [], hiddenItemIds: [] },
@@ -14668,7 +15221,9 @@ function emptySocialShareSettings() {
 
 function normalizeSocialShareSettings(raw = {}) {
   const base = emptySocialShareSettings();
-  base.profileTheme = SOCIAL_PROFILE_THEME_IDS.has(String(raw?.profileTheme || '')) ? String(raw.profileTheme) : 'blue';
+  // Profile colour follows the owner's Track calendar colour. The persisted
+  // field remains for backward compatibility with existing snapshots/settings.
+  base.profileTheme = savedCalendarThemeId();
   base.shareWithPeople = Boolean(raw?.shareWithPeople);
   for (const key of Object.keys(SOCIAL_SHARE_SECTION_META)) {
     const incoming = raw?.[key] && typeof raw[key] === 'object' ? raw[key] : {};
@@ -15054,6 +15609,7 @@ function initSocialPage() {
   $$('.social-tab[data-social-tab]').forEach(tab => tab.addEventListener('click', () => setSocialTab(tab.dataset.socialTab)));
   $('#socialEditProfile')?.addEventListener('click', openSocialProfileSettings);
   $('#socialProfileSettingsForm')?.addEventListener('submit', saveSocialProfileSettings);
+  $('#rewatchOnboardingButton')?.addEventListener('click', restartOnboardingTour);
   $('#socialShareSettings')?.addEventListener('change', handleSocialShareFormChange);
   $('#socialPeopleSearchForm')?.addEventListener('submit', handleSocialPeopleSearch);
   $('#socialPeopleResults')?.addEventListener('click', handleSocialActionClick);
@@ -15139,11 +15695,11 @@ function socialItemChoiceMarkup(item, prefs, section = '') {
   </label>`;
 }
 
-function socialProfileThemePickerMarkup(selectedTheme = 'blue') {
-  const selected = SOCIAL_PROFILE_THEME_IDS.has(selectedTheme) ? selectedTheme : 'blue';
-  return `<article class="social-share-card social-profile-theme-card">
-    <div class="social-share-card-head social-profile-theme-head"><span><strong>Profile background</strong><small>Use the same colour family choices as the Track calendar. The profile stays in Omni's normal Library style.</small></span></div>
-    <div class="social-profile-theme-picker">${CALENDAR_THEMES.map(theme => `<label class="social-profile-theme-choice" data-social-profile-theme-choice="${escapeAttr(theme.id)}"><input type="radio" name="socialProfileTheme" data-social-profile-theme-input value="${escapeAttr(theme.id)}" ${selected === theme.id ? 'checked' : ''} /><span class="social-profile-theme-dot" aria-hidden="true"></span><span>${escapeHtml(theme.label)}</span></label>`).join('')}</div>
+function socialProfileThemePickerMarkup() {
+  const selected = savedCalendarThemeId();
+  const label = CALENDAR_THEMES.find(theme => theme.id === selected)?.label || 'Track colour';
+  return `<article class="social-share-card social-profile-theme-card social-profile-theme-linked">
+    <div class="social-share-card-head social-profile-theme-head"><span><strong>Profile colour</strong><small>Matches your Track calendar automatically.</small></span><span class="social-profile-theme-linked-value"><span class="social-profile-theme-dot" data-social-profile-theme-dot="${escapeAttr(selected)}" aria-hidden="true"></span>${escapeHtml(label)}</span></div>
   </article>`;
 }
 
@@ -15151,7 +15707,7 @@ function renderSocialShareSettingsEditor() {
   const host = $('#socialShareSettings');
   if (!host) return;
   const settings = normalizeSocialShareSettings(socialState.shareSettings);
-  const themeCard = socialProfileThemePickerMarkup(settings.profileTheme);
+  const themeCard = socialProfileThemePickerMarkup();
   const withPeopleCard = `<article class="social-share-card social-with-people-share-card">
     <div class="social-share-card-head">
       <label class="social-share-enable"><input type="checkbox" data-social-share-with-people ${settings.shareWithPeople ? 'checked' : ''} /><span><strong>With people</strong><small>Show the “with” names attached to an item whenever that item is shared elsewhere on your profile.</small></span></label>
@@ -15220,8 +15776,7 @@ function handleSocialShareFormChange(event) {
 
 function readSocialShareSettingsEditor() {
   const next = emptySocialShareSettings();
-  const chosenTheme = $('#socialShareSettings [data-social-profile-theme-input]:checked')?.value || 'blue';
-  next.profileTheme = SOCIAL_PROFILE_THEME_IDS.has(chosenTheme) ? chosenTheme : 'blue';
+  next.profileTheme = savedCalendarThemeId();
   next.shareWithPeople = Boolean($('#socialShareSettings [data-social-share-with-people]')?.checked);
   $$('#socialShareSettings [data-social-share-section]').forEach(card => {
     const section = card.dataset.socialShareSection;
@@ -15286,6 +15841,15 @@ async function saveSocialProfileSettings(event) {
   $('#socialProfileSettingsModal')?.close();
   renderSocialMyProfile();
   loadSocialFollowing().catch(handleSocialLoadError);
+}
+
+function restartOnboardingTour() {
+  if (!currentUser?.id) return;
+  localStorage.setItem(onboardingStatusKey(currentUser.id), 'pending');
+  localStorage.setItem(onboardingStepKey(currentUser.id), '0');
+  clearOnboardingGuide();
+  $('#socialProfileSettingsModal')?.close();
+  window.location.assign('index.html');
 }
 
 function socialProfileInitial(profile) {

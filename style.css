@@ -10506,29 +10506,7 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
 }
 
 
-/* Typography polish v24: soften heavy display face; keep secondary labels quiet. */
-:where(.upnext-section, .library-section, .discover-section, .social-section, .modal, .detail-body, .album-section, .stats-section) h1,
-:where(.upnext-section, .library-section, .discover-section, .social-section, .modal, .detail-body, .album-section, .stats-section) h2,
-:where(.upnext-section, .library-section, .discover-section, .social-section, .modal, .detail-body, .album-section, .stats-section) h3 {
-  opacity: .82;
-}
-.track-section h1,
-.track-section h2,
-.track-section h3,
-.hero h1,
-.hero h2,
-.hero h3 { opacity: 1; }
-.eyebrow,
-.modal-eyebrow,
-.social-panel-heading h3,
-.detail-section-heading h3,
-.field-label {
-  font-weight: 400;
-}
-.section-title-row .eyebrow,
-.library-heading .eyebrow,
-.discover-heading .eyebrow,
-.social-heading .eyebrow { font-weight: 400; }
+/* Typography restored to the earlier Omni weights; Times New Roman remains the display face. */
 
 
 /* Library albums, category maps, and richer Stats v28 */
@@ -10638,4 +10616,391 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
   .library-card-album-button { font-size:.52rem; }
   .album-editor-modal { width:min(100% - 16px,940px); padding:18px; }
   .album-library-shelf { --album-picker-width:92px; gap:8px; }
+}
+
+
+/* =========================================================
+   Collection filters + interactive Stats + fixed Library cards v30
+   ========================================================= */
+.album-library-filter-row {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(120px,.32fr);
+  gap:9px;
+  align-items:end;
+}
+.album-type-filter { width:100%; }
+.album-type-filter > summary {
+  min-height:42px;
+  display:flex;
+  align-items:center;
+  padding:9px 34px 9px 12px;
+  border:1px solid rgba(21,36,58,.15);
+  border-radius:11px;
+  background:rgba(255,255,255,.78);
+  cursor:pointer;
+  font:600 .82rem/1.2 var(--sans);
+}
+.album-type-options label { grid-template-columns:18px minmax(0,1fr) auto; }
+.album-type-options small { color:var(--muted); font-size:.68rem; }
+.album-sort-control { display:grid; gap:5px; }
+.album-sort-control > span { color:var(--muted); font-size:.66rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; }
+.album-sort-control select {
+  width:100%;
+  min-height:42px;
+  border:1px solid rgba(21,36,58,.15);
+  border-radius:11px;
+  background:rgba(255,255,255,.78);
+  color:var(--ink);
+  padding:9px 30px 9px 11px;
+}
+
+/* Collection action belongs at the bottom edge of a card, not over its centre. */
+.library-card-album-button {
+  top:auto;
+  bottom:5px;
+  transform:translateY(4px);
+}
+.library-card-shell:hover .library-card-album-button,
+.library-card-shell:focus-within .library-card-album-button {
+  transform:translateY(0);
+}
+
+/* Every Library item occupies the same poster-height footprint within its shelf.
+   This supersedes older auto-height text-card experiments that caused overlap. */
+.library-poster-grid:not(.is-expanded) .library-card-shell {
+  flex:0 0 var(--library-poster-width);
+  width:var(--library-poster-width);
+  height:var(--library-row-height);
+}
+.library-poster-grid.is-expanded:has(.library-text-card-button) {
+  display:grid;
+  grid-template-columns:repeat(auto-fill,var(--library-poster-width));
+  grid-auto-rows:var(--library-row-height);
+  align-items:stretch;
+  gap:11px;
+}
+.library-poster-grid.is-expanded .library-card-shell,
+.library-poster-grid.is-expanded:has(.library-text-card-button) .library-card-shell {
+  width:100%;
+  height:var(--library-row-height);
+  min-height:var(--library-row-height);
+  flex:none;
+}
+.library-card-shell > .library-poster-button.library-text-card-button,
+.library-poster-grid.is-expanded:has(.library-text-card-button) .library-card-shell > .library-poster-button.library-text-card-button {
+  width:100% !important;
+  max-width:none !important;
+  height:100% !important;
+  min-height:0 !important;
+  aspect-ratio:auto !important;
+  overflow:hidden !important;
+  align-self:stretch !important;
+}
+.library-card-shell .library-text-card {
+  height:100% !important;
+  min-height:0 !important;
+  overflow:hidden !important;
+  padding:12px 10px 36px;
+  justify-content:flex-start;
+}
+.library-card-shell .library-text-card-title {
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:4;
+  overflow:hidden;
+  overflow-wrap:anywhere;
+}
+.library-card-shell .library-text-card-notes {
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:4;
+  overflow:hidden;
+}
+
+/* Clickable Stats rows and genre pie. */
+.stat-type-row {
+  width:100%;
+  border:0;
+  border-bottom:1px solid rgba(21,36,58,.09);
+  background:transparent;
+  color:inherit;
+  cursor:pointer;
+  text-align:left;
+}
+.stat-type-row:hover,
+.stat-type-row:focus-visible { background:rgba(139,153,202,.09); outline:none; }
+.stats-genre-pie-layout {
+  display:grid;
+  grid-template-columns:minmax(190px,.9fr) minmax(180px,1.1fr);
+  gap:20px;
+  align-items:center;
+}
+.stats-genre-pie { width:min(100%,280px); height:auto; overflow:visible; justify-self:center; }
+.stats-genre-slice { cursor:pointer; transform-origin:100px 100px; transition:transform .14s ease,opacity .14s ease; stroke:var(--paper); stroke-width:1.5; }
+.stats-genre-slice:hover,
+.stats-genre-slice:focus-visible { transform:scale(1.035); opacity:.9; outline:none; }
+.stats-genre-legend { display:grid; gap:2px; }
+.stats-genre-legend-row {
+  width:100%;
+  min-height:34px;
+  display:grid;
+  grid-template-columns:12px minmax(0,1fr) auto;
+  align-items:center;
+  gap:8px;
+  border:0;
+  border-radius:8px;
+  background:transparent;
+  color:var(--ink);
+  padding:5px 7px;
+  text-align:left;
+  cursor:pointer;
+}
+.stats-genre-legend-row:hover,
+.stats-genre-legend-row:focus-visible { background:rgba(139,153,202,.09); outline:none; }
+.stats-genre-swatch { width:10px; height:10px; border-radius:50%; background:var(--genre-color); }
+.stats-genre-legend-row span:nth-child(2) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.78rem; }
+.stats-genre-legend-row strong { font-size:.74rem; }
+.stats-catalogue-modal { width:min(960px,calc(100% - 30px)); }
+.stats-catalogue-modal .modal-heading p { margin:5px 0 0; color:var(--muted); font-size:.8rem; }
+.stats-catalogue-grid { max-height:min(62vh,650px); overflow:auto; padding:2px 3px 12px; }
+
+@media (hover:none) {
+  .library-card-album-button { opacity:.92; pointer-events:auto; transform:translateY(0); }
+}
+@media (max-width:760px) {
+  .album-library-filter-row { grid-template-columns:1fr; }
+  .stats-genre-pie-layout { grid-template-columns:1fr; gap:12px; }
+  .stats-genre-pie { width:min(74vw,250px); }
+  .stats-genre-legend { grid-template-columns:repeat(2,minmax(0,1fr)); gap:3px; }
+  .library-poster-grid.is-expanded:has(.library-text-card-button) {
+    grid-template-columns:repeat(auto-fill,var(--library-poster-width));
+    grid-auto-rows:var(--library-row-height);
+    gap:7px;
+  }
+  .library-card-shell .library-text-card { padding:10px 8px 32px; }
+}
+@media (max-width:430px) {
+  .stats-genre-legend { grid-template-columns:1fr; }
+}
+
+/* =========================================================
+   Discover TV completion + universal interaction feedback v31
+   ========================================================= */
+.discover-seasons-details {
+  border-top:1px solid rgba(21,36,58,.10);
+  border-bottom:1px solid rgba(21,36,58,.10);
+  padding:0;
+}
+.discover-seasons-summary {
+  min-height:54px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  padding:12px 2px;
+  cursor:pointer;
+  list-style:none;
+  user-select:none;
+  font-family:var(--serif);
+  font-size:1.65rem;
+  font-weight:400;
+}
+.discover-seasons-summary::-webkit-details-marker { display:none; }
+.discover-seasons-summary::after {
+  content:'+';
+  flex:0 0 auto;
+  width:28px;
+  height:28px;
+  display:grid;
+  place-items:center;
+  border-radius:50%;
+  background:rgba(21,36,58,.055);
+  font:600 1.1rem/1 var(--sans);
+  transition:transform .14s ease,background .14s ease;
+}
+.discover-seasons-details[open] .discover-seasons-summary::after { transform:rotate(45deg); }
+.discover-seasons-summary small {
+  margin-left:auto;
+  color:var(--muted);
+  font:500 .72rem/1.2 var(--sans);
+}
+.discover-seasons-summary:hover::after,
+.discover-seasons-summary:focus-visible::after { background:rgba(139,153,202,.16); }
+.discover-seasons-summary:focus-visible { outline:2px solid rgba(114,0,20,.34); outline-offset:3px; border-radius:8px; }
+.discover-seasons-panel { padding:0 0 8px; }
+
+/* Every actual button provides a visible response on pointer, keyboard and touch.
+   Existing component-specific hover treatments remain; this supplies a universal
+   fallback for controls that previously had no feedback at all. */
+button {
+  touch-action:manipulation;
+  -webkit-tap-highlight-color:rgba(114,0,20,.10);
+  transition-property:transform,opacity,filter,background-color,border-color,box-shadow,color;
+  transition-duration:.12s;
+  transition-timing-function:ease;
+}
+button:not(:disabled):hover {
+  transform:translateY(-1px);
+  filter:brightness(.985);
+}
+button:not(:disabled):active {
+  transform:translateY(1px) scale(.98);
+  filter:brightness(.94);
+  opacity:.88;
+  transition-duration:.04s;
+}
+button:focus-visible {
+  outline:2px solid rgba(114,0,20,.42);
+  outline-offset:2px;
+}
+button:disabled,
+button[aria-busy="true"] {
+  cursor:progress;
+  opacity:.66;
+}
+button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infinite alternate; }
+@keyframes omni-button-working { from { opacity:.58; } to { opacity:.82; } }
+
+/* Buttons whose base positioning uses transform need their own interaction form. */
+.library-card-album-button:not(:disabled):hover { transform:translateY(-1px); }
+.library-card-album-button:not(:disabled):active { transform:translateY(1px) scale(.97); }
+
+@media (max-width:620px) {
+  .discover-seasons-summary { min-height:50px; font-size:1.45rem; }
+  .discover-seasons-summary small { max-width:48%; text-align:right; font-size:.64rem; }
+}
+
+/* Library filter defaults + mixed-place map refinements */
+.library-type-filter-actions {
+  position: sticky;
+  bottom: -8px;
+  margin: 7px -2px -2px;
+  padding: 9px 2px 2px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  border-top: 1px solid rgba(21,36,58,.10);
+  background: #fffaf0;
+}
+.library-type-filter-actions button {
+  min-height: 32px;
+  border: 1px solid rgba(21,36,58,.12);
+  border-radius: 999px;
+  background: rgba(255,255,255,.58);
+  color: var(--ink);
+  padding: 6px 8px;
+  font: 600 .68rem/1.1 var(--sans);
+  cursor: pointer;
+}
+.library-type-filter-actions button:hover { background: rgba(139,153,202,.13); }
+.library-type-filter-actions button:active { transform: translateY(1px) scale(.985); }
+.library-type-filter-status {
+  grid-column: 1 / -1;
+  min-height: 13px;
+  color: var(--muted);
+  text-align: center;
+  font: 500 .62rem/1 var(--sans);
+}
+.library-filter-row .library-map-button { align-self: end; }
+.library-rating-map-marker span { background: var(--library-pin-color, var(--maroon)) !important; }
+.library-map-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+  margin: -10px 0 12px;
+}
+.library-map-legend[hidden] { display: none !important; }
+.library-map-legend-item,
+.library-map-list-heading { display: inline-flex; align-items: center; gap: 6px; }
+.library-map-legend-item { color: var(--muted); font: 600 .72rem/1.2 var(--sans); }
+.library-map-legend-item i,
+.library-map-list-heading i {
+  width: 10px; height: 10px; flex: 0 0 10px; border-radius: 50%;
+  background: var(--library-pin-color, var(--maroon));
+  box-shadow: 0 0 0 2px rgba(255,255,255,.82), 0 0 0 3px rgba(21,36,58,.08);
+}
+.library-map-list-heading { min-width: 0; }
+.library-map-list-heading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Library header: search + add on row one; type filter + map + sort on row two. */
+.library-search-row { grid-template-columns: minmax(260px,1fr) 48px !important; }
+.library-filter-row { grid-template-columns: minmax(190px,1.2fr) 48px minmax(150px,.8fr) !important; }
+.library-filter-row .library-map-button { width:48px !important; min-width:48px !important; height:48px !important; min-height:48px !important; margin:0 !important; }
+@media (max-width:620px) {
+  .library-search-row { grid-template-columns:minmax(0,1fr) 44px !important; gap:9px !important; }
+  .library-filter-row { grid-template-columns:minmax(0,1fr) 44px minmax(105px,.72fr) !important; gap:9px !important; }
+  .library-filter-row .library-map-button { width:44px !important; min-width:44px !important; height:44px !important; min-height:44px !important; }
+  .library-type-filter-actions { grid-template-columns: 1fr; }
+  .library-type-filter-status { grid-column: 1; }
+}
+
+/* Guided onboarding + linked profile colour */
+.onboarding-color-modal { width:min(520px, calc(100% - 30px)); }
+.onboarding-color-copy { margin:8px 0 0; color:#626a73; line-height:1.5; }
+.onboarding-color-picker { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:20px 0 24px; }
+.onboarding-color-choice {
+  min-height:56px;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:10px 12px;
+  border:1px solid rgba(21,36,58,.14);
+  border-radius:13px;
+  background:rgba(255,255,255,.52);
+  text-align:left;
+  cursor:pointer;
+}
+.onboarding-color-choice.is-selected { border-color:rgba(114,0,20,.42); box-shadow:0 0 0 3px rgba(114,0,20,.07); }
+.onboarding-color-dot,
+.social-profile-theme-linked-value .social-profile-theme-dot { width:24px; height:24px; flex:0 0 auto; border-radius:50%; box-shadow:inset 0 0 0 1px rgba(255,255,255,.55),0 0 0 1px rgba(21,36,58,.14); }
+.onboarding-color-dot[data-theme-dot="blue"], .social-profile-theme-dot[data-social-profile-theme-dot="blue"] { background:var(--blue); }
+.onboarding-color-dot[data-theme-dot="burgundy"], .social-profile-theme-dot[data-social-profile-theme-dot="burgundy"] { background:#742b3e; }
+.onboarding-color-dot[data-theme-dot="slate"], .social-profile-theme-dot[data-social-profile-theme-dot="slate"] { background:#586a7d; }
+.onboarding-color-dot[data-theme-dot="charcoal"], .social-profile-theme-dot[data-social-profile-theme-dot="charcoal"] { background:#454c55; }
+.onboarding-color-dot[data-theme-dot="forest"], .social-profile-theme-dot[data-social-profile-theme-dot="forest"] { background:#566d5c; }
+.onboarding-color-dot[data-theme-dot="espresso"], .social-profile-theme-dot[data-social-profile-theme-dot="espresso"] { background:#665149; }
+
+.onboarding-target {
+  position:relative;
+  z-index:10001 !important;
+  outline:3px solid rgba(243,213,106,.98) !important;
+  outline-offset:6px;
+  border-radius:12px;
+  box-shadow:0 0 0 9px rgba(243,213,106,.17), 0 14px 34px rgba(21,36,58,.16) !important;
+}
+.onboarding-guide {
+  position:fixed;
+  z-index:10002;
+  padding:18px;
+  border:1px solid rgba(21,36,58,.13);
+  border-radius:16px;
+  background:#fbf8ec;
+  color:var(--ink);
+  box-shadow:0 22px 56px rgba(21,36,58,.28);
+}
+.onboarding-guide h3 { margin:0 0 7px; font-size:1.45rem; }
+.onboarding-guide > p:not(.modal-eyebrow):not(.onboarding-wait-note) { margin:0; color:#5f6670; line-height:1.5; }
+.onboarding-guide-actions { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:16px; }
+.onboarding-wait-note { margin:10px 0 0; color:#7c776a; font-size:.74rem; font-style:italic; }
+.social-profile-theme-linked-value { display:inline-flex; align-items:center; gap:8px; color:#626a73; font-size:.78rem; white-space:nowrap; }
+.social-profile-theme-linked .social-share-card-head { align-items:center; }
+
+.account-danger-zone {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:10px 16px;
+  align-items:center;
+  padding:16px 0 2px;
+  border-top:1px solid rgba(21,36,58,.12);
+}
+.account-danger-zone > div { display:grid; gap:3px; }
+.account-danger-zone small { color:#74776f; font-size:.76rem; }
+.account-delete-message { grid-column:1 / -1; margin:0; }
+
+@media (max-width:620px) {
+  .onboarding-color-picker { grid-template-columns:1fr; }
+  .onboarding-guide { max-width:calc(100vw - 28px); }
+  .account-danger-zone { grid-template-columns:1fr; }
+  .account-danger-zone .delete-button { justify-self:start; }
 }

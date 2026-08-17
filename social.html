@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-collections-29" />
+  <link rel="stylesheet" href="style.css?v=omni-rewatch-onboarding-35" />
 </head>
 <body class="social-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -120,6 +120,10 @@
       </section>
 
       <p id="socialProfileSettingsMessage" class="form-message" hidden></p>
+      <section class="social-settings-section onboarding-replay-setting">
+        <div><strong>Onboarding</strong><small>Run the guided tour again without changing your account or data.</small></div>
+        <button id="rewatchOnboardingButton" class="secondary-button" type="button">Rewatch onboarding</button>
+      </section>
       <div class="modal-actions end-only"><div class="actions-right"><button class="quiet-button" type="button" data-close="socialProfileSettingsModal">Cancel</button><button class="primary-button" type="submit">Save sharing</button></div></div>
     </form>
   </dialog>
@@ -163,6 +167,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-collections-29"></script>
+  <script type="module" src="app.js?v=omni-rewatch-onboarding-35"></script>
 </body>
 </html>
