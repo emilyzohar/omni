@@ -11,7 +11,7 @@
   --rust: #97280c;
   --line: rgba(21, 36, 58, .13);
   --shadow: 8px 10px 19px rgba(27, 31, 24, .24);
-  --serif: "Bowlby One SC", "Arial Black", sans-serif;
+  --serif: "Times New Roman", Times, serif;
   --sans: "DM Sans", system-ui, sans-serif;
 }
 
@@ -10529,3 +10529,113 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
 .library-heading .eyebrow,
 .discover-heading .eyebrow,
 .social-heading .eyebrow { font-weight: 400; }
+
+
+/* Library albums, category maps, and richer Stats v28 */
+.library-card-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+.library-card-shell > .library-poster-button { width:100%; height:100%; }
+.library-poster-grid:not(.is-expanded) .library-card-shell {
+  flex: 0 0 var(--library-poster-width);
+  width: var(--library-poster-width);
+  height: var(--library-row-height);
+  scroll-snap-align: start;
+}
+.library-poster-grid.is-expanded .library-card-shell { width:100%; height:100%; }
+.library-card-album-button {
+  position:absolute;
+  right:5px;
+  top:50%;
+  z-index:8;
+  transform:translateY(-50%) translateX(4px);
+  opacity:0;
+  pointer-events:none;
+  border:1px solid rgba(21,36,58,.13);
+  border-radius:999px;
+  background:rgba(251,250,245,.94);
+  color:var(--ink);
+  padding:5px 7px;
+  box-shadow:0 3px 10px rgba(21,36,58,.14);
+  font:600 .58rem/1 var(--sans);
+  cursor:pointer;
+  transition:opacity .14s ease, transform .14s ease;
+}
+.library-card-shell:hover .library-card-album-button,
+.library-card-shell:focus-within .library-card-album-button {
+  opacity:1;
+  pointer-events:auto;
+  transform:translateY(-50%) translateX(0);
+}
+.library-add-album-choices { display:grid; gap:7px; margin-bottom:12px; }
+.library-add-album-choices button {
+  width:100%; border:1px solid var(--line); border-radius:11px; background:rgba(255,255,255,.62);
+  padding:10px 12px; display:flex; align-items:center; justify-content:space-between; gap:12px; text-align:left; cursor:pointer;
+}
+.library-add-album-choices button:disabled { opacity:.52; cursor:default; }
+.library-add-album-choices button span { color:var(--muted); font-size:.72rem; }
+.library-new-album-button { width:100%; }
+
+.album-editor-modal { width:min(940px,calc(100% - 30px)); }
+.album-library-tools { grid-template-columns:1fr; }
+.album-library-browser { display:grid; gap:22px; max-height:min(57vh,620px); overflow:auto; padding:2px 3px 10px; }
+.album-library-group { min-width:0; }
+.album-library-group-heading { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.album-library-group-heading h3 { margin:0; font-size:1.24rem; }
+.album-library-group-heading span { color:var(--muted); font:600 .7rem/1 var(--sans); }
+.album-library-shelf {
+  --album-picker-width:clamp(92px,8vw,126px);
+  display:flex; gap:10px; overflow-x:auto; overflow-y:hidden; padding:2px 2px 8px; scroll-snap-type:x proximity; scrollbar-width:thin;
+}
+.album-library-choice { flex:0 0 var(--album-picker-width); min-width:0; display:grid; gap:5px; cursor:pointer; scroll-snap-align:start; }
+.album-library-choice > input { position:absolute; opacity:0; pointer-events:none; }
+.album-library-poster {
+  position:relative; width:100%; aspect-ratio:2 / 3; border-radius:7px; overflow:hidden; background:rgba(21,36,58,.08);
+  box-shadow:0 5px 12px rgba(21,36,58,.08); border:2px solid transparent; display:grid; place-items:center;
+}
+.album-library-poster img { width:100%; height:100%; object-fit:cover; }
+.album-library-poster.is-text { padding:10px; background:var(--paper); text-align:center; }
+.album-library-poster.is-text > strong { font-family:var(--serif); font-size:.95rem; font-weight:400; line-height:1.15; }
+.album-library-choice:has(input:checked) .album-library-poster { border-color:var(--blue-deep); box-shadow:0 0 0 2px rgba(120,137,194,.18),0 5px 12px rgba(21,36,58,.08); }
+.album-library-check {
+  position:absolute; top:6px; right:6px; width:23px; height:23px; border-radius:50%; display:grid; place-items:center;
+  background:rgba(251,250,245,.92); color:rgba(21,36,58,.4); font:800 .7rem/1 var(--sans); box-shadow:0 2px 6px rgba(0,0,0,.12);
+}
+.album-library-choice:has(input:checked) .album-library-check { background:var(--blue-deep); color:#fff; }
+.album-library-rating { position:absolute; left:5px; bottom:5px; border-radius:999px; padding:3px 5px; background:rgba(21,36,58,.86); color:#fff; font:700 .57rem/1 var(--sans); }
+.album-library-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); font:600 .68rem/1.2 var(--sans); }
+
+.library-category-map-button {
+  min-height:30px; border:1px solid rgba(21,36,58,.14); border-radius:999px; background:rgba(255,255,255,.5); color:var(--ink);
+  padding:5px 9px; font:600 .68rem/1 var(--sans); cursor:pointer; white-space:nowrap;
+}
+.library-category-map-button:hover { background:rgba(139,153,202,.12); }
+.library-rating-map-marker { background:transparent !important; border:0 !important; }
+.library-rating-map-marker span {
+  min-width:34px; height:25px; padding:0 6px; display:inline-grid; place-items:center; border-radius:999px;
+  background:var(--maroon); color:#fff9ea; border:2px solid #fff9ea; box-shadow:0 3px 9px rgba(21,36,58,.28); font:700 .64rem/1 var(--sans);
+}
+
+.stats-summary { grid-template-columns:repeat(5,minmax(0,1fr)); }
+.stats-breakdowns { margin-top:28px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:34px; }
+.stats-breakdown h2 { margin:0 0 8px; font-size:1.45rem; }
+.stats-breakdown .stats-types { margin-top:0; grid-template-columns:1fr; }
+
+@media (hover:none) {
+  .library-card-album-button { opacity:.9; pointer-events:auto; transform:translateY(-50%); padding:5px 6px; }
+}
+@media (max-width:760px) {
+  .stats-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .stats-breakdowns { grid-template-columns:1fr; gap:26px; }
+  .album-library-browser { max-height:56vh; }
+}
+@media (max-width:520px) {
+  .library-shelf-controls { gap:5px; flex-wrap:wrap; justify-content:flex-end; }
+  .library-category-map-button { font-size:.62rem; padding:5px 7px; }
+  .library-card-album-button { font-size:.52rem; }
+  .album-editor-modal { width:min(100% - 16px,940px); padding:18px; }
+  .album-library-shelf { --album-picker-width:92px; gap:8px; }
+}

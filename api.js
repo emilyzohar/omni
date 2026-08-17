@@ -777,6 +777,19 @@ export const TrackerAPI = (() => {
     return video;
   }
 
+  async function getYouTubeVideos(videoIds, settings) {
+    const ids = [...new Set((videoIds || []).map(value => String(value || '').trim()).filter(Boolean))].slice(0, 50);
+    if (!ids.length) return [];
+    const key = required(settings.youtubeKey, 'YouTube Data API key');
+    const params = new URLSearchParams({
+      part: 'snippet,contentDetails,statistics',
+      id: ids.join(','),
+      key
+    });
+    const data = await fetchJson(`${YOUTUBE_ROOT}/videos?${params.toString()}`);
+    return data.items || [];
+  }
+
 
   // Ticketmaster's default Discovery API limit is 5 requests/second. Serialize
   // requests with a small gap so artist-follow and event-recommendation lookups
@@ -1131,6 +1144,7 @@ export const TrackerAPI = (() => {
     getPlaylist,
     searchYouTubeVideos,
     getYouTubeVideo,
+    getYouTubeVideos,
     searchTicketmasterEvents,
     searchTicketmasterAttractions,
     getUpcomingEvents,

@@ -15,8 +15,8 @@
   <title>Library · Omni</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Bowlby+One+SC&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-library-add-polish-25" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=omni-collections-29" />
 </head>
 <body class="library-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -120,7 +120,10 @@
       <div class="shell">
         <div class="stats-heading"><h1>Stats</h1></div>
         <div id="statsSummary" class="stats-summary"></div>
-        <div id="statsTypes" class="stats-types"></div>
+        <div class="stats-breakdowns">
+          <section class="stats-breakdown"><h2>Types</h2><div id="statsTypes" class="stats-types"></div></section>
+          <section class="stats-breakdown"><h2>Genres watched</h2><div id="statsGenres" class="stats-types stats-genres"></div></section>
+        </div>
       </div>
     </section>
   </main>
@@ -665,6 +668,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-library-add-polish-25"></script>
+  <script type="module" src="app.js?v=omni-collections-29"></script>
 </body>
 </html>
