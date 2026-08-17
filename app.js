@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-social-friend-context-10';
-import { API_CONFIG } from './config.js?v=omni-social-friend-context-10';
+import { TrackerAPI } from './api.js?v=omni-social-buddy-card-placement-11';
+import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -2139,14 +2139,16 @@ function queueCardMarkup(item, info) {
     : '';
 
   return `
-    ${art}
+    <div class="upnext-art-wrap${buddyAction ? ' has-buddy-watch' : ''}">
+      ${art}
+      ${buddyAction ? `<div class="upnext-card-buddy-slot">${buddyAction}</div>` : ''}
+    </div>
     <div class="upnext-main">
       <div>
         <p class="upnext-title">${escapeHtml(info.title || item.title)}</p>
         <p class="upnext-meta">${escapeHtml(info.meta || progressFallback(item))}</p>
         <p class="upnext-category">${escapeHtml([getItemTypeLabel(item), isTBR ? 'TBR' : '', info.streaming || ''].filter(Boolean).join(' · '))}</p>
         ${info.error ? `<div class="queue-error">${escapeHtml(info.error)}</div>` : ''}
-        ${buddyAction ? `<div class="upnext-card-social-actions">${buddyAction}</div>` : ''}
       </div>
       <button class="upnext-arrow" type="button" data-action="details" data-id="${item.id}" aria-label="Open details">→</button>
     </div>

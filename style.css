@@ -10125,3 +10125,58 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
   .social-follower-item-context > summary { min-height: 44px; }
   .social-follower-item-head { align-items: flex-start; flex-direction: column; gap: 2px; }
 }
+
+/* =========================================================
+   Buddy Watch placement v11 — poster/card action, never log column
+   ========================================================= */
+.upnext-art-wrap {
+  position: relative;
+  width: 82px;
+  height: 88px;
+  align-self: center;
+}
+.upnext-art-wrap .upnext-art {
+  width: 100% !important;
+  height: 100% !important;
+}
+.upnext-card-buddy-slot {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 5px;
+  z-index: 2;
+  display: flex;
+}
+.upnext-card-buddy-slot .queue-buddy-inline-button {
+  width: 100%;
+  min-height: 25px;
+  padding: 4px 5px;
+  border: 1px solid rgba(21,36,58,.12);
+  background: rgba(251,250,245,.92);
+  box-shadow: 0 2px 7px rgba(21,36,58,.12);
+  backdrop-filter: blur(4px);
+  font-size: .56rem;
+  line-height: 1.05;
+}
+.upnext-card-buddy-slot .queue-buddy-inline-button:hover,
+.upnext-card-buddy-slot .queue-buddy-inline-button:focus-visible {
+  background: rgba(251,250,245,.98);
+}
+/* The right-hand Up Next action column is reserved for the ordinary log/check action. */
+.upnext-actions .queue-buddy-button,
+.upnext-actions .queue-buddy-inline-button {
+  display: none !important;
+}
+
+@media (max-width: 620px) {
+  .upnext-art-wrap {
+    width: 72px;
+    height: 92px;
+  }
+  .upnext-card-buddy-slot { left: 4px; right: 4px; bottom: 4px; }
+  .upnext-card-buddy-slot .queue-buddy-inline-button {
+    min-height: 23px;
+    padding: 3px 4px;
+    font-size: .52rem;
+  }
+}
