@@ -967,25 +967,24 @@ export const TrackerAPI = (() => {
 
     const city = String(options.city || settings.homeCity || '').trim();
     const region = String(options.region || options.countryCode || settings.homeCountry || settings.tmdbWatchRegion || '').trim().toUpperCase();
-    // Include the city in the text query because it is reliable even when no
-    // latitude/longitude has been configured for the user's home location.
     const textQuery = city && !rawQuery.toLowerCase().includes(city.toLowerCase())
       ? `${rawQuery} in ${city}`
       : rawQuery;
     const requestedSize = Number(options.pageSize || options.maxResultCount || 20);
     const pageSize = Math.max(1, Math.min(20, Number.isFinite(requestedSize) ? requestedSize : 20));
+    const maxPages = Math.max(1, Math.min(3, Number(options.pages || 1)));
 
-    const body = {
+    const baseBody = {
       textQuery,
       pageSize,
       languageCode: 'en'
     };
-    if (/^[A-Z]{2}$/.test(region)) body.regionCode = region;
+    if (/^[A-Z]{2}$/.test(region)) baseBody.regionCode = region;
 
     const lat = Number(options.lat ?? settings.homeLat);
     const lng = Number(options.lng ?? options.lon ?? settings.homeLon);
     if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
-      body.locationBias = {
+      baseBody.locationBias = {
         circle: {
           center: { latitude: lat, longitude: lng },
           radius: Math.max(1000, Math.min(50000, Number(options.radiusMeters || 25000)))
@@ -993,21 +992,34 @@ export const TrackerAPI = (() => {
       };
     }
 
-    const data = await fetchJson('https://places.googleapis.com/v1/places:searchText', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Goog-Api-Key': key,
-        'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.googleMapsUri,places.websiteUri'
-      },
-      body: JSON.stringify(body)
-    });
+    const collected = [];
+    const seen = new Set();
+    let pageToken = '';
+    for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+      const body = { ...baseBody };
+      if (pageToken) body.pageToken = pageToken;
+      const data = await fetchJson('https://places.googleapis.com/v1/places:searchText', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': key,
+          'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.googleMapsUri,places.websiteUri,nextPageToken'
+        },
+        body: JSON.stringify(body)
+      });
+      for (const place of data.places || []) {
+        const mapped = mapGoogleRestaurant(place);
+        const id = String(mapped?.providerId || '');
+        if (!mapped || !id || seen.has(id)) continue;
+        seen.add(id);
+        collected.push(mapped);
+      }
+      pageToken = String(data.nextPageToken || '');
+      if (!pageToken) break;
+    }
 
     const minRating = Math.max(0, Number(options.minRating || 0));
-    return (data.places || [])
-      .map(mapGoogleRestaurant)
-      .filter(Boolean)
-      .filter(place => !minRating || Number(place.rating || 0) >= minRating);
+    return collected.filter(place => !minRating || Number(place.rating || 0) >= minRating);
   }
 
   async function getRestaurantDetails(placeId, settings) {

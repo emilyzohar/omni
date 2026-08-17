@@ -1,4 +1,4 @@
-import { TrackerAPI } from './api.js?v=omni-restaurant-api-restore-17';
+import { TrackerAPI } from './api.js?v=omni-unique-library-status-19';
 import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
@@ -777,9 +777,200 @@ function migrateSavedMusicClassification() {
   if (historyChanged) saveHistory();
 }
 
+const CANONICAL_LIBRARY_ENTITY_TYPES = new Set([
+  'tv','movie','book','youtube','music','artist','song','concert','event','restaurant','recipe','food'
+]);
+
+function canonicalLibraryIdentity(value) {
+  if (!value) return '';
+  const sourceType = getSourceType(value);
+  const title = normalizeSearchText(value.title || '');
+  const subtitle = normalizeSearchText(value.artistName || value.subtitle || '');
+  const providerId = String(value.providerId || '').trim();
+
+  // Prefer semantic identities where Omni can encounter the same catalogue entity
+  // through more than one provider (e.g. Last.fm vs iTunes artists).
+  if (sourceType === 'book') {
+    const signature = bookTitleAuthorSignature(
+      value.title || value.raw?.volumeInfo?.title || '',
+      value.raw?.volumeInfo?.authors || value.authors || value.subtitle || ''
+    );
+    if (signature) return `book:${signature}`;
+  }
+  if (sourceType === 'artist' && title) return `artist:${title}`;
+  if (sourceType === 'song' && title) return `song:${subtitle}:${title}`;
+  if (sourceType === 'music' && title) return `music:${subtitle}:${title}`;
+
+  if (providerId) return `${sourceType}:${providerId}`;
+  if (!CANONICAL_LIBRARY_ENTITY_TYPES.has(sourceType) || !title) return '';
+
+  if (['event','concert'].includes(sourceType)) {
+    const date = String(value.eventDate || value.date || value.eventMeta?.eventDate || '').slice(0, 10);
+    const venue = normalizeSearchText(value.venueName || value.eventMeta?.venueName || '');
+    return `${sourceType}:manual:${title}:${date}:${venue}`;
+  }
+  if (sourceType === 'restaurant') {
+    const address = normalizeSearchText(value.address || value.raw?.formattedAddress || value.eventMeta?.address || '');
+    return `restaurant:manual:${title}:${address}`;
+  }
+  return `${sourceType}:manual:${title}:${subtitle}`;
+}
+
+function findCanonicalLibraryItem(value, excludeId = '') {
+  const identity = canonicalLibraryIdentity(value);
+  if (!identity) return null;
+  return state.items.find(item => item.id !== excludeId && canonicalLibraryIdentity(item) === identity) || null;
+}
+
+function libraryItemPreservationScore(item) {
+  if (!item) return -Infinity;
+  const sourceType = getSourceType(item);
+  const historyCount = state.history.filter(entry => entry.sourceItemId === item.id).length;
+  let progress = 0;
+  if (sourceType === 'tv') progress = Number(item.progress?.nextSeason || 1) * 10000 + Number(item.progress?.nextEpisode || 1);
+  else if (sourceType === 'book') progress = Number(item.progress?.currentPage || 0);
+  else if (sourceType === 'youtube') progress = Number(item.progress?.currentIndex || 0);
+  return historyCount * 1000000 + (item.completedAt ? 500000 : 0) + progress * 10 + Number(item.rating || 0) * 100 + ((item.notes || '').trim() ? 50 : 0);
+}
+
+function mergeLibraryItemRecords(primary, duplicate) {
+  if (!primary || !duplicate || primary.id === duplicate.id) return primary;
+  const sourceType = getSourceType(primary);
+  const primaryScore = libraryItemPreservationScore(primary);
+  const duplicateScore = libraryItemPreservationScore(duplicate);
+
+  // Metadata: preserve the richer/current record without replacing meaningful
+  // values with blanks from an accidental duplicate.
+  for (const key of ['title','subtitle','image','provider','providerId','subcategory','typeLabel','releaseDate','artistName','artistId','albumName','lastfmUrl']) {
+    if (!primary[key] && duplicate[key]) primary[key] = duplicate[key];
+  }
+  if (!primary.notes && duplicate.notes) primary.notes = duplicate.notes;
+  if (!Number(primary.rating || 0) && Number(duplicate.rating || 0)) primary.rating = Number(duplicate.rating || 0);
+  primary.recommended = Boolean(primary.recommended || duplicate.recommended);
+  primary.people = [...new Set([...(primary.people || []), ...(duplicate.people || [])].filter(Boolean))];
+  primary.genres = [...new Set([...(primary.genres || []), ...(duplicate.genres || [])].filter(Boolean))];
+  primary.attachments = [
+    ...(primary.attachments || []),
+    ...(duplicate.attachments || []).filter(file => !(primary.attachments || []).some(saved => saved.id === file.id))
+  ];
+  primary.links = [
+    ...(primary.links || []),
+    ...(duplicate.links || []).filter(link => !(primary.links || []).some(saved => saved.url === link.url))
+  ];
+  primary.createdAt = [primary.createdAt, duplicate.createdAt].filter(Boolean).sort()[0] || primary.createdAt || duplicate.createdAt || new Date().toISOString();
+  primary.updatedAt = [primary.updatedAt, duplicate.updatedAt].filter(Boolean).sort().at(-1) || new Date().toISOString();
+  if (!primary.completedAt && duplicate.completedAt) primary.completedAt = duplicate.completedAt;
+
+  if (sourceType === 'tv') {
+    const a = Number(primary.progress?.nextSeason || 1) * 10000 + Number(primary.progress?.nextEpisode || 1);
+    const b = Number(duplicate.progress?.nextSeason || 1) * 10000 + Number(duplicate.progress?.nextEpisode || 1);
+    if (b > a) primary.progress = { ...(primary.progress || {}), ...(duplicate.progress || {}) };
+    primary.tvMeta = { ...(duplicate.tvMeta || {}), ...(primary.tvMeta || {}) };
+    if (!primary.watchDisposition && duplicate.watchDisposition) primary.watchDisposition = duplicate.watchDisposition;
+  } else if (sourceType === 'book') {
+    primary.progress = {
+      ...(duplicate.progress || {}),
+      ...(primary.progress || {}),
+      currentPage: Math.max(Number(primary.progress?.currentPage || 0), Number(duplicate.progress?.currentPage || 0)),
+      totalPages: Math.max(Number(primary.progress?.totalPages || 0), Number(duplicate.progress?.totalPages || 0)),
+      readingPeriods: sanitizeBookReadingPeriods([
+        ...getBookReadingPeriods(primary),
+        ...getBookReadingPeriods(duplicate)
+      ].filter((period, index, all) => all.findIndex(other => other.startDate === period.startDate && other.endDate === period.endDate) === index))
+    };
+  } else if (duplicateScore > primaryScore && duplicate.progress) {
+    primary.progress = { ...(duplicate.progress || {}), ...(primary.progress || {}) };
+  }
+
+  const statuses = new Set([getQueueStatus(primary), getQueueStatus(duplicate)]);
+  if (primary.completedAt) setItemQueueStatus(primary, 'library');
+  else if (statuses.has('upnext')) setItemQueueStatus(primary, 'upnext');
+  else if (statuses.has('tbr')) setItemQueueStatus(primary, 'tbr');
+  else setItemQueueStatus(primary, 'library');
+
+  for (const entry of state.history) {
+    if (entry.sourceItemId === duplicate.id) entry.sourceItemId = primary.id;
+  }
+  return primary;
+}
+
+function historyRepeatIdentity(record) {
+  if (!record?.sourceItemId) return '';
+  const source = findItem(record.sourceItemId);
+  const sourceType = source ? getSourceType(source) : String(record.sourceType || record.type || '');
+  if (record.kind === 'episode-watched') {
+    return `${record.sourceItemId}:episode:${Number(record.seasonNumber || 0)}:${Number(record.episodeNumber || 0)}`;
+  }
+  if (record.kind === 'series-watched') return `${record.sourceItemId}:series`;
+  if (record.kind === 'movie-watched') return `${record.sourceItemId}:movie`;
+  if (record.kind === 'book-finished') return `${record.sourceItemId}:book`;
+  if (record.kind === 'item-completed' && sourceType === 'youtube') return `${record.sourceItemId}:youtube`;
+  return '';
+}
+
+function repeatConsumptionLabel(record) {
+  const source = record?.sourceItemId ? findItem(record.sourceItemId) : null;
+  const sourceType = source ? getSourceType(source) : String(record?.sourceType || record?.type || '');
+  if (sourceType === 'book') return 'Reread';
+  return 'Rewatch';
+}
+
+function annotateRepeatedHistoryRecords() {
+  const groups = new Map();
+  const ordered = [...state.history].sort((a, b) => String(a.createdAt || a.date || '').localeCompare(String(b.createdAt || b.date || '')));
+  let changed = false;
+  for (const entry of ordered) {
+    const key = historyRepeatIdentity(entry);
+    if (!key) continue;
+    const count = (groups.get(key) || 0) + 1;
+    groups.set(key, count);
+    const shouldRepeat = count > 1;
+    if (Boolean(entry.rewatch) !== shouldRepeat) { entry.rewatch = shouldRepeat; changed = true; }
+    if (Number(entry.repeatIndex || 0) !== count) { entry.repeatIndex = count; changed = true; }
+    if (shouldRepeat) {
+      const label = repeatConsumptionLabel(entry);
+      const subtitle = String(entry.subtitle || '');
+      if (!subtitle.startsWith(`${label} ·`) && subtitle !== label) {
+        entry.subtitle = subtitle ? `${label} · ${subtitle}` : label;
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
+function migrateDuplicateLibraryItems() {
+  const groups = new Map();
+  for (const item of state.items) {
+    const key = canonicalLibraryIdentity(item);
+    if (!key) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  let itemsChanged = false;
+  let historyChanged = false;
+  const removeIds = new Set();
+  for (const items of groups.values()) {
+    if (items.length < 2) continue;
+    const sorted = [...items].sort((a, b) => libraryItemPreservationScore(b) - libraryItemPreservationScore(a) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    const primary = sorted[0];
+    for (const duplicate of sorted.slice(1)) {
+      mergeLibraryItemRecords(primary, duplicate);
+      removeIds.add(duplicate.id);
+      itemsChanged = true;
+      historyChanged = true;
+    }
+  }
+  if (removeIds.size) state.items = state.items.filter(item => !removeIds.has(item.id));
+  if (annotateRepeatedHistoryRecords()) historyChanged = true;
+  if (itemsChanged) saveItems();
+  if (historyChanged) saveHistory();
+}
+
 function init() {
   migrateSavedMusicClassification();
   migrateSavedFoodClassification();
+  migrateDuplicateLibraryItems();
   reconcileLocalProgressQueues();
   const now = new Date();
   if (els.monthPicker) {
@@ -3984,8 +4175,14 @@ function renderSearchResults(results) {
 }
 
 function selectCatalogueResult(result) {
-  state.selectedSource = result;
   const formSourceType = selectedFormSourceType();
+  const existingMatch = findCanonicalLibraryItem({ ...result, sourceType: formSourceType }, els.editingId?.value || '');
+  if (existingMatch) {
+    openItemModal(existingMatch.id);
+    showFormMessage('Already in your Library — loaded your existing status.', false);
+    return;
+  }
+  state.selectedSource = result;
   const selectingRestaurant = formSourceType === 'restaurant' && result.provider === 'googlePlaces';
   // Selecting a restaurant should behave like selecting a movie: use the
   // catalogue result's actual display name as the prefilled tracker title.
@@ -4429,6 +4626,24 @@ async function saveItemFromForm(event) {
       showFormMessage('The end date cannot be before the start date.', true);
       return;
     }
+  }
+
+  const collisionCandidate = {
+    sourceType, title, subtitle, provider, providerId,
+    artistName: state.selectedSource?.artistName || editing?.artistName || '',
+    eventDate: state.selectedSource?.eventDate || editing?.eventMeta?.eventDate || els.itemDate?.value || '',
+    venueName: state.selectedSource?.venueName || editing?.eventMeta?.venueName || '',
+    raw: state.selectedSource?.raw || editing?.raw || {}
+  };
+  const libraryCollision = findCanonicalLibraryItem(collisionCandidate, editing?.id || '');
+  if (libraryCollision) {
+    if (editing) {
+      showFormMessage(`“${libraryCollision.title}” is already the Library item for this content.`, true);
+    } else {
+      els.itemModal.close();
+      await openDetails(libraryCollision.id);
+    }
+    return;
   }
 
   let attachmentFiles = [];
@@ -6992,10 +7207,11 @@ function discoverResultMatchesGenre(result) {
     const resultKeywordIds = new Set((result._tmdbKeywordIds || []).map(String));
     return keywordIds.size ? [...keywordIds].some(id => resultKeywordIds.has(id)) : false;
   }
-  if (result.sourceType === 'event') {
-    const haystack = [result.title, ...(result.classifications || [])].join(' ').toLowerCase();
-    const terms = [...(genre.tmdb || []), ...(genre.keywords || []), ...(genre.book || [])].map(value => String(value).toLowerCase());
-    return terms.some(term => haystack.includes(term));
+  if (result.sourceType === 'event' || result.sourceType === 'concert' || result.sourceType === 'restaurant' || ['music','artist','song'].includes(result.sourceType)) {
+    // Live, food, and music have their own category/taste controls. The shared
+    // Genre dropdown is built for TV, movies, and books; applying it here can
+    // accidentally collapse an Events feed to only one or two cards.
+    return true;
   }
   if (result.sourceType === 'book') {
     // If this result came back from a Google Books subject query for the selected
@@ -7611,11 +7827,14 @@ async function loadMoreDiscoverFeed() {
     });
 
     const dedicatedMusicView = requestedContentTypes.length > 0 && requestedContentTypes.every(type => ['artist', 'song', 'music'].includes(type));
+    const dedicatedRestaurantView = requestedContentTypes.length === 1 && requestedContentTypes[0] === 'restaurant';
+    const dedicatedLiveView = requestedContentTypes.length > 0 && requestedContentTypes.every(type => ['concert', 'event'].includes(type));
+    const mobileDiscover = window.matchMedia('(max-width: 760px)').matches;
     const batchSize = state.discoverMode === 'new'
-      ? (window.matchMedia('(max-width: 760px)').matches ? 30 : 60)
-      : dedicatedMusicView
-        ? (window.matchMedia('(max-width: 760px)').matches ? 18 : 28)
-        : (window.matchMedia('(max-width: 760px)').matches ? 12 : 20);
+      ? (mobileDiscover ? 30 : 60)
+      : (dedicatedMusicView || dedicatedRestaurantView || dedicatedLiveView)
+        ? (mobileDiscover ? 20 : 36)
+        : (mobileDiscover ? 14 : 24);
     let ranked = await rankDiscoverFeedCandidates(fresh, batchSize);
     ranked = diversifyDiscoverFeed(ranked).slice(0, batchSize);
     musicDiscoverDebug('feed batch ranked', {
@@ -7743,6 +7962,11 @@ async function collectDiscoverFeedCandidates(batchNumber) {
 
   if (selectedTypes.length === 1 && selected.has('restaurant')) {
     return collectRestaurantDiscoverCandidates(batchNumber, state.discoverMode);
+  }
+
+  const liveOnly = selectedTypes.length > 0 && selectedTypes.every(type => ['concert','event'].includes(type));
+  if (liveOnly) {
+    return collectLiveDiscoverCandidates(batchNumber, state.discoverMode);
   }
 
   let candidates;
@@ -8034,7 +8258,7 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
         }
       }
       similarArtists.sort((a,b) => Number(b.match || 0) - Number(a.match || 0));
-      const similarArtistTarget = dedicatedArtistView ? 20 : 11;
+      const similarArtistTarget = dedicatedArtistView ? 32 : 14;
       const resolvedArtists = await collectLastFmResolvedArtists(similarArtists, similarArtistTarget);
       for (let index = 0; index < resolvedArtists.length; index += 1) {
         const artist = resolvedArtists[index];
@@ -8079,20 +8303,20 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
 
     // 3) Tag discovery widens the pool beyond direct neighbours. Dedicated Artist
     // and Song views use multiple rotating tags and deeper resolution targets.
-    const tagCount = dedicatedArtistView || dedicatedSongView ? 2 : 1;
+    const tagCount = dedicatedArtistView ? 4 : dedicatedSongView ? 3 : 1;
     const discoveryTags = rotatingMusicDiscoveryTerms(batchNumber, tagCount, true);
     for (let tagIndex = 0; tagIndex < discoveryTags.length; tagIndex += 1) {
       const discoveryTag = discoveryTags[tagIndex];
       if (!discoveryTag) continue;
       try {
-        const tagPage = 1 + ((Math.max(1, batchNumber) - 1 + tagIndex) % 5);
+        const tagPage = 1 + ((Math.max(1, batchNumber) - 1 + tagIndex) % 20);
         const [tagArtists, tagTracks] = await Promise.all([
           getCached(`lastfm:tag-artists:${discoveryTag}:${tagPage}`, () => TrackerAPI.getLastFmTopArtistsByTag(discoveryTag, state.settings, 50, tagPage)),
           getCached(`lastfm:tag-tracks:${discoveryTag}:${tagPage}`, () => TrackerAPI.getLastFmTopTracksByTag(discoveryTag, state.settings, 50, tagPage))
         ]);
         musicDiscoverDebug('Last.fm tag pool returned', { tag: discoveryTag, page: tagPage, artists: tagArtists?.length || 0, tracks: tagTracks?.length || 0 });
         const [resolvedTagArtists, resolvedTagTracks] = await Promise.all([
-          includeArtists ? collectLastFmResolvedArtists(tagArtists, dedicatedArtistView ? 12 : 6) : [],
+          includeArtists ? collectLastFmResolvedArtists(tagArtists, dedicatedArtistView ? 24 : 8) : [],
           collectLastFmResolvedTracks(tagTracks, dedicatedSongView ? 12 : 6)
         ]);
         resolvedTagArtists.forEach((artist, index) => addArtist(
@@ -8118,13 +8342,13 @@ async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
     // user's Library is small or similar-artist resolution is sparse.
     if (dedicatedArtistView || dedicatedSongView || tasteNames.length < 2) {
       try {
-        const chartPage = 1 + ((Math.max(1, batchNumber) - 1) % 6);
+        const chartPage = 1 + ((Math.max(1, batchNumber) - 1) % 20);
         const [chartArtists, chartTracks] = await Promise.all([
           getCached(`lastfm:chart-artists:${chartPage}`, () => TrackerAPI.getLastFmChartTopArtists(state.settings, 50, chartPage)),
           getCached(`lastfm:chart-tracks:${chartPage}`, () => TrackerAPI.getLastFmChartTopTracks(state.settings, 50, chartPage))
         ]);
         const [resolvedChartArtists, resolvedChartTracks] = await Promise.all([
-          includeArtists ? collectLastFmResolvedArtists(chartArtists, dedicatedArtistView ? 10 : 5) : [],
+          includeArtists ? collectLastFmResolvedArtists(chartArtists, dedicatedArtistView ? 24 : 8) : [],
           collectLastFmResolvedTracks(chartTracks, dedicatedSongView ? 10 : 5)
         ]);
         resolvedChartArtists.forEach((artist, index) => addArtist(artist, 'lastfm-chart-explore', 5.4 - index * .08, true, { recommendationReason: 'Popular on Last.fm' }));
@@ -8425,12 +8649,13 @@ async function collectNewDiscoverCandidates(batchNumber) {
     } catch {}
   }
 
-  // Future Ticketmaster events belong in New, but only within the user-selected
-  // horizon. They are added once; older infinite-scroll batches focus on releases.
-  if (state.settings.ticketmasterKey && batchNumber === 1 && normalizedDiscoverContentTypes().some(type => ['concert','event'].includes(type))) {
+  // Keep paging through upcoming Ticketmaster content as the user scrolls. Live
+  // events keep the chosen upcoming horizon even when TV/movie/book batches move
+  // backward into older release windows.
+  if (state.settings.ticketmasterKey && normalizedDiscoverContentTypes().some(type => ['concert','event'].includes(type))) {
     try {
       const events = await fetchTicketmasterEventsForPreferences('', {
-        page: 0,
+        page: Math.max(0, batchNumber - 1),
         size: 50,
         skipPrioritySearch: true,
         startDateTime: ticketmasterMonthBoundary(today),
@@ -8443,6 +8668,7 @@ async function collectNewDiscoverCandidates(batchNumber) {
   return dedupeDiscoverCandidatesByBoost(annotated).filter(result => {
     const date = discoverNewDate(result);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+    if (['event','concert'].includes(result.sourceType)) return date >= today && date <= upcomingEnd;
     return date >= windowStart && date <= windowEnd;
   });
 }
@@ -8486,10 +8712,10 @@ async function collectPopularDiscoverCandidates(batchNumber) {
     try { candidates.push(...await collectMusicDiscoverCandidates(batchNumber, 'popular')); } catch (error) { musicDiscoverWarn('Popular music collector failed', { batchNumber, error: error?.message || String(error) }); }
   }
 
-  if (state.settings.ticketmasterKey && batchNumber <= 4 && normalizedDiscoverContentTypes().some(type => ['concert','event'].includes(type))) {
+  if (state.settings.ticketmasterKey && normalizedDiscoverContentTypes().some(type => ['concert','event'].includes(type))) {
     try {
       const events = await fetchTicketmasterEventsForPreferences('', {
-        page: Math.max(0, batchNumber - 1), size: 24, skipPrioritySearch: true
+        page: Math.max(0, batchNumber - 1), size: 40, skipPrioritySearch: true
       });
       candidates.push(...events.map(result => asLiveDiscoverCandidate(result, 'popular-live', 4, false)));
     } catch {}
@@ -8505,14 +8731,23 @@ async function collectRestaurantDiscoverCandidates(batchNumber, mode = 'for-you'
     .filter(item => item.recommended || Number(item.rating || 0) >= 4)
     .map(item => item.title ? `restaurants like ${item.title}` : '')
     .filter(Boolean);
-  const broad = ['restaurants', 'casual dining', 'coffee and brunch', 'pizza', 'sushi', 'thai food', 'italian food', 'mexican food'];
+  const broad = [
+    'restaurants', 'casual dining', 'coffee and brunch', 'breakfast restaurants', 'pizza', 'sushi',
+    'thai food', 'italian food', 'mexican food', 'chinese food', 'indian food', 'korean food',
+    'vietnamese food', 'middle eastern food', 'mediterranean food', 'japanese food', 'ramen',
+    'seafood restaurants', 'steakhouses', 'burgers', 'vegetarian restaurants', 'vegan restaurants',
+    'bakeries and cafes', 'french restaurants', 'tapas restaurants', 'latin american restaurants',
+    'caribbean restaurants', 'ethiopian restaurants', 'barbecue restaurants', 'dessert cafes'
+  ];
   const seedPool = cuisineSeeds.length ? [...new Set([...cuisineSeeds, ...broad])] : broad;
   const seed = seedPool[(batchNumber - 1) % seedPool.length] || 'restaurants';
+  const dedicatedRestaurantView = normalizedDiscoverContentTypes().length === 1 && discoverTypeSelected('restaurant');
   try {
     const results = await TrackerAPI.searchRestaurants(seed, state.settings, {
       city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
       region: state.discoverPrefs.eventCountry || state.settings.homeCountry || 'CA',
-      maxResultCount: 20,
+      pageSize: 20,
+      pages: dedicatedRestaurantView ? 2 : 1,
       minRating: mode === 'popular' ? 4 : 0
     });
     return filterAlreadyKnown(results, 'restaurant').map(result => ({
@@ -8524,6 +8759,57 @@ async function collectRestaurantDiscoverCandidates(batchNumber, mode = 'for-you'
     }));
   } catch (error) {
     console.warn('Restaurant Discover unavailable:', error?.message || error);
+    return [];
+  }
+}
+
+async function collectLiveDiscoverCandidates(batchNumber, mode = 'for-you') {
+  if (!state.settings.ticketmasterKey) return [];
+  const today = todayString();
+  const horizonDays = normalizedUpcomingHorizonDays();
+  const upcomingEnd = addDaysToDateString(today, horizonDays);
+  const selectedTypes = new Set(normalizedDiscoverContentTypes());
+  const page = Math.max(0, batchNumber - 1);
+  const options = {
+    page,
+    size: 50,
+    skipPrioritySearch: mode !== 'for-you'
+  };
+  if (mode === 'new') {
+    options.startDateTime = ticketmasterMonthBoundary(today);
+    options.endDateTime = ticketmasterMonthBoundary(upcomingEnd, true);
+  }
+  try {
+    const events = await fetchTicketmasterEventsForPreferences('', options);
+    const mapped = events
+      .map(result => asLiveDiscoverCandidate(
+        result,
+        mode === 'new' ? 'new-live' : mode === 'popular' ? 'popular-live' : 'live-scroll',
+        mode === 'popular' ? 5 : mode === 'new' ? 4 : 3,
+        mode === 'for-you'
+      ))
+      .filter(result => selectedTypes.has(result.sourceType));
+
+    // In For You, add rotating related/liked concert sources on top of the full
+    // paginated catalogue. The catalogue guarantees depth; these only improve
+    // personalization and are deduped below.
+    if (mode === 'for-you' && selectedTypes.has('concert')) {
+      const extra = await Promise.allSettled([
+        getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 16 }),
+        getRelatedTicketmasterConcerts(batchNumber, 20)
+      ]);
+      if (extra[0].status === 'fulfilled') mapped.push(...extra[0].value.map(result => ({
+        ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-liked',
+        _discoverBoost: result.likedArtist ? 14 : 10, _discoverExploration: false
+      })));
+      if (extra[1].status === 'fulfilled') mapped.push(...extra[1].value.map(result => ({
+        ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-related',
+        _discoverBoost: 8, _discoverExploration: false
+      })));
+    }
+    return dedupeDiscoverCandidatesByBoost(mapped);
+  } catch (error) {
+    console.warn('Live-event Discover unavailable:', error?.message || error);
     return [];
   }
 }
@@ -8607,16 +8893,16 @@ async function collectForYouDiscoverCandidates(batchNumber) {
     }
   }
 
-  if (state.settings.googlePlacesKey && batchNumber <= 5 && discoverTypeSelected('restaurant')) {
+  if (state.settings.googlePlacesKey && discoverTypeSelected('restaurant')) {
     candidates.push(...await collectRestaurantDiscoverCandidates(batchNumber, 'for-you'));
   }
 
-  if (state.settings.ticketmasterKey && batchNumber <= 5 && normalizedDiscoverContentTypes().some(type => ['concert','event'].includes(type))) {
+  if (state.settings.ticketmasterKey && normalizedDiscoverContentTypes().some(type => ['concert','event'].includes(type))) {
     try {
       const [concerts, relatedConcerts, generalEvents] = await Promise.all([
         getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 12 }),
         getRelatedTicketmasterConcerts(batchNumber, 12),
-        fetchTicketmasterEventsForPreferences('', { page: Math.max(0, batchNumber - 1), size: 12, skipPrioritySearch: true })
+        fetchTicketmasterEventsForPreferences('', { page: Math.max(0, batchNumber - 1), size: 36, skipPrioritySearch: true })
       ]);
       candidates.push(...concerts.map(result => ({
         ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-liked',
@@ -9273,6 +9559,7 @@ function filterAlreadyKnown(results, type) {
 
   return (results || []).filter(result => {
     if (blocked.has(String(result.providerId))) return false;
+    if (findCanonicalLibraryItem({ ...result, sourceType: result.sourceType || type })) return false;
     if (type === 'book') {
       if (!isEnglishDiscoverBook(result)) return false;
       if (isDiscoverBookBundle(result)) return false;
@@ -10121,10 +10408,7 @@ function discoverLibraryVisibility(item) {
 }
 
 function findDiscoverItem(result) {
-  return state.items.find(item =>
-    getSourceType(item) === result.sourceType &&
-    String(item.providerId || '') === String(result.providerId || '')
-  ) || null;
+  return findCanonicalLibraryItem(result) || null;
 }
 
 function ensureDiscoverItem(result, queueStatus = 'library') {
@@ -13042,11 +13326,22 @@ function safeLocalSet(key, value) {
 
 function addHistoryRecord(record) {
   const source = record?.sourceItemId ? findItem(record.sourceItemId) : null;
+  const repeatKey = historyRepeatIdentity(record);
+  const priorRepeats = repeatKey ? state.history.filter(entry => historyRepeatIdentity(entry) === repeatKey).length : 0;
+  const isRepeat = record?.rewatch == null ? priorRepeats > 0 : Boolean(record.rewatch);
+  const repeatIndex = repeatKey ? priorRepeats + 1 : 0;
+  let subtitle = record?.subtitle || '';
+  if (isRepeat) {
+    const label = repeatConsumptionLabel(record);
+    if (!subtitle.startsWith(`${label} ·`) && subtitle !== label) subtitle = subtitle ? `${label} · ${subtitle}` : label;
+  }
   state.history.push({
     id: makeId(),
     createdAt: new Date().toISOString(),
     subcategory: source?.subcategory || '',
-    ...record
+    ...record,
+    ...(repeatKey ? { rewatch: isRepeat, repeatIndex } : {}),
+    subtitle
   });
 }
 
@@ -14277,15 +14572,12 @@ function socialSharedItemToDiscoverResult(item) {
 
 function socialOwnItemForShared(item) {
   if (!item) return null;
-  const sourceType = item.sourceType || item.type || '';
-  if (item.providerId) {
-    return state.items.find(candidate => getSourceType(candidate) === sourceType && String(candidate.providerId || '') === String(item.providerId)) || null;
-  }
-  const targetTitle = normalizeSearchText(item.title || '');
-  return state.items.find(candidate => getSourceType(candidate) === sourceType && normalizeSearchText(candidate.title || '') === targetTitle) || null;
+  return findCanonicalLibraryItem(item) || null;
 }
 
 function createOwnManualItemFromShared(item, queueStatus) {
+  const existing = socialOwnItemForShared(item);
+  if (existing) return existing;
   const sourceType = item.sourceType || item.type || 'other';
   const isMusicFamily = ['music','artist','song','concert'].includes(sourceType);
   const isFoodFamily = ['food','restaurant','recipe'].includes(sourceType);
@@ -14327,9 +14619,22 @@ function socialSharedItemOwnActionsMarkup(item) {
   const own = socialOwnItemForShared(item);
   const current = own ? getQueueStatus(own) : '';
   const completed = Boolean(own?.completedAt);
-  const trackLabel = completed ? 'Tracked' : current === 'upnext' ? 'Tracking' : 'Track';
+  const sourceType = own ? getSourceType(own) : (item?.sourceType || item?.type || '');
+  let trackLabel = 'Track';
+  if (own) {
+    if (sourceType === 'tv') {
+      const progress = libraryProgressText(own);
+      trackLabel = progress ? `Your status · ${progress}` : (completed ? 'Your status · Watched' : 'Your status');
+    } else if (sourceType === 'book') {
+      trackLabel = completed ? 'Your status · Finished' : `Your status · ${libraryProgressText(own) || 'Saved'}`;
+    } else if (sourceType === 'movie') {
+      trackLabel = completed ? 'Your status · Watched' : 'Your status';
+    } else {
+      trackLabel = completed ? 'Your status · Completed' : (current === 'upnext' ? 'Your status · Tracking' : 'Your status');
+    }
+  }
   const tbrLabel = current === 'tbr' ? 'In TBR' : 'TBR';
-  return `<div class="detail-actions library-detail-actions social-item-own-actions"><div class="queue-toggle-buttons" aria-label="Add to your Omni"><button class="secondary-button queue-toggle-button${completed || current === 'upnext' ? ' is-selected' : ''}" type="button" data-social-own-queue="upnext" ${completed ? 'disabled' : ''}>${trackLabel}</button><button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-social-own-queue="tbr" ${completed ? 'disabled' : ''}>${tbrLabel}</button></div></div>`;
+  return `<div class="detail-actions library-detail-actions social-item-own-actions"><div class="queue-toggle-buttons" aria-label="Add to your Omni"><button class="secondary-button queue-toggle-button${own ? ' is-selected' : ''}" type="button" data-social-own-queue="upnext">${escapeHtml(trackLabel)}</button><button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-social-own-queue="tbr" ${completed ? 'disabled' : ''}>${tbrLabel}</button></div></div>`;
 }
 
 function socialSharedItemDetailMarkup(item, ownerProfile) {
@@ -14407,11 +14712,24 @@ async function handleSocialItemDetailClick(event) {
   action.disabled = true;
   try {
     let own = socialOwnItemForShared(shared);
+    if (targetStatus === 'upnext') {
+      if (!own) {
+        if (shared.providerId) own = ensureDiscoverItem(socialSharedItemToDiscoverResult(shared), 'upnext');
+        else own = createOwnManualItemFromShared(shared, 'upnext');
+      }
+      // If this title already belongs to the user, never reset or overwrite its
+      // queue/progress from somebody else's profile. Open the user's canonical
+      // Library item so watched/completed/current-episode state is the source of truth.
+      $('#socialItemDetailModal')?.close();
+      if (own) await openDetails(own.id);
+      return;
+    }
+
     if (!own) {
-      if (shared.providerId) own = ensureDiscoverItem(socialSharedItemToDiscoverResult(shared), targetStatus);
-      else own = createOwnManualItemFromShared(shared, targetStatus);
-    } else {
-      await moveItemToQueue(own, targetStatus);
+      if (shared.providerId) own = ensureDiscoverItem(socialSharedItemToDiscoverResult(shared), 'tbr');
+      else own = createOwnManualItemFromShared(shared, 'tbr');
+    } else if (!own.completedAt) {
+      await moveItemToQueue(own, getQueueStatus(own) === 'tbr' ? 'library' : 'tbr');
     }
     const body = $('#socialItemDetailBody');
     if (body) body.innerHTML = socialSharedItemDetailMarkup(shared, socialState.activeSharedItem.ownerProfile);
