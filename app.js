@@ -11095,6 +11095,96 @@ function resetStickerSettings() {
 }
 
 let calendarRowChipDrag = null;
+let calendarRowAutoScrollFrame = 0;
+let calendarRowAutoScrollVelocity = 0;
+
+function calendarRowMoveLabel(chip) {
+  return chip?.querySelector('.calendar-row-chip-label')?.textContent?.trim() || 'Category';
+}
+
+function clearCalendarRowMoveUI({ keepSelected = false } = {}) {
+  const root = els.calendarRowSettingsRows;
+  if (!root) return;
+  root.classList.remove('has-selected-chip', 'is-drag-active', 'is-auto-scrolling-up', 'is-auto-scrolling-down');
+  root.querySelectorAll('.calendar-row-dropzone.is-move-target').forEach(zone => zone.classList.remove('is-move-target'));
+  root.querySelector('[data-calendar-row-selection-banner]')?.remove();
+  if (!keepSelected) root.querySelectorAll('.calendar-row-chip.is-selected').forEach(chip => chip.classList.remove('is-selected'));
+  document.body.classList.remove('calendar-row-drag-active');
+}
+
+function showCalendarRowMoveUI(chip, mode = 'selected') {
+  const root = els.calendarRowSettingsRows;
+  if (!root || !chip) return;
+  root.querySelector('[data-calendar-row-selection-banner]')?.remove();
+  root.classList.toggle('has-selected-chip', mode !== 'dragging');
+  root.classList.toggle('is-drag-active', mode === 'dragging');
+  root.querySelectorAll('[data-calendar-row-dropzone]').forEach(zone => {
+    zone.classList.toggle('is-move-target', !zone.contains(chip));
+  });
+
+  const banner = document.createElement('div');
+  banner.className = 'calendar-row-selection-banner';
+  banner.dataset.calendarRowSelectionBanner = '';
+  const label = calendarRowMoveLabel(chip);
+  banner.innerHTML = `<span><strong>${escapeHtml(label)}</strong>${mode === 'dragging' ? ' — drag to a row; move near the top or bottom to scroll.' : ' selected — scroll, then tap a row to move it.'}</span><button type="button" data-calendar-row-selection-cancel aria-label="Cancel moving ${escapeAttr(label)}">Cancel</button>`;
+  root.prepend(banner);
+}
+
+function stopCalendarRowAutoScroll() {
+  calendarRowAutoScrollVelocity = 0;
+  if (calendarRowAutoScrollFrame) cancelAnimationFrame(calendarRowAutoScrollFrame);
+  calendarRowAutoScrollFrame = 0;
+  els.calendarRowSettingsRows?.classList.remove('is-auto-scrolling-up', 'is-auto-scrolling-down');
+}
+
+function updateCalendarRowDragDropzoneAtPoint(x, y) {
+  if (!calendarRowChipDrag) return;
+  calendarRowChipDrag.ghost.style.display = 'none';
+  const target = document.elementFromPoint(x, y);
+  calendarRowChipDrag.ghost.style.display = '';
+  const dropzone = target?.closest?.('[data-calendar-row-dropzone]') || null;
+  if (dropzone !== calendarRowChipDrag.dropzone) {
+    calendarRowChipDrag.dropzone?.classList.remove('is-drag-over');
+    dropzone?.classList.add('is-drag-over');
+    calendarRowChipDrag.dropzone = dropzone;
+  }
+}
+
+function updateCalendarRowAutoScroll(clientY) {
+  const root = els.calendarRowSettingsRows;
+  if (!root || !calendarRowChipDrag) return;
+  const rect = root.getBoundingClientRect();
+  const edge = Math.min(92, Math.max(54, rect.height * .16));
+  let velocity = 0;
+  if (clientY < rect.top + edge) {
+    const strength = Math.min(1, Math.max(0, (rect.top + edge - clientY) / edge));
+    velocity = -(3 + 17 * strength);
+  } else if (clientY > rect.bottom - edge) {
+    const strength = Math.min(1, Math.max(0, (clientY - (rect.bottom - edge)) / edge));
+    velocity = 3 + 17 * strength;
+  }
+
+  calendarRowAutoScrollVelocity = velocity;
+  root.classList.toggle('is-auto-scrolling-up', velocity < 0);
+  root.classList.toggle('is-auto-scrolling-down', velocity > 0);
+  if (!velocity) {
+    if (calendarRowAutoScrollFrame) cancelAnimationFrame(calendarRowAutoScrollFrame);
+    calendarRowAutoScrollFrame = 0;
+    return;
+  }
+  if (calendarRowAutoScrollFrame) return;
+
+  const tick = () => {
+    if (!calendarRowChipDrag || !calendarRowAutoScrollVelocity) {
+      calendarRowAutoScrollFrame = 0;
+      return;
+    }
+    root.scrollTop += calendarRowAutoScrollVelocity;
+    updateCalendarRowDragDropzoneAtPoint(calendarRowChipDrag.lastX, calendarRowChipDrag.lastY);
+    calendarRowAutoScrollFrame = requestAnimationFrame(tick);
+  };
+  calendarRowAutoScrollFrame = requestAnimationFrame(tick);
+}
 
 function calendarRowChipMarkup(type, label, groupId, hidden = false) {
   const previewEntry = state.history.find(entry => entry.type === type) || state.items.find(item => item.type === type) || { type, typeLabel: label };
@@ -11122,6 +11212,8 @@ function calendarRowGroupMarkup(groupId, members, index) {
 
 function renderCalendarRowSettingsRows() {
   if (!els.calendarRowSettingsRows) return;
+  stopCalendarRowAutoScroll();
+  clearCalendarRowMoveUI();
   const types = getRecognizedTypes();
   const groups = new Map();
   const hidden = [];
@@ -11216,20 +11308,27 @@ function moveCalendarRowChipToDropzone(chip, dropzone) {
 }
 
 function handleCalendarRowSettingsClick(event) {
+  if (event.target.closest('[data-calendar-row-selection-cancel]')) {
+    clearCalendarRowMoveUI();
+    return;
+  }
   if (event.target.closest('[data-calendar-row-drag-handle]')) return;
   const chip = event.target.closest('.calendar-row-chip');
   const dropzone = event.target.closest('[data-calendar-row-dropzone]');
   if (chip && !event.target.closest('[data-calendar-row-drag-handle]')) {
     const wasSelected = chip.classList.contains('is-selected');
-    els.calendarRowSettingsRows?.querySelectorAll('.calendar-row-chip.is-selected').forEach(entry => entry.classList.remove('is-selected'));
-    if (!wasSelected) chip.classList.add('is-selected');
+    clearCalendarRowMoveUI();
+    if (!wasSelected) {
+      chip.classList.add('is-selected');
+      showCalendarRowMoveUI(chip, 'selected');
+    }
     return;
   }
   if (dropzone) {
     const selected = els.calendarRowSettingsRows?.querySelector('.calendar-row-chip.is-selected');
     if (selected && !dropzone.contains(selected)) {
       moveCalendarRowChipToDropzone(selected, dropzone);
-      selected.classList.remove('is-selected');
+      clearCalendarRowMoveUI();
     }
   }
 }
@@ -11239,15 +11338,23 @@ function beginCalendarRowChipDrag(event) {
   const chip = handle?.closest('.calendar-row-chip');
   if (!handle || !chip || event.button > 0) return;
   event.preventDefault();
+  clearCalendarRowMoveUI();
   const rect = chip.getBoundingClientRect();
   const ghost = chip.cloneNode(true);
   ghost.classList.add('calendar-row-chip-ghost');
   ghost.classList.remove('is-selected');
   ghost.style.width = `${rect.width}px`;
   document.body.appendChild(ghost);
-  chip.classList.add('is-dragging');
-  calendarRowChipDrag = { chip, ghost, pointerId: event.pointerId, offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top, dropzone: null };
+  chip.classList.add('is-dragging', 'is-selected');
+  calendarRowChipDrag = {
+    chip, ghost, pointerId: event.pointerId,
+    offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top,
+    dropzone: null, lastX: event.clientX, lastY: event.clientY
+  };
+  document.body.classList.add('calendar-row-drag-active');
+  showCalendarRowMoveUI(chip, 'dragging');
   positionCalendarRowChipGhost(event.clientX, event.clientY);
+  updateCalendarRowDragDropzoneAtPoint(event.clientX, event.clientY);
 }
 
 function positionCalendarRowChipGhost(x, y) {
@@ -11259,34 +11366,39 @@ function positionCalendarRowChipGhost(x, y) {
 function moveCalendarRowChipDrag(event) {
   if (!calendarRowChipDrag || event.pointerId !== calendarRowChipDrag.pointerId) return;
   event.preventDefault();
+  calendarRowChipDrag.lastX = event.clientX;
+  calendarRowChipDrag.lastY = event.clientY;
   positionCalendarRowChipGhost(event.clientX, event.clientY);
-  calendarRowChipDrag.ghost.style.display = 'none';
-  const target = document.elementFromPoint(event.clientX, event.clientY);
-  calendarRowChipDrag.ghost.style.display = '';
-  const dropzone = target?.closest?.('[data-calendar-row-dropzone]') || null;
-  if (dropzone !== calendarRowChipDrag.dropzone) {
-    calendarRowChipDrag.dropzone?.classList.remove('is-drag-over');
-    dropzone?.classList.add('is-drag-over');
-    calendarRowChipDrag.dropzone = dropzone;
-  }
+  updateCalendarRowDragDropzoneAtPoint(event.clientX, event.clientY);
+  updateCalendarRowAutoScroll(event.clientY);
 }
 
 function endCalendarRowChipDrag(event) {
   if (!calendarRowChipDrag || event.pointerId !== calendarRowChipDrag.pointerId) return;
   const { chip, ghost, dropzone } = calendarRowChipDrag;
+  stopCalendarRowAutoScroll();
   dropzone?.classList.remove('is-drag-over');
   chip.classList.remove('is-dragging');
   ghost.remove();
   calendarRowChipDrag = null;
-  if (dropzone) moveCalendarRowChipToDropzone(chip, dropzone);
+  document.body.classList.remove('calendar-row-drag-active');
+  if (dropzone && !dropzone.contains(chip)) {
+    moveCalendarRowChipToDropzone(chip, dropzone);
+    clearCalendarRowMoveUI();
+  } else {
+    chip.classList.add('is-selected');
+    showCalendarRowMoveUI(chip, 'selected');
+  }
 }
 
 function cancelCalendarRowChipDrag(event) {
   if (!calendarRowChipDrag || (event.pointerId != null && event.pointerId !== calendarRowChipDrag.pointerId)) return;
+  stopCalendarRowAutoScroll();
   calendarRowChipDrag.dropzone?.classList.remove('is-drag-over');
   calendarRowChipDrag.chip.classList.remove('is-dragging');
   calendarRowChipDrag.ghost.remove();
   calendarRowChipDrag = null;
+  clearCalendarRowMoveUI();
 }
 
 function saveCalendarRowSettings(event) {
