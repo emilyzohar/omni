@@ -258,7 +258,7 @@ h3 { margin-bottom: 0; font-size: 1.65rem; }
   border-top: 3px solid var(--track-line-strong);
   font-family: var(--serif);
   font-size: 1rem;
-  font-weight: 700;
+  font-weight: 400;
 }
 .tracker-category {
   justify-items: end;
@@ -266,7 +266,7 @@ h3 { margin-bottom: 0; font-size: 1.65rem; }
   text-transform: lowercase;
   font-family: var(--serif);
   font-size: 1rem;
-  font-weight: 700;
+  font-weight: 400;
 }
 .sticker-button {
   border: 0;
@@ -946,7 +946,7 @@ h3 { margin-bottom: 0; font-size: 1.65rem; }
   gap: 3px;
 }
 .week-weekday-row { display: inline-flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-.week-weekday { font-family: var(--serif); font-weight: 700; font-size: 1rem; }
+.week-weekday { font-family: var(--serif); font-weight: 400; font-size: 1rem; }
 .week-date { font-size: .76rem; color: rgba(255,255,255,.72); }
 .week-today-badge {
   display: inline-flex;
@@ -2293,6 +2293,28 @@ body.auth-locked > main {
   border-top: 1px solid rgba(21,36,58,.09);
   border-bottom: 1px solid rgba(21,36,58,.09);
 }
+.streak-setting-section {
+  display: grid;
+  border-bottom: 1px solid rgba(21,36,58,.13);
+}
+.streak-setting-section:last-child { border-bottom: 0; }
+.streak-setting-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 10px 8px;
+  background: rgba(21,36,58,.035);
+}
+.streak-setting-section-heading strong {
+  font-size: .94rem;
+  font-weight: 700;
+}
+.streak-setting-section-heading small {
+  color: #77756e;
+  font-size: .72rem;
+  text-align: right;
+}
 .streak-setting-row {
   min-height: 68px;
   padding: 10px;
@@ -2301,7 +2323,96 @@ body.auth-locked > main {
 .streak-setting-row:last-child { border-bottom: 0; }
 .streak-setting-row:not(.is-enabled) .rest-day-picker,
 .streak-setting-row:not(.is-enabled) .streak-setting-current { opacity: .48; }
-.streak-setting-type { font-size: .9rem; }
+.streak-setting-type {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  font-size: .9rem;
+}
+.streak-setting-type small {
+  color: #8a877f;
+  font-size: .66rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+.streak-setting-row-subcategory .streak-setting-type {
+  padding-left: 14px;
+}
+.streak-setting-row-subcategory .streak-setting-name::before {
+  content: '↳ ';
+  color: #aaa49a;
+}
+.streak-group-delete {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 24px;
+  height: 24px;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #8a706f;
+  cursor: pointer;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+.streak-setting-row-group .streak-setting-type { padding-right: 26px; }
+.streak-group-builder {
+  margin: 4px 10px 12px;
+  border: 1px dashed rgba(21,36,58,.18);
+  border-radius: 12px;
+  background: rgba(255,255,255,.28);
+}
+.streak-group-builder > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 9px 12px;
+  font-size: .76rem;
+  font-weight: 700;
+  color: #66715d;
+}
+.streak-group-builder > summary::-webkit-details-marker { display: none; }
+.streak-group-builder-body {
+  display: grid;
+  gap: 10px;
+  padding: 2px 12px 12px;
+}
+.streak-group-subcategory-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.streak-group-subcategory-choices label {
+  position: relative;
+  cursor: pointer;
+}
+.streak-group-subcategory-choices input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.streak-group-subcategory-choices span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid rgba(21,36,58,.14);
+  border-radius: 999px;
+  background: #fffdf7;
+  font-size: .72rem;
+}
+.streak-group-subcategory-choices input:checked + span {
+  background: var(--blue);
+  border-color: var(--blue-deep);
+  color: #fff8df;
+}
+.streak-group-builder-message {
+  margin: 0;
+  color: #9b2d1a;
+  font-size: .72rem;
+}
 .streak-toggle {
   display: inline-flex;
   align-items: center;
@@ -2351,6 +2462,13 @@ body.auth-locked > main {
   .streak-settings-modal { width: 100%; }
   .streak-settings-head { display: none; }
   .streak-settings-rows { max-height: 62vh; }
+  .streak-setting-section-heading {
+    display: grid;
+    gap: 3px;
+    padding-inline: 3px;
+  }
+  .streak-setting-section-heading small { text-align: left; }
+  .streak-group-builder { margin-inline: 3px; }
   .streak-setting-row {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 10px 12px;
