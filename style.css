@@ -11004,3 +11004,222 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
   .account-danger-zone { grid-template-columns:1fr; }
   .account-danger-zone .delete-button { justify-self:start; }
 }
+
+
+/* =========================================================
+   Final UI polish v37
+   ========================================================= */
+
+/* Collections uses the same display scale as Up Next. */
+.albums-heading h1 {
+  font-size: clamp(2.8rem, 3.4vw, 4.35rem) !important;
+  line-height: 1 !important;
+}
+
+/* Stats are informational, not emphatic: keep values/counts at normal weight. */
+.stat-card strong,
+.stat-type-row strong,
+.stats-genre-legend-row strong {
+  font-weight: 400 !important;
+}
+
+/* DNF uses the same close control and heading spacing as every other dialog. */
+.dnf-choice-modal > .modal-heading {
+  margin: -18px 0 22px;
+  padding-right: 50px;
+}
+
+/* Text-only Library cards keep the same shelf height as poster cards, but their
+   width follows the title. Titles can wrap if exceptionally long and are never
+   line-clamped/ellipsized. */
+.library-poster-grid:not(.is-expanded) .library-card-shell.is-text-card {
+  flex: 0 0 var(--library-text-card-width, var(--library-poster-width)) !important;
+  width: var(--library-text-card-width, var(--library-poster-width)) !important;
+  max-width: min(460px, 82vw);
+  height: var(--library-row-height) !important;
+}
+.library-poster-grid:not(.is-expanded) .library-card-shell.is-text-card > .library-text-card-button {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Expanded mixed shelves wrap cleanly while allowing title-sized text cards. */
+.library-poster-grid.is-expanded:has(.library-text-card-button) {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: stretch !important;
+  gap: 11px !important;
+}
+.library-poster-grid.is-expanded:has(.library-text-card-button) .library-card-shell {
+  flex: 0 0 var(--library-poster-width) !important;
+  width: var(--library-poster-width) !important;
+  height: var(--library-row-height) !important;
+  min-height: var(--library-row-height) !important;
+}
+.library-poster-grid.is-expanded:has(.library-text-card-button) .library-card-shell.is-text-card {
+  flex-basis: var(--library-text-card-width, var(--library-poster-width)) !important;
+  width: var(--library-text-card-width, var(--library-poster-width)) !important;
+  max-width: min(460px, 82vw);
+}
+.library-card-shell.is-text-card > .library-poster-button.library-text-card-button {
+  width: 100% !important;
+  max-width: none !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+.library-card-shell.is-text-card .library-text-card {
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  padding: 12px 10px 36px !important;
+}
+.library-card-shell.is-text-card .library-text-card-title {
+  display: block !important;
+  -webkit-line-clamp: unset !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+}
+
+@media (max-width: 760px) {
+  .albums-heading h1 { font-size: 2.45rem !important; }
+  .dnf-choice-modal > .modal-heading { margin-top: -15px; }
+  .library-poster-grid.is-expanded:has(.library-text-card-button) { gap: 7px !important; }
+}
+
+/* =========================================================
+   Compact Collection editor toolbar + Library-matched filters v38
+   ========================================================= */
+.album-editor-modal {
+  width:min(1040px,calc(100% - 30px));
+  max-height:min(86vh,820px);
+}
+.album-editor-form { gap:12px; }
+.album-editor-toolbar {
+  display:grid;
+  grid-template-columns:minmax(145px,.78fr) minmax(210px,1.2fr) minmax(155px,.72fr) minmax(115px,.48fr);
+  gap:9px;
+  align-items:center;
+}
+.album-editor-toolbar input,
+.album-editor-toolbar select {
+  width:100%;
+  min-height:36px;
+  border:1px solid var(--line);
+  border-radius:999px;
+  background:rgba(255,255,255,.55);
+  color:var(--ink);
+  padding:7px 13px;
+  outline:none;
+}
+.album-editor-toolbar input:focus,
+.album-editor-toolbar select:focus {
+  border-color:rgba(21,36,58,.45);
+  box-shadow:0 0 0 3px rgba(139,153,202,.18);
+}
+.album-editor-toolbar .album-type-filter,
+.album-editor-toolbar .album-type-filter > summary {
+  width:100%;
+  min-width:0;
+}
+/* Use the exact Library checkbox geometry instead of modal-wide checkbox inheritance. */
+.album-type-options .library-type-option {
+  display:flex;
+  grid-template-columns:none;
+  align-items:center;
+  gap:10px;
+  min-height:38px;
+  padding:8px 9px;
+}
+.album-type-options .library-type-option input {
+  width:16px !important;
+  height:16px !important;
+  min-width:16px;
+  margin:0;
+  padding:0;
+  flex:0 0 16px;
+  accent-color:var(--ink);
+}
+.album-type-options .library-type-option span { min-width:0; flex:1 1 auto; }
+.album-type-options .library-type-option small {
+  flex:0 0 auto;
+  color:var(--muted);
+  font-size:.68rem;
+}
+/* Remove the older collection-specific rectangular filter treatment. */
+.album-type-filter > summary {
+  min-height:36px;
+  padding:7px 13px;
+  border:1px solid var(--line);
+  border-radius:999px;
+  background:rgba(255,255,255,.55);
+  font:700 .78rem/1.15 var(--sans);
+}
+.album-sort-control { display:block; min-width:0; }
+.album-sort-control select {
+  min-height:36px;
+  border:1px solid var(--line);
+  border-radius:999px;
+  background:rgba(255,255,255,.55);
+  padding:7px 30px 7px 13px;
+  font:700 .78rem/1.15 var(--sans);
+}
+.album-selected-summary { margin-top:0; }
+/* Keep the browser as the scrolling region so the whole modal does not run far down the page. */
+.album-library-browser {
+  max-height:min(41vh,430px) !important;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  padding-bottom:6px;
+}
+
+@media (max-width:800px) {
+  .album-editor-toolbar {
+    grid-template-columns:minmax(130px,.8fr) minmax(180px,1.2fr) minmax(135px,.7fr) minmax(105px,.5fr);
+    gap:7px;
+  }
+}
+@media (max-width:620px) {
+  .album-editor-modal { max-height:92dvh; }
+  .album-editor-toolbar {
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  }
+  .album-library-browser { max-height:min(44dvh,390px) !important; }
+}
+
+
+/* v40 — Collection is available inside opened Library items on every screen.
+   Desktop also keeps the quick hover shortcut on the card itself. */
+.library-detail-mobile-collection-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 620px) {
+  .library-card-album-button {
+    display: none !important;
+  }
+}
+
+/* Keep Recommended immediately beside the stars on phones.  The optional
+   clear action follows it instead of forcing the heart onto a second line. */
+@media (max-width: 620px) {
+  .star-picker:has(.rating-heart-button) {
+    flex-wrap: nowrap !important;
+    width: max-content;
+    max-width: 100%;
+  }
+  .star-picker:has(.rating-heart-button) .rating-heart-button {
+    order: 2;
+    margin-left: 5px;
+  }
+  .star-picker:has(.rating-heart-button) .clear-rating {
+    order: 3;
+    margin-left: 6px;
+    white-space: nowrap;
+  }
+}

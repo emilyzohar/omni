@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-rewatch-onboarding-35" />
+  <link rel="stylesheet" href="style.css?v=omni-rating-collection-detail-40" />
 </head>
 <body class="library-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -420,8 +420,8 @@
           <button type="button" data-rating="3" aria-label="3 stars">★</button>
           <button type="button" data-rating="4" aria-label="4 stars">★</button>
           <button type="button" data-rating="5" aria-label="5 stars">★</button>
-          <button id="clearRating" class="clear-rating" type="button">clear</button>
           <button id="itemRecommendHeart" class="rating-heart-button" type="button" aria-label="Add to Recommended" aria-pressed="false" title="Recommended">♡</button>
+          <button id="clearRating" class="clear-rating" type="button">clear</button>
         </div>
         <input id="itemRating" type="hidden" value="0" />
       </fieldset>
@@ -558,8 +558,8 @@
           <button type="button" data-history-rating="3" aria-label="3 stars">★</button>
           <button type="button" data-history-rating="4" aria-label="4 stars">★</button>
           <button type="button" data-history-rating="5" aria-label="5 stars">★</button>
-          <button id="historyClearRating" type="button" class="clear-rating">clear</button>
           <button id="historyRecommendHeart" class="rating-heart-button" type="button" aria-label="Add source item to Recommended" aria-pressed="false" title="Recommended">♡</button>
+          <button id="historyClearRating" type="button" class="clear-rating">clear</button>
         </div>
         <input id="historyEditRating" type="hidden" value="0" />
       </fieldset>
@@ -583,10 +583,8 @@
 
   <!-- DETAILS -->
   <dialog id="dnfChoiceModal" class="modal small-modal dnf-choice-modal">
-    <div class="modal-header">
-      <div><h2>DNF</h2></div>
-      <button class="icon-button modal-close-button" type="button" data-close="dnfChoiceModal" aria-label="Close">×</button>
-    </div>
+    <button class="modal-x" type="button" data-close="dnfChoiceModal" aria-label="Close">×</button>
+    <div class="modal-heading"><h2>DNF</h2></div>
     <div class="dnf-choice-actions">
       <button class="secondary-button" type="button" data-dnf-choice="pause">Pause</button>
       <button class="secondary-button danger-button" type="button" data-dnf-choice="stop">Stop</button>
@@ -648,6 +646,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-rewatch-onboarding-35"></script>
+  <script type="module" src="app.js?v=omni-rating-collection-detail-40"></script>
 </body>
 </html>

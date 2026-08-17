@@ -726,7 +726,7 @@ function ensureOnboardingColorModal() {
   modal = document.createElement('dialog');
   modal.id = 'onboardingColorModal';
   modal.className = 'modal small-modal onboarding-color-modal';
-  modal.innerHTML = `<div class="modal-heading"><p class="modal-eyebrow">WELCOME TO OMNI</p><h2>Pick your colour</h2><p class="onboarding-color-copy">This sets your Track calendar and your profile colour. You can change it later in Track settings.</p></div><div class="onboarding-color-picker" role="radiogroup" aria-label="Choose your Omni colour"></div><div class="modal-actions"><button class="quiet-button" type="button" data-onboarding-skip>Skip tour</button><div class="actions-right"><button class="primary-button" type="button" data-onboarding-colour-continue>Continue</button></div></div>`;
+  modal.innerHTML = `<div class="modal-heading"><p class="modal-eyebrow">WELCOME TO OMNI</p><h2>Pick your colour</h2></div><div class="onboarding-color-picker" role="radiogroup" aria-label="Choose your Omni colour"></div><div class="modal-actions"><button class="quiet-button" type="button" data-onboarding-skip>Skip tour</button><div class="actions-right"><button class="primary-button" type="button" data-onboarding-colour-continue>Continue</button></div></div>`;
   document.body.appendChild(modal);
   const picker = modal.querySelector('.onboarding-color-picker');
   const render = () => {
@@ -794,7 +794,8 @@ function showOnboardingGuide({ target, eyebrow = 'GETTING STARTED', title, body,
   guide.setAttribute('role', 'dialog');
   guide.setAttribute('aria-live', 'polite');
   guide.innerHTML = `<p class="modal-eyebrow">${escapeHtml(eyebrow)}</p><h3>${escapeHtml(title)}</h3><p>${escapeHtml(body)}</p><div class="onboarding-guide-actions"><button class="quiet-button" type="button" data-onboarding-guide-skip>Skip tour</button>${actionLabel ? `<button class="primary-button" type="button" data-onboarding-guide-action>${escapeHtml(actionLabel)}</button>` : ''}</div>${waitForClick ? '<p class="onboarding-wait-note">Use the highlighted control to continue.</p>' : ''}`;
-  document.body.appendChild(guide);
+  const guideHost = target.closest('dialog')?.open ? target.closest('dialog') : document.body;
+  guideHost.appendChild(guide);
 
   const reposition = () => positionOnboardingGuide(guide, target);
   const timer = setTimeout(reposition, 280);
@@ -850,96 +851,134 @@ function showOnboardingGuideStep(user = currentUser) {
   if (step === 1) {
     if (page !== 'index.html') { window.location.assign('index.html'); return; }
     const target = onboardingTargetFor('#openAddModal');
-    if (showOnboardingGuide({ target, title: 'Add something', body: 'Press + to open Add. Omni starts with a small “I…” choice so you only see the options that fit.', waitForClick: true })) {
+    if (showOnboardingGuide({ target, title: 'Add something', body: 'Press + to open Add.', waitForClick: true })) {
       routeOnboardingClick(target, 2);
       target.addEventListener('click', () => setTimeout(() => showOnboardingGuideStep(user), 180), { once: true });
     }
     return;
   }
 
-  if (step === 2) {
+  if (step >= 2 && step <= 7) {
     if (page !== 'index.html') { window.location.assign('index.html'); return; }
-    if (!els.itemModal?.open) { openItemModal(); }
+    if (!els.itemModal?.open) openItemModal();
     setTimeout(() => {
-      const target = onboardingTargetFor('#itemActionChoice') || onboardingTargetFor('#itemForm');
+      const steps = {
+        2: {
+          selector: '.add-intent-grid',
+          title: 'Pick the type',
+          body: 'Choose what you did, then choose what it was.'
+        },
+        3: {
+          selector: '#catalogueSearchBlock',
+          title: 'Search',
+          body: 'Search for the item and pick the matching result. Open Search source only if you need a different lookup.'
+        },
+        4: {
+          selector: '.rating-fieldset',
+          title: 'Rate it',
+          body: 'Choose 1–5 stars. Tap the heart if you recommend it.'
+        },
+        5: {
+          selector: '.item-comment-field',
+          title: 'Comment or note',
+          body: 'Comment is public. Open Note to self underneath for a private note.'
+        },
+        6: {
+          selector: '#itemDateField',
+          title: 'Add a date',
+          body: 'Add a date when you want the item recorded on Track.'
+        },
+        7: {
+          selector: '#queueStatusField',
+          title: 'Choose where it goes',
+          body: 'Library only saves it. Up Next puts it in your active queue. TBR saves it for later.'
+        }
+      };
+      const config = steps[step];
+      const target = onboardingTargetFor(config?.selector) || onboardingTargetFor('#itemForm');
       showOnboardingGuide({
         target,
-        title: 'Add stays contextual',
-        body: 'Choose what you did, then what it was. Search, progress, dates, notes, and other features only appear when they are useful.',
-        actionLabel: 'Continue',
-        onAction: () => { closeItemModalForTour(); setOnboardingStep(3); showOnboardingGuideStep(user); }
+        eyebrow: 'ADD',
+        title: config?.title || 'Add',
+        body: config?.body || '',
+        actionLabel: step === 7 ? 'Continue tour' : 'Next',
+        onAction: () => {
+          if (step === 7) closeItemModalForTour();
+          setOnboardingStep(step + 1);
+          showOnboardingGuideStep(user);
+        }
       });
-    }, 80);
-    return;
-  }
-
-  if (step === 3) {
-    if (page !== 'index.html') { window.location.assign('index.html'); return; }
-    const target = onboardingTargetFor('#track');
-    showOnboardingGuide({
-      target,
-      title: 'Track is your history',
-      body: 'Anything you log appears here. Use the + to log directly from the calendar, and the gear later if you want to change rows, stickers, or colour.',
-      actionLabel: 'Next',
-      onAction: () => { setOnboardingStep(4); showOnboardingGuideStep(user); }
-    });
-    return;
-  }
-
-  if (step === 4) {
-    if (page !== 'index.html') { window.location.assign('index.html'); return; }
-    const target = onboardingTargetFor('.site-header a[href="library.html"]');
-    if (showOnboardingGuide({ target, title: 'Go to Library', body: 'Library is where everything you have saved or completed lives. Press Library.', waitForClick: true })) routeOnboardingClick(target, 5);
-    return;
-  }
-
-  if (step === 5) {
-    if (page !== 'library.html') { window.location.assign('library.html'); return; }
-    const target = onboardingTargetFor('.library-controls') || onboardingTargetFor('#library');
-    showOnboardingGuide({
-      target,
-      title: 'Browse your Library',
-      body: 'Search, select multiple Types, sort, or open saved Places on the map. Stats below are clickable too.',
-      actionLabel: 'Next',
-      onAction: () => { setOnboardingStep(6); showOnboardingGuideStep(user); }
-    });
-    return;
-  }
-
-  if (step === 6) {
-    if (page !== 'library.html') { window.location.assign('library.html'); return; }
-    const target = onboardingTargetFor('.site-header a[href="discover.html"]');
-    if (showOnboardingGuide({ target, title: 'Try Discover', body: 'Press Discover to browse things you might want to track next.', waitForClick: true })) routeOnboardingClick(target, 7);
-    return;
-  }
-
-  if (step === 7) {
-    if (page !== 'discover.html') { window.location.assign('discover.html'); return; }
-    const target = onboardingTargetFor('#discover');
-    showOnboardingGuide({
-      target,
-      title: 'Discover from here',
-      body: 'Open a card for details, add it to a queue or Library, and use the filters when you want to narrow the feed.',
-      actionLabel: 'Next',
-      onAction: () => { setOnboardingStep(8); showOnboardingGuideStep(user); }
-    });
+    }, 90);
     return;
   }
 
   if (step === 8) {
-    if (page !== 'discover.html') { window.location.assign('discover.html'); return; }
-    const target = onboardingTargetFor('.site-header a[href="social.html"]');
-    if (showOnboardingGuide({ target, title: 'Finish in Social', body: 'Press Social to see your feed, people you follow, and your own profile.', waitForClick: true })) routeOnboardingClick(target, 9);
+    if (page !== 'index.html') { window.location.assign('index.html'); return; }
+    const target = onboardingTargetFor('#track');
+    showOnboardingGuide({
+      target,
+      title: 'Track',
+      body: 'See what you logged by date. Use + here to add directly from the calendar.',
+      actionLabel: 'Next',
+      onAction: () => { setOnboardingStep(9); showOnboardingGuideStep(user); }
+    });
     return;
   }
 
-  if (step >= 9) {
+  if (step === 9) {
+    if (page !== 'index.html') { window.location.assign('index.html'); return; }
+    const target = onboardingTargetFor('.site-header a[href="library.html"]');
+    if (showOnboardingGuide({ target, title: 'Open Library', body: 'Press Library.', waitForClick: true })) routeOnboardingClick(target, 10);
+    return;
+  }
+
+  if (step === 10) {
+    if (page !== 'library.html') { window.location.assign('library.html'); return; }
+    const target = onboardingTargetFor('.library-controls') || onboardingTargetFor('#library');
+    showOnboardingGuide({
+      target,
+      title: 'Library controls',
+      body: 'Search, filter by Type, sort, or open saved Places on the map.',
+      actionLabel: 'Next',
+      onAction: () => { setOnboardingStep(11); showOnboardingGuideStep(user); }
+    });
+    return;
+  }
+
+  if (step === 11) {
+    if (page !== 'library.html') { window.location.assign('library.html'); return; }
+    const target = onboardingTargetFor('.site-header a[href="discover.html"]');
+    if (showOnboardingGuide({ target, title: 'Open Discover', body: 'Press Discover.', waitForClick: true })) routeOnboardingClick(target, 12);
+    return;
+  }
+
+  if (step === 12) {
+    if (page !== 'discover.html') { window.location.assign('discover.html'); return; }
+    const target = onboardingTargetFor('#discover');
+    showOnboardingGuide({
+      target,
+      title: 'Discover',
+      body: 'Open a card for details, then save it or add it to a queue.',
+      actionLabel: 'Next',
+      onAction: () => { setOnboardingStep(13); showOnboardingGuideStep(user); }
+    });
+    return;
+  }
+
+  if (step === 13) {
+    if (page !== 'discover.html') { window.location.assign('discover.html'); return; }
+    const target = onboardingTargetFor('.site-header a[href="social.html"]');
+    if (showOnboardingGuide({ target, title: 'Open Social', body: 'Press Social.', waitForClick: true })) routeOnboardingClick(target, 14);
+    return;
+  }
+
+  if (step >= 14) {
     if (page !== 'social.html') { window.location.assign('social.html'); return; }
     const target = onboardingTargetFor('.social-tabs') || onboardingTargetFor('#socialRoot');
     showOnboardingGuide({
       target,
-      title: 'You are set',
-      body: 'Feed shows recent activity from people you follow. Profile controls what you share. Your profile colour follows the Track colour you chose.',
+      title: 'Social',
+      body: 'Use Feed, Following, People, and Profile here.',
       actionLabel: 'Finish',
       onAction: () => finishOnboarding(user)
     });
@@ -1638,6 +1677,14 @@ function bindEvents() {
       return;
     }
 
+    const detailCollection = event.target.closest('.library-detail-mobile-collection-button[data-library-add-album]');
+    if (detailCollection) {
+      event.preventDefault();
+      event.stopPropagation();
+      openLibraryAddToAlbum(detailCollection.dataset.libraryAddAlbum);
+      return;
+    }
+
     const libraryTrack = event.target.closest('[data-library-track]');
     if (libraryTrack) {
       const item = findItem(libraryTrack.dataset.libraryTrack || state.openDetailId);
@@ -2132,7 +2179,7 @@ function renderAlbumTypeFilterOptions() {
   const available = new Set(groups.map(group => group.key));
   albumEditorTypeFilters = new Set([...albumEditorTypeFilters].filter(key => available.has(key)));
   if (!albumEditorTypeFilters.size && groups.length) albumEditorTypeFilters = new Set(groups.map(group => group.key));
-  options.innerHTML = groups.map(group => `<label><input type="checkbox" value="${escapeAttr(group.key)}" ${albumEditorTypeFilters.has(group.key) ? 'checked' : ''} /> <span>${escapeHtml(group.label)}</span><small>${group.count}</small></label>`).join('');
+  options.innerHTML = groups.map(group => `<label class="library-type-option album-type-option"><input type="checkbox" value="${escapeAttr(group.key)}" ${albumEditorTypeFilters.has(group.key) ? 'checked' : ''} /><span>${escapeHtml(group.label)}</span><small>${group.count}</small></label>`).join('');
   summary.textContent = albumEditorTypeFilters.size === groups.length
     ? 'All types'
     : groups.filter(group => albumEditorTypeFilters.has(group.key)).map(group => group.label).slice(0,3).join(', ') + (albumEditorTypeFilters.size > 3 ? ` +${albumEditorTypeFilters.size - 3}` : '');
@@ -2146,18 +2193,16 @@ function ensureAlbumEditorModal() {
   modal.className = 'modal album-editor-modal';
   modal.innerHTML = `<button class="modal-x" type="button" data-close="albumEditorModal" aria-label="Close">×</button>
     <div class="modal-heading"><h2 id="albumEditorTitle">New collection</h2></div>
-    <form id="albumEditorForm" class="item-form">
+    <form id="albumEditorForm" class="item-form album-editor-form">
       <input id="albumEditingId" type="hidden"/>
-      <label class="field"><span>Name</span><input id="albumName" type="text" maxlength="80" required/></label>
-      <div class="album-picker-tools album-library-tools">
-        <input id="albumItemSearch" type="search" autocomplete="off" placeholder="Search your Library" aria-label="Search your Library" />
-        <div class="album-library-filter-row">
-          <details id="albumTypeFilter" class="library-type-filter album-type-filter">
-            <summary id="albumTypeFilterSummary">All types</summary>
-            <div id="albumTypeFilterOptions" class="library-type-options album-type-options" role="group" aria-label="Collection item types"></div>
-          </details>
-          <label class="album-sort-control"><span>Sort</span><select id="albumSort" aria-label="Sort collection Library"><option value="recent">Recent</option><option value="rating">Rating</option></select></label>
-        </div>
+      <div class="album-editor-toolbar">
+        <label class="album-toolbar-name"><span class="sr-only">Collection name</span><input id="albumName" type="text" maxlength="80" placeholder="Collection name" aria-label="Collection name" required/></label>
+        <label class="album-toolbar-search"><span class="sr-only">Search your Library</span><input id="albumItemSearch" type="search" autocomplete="off" placeholder="Search Library…" aria-label="Search your Library" /></label>
+        <details id="albumTypeFilter" class="library-type-filter album-type-filter">
+          <summary id="albumTypeFilterSummary">All types</summary>
+          <div id="albumTypeFilterOptions" class="library-type-options album-type-options" role="group" aria-label="Collection item types"></div>
+        </details>
+        <label class="album-sort-control"><span class="sr-only">Sort collection Library</span><select id="albumSort" aria-label="Sort collection Library"><option value="recent">Recent</option><option value="rating">Rating</option><option value="title">Title</option></select></label>
       </div>
       <div id="albumSelectedSummary" class="album-selected-summary"></div>
       <div id="albumItemChoices" class="album-library-browser"></div>
@@ -2168,7 +2213,7 @@ function ensureAlbumEditorModal() {
   modal.querySelector('[data-close="albumEditorModal"]')?.addEventListener('click', () => modal.close());
   modal.querySelector('#albumItemSearch')?.addEventListener('input', renderAlbumItemChoices);
   modal.querySelector('#albumSort')?.addEventListener('change', event => {
-    albumEditorSort = event.target.value === 'rating' ? 'rating' : 'recent';
+    albumEditorSort = ['recent', 'rating', 'title'].includes(event.target.value) ? event.target.value : 'recent';
     renderAlbumItemChoices();
   });
   modal.querySelector('#albumTypeFilterOptions')?.addEventListener('change', event => {
@@ -2262,6 +2307,10 @@ function renderAlbumItemChoices() {
       return Number(b.rating || 0) - Number(a.rating || 0)
         || String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''))
         || String(a.title || '').localeCompare(String(b.title || ''));
+    }
+    if (albumEditorSort === 'title') {
+      return String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' })
+        || String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''));
     }
     return String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''))
       || Number(b.rating || 0) - Number(a.rating || 0)
@@ -7278,8 +7327,13 @@ function buddyWatchItemActionMarkup(item) {
   return `<button class="secondary-button buddy-watch-item-action" type="button" data-buddy-watch-item="${escapeAttr(item.id)}">Buddy Watch</button>`;
 }
 
+function mobileCollectionActionMarkup(item) {
+  if (!item) return '';
+  return `<button class="secondary-button library-detail-mobile-collection-button" type="button" data-library-add-album="${escapeAttr(item.id)}">+ Collection</button>`;
+}
+
 function libraryDetailActionContents(item, { leading = '', trailing = '' } = {}) {
-  return `${leading}${queueMoveControls(item)}${buddyWatchItemActionMarkup(item)}${trailing}`;
+  return `${leading}${queueMoveControls(item)}${buddyWatchItemActionMarkup(item)}${mobileCollectionActionMarkup(item)}${trailing}`;
 }
 
 function libraryDetailActions(item, { leading = '', trailing = '', className = '' } = {}) {
@@ -7411,8 +7465,8 @@ function libraryPersonalMetadataMarkup(item) {
     <div class="library-personal-meta-row">
       <div class="star-picker library-detail-rating-picker rating-with-heart" aria-label="Your rating out of five stars">
         ${[1,2,3,4,5].map(value => `<button type="button" data-library-rating="${value}" data-item-id="${escapeAttr(item.id)}" class="${starFillClass(value, rating)}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
-        <button class="clear-rating" type="button" data-clear-library-rating data-item-id="${escapeAttr(item.id)}">clear</button>
         <button class="rating-heart-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${escapeAttr(item.id)}" aria-label="${item.recommended ? 'Remove from Recommended' : 'Add to Recommended'}" aria-pressed="${Boolean(item.recommended)}" title="Recommended">${item.recommended ? '♥' : '♡'}</button>
+        <button class="clear-rating" type="button" data-clear-library-rating data-item-id="${escapeAttr(item.id)}">clear</button>
       </div>
       <button class="secondary-button library-personal-edit" type="button" data-edit-id="${escapeAttr(item.id)}">Edit</button>
     </div>
@@ -12471,8 +12525,8 @@ function discoverTVPersonalMetadataMarkup(item, key) {
       <legend>Rating <span>optional</span></legend>
       <div class="star-picker discover-tv-rating-picker rating-with-heart" aria-label="Your rating out of five stars">
         ${[1,2,3,4,5].map(value => `<button type="button" data-discover-tv-rating="${value}" data-discover-key="${escapeAttr(key)}" class="${starFillClass(value, rating)}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
-        <button class="clear-rating" type="button" data-clear-discover-tv-rating data-discover-key="${escapeAttr(key)}">clear</button>
         <button class="rating-heart-button${item?.recommended ? ' is-recommended' : ''}" type="button" data-discover-recommend="${escapeAttr(key)}" aria-label="${item?.recommended ? 'Remove from Recommended' : 'Add to Recommended'}" aria-pressed="${Boolean(item?.recommended)}" title="Recommended">${item?.recommended ? '♥' : '♡'}</button>
+        <button class="clear-rating" type="button" data-clear-discover-tv-rating data-discover-key="${escapeAttr(key)}">clear</button>
       </div>
     </fieldset>
     <label class="field">
@@ -14311,6 +14365,19 @@ function normalizeSearchText(value) {
   return String(value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
+function libraryTextCardWidth(title) {
+  const text = String(title || 'Untitled').trim() || 'Untitled';
+  try {
+    const canvas = libraryTextCardWidth.canvas || (libraryTextCardWidth.canvas = document.createElement('canvas'));
+    const context = canvas.getContext('2d');
+    if (context) {
+      context.font = '700 14.4px \"DM Sans\", system-ui, sans-serif';
+      return Math.max(118, Math.min(460, Math.ceil(context.measureText(text).width + 34)));
+    }
+  } catch {}
+  return Math.max(118, Math.min(460, 34 + text.length * 8));
+}
+
 function makeLibraryPoster(item) {
   const shell = document.createElement('div');
   shell.className = 'library-card-shell';
@@ -14325,7 +14392,10 @@ function makeLibraryPoster(item) {
   const hasThumbnail = Boolean(String(item.image || '').trim());
   if (!hasThumbnail) {
     poster.classList.add('library-text-card-button');
-    poster.style.setProperty('--library-text-title-chars', String(Math.min(42, Math.max(12, String(item.title || '').trim().length || 12))));
+    const textCardWidth = libraryTextCardWidth(item.title);
+    shell.classList.add('is-text-card');
+    shell.style.setProperty('--library-text-card-width', `${textCardWidth}px`);
+    poster.style.setProperty('--library-text-card-width', `${textCardWidth}px`);
   }
   const recommendedBadge = item.recommended
     ? `<span class="library-recommended-badge" aria-label="Recommended" title="Recommended">♥</span>`
@@ -15699,7 +15769,7 @@ function socialProfileThemePickerMarkup() {
   const selected = savedCalendarThemeId();
   const label = CALENDAR_THEMES.find(theme => theme.id === selected)?.label || 'Track colour';
   return `<article class="social-share-card social-profile-theme-card social-profile-theme-linked">
-    <div class="social-share-card-head social-profile-theme-head"><span><strong>Profile colour</strong><small>Matches your Track calendar automatically.</small></span><span class="social-profile-theme-linked-value"><span class="social-profile-theme-dot" data-social-profile-theme-dot="${escapeAttr(selected)}" aria-hidden="true"></span>${escapeHtml(label)}</span></div>
+    <div class="social-share-card-head social-profile-theme-head"><span><strong>Profile colour</strong></span><span class="social-profile-theme-linked-value"><span class="social-profile-theme-dot" data-social-profile-theme-dot="${escapeAttr(selected)}" aria-hidden="true"></span>${escapeHtml(label)}</span></div>
   </article>`;
 }
 
