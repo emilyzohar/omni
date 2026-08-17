@@ -11472,7 +11472,9 @@ async function collectGameDiscoverCandidates(batchNumber, mode = 'for-you') {
     }
   };
   if (settled[0].status === 'fulfilled') add(settled[0].value, 'video-game', mode === 'popular' ? 7 : mode === 'new' ? 5 : 3);
+  else console.warn('[Discover][Video games] catalogue request failed:', settled[0].reason?.message || settled[0].reason || 'Unknown error');
   if (settled[1].status === 'fulfilled') add(settled[1].value, 'board-game', mode === 'popular' ? 7 : mode === 'new' ? 4 : 3);
+  else console.warn('[Discover][Board games] catalogue request failed:', settled[1].reason?.message || settled[1].reason || 'Unknown error');
 
   if (mode === 'new') {
     const today = todayString();
@@ -11870,8 +11872,12 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
   // Pick the batch first, then resolve watch-provider names only for TV/movies
   // that will actually be rendered. This matters for an endless feed: it avoids
   // dozens of unnecessary provider calls for cards the user never sees.
+  const requestedTypes = normalizedDiscoverContentTypes();
+  const dedicatedGameView = requestedTypes.length === 1 && requestedTypes[0] === 'game';
   let selected;
-  if (mode === 'new') {
+  if (dedicatedGameView) {
+    selected = selectGameSubtypeMix(prelim, batchSize);
+  } else if (mode === 'new') {
     const groupKeys = ['this-week', 'last-week', 'upcoming', 'recently-released'];
     const perGroup = Math.max(4, Math.floor(batchSize / groupKeys.length));
     const picked = [];
@@ -11957,6 +11963,48 @@ function selectAcrossContentFamilies(results, limit) {
     round += 1;
   }
   return selected;
+}
+
+// Games is one Discover category, but video games and board games are distinct
+// catalogues. In a dedicated Games view, don't let IGDB's richer popularity/
+// rating metadata crowd BoardGameGeek out of the first visible batch.
+function selectGameSubtypeMix(results, limit) {
+  const ranked = [...(results || [])];
+  const videoGames = ranked.filter(result => result.sourceType === 'video-game');
+  const boardGames = ranked.filter(result => result.sourceType === 'board-game');
+  if (!videoGames.length || !boardGames.length) return ranked.slice(0, limit);
+
+  const selected = [];
+  let videoIndex = 0;
+  let boardIndex = 0;
+  let nextType = Number(videoGames[0]?._discoverScore || 0) >= Number(boardGames[0]?._discoverScore || 0)
+    ? 'video-game'
+    : 'board-game';
+
+  while (selected.length < limit && (videoIndex < videoGames.length || boardIndex < boardGames.length)) {
+    if (nextType === 'video-game' && videoIndex < videoGames.length) {
+      selected.push(videoGames[videoIndex++]);
+      nextType = 'board-game';
+      continue;
+    }
+    if (nextType === 'board-game' && boardIndex < boardGames.length) {
+      selected.push(boardGames[boardIndex++]);
+      nextType = 'video-game';
+      continue;
+    }
+    if (videoIndex < videoGames.length) selected.push(videoGames[videoIndex++]);
+    else if (boardIndex < boardGames.length) selected.push(boardGames[boardIndex++]);
+  }
+
+  const selectedIds = new Set(selected.map(discoverResultIdentity));
+  for (const result of ranked) {
+    if (selected.length >= limit) break;
+    const id = discoverResultIdentity(result);
+    if (!id || selectedIds.has(id)) continue;
+    selectedIds.add(id);
+    selected.push(result);
+  }
+  return selected.slice(0, limit);
 }
 
 function diversifyDiscoverFeed(results) {
