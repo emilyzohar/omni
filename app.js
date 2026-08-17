@@ -2462,15 +2462,29 @@ function watchedTitleHasConsumption(item) {
   return false;
 }
 
+function statsCanonicalGenreLabels(value) {
+  const label = cleanTypeLabel(value || '');
+  if (!label) return [];
+  // TMDB uses combined TV genres where its movie taxonomy uses separate genres.
+  // Expand them so Stats has one consistent set of labels instead of showing
+  // both “Sci-Fi & Fantasy” and “Science Fiction”, etc.
+  if (label === 'Sci-Fi & Fantasy') return ['Science Fiction', 'Fantasy'];
+  if (label === 'Action & Adventure') return ['Action', 'Adventure'];
+  if (label === 'Kids') return ['Family'];
+  if (label === 'War & Politics') return ['War', 'Politics'];
+  return [label];
+}
+
 function watchedGenreCounts() {
   const counts = new Map();
   for (const item of state.items) {
     if (!watchedTitleHasConsumption(item)) continue;
+    const itemLabels = new Set();
     for (const genre of item.genres || []) {
-      const label = cleanTypeLabel(typeof genre === 'string' ? genre : genre?.name || '');
-      if (!label) continue;
-      counts.set(label, (counts.get(label) || 0) + 1);
+      const raw = typeof genre === 'string' ? genre : genre?.name || '';
+      for (const label of statsCanonicalGenreLabels(raw)) itemLabels.add(label);
     }
+    for (const label of itemLabels) counts.set(label, (counts.get(label) || 0) + 1);
   }
   return [...counts.entries()].sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
@@ -2626,8 +2640,14 @@ function renderGenrePie(genres = []) {
     Romance: '#780000',
     'Science Fiction': '#A09BE7',
     Thriller: '#031D44', 
+    War: '#6d7480',
+    Western: '#9c7450',
+    'TV Movie': '#8fa8bc',
+    Politics: '#9a4353',
     Other: '#b0a79a'
   };
+  
+
   const genreAliases = {
     'Sci-Fi & Fantasy': 'Science Fiction',
     'Action & Adventure': 'Action',
@@ -7746,7 +7766,12 @@ function libraryAssociatedDateInfo(item) {
       const latest = periods[periods.length - 1];
       const start = latest.startDate ? formatLongDate(latest.startDate) : '';
       const end = latest.endDate ? formatLongDate(latest.endDate) : '';
-      return { label: 'Reading', values: [start && end ? `${start} – ${end}` : start || end].filter(Boolean), extra: Math.max(0, periods.length - 1) };
+      return {
+        label: 'Reading',
+        values: [start && end ? `${start} – ${end}` : start || end].filter(Boolean),
+        rawDates: [latest.endDate || latest.startDate].filter(Boolean),
+        extra: Math.max(0, periods.length - 1)
+      };
     }
   }
 
@@ -7757,14 +7782,15 @@ function libraryAssociatedDateInfo(item) {
       const value = endDate && endDate !== startDate
         ? `${formatLongDate(startDate)} – ${formatLongDate(endDate)}`
         : formatLongDate(startDate);
-      return { label: 'Date', values: [value], extra: 0 };
+      return { label: 'Date', values: [value], rawDates: [startDate], extra: 0 };
     }
   }
 
   const historyDates = state.history
     .filter(entry => entry.sourceItemId === item.id && entry.date)
-    .map(entry => entry.date);
-  const dates = [...new Set([item.date, ...historyDates].filter(Boolean))].sort((a, b) => String(b).localeCompare(String(a)));
+    .map(entry => String(entry.date).slice(0,10));
+  const dates = [...new Set([item.date ? String(item.date).slice(0,10) : '', ...historyDates].filter(Boolean))]
+    .sort((a, b) => String(b).localeCompare(String(a)));
   if (!dates.length) return null;
 
   let label = 'Tracked';
@@ -7775,6 +7801,7 @@ function libraryAssociatedDateInfo(item) {
   return {
     label,
     values: dates.slice(0, 3).map(formatLongDate),
+    rawDates: dates,
     extra: Math.max(0, dates.length - 3)
   };
 }
@@ -14493,36 +14520,13 @@ function itemLastTrackedDate(item) {
   return dates.sort().at(-1) || '';
 }
 
-// Date shown beneath a Library card should reflect an actual logged/consumed
-// date, never the date the item happened to be added to the Library.
+// The footer date is deliberately sourced from the exact same date summary used
+// inside the opened Library item. This prevents the card footer and its date badge
+// from drifting apart as history is edited. Books intentionally have no footer date.
 function itemLastLoggedDate(item) {
-  if (!item) return '';
-  const sourceType = getSourceType(item);
-
-  // Books already communicate their reading period/progress in the detail view;
-  // do not add a separate date underneath the Library card.
-  if (sourceType === 'book') return '';
-
-  const dates = state.history
-    .filter(entry => entry.sourceItemId === item.id && entry.date)
-    .map(entry => String(entry.date).slice(0,10))
-    .filter(Boolean);
-
-  // item.date is the user-facing Date/Visit/Tracked value used by the Library
-  // detail date strip. When present, it represents the experienced/logged date
-  // chosen by the user, not createdAt (the date the item entered the Library).
-  if (item.date) dates.push(String(item.date).slice(0,10));
-
-  if (sourceType === 'activity') {
-    const activityDate = item.activityMeta?.endDate || item.activityMeta?.startDate || '';
-    if (activityDate) dates.push(String(activityDate).slice(0,10));
-  }
-
-  // Older completed records can predate history-date storage. Use completedAt
-  // only as a last-resort consumption-date fallback; never use createdAt.
-  if (!dates.length && item.completedAt) dates.push(String(item.completedAt).slice(0,10));
-
-  return [...new Set(dates)].sort().at(-1) || '';
+  if (!item || getSourceType(item) === 'book') return '';
+  const info = libraryAssociatedDateInfo(item);
+  return String(info?.rawDates?.[0] || '').slice(0,10);
 }
 
 function normalizeLibraryPrefs(value) {
