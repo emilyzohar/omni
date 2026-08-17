@@ -1,4 +1,4 @@
-import { TrackerAPI } from './api.js?v=omni-structure-overhaul-22';
+import { TrackerAPI } from './api.js?v=omni-low-cognitive-add-24';
 import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
@@ -376,6 +376,8 @@ const els = {
   bookProgressModal: $('#bookProgressModal'),
   itemForm: $('#itemForm'),
   itemSourceType: $('#itemSourceType'),
+  itemActionChoice: $('#itemActionChoice'),
+  itemKindChoice: $('#itemKindChoice'),
   itemSubtypeBlock: $('#itemSubtypeBlock'),
   itemSubtype: $('#itemSubtype'),
   itemSubtypeLabel: $('#itemSubtypeLabel'),
@@ -388,6 +390,8 @@ const els = {
   displayTypeHint: $('#displayTypeHint'),
   catalogueSearchBlock: $('#catalogueSearchBlock'),
   itemFindSource: $('#itemFindSource'),
+  itemFindSourceDisclosure: $('#itemFindSourceDisclosure'),
+  itemFindSourceSummary: $('#itemFindSourceSummary'),
   itemFeaturesDisclosure: $('#itemFeaturesDisclosure'),
   itemFeaturesSummary: $('#itemFeaturesSummary'),
   itemProgressMode: $('#itemProgressMode'),
@@ -442,6 +446,8 @@ const els = {
   starPicker: $('#starPicker'),
   clearRating: $('#clearRating'),
   itemNote: $('#itemNote'),
+  itemNoteDisclosure: $('#itemNoteDisclosure'),
+  itemComment: $('#itemComment'),
   itemFiles: $('#itemFiles'),
   itemAttachmentsDisclosure: $('#itemAttachmentsDisclosure'),
   itemAttachmentsSummary: $('#itemAttachmentsSummary'),
@@ -898,7 +904,7 @@ function mergeLibraryItemRecords(primary, duplicate) {
 
   // Metadata: preserve the richer/current record without replacing meaningful
   // values with blanks from an accidental duplicate.
-  for (const key of ['title','subtitle','image','provider','providerId','subcategory','typeLabel','releaseDate','artistName','artistId','albumName','lastfmUrl']) {
+  for (const key of ['title','subtitle','image','provider','providerId','subcategory','typeLabel','releaseDate','artistName','artistId','albumName','lastfmUrl','comment']) {
     if (!primary[key] && duplicate[key]) primary[key] = duplicate[key];
   }
   if (!primary.notes && duplicate.notes) primary.notes = duplicate.notes;
@@ -1173,6 +1179,11 @@ function bindEvents() {
   document.addEventListener('pointermove', moveCalendarRowChipDrag, { passive: false });
   document.addEventListener('pointerup', endCalendarRowChipDrag);
   document.addEventListener('pointercancel', cancelCalendarRowChipDrag);
+  els.itemActionChoice?.addEventListener('change', () => {
+    refreshItemKindChoices('', els.itemActionChoice.value);
+    applyItemKindChoice(true);
+  });
+  els.itemKindChoice?.addEventListener('change', () => applyItemKindChoice(true));
   els.itemSourceType?.addEventListener('change', () => {
     clearSourceSelectionForTypeChange();
     configureItemSubtype(true);
@@ -1184,6 +1195,7 @@ function bindEvents() {
   });
   els.itemFindSource?.addEventListener('change', () => {
     clearSourceSelectionForTypeChange();
+    syncItemFindSourceSummary();
     updateItemFormForType();
   });
   els.itemProgressMode?.addEventListener('change', updateItemFormForType);
@@ -1821,43 +1833,102 @@ function renderAlbums() {
   if (els.albumsEmpty) els.albumsEmpty.hidden = state.albums.length > 0;
 }
 
+let albumEditorSelectedIds = new Set();
+
 function ensureAlbumEditorModal() {
   let modal = $('#albumEditorModal');
   if (modal) return modal;
   modal = document.createElement('dialog');
   modal.id = 'albumEditorModal';
   modal.className = 'modal album-editor-modal';
-  modal.innerHTML = `<button class="modal-x" type="button" data-close="albumEditorModal" aria-label="Close">×</button><div class="modal-heading"><h2 id="albumEditorTitle">New album</h2></div><form id="albumEditorForm" class="item-form"><input id="albumEditingId" type="hidden"/><label class="field"><span>Name</span><input id="albumName" type="text" maxlength="80" required/></label><label class="field"><span>Note</span><input id="albumNote" type="text" maxlength="160"/></label><div id="albumItemChoices" class="album-item-choices"></div><div class="modal-actions"><button id="albumDelete" class="delete-button" type="button" hidden>Delete</button><div class="actions-right"><button class="quiet-button" type="button" data-close="albumEditorModal">Cancel</button><button class="primary-button" type="submit">Save</button></div></div></form>`;
+  modal.innerHTML = `<button class="modal-x" type="button" data-close="albumEditorModal" aria-label="Close">×</button>
+    <div class="modal-heading"><h2 id="albumEditorTitle">New album</h2></div>
+    <form id="albumEditorForm" class="item-form">
+      <input id="albumEditingId" type="hidden"/>
+      <label class="field"><span>Name</span><input id="albumName" type="text" maxlength="80" required/></label>
+      <div class="album-picker-tools">
+        <input id="albumItemSearch" type="search" autocomplete="off" placeholder="Search your Library" />
+        <select id="albumItemTypeFilter" aria-label="Filter Library items"><option value="all">Everything</option></select>
+      </div>
+      <div id="albumSelectedSummary" class="album-selected-summary"></div>
+      <div id="albumItemChoices" class="album-item-choices"></div>
+      <details class="compact-add-option"><summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Note</span></summary><label class="field compact-add-body"><span class="sr-only">Album note</span><input id="albumNote" type="text" maxlength="160"/></label></details>
+      <div class="modal-actions"><button id="albumDelete" class="delete-button" type="button" hidden>Delete</button><div class="actions-right"><button class="quiet-button" type="button" data-close="albumEditorModal">Cancel</button><button class="primary-button" type="submit">Save</button></div></div>
+    </form>`;
   document.body.appendChild(modal);
   modal.querySelector('[data-close="albumEditorModal"]')?.addEventListener('click', () => modal.close());
+  modal.querySelector('#albumItemSearch')?.addEventListener('input', renderAlbumItemChoices);
+  modal.querySelector('#albumItemTypeFilter')?.addEventListener('change', renderAlbumItemChoices);
+  modal.querySelector('#albumItemChoices')?.addEventListener('change', event => {
+    if (!event.target.matches('[data-album-item]')) return;
+    if (event.target.checked) albumEditorSelectedIds.add(event.target.value);
+    else albumEditorSelectedIds.delete(event.target.value);
+    renderAlbumSelectedSummary();
+  });
   modal.querySelector('#albumEditorForm')?.addEventListener('submit', event => {
     event.preventDefault();
     const id = $('#albumEditingId')?.value || '';
     const existing = state.albums.find(album => album.id === id);
     const title = String($('#albumName')?.value || '').trim();
     if (!title) return;
-    const itemIds = [...modal.querySelectorAll('[data-album-item]:checked')].map(input => input.value);
+    const itemIds = [...albumEditorSelectedIds].filter(id => findItem(id));
     const album = existing || { id: makeId(), createdAt: new Date().toISOString() };
     album.title = title;
     album.description = String($('#albumNote')?.value || '').trim();
     album.itemIds = itemIds;
     album.updatedAt = new Date().toISOString();
     if (!existing) state.albums.unshift(album);
-    saveAlbums();
-    renderAlbums();
-    modal.close();
+    saveAlbums(); renderAlbums(); modal.close(); scheduleCloudSync();
   });
   modal.querySelector('#albumDelete')?.addEventListener('click', () => {
     const id = $('#albumEditingId')?.value || '';
     if (!id) return;
     state.albums = state.albums.filter(album => album.id !== id);
-    saveAlbums(); renderAlbums(); modal.close();
+    saveAlbums(); renderAlbums(); modal.close(); scheduleCloudSync();
   });
   return modal;
 }
 
 function albumChoiceMarkup(item, selected) {
   return `<label class="album-item-choice"><input type="checkbox" data-album-item value="${escapeAttr(item.id)}" ${selected ? 'checked' : ''}/>${item.image ? `<img src="${escapeAttr(item.image)}" alt=""/>` : '<span class="album-choice-placeholder"></span>'}<span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(getItemTypeLabel(item))}</small></span></label>`;
+}
+
+function albumPickerTypeOptions() {
+  const types = new Map();
+  for (const item of state.items) types.set(item.type, getItemTypeLabel(item));
+  return [...types.entries()].sort((a,b) => a[1].localeCompare(b[1]));
+}
+
+function renderAlbumSelectedSummary() {
+  const modal = $('#albumEditorModal');
+  const target = $('#albumSelectedSummary');
+  if (!modal || !target) return;
+  const selected = [...albumEditorSelectedIds].map(findItem).filter(Boolean);
+  target.innerHTML = selected.length
+    ? `<strong>${selected.length} selected</strong><span>${selected.slice(0,5).map(item => escapeHtml(item.title)).join(' · ')}${selected.length > 5 ? ' · …' : ''}</span>`
+    : '<span>Choose anything from your Library.</span>';
+}
+
+function renderAlbumItemChoices() {
+  const modal = $('#albumEditorModal');
+  const container = $('#albumItemChoices');
+  if (!modal || !container) return;
+  const search = normalizeSearchText($('#albumItemSearch')?.value || '');
+  const type = $('#albumItemTypeFilter')?.value || 'all';
+  const checkedIds = albumEditorSelectedIds;
+  const ranked = state.items.slice().sort((a,b) => {
+    const aSelected = checkedIds.has(a.id) ? 1 : 0, bSelected = checkedIds.has(b.id) ? 1 : 0;
+    if (aSelected !== bSelected) return bSelected - aSelected;
+    return String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''));
+  }).filter(item => {
+    if (type !== 'all' && item.type !== type) return false;
+    if (!search) return true;
+    return normalizeSearchText([item.title, item.subtitle, getItemTypeLabel(item), item.subcategory].filter(Boolean).join(' ')).includes(search);
+  });
+  const visible = ranked.slice(0, search ? 50 : 24);
+  container.innerHTML = visible.map(item => albumChoiceMarkup(item, checkedIds.has(item.id))).join('') || '<p class="empty-state album-picker-empty">No matches.</p>';
+  if (ranked.length > visible.length) container.insertAdjacentHTML('beforeend', `<p class="album-picker-more">${ranked.length - visible.length} more — narrow the search to find them.</p>`);
+  renderAlbumSelectedSummary();
 }
 
 function openAlbumEditor(id = '') {
@@ -1868,8 +1939,12 @@ function openAlbumEditor(id = '') {
   $('#albumName').value = album?.title || '';
   $('#albumNote').value = album?.description || '';
   $('#albumDelete').hidden = !album;
-  const selected = new Set(album?.itemIds || []);
-  $('#albumItemChoices').innerHTML = state.items.slice().sort((a,b) => String(a.title).localeCompare(String(b.title))).map(item => albumChoiceMarkup(item, selected.has(item.id))).join('') || '<p class="empty-state">Add something to your Library first.</p>';
+  albumEditorSelectedIds = new Set(album?.itemIds || []);
+  $('#albumItemSearch').value = '';
+  const typeFilter = $('#albumItemTypeFilter');
+  typeFilter.innerHTML = '<option value="all">Everything</option>' + albumPickerTypeOptions().map(([type,label]) => `<option value="${escapeAttr(type)}">${escapeHtml(label)}</option>`).join('');
+  typeFilter.value = 'all';
+  renderAlbumItemChoices();
   showDialogAtTop(modal);
 }
 
@@ -4033,6 +4108,124 @@ function typeUsageCount(value) {
   return Number(state.typeUsage?.[itemTypeOptionUsageKey(value)]?.count || 0);
 }
 
+
+const ADD_ACTION_KIND_OPTIONS = Object.freeze({
+  watched: [
+    { value: 'movie', label: 'Movie', parent: 'movie' },
+    { value: 'tv', label: 'TV', parent: 'tv' },
+    { value: 'youtube', label: 'YouTube', parent: 'youtube' }
+  ],
+  read: [
+    { value: 'book', label: 'Book', parent: 'book' }
+  ],
+  went: [
+    { value: 'restaurant', label: 'Restaurant', parent: 'food', subtype: 'restaurant' },
+    { value: 'shopping', label: 'Shopping / store', parent: 'shopping' }
+  ],
+  completed: [
+    { value: 'workout', label: 'Workout', parent: 'workout' }
+  ],
+  other: [
+    { value: 'activity', label: 'Activity', parent: 'activity' },
+    { value: 'event', label: 'Event', parent: 'event' },
+    { value: 'concert', label: 'Concert', parent: 'music', subtype: 'concert' },
+    { value: 'music', label: 'Music album', parent: 'music', subtype: 'album' },
+    { value: 'artist', label: 'Artist', parent: 'music', subtype: 'artist' },
+    { value: 'song', label: 'Song', parent: 'music', subtype: 'song' },
+    { value: 'recipe', label: 'Recipe', parent: 'food', subtype: 'recipe' },
+    { value: 'food', label: 'Food', parent: 'food', subtype: 'manual' },
+    { value: 'reminder', label: 'Reminder', parent: 'reminder' },
+    { value: 'new-type', label: 'New type…', parent: 'other' }
+  ]
+});
+
+function addKindUsageValue(option) {
+  if (!option) return '';
+  if (String(option.value || '').startsWith('custom:')) return option.value;
+  return option.parent || option.value || '';
+}
+
+function customAddKindOptions() {
+  return (state.customTypes || []).map(entry => ({
+    value: `custom:${entry.type}`,
+    label: entry.label || getTypeLabel(entry.type),
+    parent: `custom:${entry.type}`,
+    custom: true
+  })).sort((a,b) => {
+    const delta = typeUsageCount(addKindUsageValue(b)) - typeUsageCount(addKindUsageValue(a));
+    return delta || a.label.localeCompare(b.label);
+  });
+}
+
+function addActionForKind(kind) {
+  for (const [action, options] of Object.entries(ADD_ACTION_KIND_OPTIONS)) {
+    if (options.some(option => option.value === kind)) return action;
+  }
+  if (String(kind || '').startsWith('custom:')) return 'other';
+  return 'other';
+}
+
+function kindForCurrentForm(item = null) {
+  const raw = String(els.itemSourceType?.value || '');
+  if (raw.startsWith('custom:')) return raw;
+  const parent = formParentType();
+  const subtype = els.itemSubtype?.value || formSubtypeForItem(getSourceType(item), item);
+  if (parent === 'food' && subtype === 'restaurant') return 'restaurant';
+  if (parent === 'food' && subtype === 'recipe') return 'recipe';
+  if (parent === 'music' && ['artist','song','concert'].includes(subtype)) return subtype;
+  if (parent === 'music' && subtype === 'album') return 'music';
+  if (parent === 'other') return 'new-type';
+  return parent;
+}
+
+function refreshItemKindChoices(preferredKind = '', actionOverride = '') {
+  if (!els.itemKindChoice || !els.itemActionChoice) return;
+  const action = actionOverride || els.itemActionChoice.value || 'watched';
+  const base = [...(ADD_ACTION_KIND_OPTIONS[action] || ADD_ACTION_KIND_OPTIONS.other)];
+  const custom = action === 'other' ? customAddKindOptions() : [];
+  const options = action === 'other'
+    ? [...custom.filter(option => typeUsageCount(addKindUsageValue(option)) > 0), ...base, ...custom.filter(option => typeUsageCount(addKindUsageValue(option)) <= 0)]
+    : base;
+  const current = preferredKind || els.itemKindChoice.value || options[0]?.value || '';
+  els.itemKindChoice.innerHTML = options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
+  els.itemKindChoice.value = options.some(option => option.value === current) ? current : (options[0]?.value || '');
+}
+
+function setUnderlyingFormTypeForKind(kind) {
+  if (!els.itemSourceType) return;
+  const all = Object.values(ADD_ACTION_KIND_OPTIONS).flat();
+  const option = String(kind || '').startsWith('custom:')
+    ? { value: kind, parent: kind }
+    : all.find(entry => entry.value === kind) || { value: 'new-type', parent: 'other' };
+  refreshItemTypeOptions(option.parent);
+  els.itemSourceType.value = option.parent;
+  configureItemSubtype(true);
+  if (option.subtype && els.itemSubtype) els.itemSubtype.value = option.subtype;
+}
+
+function applyItemKindChoice(clearSource = false) {
+  if (!els.itemKindChoice) return;
+  if (clearSource) clearSourceSelectionForTypeChange();
+  setUnderlyingFormTypeForKind(els.itemKindChoice.value);
+  updateItemFormForType();
+}
+
+function syncAddActionControls(item = null) {
+  if (!els.itemActionChoice || !els.itemKindChoice) return;
+  const kind = kindForCurrentForm(item);
+  const action = addActionForKind(kind);
+  els.itemActionChoice.value = action;
+  refreshItemKindChoices(kind, action);
+}
+
+function preferredAddKindFromUsage() {
+  const candidates = Object.entries(ADD_ACTION_KIND_OPTIONS).flatMap(([action, options]) => options.map(option => ({ action, option })));
+  for (const option of customAddKindOptions()) candidates.push({ action: 'other', option });
+  candidates.sort((a,b) => typeUsageCount(addKindUsageValue(b.option)) - typeUsageCount(addKindUsageValue(a.option)));
+  const best = candidates[0];
+  return best && typeUsageCount(addKindUsageValue(best.option)) > 0 ? { action: best.action, kind: best.option.value } : { action: 'watched', kind: 'movie' };
+}
+
 function selectedSavedTypeEntry() {
   const raw = String(els.itemSourceType?.value || '');
   if (!raw.startsWith('custom:')) return null;
@@ -4118,6 +4311,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     els.itemModalEyebrow.textContent = 'EDIT';
     els.itemModalTitle.textContent = item.title;
     const sourceType = getSourceType(item);
+    if (els.itemForm) els.itemForm.dataset.sourceTypeHint = sourceType;
     setItemFormSourceType(sourceType, item);
     if (els.itemFindSource) els.itemFindSource.value = item.featureConfig?.findSource || (sourceType === 'place' ? 'google-places' : 'auto');
     if (els.itemProgressMode) els.itemProgressMode.value = item.featureConfig?.progressMode || 'auto';
@@ -4132,6 +4326,8 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     if (els.itemSubcategory) els.itemSubcategory.value = item.subcategory || '';
     if (els.itemPeople) els.itemPeople.value = getItemPeople(item).join(', ');
     els.itemNote.value = item.notes || '';
+    if (els.itemComment) els.itemComment.value = item.comment || '';
+    if (els.itemNoteDisclosure) els.itemNoteDisclosure.open = Boolean(String(item.notes || '').trim());
     els.itemDate.value = item.date || '';
     if (sourceType === 'activity' || els.itemUseDateRange?.checked) {
       if (els.activityStartDate) els.activityStartDate.value = item.activityMeta?.startDate || item.date || '';
@@ -4195,16 +4391,20 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
 
 function resetItemForm(defaultQueueStatus = 'library') {
   els.itemForm.reset();
+  delete els.itemForm.dataset.sourceTypeHint;
   els.editingId.value = '';
   refreshItemTypeOptions();
-  const ranked = [...els.itemSourceType.options].sort((a,b) => typeUsageCount(b.value) - typeUsageCount(a.value));
-  els.itemSourceType.value = ranked[0]?.value || 'tv';
-  configureItemSubtype(true);
+  const preferredAdd = preferredAddKindFromUsage();
+  if (els.itemActionChoice) els.itemActionChoice.value = preferredAdd.action;
+  refreshItemKindChoices(preferredAdd.kind, preferredAdd.action);
+  setUnderlyingFormTypeForKind(preferredAdd.kind);
   els.itemDisplayType.value = 'Workout';
   if (els.itemSubcategory) els.itemSubcategory.value = '';
   if (els.itemSubcategoryDisclosure) els.itemSubcategoryDisclosure.open = false;
   if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.open = false;
   if (els.itemAttachmentsDisclosure) els.itemAttachmentsDisclosure.open = false;
+  if (els.itemFindSourceDisclosure) els.itemFindSourceDisclosure.open = false;
+  if (els.itemNoteDisclosure) els.itemNoteDisclosure.open = false;
   if (els.itemBuddyWatchToggle) els.itemBuddyWatchToggle.checked = false;
   if (els.itemFindSource) els.itemFindSource.value = 'auto';
   if (els.itemProgressMode) els.itemProgressMode.value = 'auto';
@@ -4216,6 +4416,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.activityStartDate) els.activityStartDate.value = todayString();
   if (els.activityEndDate) els.activityEndDate.value = '';
   if (els.itemPeople) els.itemPeople.value = '';
+  if (els.itemComment) els.itemComment.value = '';
   els.itemQueueStatus.value = ['upnext','tbr','library'].includes(defaultQueueStatus) ? defaultQueueStatus : 'library';
   els.nextSeason.value = 1;
   els.nextEpisode.value = 1;
@@ -4234,7 +4435,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.providerImage.value = '';
   els.providerSubtitle.value = '';
   els.itemModalEyebrow.textContent = 'ADD';
-  els.itemModalTitle.textContent = 'Add something';
+  els.itemModalTitle.textContent = 'Add';
   if (els.itemRecommended) els.itemRecommended.checked = false;
   syncItemRecommendHeart();
   els.deleteItem.hidden = true;
@@ -4292,7 +4493,9 @@ function configureItemSubtype(reset = false, sourceTypeHint = '', item = null) {
   if (!els.itemSubtypeBlock || !els.itemSubtype) return;
   const parent = formParentType();
   const options = FORM_SUBTYPE_OPTIONS[parent] || null;
-  els.itemSubtypeBlock.hidden = !options;
+  // The staged I… / What? controls own this choice now; keep the legacy subtype
+  // select as internal state only so the form never asks the same question twice.
+  els.itemSubtypeBlock.hidden = true;
   if (!options) {
     els.itemSubtype.innerHTML = '';
     return;
@@ -4323,7 +4526,7 @@ const FIND_SOURCE_CONFIG = Object.freeze({
 function automaticFormSourceType() {
   const parent = formParentType();
   if (parent === 'shopping') return 'place';
-  if (parent === 'workout') return 'youtube';
+  if (parent === 'workout') return 'workout';
   if (parent === 'music') {
     const subtype = els.itemSubtype?.value || 'manual';
     if (['artist','song','concert'].includes(subtype)) return subtype;
@@ -4347,7 +4550,12 @@ function defaultFindSourceForType(sourceType = automaticFormSourceType()) {
 
 function selectedFormSourceType() {
   const automatic = automaticFormSourceType();
+  // A playlist is a behavior, not a display Type. Turning it on makes YouTube
+  // the content backend while the chosen Type/label remains whatever the user picked.
+  if (els.itemUsePlaylist?.checked) return 'youtube';
   const findSource = els.itemFindSource?.value || 'auto';
+  const editingHint = String(els.itemForm?.dataset?.sourceTypeHint || '');
+  if (findSource === 'auto' && editingHint) return editingHint;
   if (findSource === 'auto') return automatic;
   if (findSource === 'google-places' && automatic === 'restaurant') return 'restaurant';
   return FIND_SOURCE_CONFIG[findSource]?.sourceType || automatic;
@@ -4363,6 +4571,13 @@ function effectiveItemProgressMode(sourceType = selectedFormSourceType()) {
   if (parent === 'tv' || sourceType === 'tv') return 'tv';
   if (parent === 'book' || sourceType === 'book') return 'book';
   return 'none';
+}
+
+
+function syncItemFindSourceSummary() {
+  if (!els.itemFindSourceSummary || !els.itemFindSource) return;
+  const option = els.itemFindSource.options[els.itemFindSource.selectedIndex];
+  els.itemFindSourceSummary.textContent = els.itemFindSource.value === 'auto' ? 'Automatic' : (option?.textContent || 'Changed');
 }
 
 function syncItemFeatureSummary() {
@@ -4392,9 +4607,11 @@ function setItemFormSourceType(sourceType, item = null) {
   else if (BASE_ITEM_TYPE_OPTIONS.some(([value]) => value === sourceType)) els.itemSourceType.value = sourceType;
   else els.itemSourceType.value = 'other';
   configureItemSubtype(true, sourceType, item);
+  syncAddActionControls(item);
 }
 
 function clearSourceSelectionForTypeChange() {
+  if (els.itemForm) delete els.itemForm.dataset.sourceTypeHint;
   state.selectedSource = null;
   state.loadedPlaylist = null;
   resetTVDraftSetup();
@@ -4539,7 +4756,7 @@ function updateItemFormForType() {
   els.catalogueSearchBlock.hidden = false;
   if (els.catalogueQuery) els.catalogueQuery.disabled = !isCatalogue;
   if (els.catalogueSearchButton) els.catalogueSearchButton.disabled = !isCatalogue;
-  els.workoutBlock.hidden = !(isYouTube && Boolean(els.itemUsePlaylist?.checked));
+  els.workoutBlock.hidden = !Boolean(els.itemUsePlaylist?.checked);
   if (els.reminderBlock) els.reminderBlock.hidden = !isReminder;
   if (els.activityFields) els.activityFields.hidden = !(isActivity || Boolean(els.itemUseDateRange?.checked));
   const bookDisplay = parentType === 'book' || sourceType === 'book';
@@ -4547,7 +4764,7 @@ function updateItemFormForType() {
   if (els.itemPeopleBlock) els.itemPeopleBlock.hidden = bookDisplay;
   if (els.itemPeopleSuggestions && bookDisplay) els.itemPeopleSuggestions.hidden = true;
   else if (els.itemPeopleSuggestions && els.itemModal?.open) refreshItemPeopleSuggestions().catch(() => {});
-  const showDisplayType = parentType === 'youtube' || parentType === 'reminder' || (parentType === 'other' && !savedType);
+  const showDisplayType = parentType === 'reminder' || (parentType === 'other' && !savedType);
   els.displayTypeBlock.hidden = !showDisplayType;
   els.manualTitleBlock.hidden = false;
   const progressMode = effectiveItemProgressMode(sourceType);
@@ -4623,6 +4840,7 @@ function updateItemFormForType() {
   const placeholders = { tv: 'Search TV', movie: 'Search movies', book: 'Search books', music: 'Search albums', artist: 'Search artists', song: 'Search songs', concert: 'Search concerts', event: 'Search events', restaurant: 'Search restaurants', place: 'Search places', youtube: 'Search YouTube' };
   els.catalogueQuery.placeholder = isCatalogue ? (placeholders[sourceType] || 'Search') : 'Manual';
   syncItemFeatureSummary();
+  syncItemFindSourceSummary();
 
   if (els.manualTitle) {
     els.manualTitle.placeholder = sourceType === 'recipe'
@@ -5092,9 +5310,8 @@ async function saveItemFromForm(event) {
     typeLabel = 'Food';
     fixedSubcategory = foodSubcategoryForSourceType(automaticSourceType);
   } else if (displayParent === 'youtube') {
-    typeLabel = cleanTypeLabel(els.itemDisplayType.value) || 'YouTube';
-    type = displayTypeSlug(typeLabel, 'youtube');
-    registerCustomType(type, typeLabel);
+    type = 'youtube';
+    typeLabel = 'YouTube';
   } else if (displayParent === 'reminder') {
     typeLabel = cleanTypeLabel(els.itemDisplayType.value) || 'Reminder';
     type = displayTypeSlug(typeLabel, 'other');
@@ -5245,6 +5462,7 @@ async function saveItemFromForm(event) {
     subtitle,
     rating: Number(els.itemRating.value || 0),
     notes: els.itemNote.value.trim(),
+    comment: String(els.itemComment?.value || '').trim(),
     people,
     recommended: Boolean(els.itemRecommended?.checked),
     genres: extractItemGenres(sourceType, state.selectedSource, editing),
@@ -5372,9 +5590,11 @@ async function saveItemFromForm(event) {
   if (existingRestaurant) {
     const formRating = Number(els.itemRating.value || 0);
     const formNotes = els.itemNote.value.trim();
+    const formComment = String(els.itemComment?.value || '').trim();
     if (formRating > 0) existingRestaurant.rating = formRating;
     if (els.itemRecommended?.checked) existingRestaurant.recommended = true;
     if (formNotes && !String(existingRestaurant.notes || '').trim()) existingRestaurant.notes = formNotes;
+    if (formComment) existingRestaurant.comment = formComment;
     if (els.itemQueueStatus?.value === 'tbr') setItemQueueStatus(existingRestaurant, 'tbr');
     else setItemQueueStatus(existingRestaurant, 'library');
     existingRestaurant.updatedAt = new Date().toISOString();
@@ -6397,7 +6617,8 @@ function libraryPersonalMetadataMarkup(item) {
       </div>
       <button class="secondary-button library-personal-edit" type="button" data-edit-id="${escapeAttr(item.id)}">Edit</button>
     </div>
-    ${String(item.notes || '').trim() ? `<p class="library-personal-note">${escapeHtml(item.notes)}</p>` : ''}
+    ${String(item.comment || '').trim() ? `<p class="library-public-comment"><strong>Comment</strong> ${escapeHtml(item.comment)}</p>` : ''}
+    ${String(item.notes || '').trim() ? `<p class="library-personal-note"><strong>Note to self</strong> ${escapeHtml(item.notes)}</p>` : ''}
     ${calendarFootnote ? `<div class="library-personal-footnotes">${calendarFootnote}</div>` : ''}
     <span class="library-meta-status" aria-live="polite"></span>
   </div>`;
@@ -14060,15 +14281,15 @@ function escapeAttr(value) { return escapeHtml(value); }
 // =========================================================
 // SOCIAL — profiles, sharing snapshots, following, Buddy Watch
 // =========================================================
-const SOCIAL_SNAPSHOT_VERSION = 8;
+const SOCIAL_SNAPSHOT_VERSION = 9;
 const SOCIAL_SHARE_SECTION_META = Object.freeze({
-  activity: { label: 'Watched & ratings', description: 'Shared with followers by default, even if your Library/profile sections are private. Uncheck types or individual items to hide them.', items: true, contextOnly: true },
-  notes: { label: 'Notes', description: 'Off by default. Turn this on to let followers see your notes about matching items, then uncheck anything you want private.', items: true, contextOnly: true },
-  recommended: { label: 'Recommended', description: 'Share all recommended types by default; uncheck anything you want private.', items: true },
-  upnext: { label: 'Up Next', description: 'Share all Up Next types by default; uncheck anything you want private.', items: true },
-  ratings: { label: 'Ratings shelf', description: 'Controls the Ratings shelf on your profile. Matching-item ratings are controlled separately by Watched & ratings above.', items: true },
-  streaks: { label: 'Streaks', description: 'Share all active streak types by default; uncheck any you want private.', items: false, streaks: true },
-  library: { label: 'Library', description: 'Share all Library types by default; uncheck types or individual items to hide them while shared-type totals remain visible.', items: true }
+  activity: { label: 'Activity', description: 'Recent tracking and ratings.', items: true, contextOnly: true },
+  notes: { label: 'Comments', description: 'Public comments.', items: true, contextOnly: true },
+  recommended: { label: 'Recommended', description: 'Recommended items.', items: true },
+  upnext: { label: 'Up Next', description: 'Your current queue.', items: true },
+  ratings: { label: 'Ratings', description: 'Rated items.', items: true },
+  streaks: { label: 'Streaks', description: 'Active streaks.', items: false, streaks: true },
+  library: { label: 'Library', description: 'Shared Library items.', items: true }
 });
 
 const SOCIAL_PROFILE_THEME_IDS = new Set(CALENDAR_THEMES.map(theme => theme.id));
@@ -14106,7 +14327,7 @@ function emptySocialShareSettings() {
     profileTheme: 'blue',
     shareWithPeople: false,
     activity: { enabled: true, excludedTypes: [], hiddenItemIds: [] },
-    notes: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
+    notes: { enabled: true, excludedTypes: [], hiddenItemIds: [] },
     recommended: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
     upnext: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
     ratings: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
@@ -14269,7 +14490,7 @@ function socialItemWasLogged(item) {
 
 function socialShareCandidates(section) {
   if (section === 'activity') return state.items.filter(item => socialItemWasLogged(item) || Number(item.rating || 0) > 0);
-  if (section === 'notes') return state.items.filter(item => String(item.notes || '').trim());
+  if (section === 'notes') return state.items.filter(item => String(item.comment || '').trim());
   if (section === 'recommended') return state.items.filter(item => Boolean(item.recommended));
   if (section === 'upnext') return state.items.filter(item => getQueueStatus(item) === 'upnext');
   if (section === 'ratings') return state.items.filter(item => Number(item.rating || 0) > 0);
@@ -14330,11 +14551,11 @@ function socialItemSummary(item, settings = null, section = '') {
   const sourceType = getSourceType(item);
   const shareWithPeople = Boolean(settings?.shareWithPeople);
   const activityAllowed = socialItemIsAllowed('activity', item, settings);
-  const notesAllowed = Boolean(String(item.notes || '').trim() && socialItemIsAllowed('notes', item, settings));
   const libraryAllowed = socialItemIsAllowed('library', item, settings);
   const recommendedAllowed = Boolean(item.recommended && socialItemIsAllowed('recommended', item, settings));
   const ratingAllowed = Boolean(Number(item.rating || 0) > 0 && socialItemIsAllowed('ratings', item, settings));
   const upNextAllowed = Boolean(getQueueStatus(item) === 'upnext' && socialItemIsAllowed('upnext', item, settings));
+  const commentAllowed = Boolean(String(item.comment || '').trim() && (activityAllowed || ratingAllowed || libraryAllowed || recommendedAllowed || upNextAllowed || socialItemIsAllowed('notes', item, settings)));
   let statusKey = '';
   let statusLabel = '';
   if (section === 'tbr') {
@@ -14375,7 +14596,8 @@ function socialItemSummary(item, settings = null, section = '') {
     subtitle: item.subtitle || '',
     image: item.image || '',
     description: item.description || '',
-    notes: notesAllowed ? String(item.notes || '') : '',
+    notes: '',
+    comment: commentAllowed ? String(item.comment || '') : '',
     sourceType,
     type: item.type,
     typeLabel: getItemTypeLabel(item),
@@ -14419,7 +14641,7 @@ function buildSocialSnapshotPayload(settings = socialState.shareSettings || empt
   sections.activity = [...contextItems.values()]
     .filter(item => socialItemIsAllowed('activity', item, normalized) || socialItemIsAllowed('notes', item, normalized))
     .map(item => socialItemSummary(item, normalized, 'activity'))
-    .filter(item => item.logged || Number(item.rating || 0) > 0 || String(item.notes || '').trim());
+    .filter(item => item.logged || Number(item.rating || 0) > 0 || String(item.comment || '').trim());
   for (const section of ['recommended','upnext','ratings']) {
     sections[section] = socialShareCandidates(section)
       .filter(item => socialItemIsAllowed(section, item, normalized))
@@ -14842,7 +15064,7 @@ function socialFeedCardMarkup(entry) {
   const badge = socialFeedProgressBadge(item);
   const rating = Number(item.rating || 0);
   const meta = [item.typeLabel || getTypeLabel(item.type), badge].filter(Boolean).join(' · ');
-  return `<article class="social-feed-card"><button class="social-feed-content" type="button" data-social-open-item="${escapeAttr(item.key)}" data-social-profile-id="${escapeAttr(profile.user_id)}">${item.image ? `<img class="social-feed-image" src="${escapeAttr(item.image)}" alt=""/>` : ''}<span class="social-feed-copy"><strong>${escapeHtml(item.title || 'Untitled')}</strong>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}<span class="social-feed-badges">${rating ? `<b>${escapeHtml(String(rating))}★</b>` : ''}${item.recommended ? '<b>♥</b>' : ''}</span></span></button><button class="social-feed-person" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span>${escapeHtml(profile.display_name || profile.username)}</span></button></article>`;
+  return `<article class="social-feed-card"><button class="social-feed-content" type="button" data-social-open-item="${escapeAttr(item.key)}" data-social-profile-id="${escapeAttr(profile.user_id)}">${item.image ? `<img class="social-feed-image" src="${escapeAttr(item.image)}" alt=""/>` : ''}<span class="social-feed-copy"><strong>${escapeHtml(item.title || 'Untitled')}</strong>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}<span class="social-feed-badges">${rating ? `<b>${escapeHtml(String(rating))}★</b>` : ''}${item.recommended ? '<b>♥</b>' : ''}</span>${item.comment ? `<span class="social-feed-comment">${escapeHtml(item.comment)}</span>` : ''}</span></button><button class="social-feed-person" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span>${escapeHtml(profile.display_name || profile.username)}</span></button></article>`;
 }
 
 function socialBuddyInviteMarkup(watch) {
@@ -15240,7 +15462,7 @@ function socialProfileForOwner(ownerId) {
 function socialFindSnapshotItem(payload, itemKey) {
   if (!payload || !itemKey) return null;
   const matches = [];
-  for (const section of ['library','tbr','recommended','upnext','ratings']) {
+  for (const section of ['activity','notes','library','tbr','recommended','upnext','ratings']) {
     for (const item of payload.sections?.[section] || []) if (item?.key === itemKey) matches.push(item);
   }
   if (!matches.length) return null;
@@ -15250,7 +15472,8 @@ function socialFindSnapshotItem(payload, itemKey) {
     recommended: Boolean(acc.recommended || item.recommended),
     rating: Number(item.rating || acc.rating || 0),
     progress: item.progress || acc.progress || '',
-    notes: item.notes || acc.notes || '',
+    notes: '',
+    comment: item.comment || acc.comment || '',
     description: item.description || acc.description || '',
     people: (item.people?.length ? item.people : acc.people) || []
   }), {});
@@ -15355,7 +15578,7 @@ function socialSharedItemDetailMarkup(item, ownerProfile) {
   const dateLabel = ['tv','movie','youtube'].includes(sourceType) ? 'Watched' : sourceType === 'book' ? 'Finished' : 'Tracked';
   const trackedDateMarkup = trackedDate ? `<div class="library-detail-date-strip social-shared-watch-date"><span>${escapeHtml(dateLabel)}</span><strong>${escapeHtml(formatLongDate(trackedDate))}</strong></div>` : '';
   const personal = (rating || item?.notes || people.length)
-    ? `<section class="detail-section social-shared-personal-detail"><h3>${escapeHtml(ownerName)}'s details</h3>${rating ? `<div class="social-detail-rating"><span>Rating</span><strong>★ ${escapeHtml(formatPersonalRating(rating))} / 5</strong></div>` : ''}${people.length ? `<div class="library-detail-date-strip library-people-strip"><span>With</span><strong>${escapeHtml(people.join(', '))}</strong></div>` : ''}${item?.notes ? `<div class="social-detail-notes"><span>Notes</span><p>${escapeHtml(item.notes)}</p></div>` : ''}</section>`
+    ? `<section class="detail-section social-shared-personal-detail"><h3>${escapeHtml(ownerName)}'s details</h3>${rating ? `<div class="social-detail-rating"><span>Rating</span><strong>★ ${escapeHtml(formatPersonalRating(rating))} / 5</strong></div>` : ''}${people.length ? `<div class="library-detail-date-strip library-people-strip"><span>With</span><strong>${escapeHtml(people.join(', '))}</strong></div>` : ''}${item?.comment ? `<div class="social-detail-notes"><span>Comment</span><p>${escapeHtml(item.comment)}</p></div>` : ''}</section>`
     : '';
   return `${libraryDetailHero({ type: item?.typeLabel || socialTypeLabel(item?.type || item?.sourceType || 'Other'), title: item?.title || 'Untitled', image: item?.image || '', subtitle: item?.subtitle || '', overview: item?.description || '' })}${badges ? `<div class="social-detail-badges">${badges}</div>` : ''}${trackedDateMarkup}${personal}${socialSharedItemOwnActionsMarkup(item)}`;
 }

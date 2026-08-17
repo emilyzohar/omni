@@ -15,8 +15,8 @@
   <title>Omni</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-structure-overhaul-22" />
+  <link href="https://fonts.googleapis.com/css2?family=Bowlby+One+SC&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=omni-low-cognitive-add-24" />
 </head>
 <body class="auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -231,8 +231,8 @@
     <button class="modal-x" type="button" data-close="itemModal" aria-label="Close">×</button>
 
     <div class="modal-heading">
-      <p id="itemModalEyebrow" class="modal-eyebrow">ADD</p>
-      <h2 id="itemModalTitle">Add something</h2>
+      <p id="itemModalEyebrow" class="modal-eyebrow" hidden>ADD</p>
+      <h2 id="itemModalTitle">Add</h2>
     </div>
 
     <form id="itemForm" class="item-form">
@@ -242,7 +242,24 @@
       <input id="providerImage" type="hidden" />
       <input id="providerSubtitle" type="hidden" />
 
-      <label class="field">
+      <div class="add-intent-grid">
+        <label class="field">
+          <span>I…</span>
+          <select id="itemActionChoice" aria-label="What did you do?">
+            <option value="watched">Watched</option>
+            <option value="read">Read</option>
+            <option value="went">Went</option>
+            <option value="completed">Completed</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>What?</span>
+          <select id="itemKindChoice" aria-label="What kind of thing?"></select>
+        </label>
+      </div>
+
+      <label class="field add-underlying-type" hidden>
         <span>Type</span>
         <select id="itemSourceType" required>
           <option value="tv">TV</option>
@@ -252,7 +269,9 @@
           <option value="food">Food</option>
           <option value="event">Event</option>
           <option value="activity">Activity</option>
+          <option value="shopping">Shopping</option>
           <option value="youtube">YouTube</option>
+          <option value="workout">Workouts</option>
           <option value="reminder">Reminder</option>
           <option value="other">Other</option>
         </select>
@@ -283,36 +302,40 @@
       <div id="catalogueSearchBlock" class="find-it-block">
         <label class="field">
           <span>Find it</span>
-          <div class="find-source-row">
-            <select id="itemFindSource" aria-label="Where to search">
-              <option value="auto">Best match</option>
+          <div class="search-row">
+            <input id="catalogueQuery" type="search" autocomplete="off" placeholder="Search" />
+            <button id="catalogueSearchButton" class="secondary-button" type="button">Search</button>
+          </div>
+        </label>
+        <details id="itemFindSourceDisclosure" class="compact-add-option find-source-disclosure">
+          <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Search source</span><small id="itemFindSourceSummary">Automatic</small></summary>
+          <label class="field compact-field compact-add-body">
+            <span class="sr-only">Search source</span>
+            <select id="itemFindSource" aria-label="Search source">
+              <option value="auto">Automatic</option>
               <option value="tmdb-tv">TV · TMDB</option>
               <option value="tmdb-movie">Movies · TMDB</option>
               <option value="google-books">Books · Google Books</option>
-              <option value="apple-albums">Albums · Apple Music</option>
+              <option value="apple-albums">Music albums · Apple Music</option>
               <option value="lastfm-artists">Artists · Last.fm</option>
               <option value="apple-songs">Songs · Apple Music</option>
-              <option value="youtube-videos">Videos · YouTube</option>
+              <option value="youtube-videos">YouTube videos · YouTube</option>
               <option value="google-places">Places · Google Maps</option>
               <option value="ticketmaster-events">Events · Ticketmaster</option>
               <option value="ticketmaster-concerts">Concerts · Ticketmaster</option>
-              <option value="manual">Manual</option>
+              <option value="manual">No lookup</option>
             </select>
-            <div class="search-row">
-              <input id="catalogueQuery" type="search" autocomplete="off" placeholder="Search" />
-              <button id="catalogueSearchButton" class="secondary-button" type="button">Search</button>
-            </div>
-          </div>
-        </label>
+          </label>
+        </details>
         <div id="searchResults" class="search-results" hidden></div>
         <div id="selectedSource" class="selected-source" hidden></div>
       </div>
 
       <details id="itemFeaturesDisclosure" class="compact-add-option item-features-disclosure">
-        <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Features</span><small id="itemFeaturesSummary">automatic</small></summary>
+        <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Options</span><small id="itemFeaturesSummary">automatic</small></summary>
         <div class="compact-add-body item-feature-grid">
           <label class="field compact-field"><span>Progress</span><select id="itemProgressMode"><option value="auto">Automatic</option><option value="none">None</option><option value="tv">Episodes</option><option value="book">Pages</option></select></label>
-          <label class="checkbox-field compact-feature-toggle"><input id="itemUseDateRange" type="checkbox" /><span>Date range</span></label>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUseDateRange" type="checkbox" /><span>Multiple days</span></label>
           <label class="checkbox-field compact-feature-toggle"><input id="itemUsePlaylist" type="checkbox" /><span>YouTube playlist</span></label>
         </div>
       </details>
@@ -436,10 +459,18 @@
         <input id="itemRating" type="hidden" value="0" />
       </fieldset>
 
-      <label class="field">
-        <span>Note</span>
-        <textarea id="itemNote" rows="3" placeholder="Anything you want to remember"></textarea>
+      <label class="field item-comment-field">
+        <span>Comment <em>public</em></span>
+        <textarea id="itemComment" rows="2" maxlength="500" placeholder="What did you think?"></textarea>
       </label>
+
+      <details id="itemNoteDisclosure" class="compact-add-option note-self-disclosure">
+        <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Note to self</span><small>private</small></summary>
+        <label class="field compact-add-body">
+          <span class="sr-only">Private note to self</span>
+          <textarea id="itemNote" rows="2" placeholder="Anything you want to remember"></textarea>
+        </label>
+      </details>
 
       <div id="itemSocialMetaRow" class="item-social-meta-row">
         <details id="itemPeopleDisclosure" class="compact-add-option people-disclosure">
@@ -500,7 +531,7 @@
       </label>
 
       <label id="queueStatusField" class="field">
-        <span>Save to</span>
+        <span>Where</span>
         <select id="itemQueueStatus">
           <option value="library">Library only</option>
           <option value="upnext">Up Next</option>
@@ -650,6 +681,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-structure-overhaul-22"></script>
+  <script type="module" src="app.js?v=omni-low-cognitive-add-24"></script>
 </body>
 </html>
