@@ -266,12 +266,13 @@
       <details id="itemSubcategoryDisclosure" class="compact-add-option subcategory-disclosure">
         <summary>
           <span class="compact-add-plus" aria-hidden="true">+</span>
-          <span>Subcategory</span>
+          <span>Subtype</span>
           <small id="itemSubcategorySummary"></small>
         </summary>
         <label class="field compact-field compact-add-body">
-          <span class="sr-only">Subcategory</span>
-          <input id="itemSubcategory" type="text" autocomplete="off" placeholder="e.g. Documentary, Lecture, Gym" />
+          <span class="sr-only">Subtype</span>
+          <input id="itemSubcategory" type="text" autocomplete="off" list="itemSubtypeSuggestions" placeholder="e.g. Documentary, Lecture, Gym" />
+          <datalist id="itemSubtypeSuggestions"></datalist>
         </label>
       </details>
 
@@ -567,7 +568,7 @@
         </label>
       </div>
       <label class="field">
-        <span>Subcategory <em>optional</em></span>
+        <span>Subtype <em>optional</em></span>
         <input id="historyEditSubcategory" type="text" autocomplete="off" />
       </label>
       <label class="field">
@@ -670,6 +671,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-track-cleanup-73"></script>
+  <script type="module" src="app.js?v=omni-subtypes-74"></script>
 </body>
 </html>

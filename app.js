@@ -1068,13 +1068,14 @@ function musicSubcategoryForSourceType(sourceType) {
 function inferredMusicSubcategory(item) {
   if (!item) return '';
   const sourceType = getSourceType(item);
+  const existing = cleanTypeLabel(item.subcategory || '');
+  // A user-created subtype always wins. Catalogue source types provide a default
+  // only when no subtype has been saved yet.
+  if (existing) return existing;
   const fixed = musicSubcategoryForSourceType(sourceType);
   if (fixed) return fixed;
   if (sourceType !== 'music') return '';
-  const existing = cleanTypeLabel(item.subcategory || '');
-  if (existing) return existing;
-  // iTunes `music` results in this app are album results. Manual Music items are
-  // allowed to remain uncategorized (or use any user-entered subcategory).
+  // iTunes `music` results in this app are album results.
   if (item.provider === 'itunes' && item.providerId) return 'Album';
   return '';
 }
@@ -1104,7 +1105,8 @@ function normalizeFoodFamilyItem(item) {
   if (!item) return false;
   const sourceType = getSourceType(item);
   if (!['food','restaurant','recipe'].includes(sourceType)) return false;
-  const subcategory = foodSubcategoryForSourceType(sourceType) || cleanTypeLabel(item.subcategory || '');
+  const existingSubtype = cleanTypeLabel(item.subcategory || '');
+  const subcategory = existingSubtype || foodSubcategoryForSourceType(sourceType);
   let changed = false;
   if (item.type !== 'food') { item.type = 'food'; changed = true; }
   if (item.typeLabel !== 'Food') { item.typeLabel = 'Food'; changed = true; }
@@ -1120,7 +1122,7 @@ function migrateSavedFoodClassification() {
     const source = entry.sourceItemId ? state.items.find(item => item.id === entry.sourceItemId) : null;
     const sourceType = source ? getSourceType(source) : entry.sourceType || '';
     if (!['food','restaurant','recipe'].includes(sourceType)) continue;
-    const subcategory = source ? (foodSubcategoryForSourceType(sourceType) || source.subcategory || '') : (foodSubcategoryForSourceType(sourceType) || entry.subcategory || '');
+    const subcategory = source ? (source.subcategory || foodSubcategoryForSourceType(sourceType) || '') : (entry.subcategory || foodSubcategoryForSourceType(sourceType) || '');
     if (entry.type !== 'food') { entry.type = 'food'; historyChanged = true; }
     if (entry.typeLabel !== 'Food') { entry.typeLabel = 'Food'; historyChanged = true; }
     if (subcategory && cleanTypeLabel(entry.subcategory || '') !== cleanTypeLabel(subcategory)) { entry.subcategory = cleanTypeLabel(subcategory); historyChanged = true; }
@@ -1523,7 +1525,22 @@ function bindEvents() {
     updateItemFormForType();
   });
   els.itemSubtype?.addEventListener('change', () => {
+    const parent = formParentType();
+    if (FORM_SUBTYPE_OPTIONS[parent]?.some(option => option.value === els.itemSubtype.value)) {
+      els.itemSubtype.dataset.behaviorSubtype = els.itemSubtype.value;
+    }
     clearSourceSelectionForTypeChange();
+    if (els.itemSubtype.value === FORM_SUBTYPE_CUSTOM_VALUE && els.itemSubcategory) {
+      const priorAuto = cleanTypeLabel(els.itemSubcategory.dataset.autoSubtype || '');
+      if (priorAuto && cleanTypeLabel(els.itemSubcategory.value || '') === priorAuto) els.itemSubcategory.value = '';
+      els.itemSubcategory.readOnly = false;
+      els.itemSubcategory.placeholder = 'Name subtype';
+      if (els.itemSubcategoryDisclosure) {
+        els.itemSubcategoryDisclosure.hidden = false;
+        els.itemSubcategoryDisclosure.open = true;
+      }
+      requestAnimationFrame(() => els.itemSubcategory?.focus());
+    }
     updateItemFormForType();
   });
   els.itemFindSource?.addEventListener('change', () => {
@@ -5739,6 +5756,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   updateItemFormForType();
 }
 
+const FORM_SUBTYPE_CUSTOM_VALUE = '__custom__';
 const FORM_SUBTYPE_OPTIONS = {
   music: [
     { value: 'album', label: 'Album' },
@@ -5760,6 +5778,70 @@ const FORM_SUBTYPE_OPTIONS = {
     { value: 'personal-event', label: 'Personal Event / Occasion' }
   ]
 };
+
+function subtypeOptionLabel(parent, value) {
+  return FORM_SUBTYPE_OPTIONS[parent]?.find(option => option.value === value)?.label || '';
+}
+
+const FORM_SAVED_SUBTYPE_PREFIX = '__saved_subtype__:';
+
+function subtypeScopeType() {
+  return selectedSavedTypeEntry()?.type || formParentType();
+}
+
+function knownSubtypeLabelsForCurrentType() {
+  const type = subtypeScopeType();
+  const labels = new Map();
+  const add = value => {
+    const label = cleanTypeLabel(value || '');
+    if (!label) return;
+    const key = label.toLowerCase();
+    if (!labels.has(key)) labels.set(key, label);
+  };
+  for (const item of state.items || []) if (String(item?.type || '') === String(type)) add(item.subcategory);
+  for (const entry of state.history || []) if (String(entry?.type || '') === String(type)) add(entry.subcategory);
+  return [...labels.values()].sort((a,b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function savedSubtypeValue(label) {
+  return `${FORM_SAVED_SUBTYPE_PREFIX}${encodeURIComponent(label)}`;
+}
+
+function savedSubtypeLabel(value = els.itemSubtype?.value || '') {
+  const raw = String(value || '');
+  if (!raw.startsWith(FORM_SAVED_SUBTYPE_PREFIX)) return '';
+  try { return cleanTypeLabel(decodeURIComponent(raw.slice(FORM_SAVED_SUBTYPE_PREFIX.length))); }
+  catch { return cleanTypeLabel(raw.slice(FORM_SAVED_SUBTYPE_PREFIX.length)); }
+}
+
+function isCustomFormSubtype(parent = formParentType()) {
+  return Boolean(FORM_SUBTYPE_OPTIONS[parent]) && els.itemSubtype?.value === FORM_SUBTYPE_CUSTOM_VALUE;
+}
+
+function subtypeBehaviorValue(parent = formParentType()) {
+  if (!FORM_SUBTYPE_OPTIONS[parent] || !els.itemSubtype) return '';
+  const selected = els.itemSubtype.value || '';
+  if (FORM_SUBTYPE_OPTIONS[parent].some(option => option.value === selected)) return selected;
+
+  const savedLabel = savedSubtypeLabel(selected);
+  if (savedLabel) {
+    const scopeType = subtypeScopeType();
+    const representative = (state.items || []).find(item => String(item?.type || '') === String(scopeType)
+      && cleanTypeLabel(item?.subcategory || '').toLowerCase() === savedLabel.toLowerCase());
+    const inferred = representative ? formSubtypeForItem(getSourceType(representative), representative) : '';
+    if (inferred && FORM_SUBTYPE_OPTIONS[parent].some(option => option.value === inferred)) return inferred;
+  }
+
+  const remembered = String(els.itemSubtype.dataset.behaviorSubtype || '');
+  if (FORM_SUBTYPE_OPTIONS[parent].some(option => option.value === remembered)) return remembered;
+  return FORM_SUBTYPE_OPTIONS[parent][0]?.value || '';
+}
+
+function refreshSubtypeSuggestions() {
+  const list = document.getElementById('itemSubtypeSuggestions');
+  if (!list) return;
+  list.innerHTML = knownSubtypeLabelsForCurrentType().map(label => `<option value="${escapeAttr(label)}"></option>`).join('');
+}
 
 function formSubtypeForItem(sourceType, item = null) {
   if (sourceType === 'artist' || sourceType === 'song' || sourceType === 'concert' || sourceType === 'restaurant' || sourceType === 'recipe') return sourceType;
@@ -5783,18 +5865,43 @@ function configureItemSubtype(reset = false, sourceTypeHint = '', item = null) {
     els.itemSubtype.innerHTML = '';
     return;
   }
+
   const previous = reset ? '' : els.itemSubtype.value;
-  els.itemSubtype.innerHTML = options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
+  const previousCustom = previous === FORM_SUBTYPE_CUSTOM_VALUE;
+  const previousSavedLabel = savedSubtypeLabel(previous);
+  const existingSubtype = cleanTypeLabel(item?.subcategory || (previousCustom ? els.itemSubcategory?.value : '') || previousSavedLabel || '');
+  const existingKey = existingSubtype.toLowerCase();
+  const optionForExisting = existingSubtype
+    ? options.find(option => {
+        const labelKey = cleanTypeLabel(option.label).toLowerCase();
+        if (labelKey === existingKey) return true;
+        if (parent === 'event' && option.value === 'personal-event' && ['personal event', 'personal event / occasion', 'occasion'].includes(existingKey)) return true;
+        if (parent === 'food' && option.value === 'food' && ['food', 'meal', 'meal / food'].includes(existingKey)) return true;
+        return false;
+      })
+    : null;
+  const canonicalKeys = new Set(options.map(option => cleanTypeLabel(option.label).toLowerCase()));
+  const savedLabels = knownSubtypeLabelsForCurrentType().filter(label => !canonicalKeys.has(cleanTypeLabel(label).toLowerCase()));
+  const savedExisting = existingSubtype ? savedLabels.find(label => cleanTypeLabel(label).toLowerCase() === existingKey) : '';
   const hinted = formSubtypeForItem(sourceTypeHint, item);
-  const preferred = hinted || (options.some(option => option.value === previous) ? previous : options[0].value);
-  els.itemSubtype.value = options.some(option => option.value === preferred) ? preferred : options[0].value;
-  if (els.itemSubtypeLabel) {
-    els.itemSubtypeLabel.textContent = parent === 'music' ? 'Music type'
-      : parent === 'food' ? 'Food type'
-      : parent === 'game' ? 'Game type'
-      : parent === 'event' ? 'Event type'
-      : 'Subtype';
-  }
+  const hintedLabel = subtypeOptionLabel(parent, hinted);
+  const hasCustomExisting = Boolean(existingSubtype && !optionForExisting && (!hintedLabel || existingSubtype.toLowerCase() !== cleanTypeLabel(hintedLabel).toLowerCase()));
+
+  els.itemSubtype.innerHTML = `${options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('')}${savedLabels.map(label => `<option value="${escapeAttr(savedSubtypeValue(label))}">${escapeHtml(label)}</option>`).join('')}<option value="${FORM_SUBTYPE_CUSTOM_VALUE}">Create subtype…</option>`;
+
+  let preferred = options[0].value;
+  if (savedExisting) preferred = savedSubtypeValue(savedExisting);
+  else if (hasCustomExisting || previousCustom) preferred = FORM_SUBTYPE_CUSTOM_VALUE;
+  else if (optionForExisting) preferred = optionForExisting.value;
+  else if (hinted && options.some(option => option.value === hinted)) preferred = hinted;
+  else if (options.some(option => option.value === previous) || savedSubtypeLabel(previous)) preferred = previous;
+  els.itemSubtype.value = preferred;
+  const preferredBehavior = options.some(option => option.value === preferred)
+    ? preferred
+    : (hinted && options.some(option => option.value === hinted) ? hinted : String(els.itemSubtype.dataset.behaviorSubtype || options[0].value));
+  els.itemSubtype.dataset.behaviorSubtype = preferredBehavior;
+
+  if (els.itemSubtypeLabel) els.itemSubtypeLabel.textContent = 'Subtype';
 }
 
 const FIND_SOURCE_CONFIG = Object.freeze({
@@ -5816,15 +5923,15 @@ const FIND_SOURCE_CONFIG = Object.freeze({
 function automaticFormSourceType() {
   const parent = formParentType();
   if (parent === 'workout') return 'workout';
-  if (parent === 'game') return els.itemSubtype?.value === 'board-game' ? 'board-game' : 'video-game';
+  if (parent === 'game') return subtypeBehaviorValue(parent) === 'board-game' ? 'board-game' : 'video-game';
   if (parent === 'event') return 'event';
   if (parent === 'music') {
-    const subtype = els.itemSubtype?.value || 'album';
+    const subtype = subtypeBehaviorValue(parent) || 'album';
     if (['artist','song','concert'].includes(subtype)) return subtype;
     return 'music';
   }
   if (parent === 'food') {
-    const subtype = els.itemSubtype?.value || 'food';
+    const subtype = subtypeBehaviorValue(parent) || 'food';
     if (['restaurant','recipe'].includes(subtype)) return subtype;
     return 'food';
   }
@@ -5833,7 +5940,7 @@ function automaticFormSourceType() {
 }
 
 function defaultFindSourceForType(sourceType = automaticFormSourceType()) {
-  if (formParentType() === 'event' && els.itemSubtype?.value === 'personal-event') return 'manual';
+  if (formParentType() === 'event' && subtypeBehaviorValue('event') === 'personal-event') return 'manual';
   return ({
     tv: 'tmdb-tv', movie: 'tmdb-movie', book: 'google-books',
     'video-game': 'igdb-games', 'board-game': 'bgg-games',
@@ -6205,6 +6312,7 @@ function syncTVDraftHistoryVisibility(sourceType = selectedFormSourceType()) {
 
 function updateItemFormForType() {
   configureItemSubtype(false);
+  refreshSubtypeSuggestions();
   const repeatEntryMode = Boolean(els.itemForm?.dataset?.repeatGroupId);
   const savedType = selectedSavedTypeEntry();
   const parentType = formParentType();
@@ -6263,28 +6371,32 @@ function updateItemFormForType() {
     if (sourceType === 'restaurant' && els.itemQueueStatus.value === 'upnext') els.itemQueueStatus.value = 'library';
   }
 
+  const hasPresetSubtypes = Boolean(FORM_SUBTYPE_OPTIONS[parentType]);
+  const customSubtype = isCustomFormSubtype(parentType);
   if (els.itemSubcategoryDisclosure) {
-    // Music/Food/Games/Events have an explicit subtype selector, so don't show
-    // a second redundant Subcategory control for the same distinction.
-    els.itemSubcategoryDisclosure.hidden = Boolean(FORM_SUBTYPE_OPTIONS[parentType]);
+    // Every Type can have a user-created subtype. Types with built-in subtypes
+    // expose "Create subtype…" in the selector and reveal this field when chosen.
+    els.itemSubcategoryDisclosure.hidden = hasPresetSubtypes && !customSubtype;
   }
 
-  const fixedSubcategory = parentType === 'game'
-    ? (sourceType === 'board-game' ? 'Board Game' : 'Video Game')
-    : parentType === 'event'
-      ? (els.itemSubtype?.value === 'personal-event' ? 'Personal Event' : 'Live Event')
-      : musicAlbum
-        ? 'Album'
-        : musicSubcategoryForSourceType(sourceType) || foodSubcategoryForSourceType(sourceType) || '';
+  const presetSubtype = hasPresetSubtypes && !customSubtype
+    ? (subtypeOptionLabel(parentType, els.itemSubtype?.value || '') || savedSubtypeLabel())
+    : '';
   if (els.itemSubcategory) {
-    if (fixedSubcategory) {
-      els.itemSubcategory.value = fixedSubcategory;
+    const previousAuto = cleanTypeLabel(els.itemSubcategory.dataset.autoSubtype || '');
+    const current = cleanTypeLabel(els.itemSubcategory.value || '');
+    if (presetSubtype) {
+      if (!current || current === previousAuto || (!els.editingId.value && current !== presetSubtype)) {
+        els.itemSubcategory.value = presetSubtype;
+      }
+      els.itemSubcategory.dataset.autoSubtype = presetSubtype;
       els.itemSubcategory.readOnly = true;
-      els.itemSubcategory.placeholder = fixedSubcategory;
+      els.itemSubcategory.placeholder = presetSubtype;
     } else {
       els.itemSubcategory.readOnly = false;
-      if (!els.editingId.value && !els.itemSubcategory.value) els.itemSubcategory.value = '';
-      els.itemSubcategory.placeholder = isActivity ? 'e.g. Trip, Outing, Social' : 'e.g. Documentary, Lecture, Gym';
+      delete els.itemSubcategory.dataset.autoSubtype;
+      if (!els.editingId.value && !customSubtype && !els.itemSubcategory.value) els.itemSubcategory.value = '';
+      els.itemSubcategory.placeholder = customSubtype ? 'Name subtype' : (isActivity ? 'e.g. Trip, Outing, Social' : 'e.g. Documentary, Lecture, Gym');
     }
   }
   syncItemSubcategoryDisclosure();
@@ -6514,8 +6626,9 @@ async function selectCatalogueResult(result) {
     const releaseDate = normalizedReleaseDate(extractItemReleaseDate(formSourceType, result, null));
     if (releaseDate) els.itemReleaseDate.value = releaseDate;
   }
-  if (formSourceType === 'music' && result.provider === 'itunes' && els.itemSubcategory) {
+  if (formSourceType === 'music' && result.provider === 'itunes' && els.itemSubcategory && !isCustomFormSubtype()) {
     els.itemSubcategory.value = 'Album';
+    els.itemSubcategory.dataset.autoSubtype = 'Album';
     els.itemSubcategory.readOnly = true;
     els.itemSubcategory.placeholder = 'Album';
     syncItemSubcategoryDisclosure();
@@ -6821,20 +6934,19 @@ async function saveItemFromForm(event) {
   } else if (displayParent === 'game') {
     type = 'game';
     typeLabel = 'Games';
-    fixedSubcategory = automaticSourceType === 'board-game' ? 'Board Game' : 'Video Game';
+    fixedSubcategory = isCustomFormSubtype(displayParent) ? '' : (subtypeOptionLabel(displayParent, els.itemSubtype?.value || '') || savedSubtypeLabel());
   } else if (displayParent === 'event') {
     type = 'event';
     typeLabel = 'Events';
-    fixedSubcategory = els.itemSubtype?.value === 'personal-event' ? 'Personal Event' : 'Live Event';
+    fixedSubcategory = isCustomFormSubtype(displayParent) ? '' : (subtypeOptionLabel(displayParent, els.itemSubtype?.value || '') || savedSubtypeLabel());
   } else if (displayParent === 'music') {
     type = 'music';
     typeLabel = 'Music';
-    fixedSubcategory = musicSubcategoryForSourceType(automaticSourceType);
-    if (automaticSourceType === 'music' && (state.selectedSource?.provider === 'itunes' || (editing?.provider === 'itunes' && editing?.providerId))) fixedSubcategory = 'Album';
+    fixedSubcategory = isCustomFormSubtype(displayParent) ? '' : (subtypeOptionLabel(displayParent, els.itemSubtype?.value || '') || savedSubtypeLabel());
   } else if (displayParent === 'food') {
     type = 'food';
     typeLabel = 'Food';
-    fixedSubcategory = foodSubcategoryForSourceType(automaticSourceType);
+    fixedSubcategory = isCustomFormSubtype(displayParent) ? '' : (subtypeOptionLabel(displayParent, els.itemSubtype?.value || '') || savedSubtypeLabel());
   } else if (displayParent === 'youtube') {
     type = 'youtube';
     typeLabel = 'YouTube';
@@ -6888,6 +7000,13 @@ async function saveItemFromForm(event) {
 
   if (!title) {
     showFormMessage(creatingRepeatGroup ? 'Add an overall title.' : 'Add a title.', true);
+    return;
+  }
+  if (isCustomFormSubtype(displayParent) && !cleanTypeLabel(els.itemSubcategory?.value || '')) {
+    showFormMessage('Name the subtype.', true);
+    els.itemSubcategoryDisclosure.hidden = false;
+    els.itemSubcategoryDisclosure.open = true;
+    els.itemSubcategory?.focus();
     return;
   }
   if (creatingRepeatGroup) {
