@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-unique-library-status-19" />
+  <link rel="stylesheet" href="style.css?v=omni-structure-overhaul-22" />
 </head>
 <body class="social-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -46,7 +46,8 @@
     <nav class="nav shell" aria-label="Primary">
       <a href="index.html">Home</a>
       <a href="discover.html">Discover</a>
-      <a class="active" href="social.html" aria-current="page">Social</a>
+      <a href="library.html">Library</a>
+      <a class="active" aria-current="page" href="social.html">Social</a>
       <span class="nav-spacer"></span>
       <span id="syncStatus" class="sync-status" aria-live="polite"></span>
       <span id="userEmail" class="user-email"></span>
@@ -59,7 +60,6 @@
       <div class="shell social-shell">
         <div class="social-heading">
           <div><h1>Social</h1></div>
-          <button id="socialEditProfile" class="secondary-button" type="button">Profile & sharing</button>
         </div>
 
         <div id="socialSetupNotice" class="social-setup-notice" hidden>
@@ -68,40 +68,33 @@
         </div>
 
         <div class="social-tabs" role="tablist" aria-label="Social">
-          <button class="social-tab is-active" type="button" role="tab" data-social-tab="following" aria-selected="true">Following</button>
+          <button class="social-tab is-active" type="button" role="tab" data-social-tab="feed" aria-selected="true">Feed</button>
+          <button class="social-tab" type="button" role="tab" data-social-tab="following" aria-selected="false">Following</button>
           <button class="social-tab" type="button" role="tab" data-social-tab="people" aria-selected="false">People</button>
-          <button class="social-tab" type="button" role="tab" data-social-tab="buddy" aria-selected="false">Buddy Watch</button>
-          <button class="social-tab" type="button" role="tab" data-social-tab="me" aria-selected="false">My profile</button>
+          <button class="social-tab" type="button" role="tab" data-social-tab="me" aria-selected="false">Profile</button>
         </div>
 
-        <section class="social-panel" data-social-panel="following">
-          <div class="social-panel-heading">
-            <div><h2>Following</h2><p>A window into the shared parts of each person’s Library. Open a profile to browse everything they chose to share.</p></div>
-          </div>
+        <section class="social-panel" data-social-panel="feed">
+          <div id="socialFeed" class="social-feed"></div>
+          <p id="socialFeedEmpty" class="empty-state" hidden>No recent activity.</p>
+        </section>
+
+        <section class="social-panel" data-social-panel="following" hidden>
           <div id="socialFollowRequests" class="social-request-list"></div>
           <div id="socialFollowingList" class="social-profile-grid"></div>
-          <p id="socialFollowingEmpty" class="empty-state" hidden>You are not following anyone yet.</p>
+          <p id="socialFollowingEmpty" class="empty-state" hidden>Not following anyone yet.</p>
         </section>
 
         <section class="social-panel" data-social-panel="people" hidden>
-          <div class="social-panel-heading"><div><h2>People</h2><p>Find people by username.</p></div></div>
           <form id="socialPeopleSearchForm" class="social-search-form" role="search">
-            <input id="socialPeopleSearchInput" type="search" autocomplete="off" placeholder="Search username" />
+            <input id="socialPeopleSearchInput" type="search" autocomplete="off" placeholder="Find people" />
             <button class="primary-button" type="submit">Search</button>
           </form>
           <div id="socialPeopleResults" class="social-profile-grid"></div>
         </section>
 
-        <section class="social-panel" data-social-panel="buddy" hidden>
-          <div class="social-panel-heading">
-            <div><h2>Buddy Watch</h2><p>Share progress updates. TV episodes marked here are also marked watched in your own Omni, so Up Next stays in sync.</p></div>
-            <button id="socialCreateBuddyWatch" class="primary-button" type="button">+ Buddy Watch</button>
-          </div>
-          <div id="socialBuddyList" class="buddy-watch-list"></div>
-          <p id="socialBuddyEmpty" class="empty-state" hidden>No Buddy Watches yet.</p>
-        </section>
-
         <section class="social-panel" data-social-panel="me" hidden>
+          <div class="social-profile-page-actions"><button id="socialEditProfile" class="secondary-button" type="button">Edit profile</button></div>
           <div id="socialMyProfile" class="social-profile-view"></div>
         </section>
       </div>
@@ -122,7 +115,7 @@
       </section>
 
       <section class="social-settings-section">
-        <div class="social-sharing-heading"><h3>What people can see</h3><p>Nothing below reads directly from your private <code>user_state</code>. Omni publishes only the selected fields into a separate social snapshot.</p></div>
+        <div class="social-sharing-heading"><h3>Sharing</h3></div>
         <div id="socialShareSettings" class="social-share-settings"></div>
       </section>
 
@@ -170,6 +163,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-unique-library-status-19"></script>
+  <script type="module" src="app.js?v=omni-structure-overhaul-22"></script>
 </body>
 </html>

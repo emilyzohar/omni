@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-unique-library-status-19" />
+  <link rel="stylesheet" href="style.css?v=omni-structure-overhaul-22" />
 </head>
 <body class="auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -54,8 +54,9 @@
 
   <header class="site-header">
     <nav class="nav shell" aria-label="Primary">
-      <a class="active" href="index.html" aria-current="page">Home</a>
+      <a class="active" aria-current="page" href="index.html">Home</a>
       <a href="discover.html">Discover</a>
+      <a href="library.html">Library</a>
       <a href="social.html">Social</a>
       <span class="nav-spacer"></span>
       <span id="syncStatus" class="sync-status" aria-live="polite"></span>
@@ -69,7 +70,6 @@
       <div class="shell upnext-shell">
         <div class="section-title-row compact-title-row queue-title-row">
           <div>
-            <p class="eyebrow">YOUR QUEUE</p>
             <h1 id="queueHeading">Up Next</h1>
           </div>
           <div class="queue-header-controls">
@@ -100,7 +100,6 @@
       <div class="shell">
         <div class="track-heading">
           <div>
-            <p class="eyebrow light">DATED ITEMS</p>
             <div class="track-month-title">
               <button id="previousMonth" class="month-nav-button" type="button" aria-label="Previous month" title="Previous month">‹</button>
               <h1 id="monthLabel">August</h1>
@@ -126,57 +125,18 @@
         <div class="tracker-scroll">
           <div id="trackerGrid" class="tracker-grid"></div>
         </div>
-        <p class="tracker-note"><span class="desktop-calendar-note">Click a sticker to open its full entry.</span><span class="mobile-calendar-note">Tap a sticker group to open everything logged for that type and day.</span></p>
       </div>
     </section>
 
 
-    <section id="library" class="library-section">
+    <section id="albums" class="albums-section">
       <div class="shell">
-        <div class="library-heading">
-          <div class="library-title-block">
-            <h1>Library</h1>
-            <div class="library-folder-tabs" role="tablist" aria-label="Library folder">
-              <button class="library-folder-tab is-active" type="button" data-library-view="all" role="tab" aria-selected="true">All</button>
-              <button class="library-folder-tab" type="button" data-library-view="recommended" role="tab" aria-selected="false">Recommended</button>
-            </div>
-          </div>
-
-          <div class="library-controls">
-            <div class="library-search-row">
-              <label class="library-search-control">
-                <span class="sr-only">Search Library</span>
-                <input id="librarySearch" type="search" autocomplete="off" placeholder="Search Library…" />
-              </label>
-              <button id="openLibraryAdd" class="library-add-button library-icon-button" type="button" aria-label="Add item" title="Add item">+</button>
-            </div>
-            <div class="library-filter-row">
-              <div class="filter-control library-type-filter-control">
-                <span>Types</span>
-                <details id="typeFilter" class="library-type-filter">
-                  <summary id="typeFilterSummary">TV, Movie, Book</summary>
-                  <div id="typeFilterOptions" class="library-type-options" role="group" aria-label="Library types"></div>
-                </details>
-              </div>
-              <div class="library-folder-tabs library-folder-tabs-mobile" role="tablist" aria-label="Library folder">
-                <button class="library-folder-tab is-active" type="button" data-library-view="all" role="tab" aria-selected="true">All</button>
-                <button class="library-folder-tab" type="button" data-library-view="recommended" role="tab" aria-selected="false">Recommended</button>
-              </div>
-              <button id="openLibrarySettings" class="library-settings-button library-icon-button" type="button" aria-label="Library display settings" title="Library settings"><span class="text-gear-icon" aria-hidden="true">⚙︎</span></button>
-              <label class="filter-control library-sort-control">
-                <span>Sort</span>
-                <select id="librarySort">
-                  <option value="date">Recent</option>
-                  <option value="rating">Rating</option>
-                  <option value="title">Title</option>
-                </select>
-              </label>
-            </div>
-          </div>
+        <div class="albums-heading">
+          <h1>Albums</h1>
+          <button id="openAlbumCreate" class="library-icon-button" type="button" aria-label="Create album" title="Create album">+</button>
         </div>
-
-        <div id="libraryGroups" class="library-groups"></div>
-        <p id="libraryEmpty" class="empty-state library-empty">Nothing saved yet.</p>
+        <div id="albumsGrid" class="albums-grid"></div>
+        <p id="albumsEmpty" class="empty-state">Group anything together.</p>
       </div>
     </section>
   </main>
@@ -187,7 +147,6 @@
     <div class="modal-heading">
       <p class="modal-eyebrow">LIBRARY</p>
       <h2>Default visible types</h2>
-      <p>Choose which sections appear whenever you open the Library. You can still temporarily add or remove types with the Types filter.</p>
     </div>
     <form id="librarySettingsForm" class="settings-form">
       <div id="libraryDefaultTypeOptions" class="library-default-type-options"></div>
@@ -308,7 +267,6 @@
         <label class="field compact-field compact-add-body">
           <span class="sr-only">Subcategory</span>
           <input id="itemSubcategory" type="text" autocomplete="off" placeholder="e.g. Documentary, Lecture, Gym" />
-          <small class="field-hint">Stays inside the main type, but can use its own calendar sticker.</small>
         </label>
       </details>
 
@@ -320,20 +278,44 @@
       <label id="displayTypeBlock" class="field" hidden>
         <span id="displayTypeLabel">Display as</span>
         <input id="itemDisplayType" type="text" autocomplete="off" placeholder="Workout" />
-        <small id="displayTypeHint" class="field-hint">This is how the type will appear in Up Next, the tracker, and your library.</small>
       </label>
 
-      <div id="catalogueSearchBlock">
+      <div id="catalogueSearchBlock" class="find-it-block">
         <label class="field">
-          <span>Find it <em>optional for Music / Concert; Restaurants use Google Places</em></span>
-          <div class="search-row">
-            <input id="catalogueQuery" type="search" autocomplete="off" placeholder="Search title" />
-            <button id="catalogueSearchButton" class="secondary-button" type="button">Search</button>
+          <span>Find it</span>
+          <div class="find-source-row">
+            <select id="itemFindSource" aria-label="Where to search">
+              <option value="auto">Best match</option>
+              <option value="tmdb-tv">TV · TMDB</option>
+              <option value="tmdb-movie">Movies · TMDB</option>
+              <option value="google-books">Books · Google Books</option>
+              <option value="apple-albums">Albums · Apple Music</option>
+              <option value="lastfm-artists">Artists · Last.fm</option>
+              <option value="apple-songs">Songs · Apple Music</option>
+              <option value="youtube-videos">Videos · YouTube</option>
+              <option value="google-places">Places · Google Maps</option>
+              <option value="ticketmaster-events">Events · Ticketmaster</option>
+              <option value="ticketmaster-concerts">Concerts · Ticketmaster</option>
+              <option value="manual">Manual</option>
+            </select>
+            <div class="search-row">
+              <input id="catalogueQuery" type="search" autocomplete="off" placeholder="Search" />
+              <button id="catalogueSearchButton" class="secondary-button" type="button">Search</button>
+            </div>
           </div>
         </label>
         <div id="searchResults" class="search-results" hidden></div>
         <div id="selectedSource" class="selected-source" hidden></div>
       </div>
+
+      <details id="itemFeaturesDisclosure" class="compact-add-option item-features-disclosure">
+        <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Features</span><small id="itemFeaturesSummary">automatic</small></summary>
+        <div class="compact-add-body item-feature-grid">
+          <label class="field compact-field"><span>Progress</span><select id="itemProgressMode"><option value="auto">Automatic</option><option value="none">None</option><option value="tv">Episodes</option><option value="book">Pages</option></select></label>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUseDateRange" type="checkbox" /><span>Date range</span></label>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUsePlaylist" type="checkbox" /><span>YouTube playlist</span></label>
+        </div>
+      </details>
 
       <div id="workoutBlock" hidden>
         <label class="field">
@@ -378,7 +360,6 @@
             </select>
           </label>
         </div>
-        <p class="field-hint">For a one-time reminder, choose Never and a specific date. Repeating reminders use the start date as their anchor, including custom schedules such as every 3 days or every 2 months.</p>
       </div>
 
       <div id="activityFields" class="progress-fields activity-fields" hidden>
@@ -407,7 +388,6 @@
         <div class="tv-watch-setup-heading">
           <div>
             <p class="field-label">What have you already watched?</p>
-            <p class="field-hint">Mark seasons or individual episodes before saving. These imported watches go to your Library history, not today's calendar.</p>
           </div>
           <div class="tv-watch-setup-actions">
             <button id="tvMarkAllWatched" class="secondary-button" type="button">✓ Mark series complete</button>
@@ -440,11 +420,10 @@
             <input id="bookEndDate" type="date" />
           </label>
         </div>
-        <p class="field-hint">Leave the end blank while you are actively reading. If you pause and resume later, the book can have multiple reading periods and the calendar line will break between them.</p>
       </div>
 
       <fieldset class="rating-fieldset">
-        <legend>Rating <span>optional</span></legend>
+        <legend>Rating</legend>
         <div id="starPicker" class="star-picker" aria-label="Rating out of five stars">
           <button type="button" data-rating="1" aria-label="1 star">★</button>
           <button type="button" data-rating="2" aria-label="2 stars">★</button>
@@ -458,7 +437,7 @@
       </fieldset>
 
       <label class="field">
-        <span>Note <em>optional</em></span>
+        <span>Note</span>
         <textarea id="itemNote" rows="3" placeholder="Anything you want to remember"></textarea>
       </label>
 
@@ -574,7 +553,7 @@
         <input id="historyEditSubtitle" type="text" />
       </label>
       <fieldset class="rating-fieldset">
-        <legend>Rating <span>optional</span></legend>
+        <legend>Rating</legend>
         <div id="historyRatingPicker" class="star-picker" aria-label="Rating out of five stars">
           <button type="button" data-history-rating="1" aria-label="1 star">★</button>
           <button type="button" data-history-rating="2" aria-label="2 stars">★</button>
@@ -671,6 +650,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-unique-library-status-19"></script>
+  <script type="module" src="app.js?v=omni-structure-overhaul-22"></script>
 </body>
 </html>

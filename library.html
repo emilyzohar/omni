@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#720014" />
+  <style>
+    body.auth-pending > .site-header,
+    body.auth-pending > main,
+    body.auth-pending > .auth-screen,
+    body.auth-locked > .site-header,
+    body.auth-locked > main { display: none !important; }
+    [hidden] { display: none !important; }
+  </style>
+  <title>Library · Omni</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=omni-structure-overhaul-22" />
+</head>
+<body class="library-page auth-pending">
+  <section id="authScreen" class="auth-screen" hidden>
+    <div class="auth-card">
+      <div class="auth-brand">
+        <span class="auth-mark">omni</span>
+        <div>
+          <p class="eyebrow">OMNI</p>
+          <h1>Your tracker</h1>
+        </div>
+      </div>
+      <p class="auth-copy">Sign in to keep your library, queues, progress, stickers, and calendar history synced across your computer and phone.</p>
+
+      <form id="authForm" class="auth-form">
+        <label class="field">
+          <span>Email</span>
+          <input id="authEmail" type="email" autocomplete="email" required />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input id="authPassword" type="password" autocomplete="current-password" minlength="6" required />
+        </label>
+
+        <p id="authMessage" class="auth-message" hidden></p>
+
+        <div class="auth-actions">
+          <button id="signInButton" class="primary-button auth-primary" type="submit" data-auth-action="signin">Sign in</button>
+          <button id="signUpButton" class="secondary-button auth-secondary" type="submit" data-auth-action="signup">Create account</button>
+        </div>
+
+        <button id="continueLocalButton" class="auth-local-button" type="button" hidden>Continue on this device only</button>
+      </form>
+    </div>
+  </section>
+
+  <header class="site-header">
+    <nav class="nav shell" aria-label="Primary">
+      <a href="index.html">Home</a>
+      <a href="discover.html">Discover</a>
+      <a class="active" aria-current="page" href="library.html">Library</a>
+      <a href="social.html">Social</a>
+      <span class="nav-spacer"></span>
+      <span id="syncStatus" class="sync-status" aria-live="polite"></span>
+      <span id="userEmail" class="user-email"></span>
+      <button id="signOutButton" class="sign-out-button" type="button">Sign out</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="library" class="library-section">
+      <div class="shell">
+        <div class="library-heading">
+          <div class="library-title-block">
+            <h1>Library</h1>
+            <div class="library-folder-tabs" role="tablist" aria-label="Library folder">
+              <button class="library-folder-tab is-active" type="button" data-library-view="all" role="tab" aria-selected="true">All</button>
+              <button class="library-folder-tab" type="button" data-library-view="recommended" role="tab" aria-selected="false">Recommended</button>
+            </div>
+          </div>
+
+          <div class="library-controls">
+            <div class="library-search-row">
+              <label class="library-search-control">
+                <span class="sr-only">Search Library</span>
+                <input id="librarySearch" type="search" autocomplete="off" placeholder="Search Library…" />
+              </label>
+              <button id="openLibraryMap" class="library-map-button library-icon-button" type="button" aria-label="View places on map" title="Map">⌖</button>
+              <button id="openLibraryAdd" class="library-add-button library-icon-button" type="button" aria-label="Add item" title="Add item">+</button>
+            </div>
+            <div class="library-filter-row">
+              <div class="filter-control library-type-filter-control">
+                <span>Types</span>
+                <details id="typeFilter" class="library-type-filter">
+                  <summary id="typeFilterSummary">TV, Movie, Book</summary>
+                  <div id="typeFilterOptions" class="library-type-options" role="group" aria-label="Library types"></div>
+                </details>
+              </div>
+              <div class="library-folder-tabs library-folder-tabs-mobile" role="tablist" aria-label="Library folder">
+                <button class="library-folder-tab is-active" type="button" data-library-view="all" role="tab" aria-selected="true">All</button>
+                <button class="library-folder-tab" type="button" data-library-view="recommended" role="tab" aria-selected="false">Recommended</button>
+              </div>
+              <button id="openLibrarySettings" class="library-settings-button library-icon-button" type="button" aria-label="Library display settings" title="Library settings"><span class="text-gear-icon" aria-hidden="true">⚙︎</span></button>
+              <label class="filter-control library-sort-control">
+                <span>Sort</span>
+                <select id="librarySort">
+                  <option value="date">Recent</option>
+                  <option value="rating">Rating</option>
+                  <option value="title">Title</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div id="libraryGroups" class="library-groups"></div>
+        <p id="libraryEmpty" class="empty-state library-empty">Nothing saved yet.</p>
+      </div>
+    </section>
+
+    <section id="stats" class="stats-section">
+      <div class="shell">
+        <div class="stats-heading"><h1>Stats</h1></div>
+        <div id="statsSummary" class="stats-summary"></div>
+        <div id="statsTypes" class="stats-types"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- LIBRARY DISPLAY SETTINGS -->
+  <dialog id="librarySettingsModal" class="modal small-modal library-settings-modal">
+    <button class="modal-x" type="button" data-close="librarySettingsModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">LIBRARY</p>
+      <h2>Default visible types</h2>
+    </div>
+    <form id="librarySettingsForm" class="settings-form">
+      <div id="libraryDefaultTypeOptions" class="library-default-type-options"></div>
+      <div class="modal-actions">
+        <button id="resetLibraryDefaults" class="quiet-button" type="button">Movie, TV &amp; Book</button>
+        <div class="actions-right">
+          <button class="quiet-button" type="button" data-close="librarySettingsModal">Cancel</button>
+          <button class="primary-button" type="submit">Save defaults</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- TRACK SETTINGS -->
+  <dialog id="stickerSettingsModal" class="modal sticker-settings-modal track-settings-modal">
+    <button class="modal-x" type="button" data-close="stickerSettingsModal" aria-label="Close">×</button>
+    <div class="modal-heading track-settings-heading">
+      <h2>Track settings</h2>
+      <div class="track-settings-tabs" role="tablist" aria-label="Track settings">
+        <button class="track-settings-tab is-active" type="button" data-track-settings-tab="stickers" role="tab" aria-selected="true">Stickers</button>
+        <button class="track-settings-tab" type="button" data-track-settings-tab="rows" role="tab" aria-selected="false">Rows</button>
+        <button class="track-settings-tab" type="button" data-track-settings-tab="streaks" role="tab" aria-selected="false">Streaks</button>
+      </div>
+    </div>
+
+    <section class="track-settings-panel" data-track-settings-panel="stickers">
+      <form id="stickerSettingsForm" class="sticker-settings-form">
+        <div class="calendar-theme-setting">
+          <div class="calendar-theme-setting-copy"><strong>Calendar colour</strong><small>Dark palettes keep the grid lines readable.</small></div>
+          <div id="calendarThemePicker" class="calendar-theme-picker" aria-label="Track calendar colour"></div>
+        </div>
+        <div class="sticker-settings-head" aria-hidden="true">
+          <span>Type</span><span>Calendar name</span><span>Preview</span><span>Shape</span><span>Text</span><span>Color</span>
+        </div>
+        <div id="stickerSettingsRows" class="sticker-settings-rows"></div>
+        <div class="modal-actions">
+          <button id="resetStickerSettings" class="quiet-button" type="button">Reset</button>
+          <div class="actions-right">
+            <button class="quiet-button" type="button" data-close="stickerSettingsModal">Cancel</button>
+            <button class="primary-button" type="submit">Save</button>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <section class="track-settings-panel" data-track-settings-panel="rows" hidden>
+      <form id="calendarRowSettingsForm" class="calendar-row-settings-form">
+        <div class="calendar-row-settings-toolbar">
+          <p class="calendar-row-settings-hint">Drag a category by its handle, or select it, scroll, then tap another row to move it. Row names are automatic, or type your own name in the row heading.</p>
+          <button id="addCalendarRow" class="calendar-row-add-button" type="button">+ Row</button>
+        </div>
+        <div id="calendarRowSettingsRows" class="calendar-row-settings-rows"></div>
+        <div class="modal-actions">
+          <button id="resetCalendarRowSettings" class="quiet-button" type="button">Reset</button>
+          <div class="actions-right">
+            <button class="quiet-button" type="button" data-close="stickerSettingsModal">Cancel</button>
+            <button class="primary-button" type="submit">Save</button>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <section class="track-settings-panel" data-track-settings-panel="streaks" hidden>
+      <form id="streakSettingsForm" class="streak-settings-form">
+        <div class="streak-settings-head" aria-hidden="true">
+          <span>Type</span><span>On</span><span>Rest days</span><span>Current</span>
+        </div>
+        <div id="streakSettingsRows" class="streak-settings-rows"></div>
+        <div class="modal-actions">
+          <button id="resetStreakSettings" class="quiet-button" type="button">Reset</button>
+          <div class="actions-right">
+            <button class="quiet-button" type="button" data-close="stickerSettingsModal">Cancel</button>
+            <button class="primary-button" type="submit">Save</button>
+          </div>
+        </div>
+      </form>
+    </section>
+  </dialog>
+
+  <!-- ADD / EDIT -->
+  <dialog id="itemModal" class="modal item-modal">
+    <button class="modal-x" type="button" data-close="itemModal" aria-label="Close">×</button>
+
+    <div class="modal-heading">
+      <p id="itemModalEyebrow" class="modal-eyebrow">ADD</p>
+      <h2 id="itemModalTitle">Add something</h2>
+    </div>
+
+    <form id="itemForm" class="item-form">
+      <input id="editingId" type="hidden" />
+      <input id="provider" type="hidden" />
+      <input id="providerId" type="hidden" />
+      <input id="providerImage" type="hidden" />
+      <input id="providerSubtitle" type="hidden" />
+
+      <label class="field">
+        <span>Type</span>
+        <select id="itemSourceType" required>
+          <option value="tv">TV</option>
+          <option value="movie">Movie</option>
+          <option value="book">Book</option>
+          <option value="music">Music</option>
+          <option value="food">Food</option>
+          <option value="event">Event</option>
+          <option value="activity">Activity</option>
+          <option value="youtube">YouTube</option>
+          <option value="reminder">Reminder</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+
+      <details id="itemSubcategoryDisclosure" class="compact-add-option subcategory-disclosure">
+        <summary>
+          <span class="compact-add-plus" aria-hidden="true">+</span>
+          <span>Subcategory</span>
+          <small id="itemSubcategorySummary"></small>
+        </summary>
+        <label class="field compact-field compact-add-body">
+          <span class="sr-only">Subcategory</span>
+          <input id="itemSubcategory" type="text" autocomplete="off" placeholder="e.g. Documentary, Lecture, Gym" />
+        </label>
+      </details>
+
+      <label id="itemSubtypeBlock" class="field" hidden>
+        <span id="itemSubtypeLabel">Kind</span>
+        <select id="itemSubtype"></select>
+      </label>
+
+      <label id="displayTypeBlock" class="field" hidden>
+        <span id="displayTypeLabel">Display as</span>
+        <input id="itemDisplayType" type="text" autocomplete="off" placeholder="Workout" />
+      </label>
+
+      <div id="catalogueSearchBlock" class="find-it-block">
+        <label class="field">
+          <span>Find it</span>
+          <div class="find-source-row">
+            <select id="itemFindSource" aria-label="Where to search">
+              <option value="auto">Best match</option>
+              <option value="tmdb-tv">TV · TMDB</option>
+              <option value="tmdb-movie">Movies · TMDB</option>
+              <option value="google-books">Books · Google Books</option>
+              <option value="apple-albums">Albums · Apple Music</option>
+              <option value="lastfm-artists">Artists · Last.fm</option>
+              <option value="apple-songs">Songs · Apple Music</option>
+              <option value="youtube-videos">Videos · YouTube</option>
+              <option value="google-places">Places · Google Maps</option>
+              <option value="ticketmaster-events">Events · Ticketmaster</option>
+              <option value="ticketmaster-concerts">Concerts · Ticketmaster</option>
+              <option value="manual">Manual</option>
+            </select>
+            <div class="search-row">
+              <input id="catalogueQuery" type="search" autocomplete="off" placeholder="Search" />
+              <button id="catalogueSearchButton" class="secondary-button" type="button">Search</button>
+            </div>
+          </div>
+        </label>
+        <div id="searchResults" class="search-results" hidden></div>
+        <div id="selectedSource" class="selected-source" hidden></div>
+      </div>
+
+      <details id="itemFeaturesDisclosure" class="compact-add-option item-features-disclosure">
+        <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Features</span><small id="itemFeaturesSummary">automatic</small></summary>
+        <div class="compact-add-body item-feature-grid">
+          <label class="field compact-field"><span>Progress</span><select id="itemProgressMode"><option value="auto">Automatic</option><option value="none">None</option><option value="tv">Episodes</option><option value="book">Pages</option></select></label>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUseDateRange" type="checkbox" /><span>Date range</span></label>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUsePlaylist" type="checkbox" /><span>YouTube playlist</span></label>
+        </div>
+      </details>
+
+      <div id="workoutBlock" hidden>
+        <label class="field">
+          <span>YouTube playlist URL or ID</span>
+          <div class="search-row">
+            <input id="playlistInput" type="text" placeholder="https://youtube.com/playlist?list=..." />
+            <button id="playlistLoadButton" class="secondary-button" type="button">Load</button>
+          </div>
+        </label>
+        <div id="playlistPreview" class="selected-source" hidden></div>
+      </div>
+
+      <div id="reminderBlock" class="progress-fields reminder-fields" hidden>
+        <div class="two-column-fields reminder-repeat-grid">
+          <label class="field compact-field">
+            <span>Repeat</span>
+            <select id="reminderFrequency">
+              <option value="none" selected>Never</option>
+              <option value="daily">Every day</option>
+              <option value="weekly">Every week</option>
+              <option value="biweekly">Every 2 weeks</option>
+              <option value="monthly">Every month</option>
+              <option value="custom">Custom…</option>
+            </select>
+          </label>
+          <label id="reminderDateField" class="field compact-field">
+            <span id="reminderDateLabel">Date</span>
+            <input id="reminderDueDate" type="date" />
+          </label>
+        </div>
+        <div id="reminderCustomFields" class="reminder-custom-fields" hidden>
+          <label class="field compact-field">
+            <span>Every</span>
+            <input id="reminderInterval" type="number" min="1" max="365" step="1" value="2" inputmode="numeric" />
+          </label>
+          <label class="field compact-field">
+            <span>Unit</span>
+            <select id="reminderIntervalUnit">
+              <option value="days">Days</option>
+              <option value="weeks" selected>Weeks</option>
+              <option value="months">Months</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div id="activityFields" class="progress-fields activity-fields" hidden>
+        <div class="two-column-fields">
+          <label class="field compact-field">
+            <span>Starts</span>
+            <input id="activityStartDate" type="date" />
+          </label>
+          <label class="field compact-field">
+            <span>Ends <em>optional</em></span>
+            <input id="activityEndDate" type="date" />
+          </label>
+        </div>
+      </div>
+
+      <div id="manualTitleBlock">
+        <label class="field">
+          <span>Title</span>
+          <input id="manualTitle" type="text" placeholder="Title" required />
+        </label>
+      </div>
+
+      <div id="tvProgressFields" class="progress-fields tv-watch-history-setup" hidden>
+        <input id="nextSeason" type="hidden" value="1" />
+        <input id="nextEpisode" type="hidden" value="1" />
+        <div class="tv-watch-setup-heading">
+          <div>
+            <p class="field-label">What have you already watched?</p>
+          </div>
+          <div class="tv-watch-setup-actions">
+            <button id="tvMarkAllWatched" class="secondary-button" type="button">✓ Mark series complete</button>
+            <button id="tvClearWatched" class="quiet-button" type="button">Clear</button>
+          </div>
+        </div>
+        <p id="tvWatchSetupStatus" class="tv-watch-setup-status">Choose a TV search result to load its seasons and episodes.</p>
+        <div id="tvWatchSetupList" class="tv-watch-setup-list"></div>
+      </div>
+
+      <div id="bookProgressFields" class="progress-fields book-reading-fields" hidden>
+        <button class="secondary-button whole-item-complete-button" type="button" data-book-mark-complete-draft>✓ Mark book complete</button>
+        <div class="two-column-fields">
+          <label class="field compact-field">
+            <span>Current page</span>
+            <input id="bookCurrentPage" type="number" min="0" step="1" value="0" />
+          </label>
+          <label class="field compact-field">
+            <span>Total pages</span>
+            <input id="bookTotalPages" type="number" min="1" step="1" />
+          </label>
+        </div>
+        <div class="two-column-fields">
+          <label class="field compact-field">
+            <span>Reading start</span>
+            <input id="bookStartDate" type="date" />
+          </label>
+          <label class="field compact-field">
+            <span>End / pause date <em>optional</em></span>
+            <input id="bookEndDate" type="date" />
+          </label>
+        </div>
+      </div>
+
+      <fieldset class="rating-fieldset">
+        <legend>Rating</legend>
+        <div id="starPicker" class="star-picker" aria-label="Rating out of five stars">
+          <button type="button" data-rating="1" aria-label="1 star">★</button>
+          <button type="button" data-rating="2" aria-label="2 stars">★</button>
+          <button type="button" data-rating="3" aria-label="3 stars">★</button>
+          <button type="button" data-rating="4" aria-label="4 stars">★</button>
+          <button type="button" data-rating="5" aria-label="5 stars">★</button>
+          <button id="clearRating" class="clear-rating" type="button">clear</button>
+          <button id="itemRecommendHeart" class="rating-heart-button" type="button" aria-label="Add to Recommended" aria-pressed="false" title="Recommended">♡</button>
+        </div>
+        <input id="itemRating" type="hidden" value="0" />
+      </fieldset>
+
+      <label class="field">
+        <span>Note</span>
+        <textarea id="itemNote" rows="3" placeholder="Anything you want to remember"></textarea>
+      </label>
+
+      <div id="itemSocialMetaRow" class="item-social-meta-row">
+        <details id="itemPeopleDisclosure" class="compact-add-option people-disclosure">
+          <summary>
+            <span class="compact-add-plus" aria-hidden="true">+</span>
+            <span>With people</span>
+            <small id="itemPeopleSummary"></small>
+          </summary>
+          <div id="itemPeopleBlock" class="compact-add-body">
+            <label class="field">
+              <span class="sr-only">With people</span>
+              <input id="itemPeople" type="text" autocomplete="off" placeholder="Names, separated by commas or @username" />
+            </label>
+            <div id="itemPeopleSuggestions" class="people-tag-suggestions" hidden aria-label="Tag people you follow or who follow you"></div>
+          </div>
+        </details>
+
+        <div id="itemBuddyWatchField" class="buddy-watch-inline" hidden>
+          <label class="buddy-watch-toggle">
+            <input id="itemBuddyWatchToggle" type="checkbox" />
+            <span class="buddy-watch-switch" aria-hidden="true"></span>
+            <span>Buddy Watch</span>
+          </label>
+          <label id="itemBuddyWatchPersonField" class="buddy-watch-person-field" hidden>
+            <span class="sr-only">Buddy Watch with</span>
+            <select id="itemBuddyWatchPerson" aria-label="Buddy Watch with"></select>
+          </label>
+        </div>
+      </div>
+
+      <details id="itemAttachmentsDisclosure" class="attachment-editor attachment-editor-collapsible">
+        <summary class="attachment-editor-heading">
+          <span><span class="compact-add-plus" aria-hidden="true">+</span> Files, images & links</span>
+          <small id="itemAttachmentsSummary">optional</small>
+        </summary>
+        <div class="attachment-editor-content">
+          <small class="attachment-editor-note">Images and viewable files open inside the site.</small>
+          <label class="attachment-upload-button">
+            <input id="itemFiles" type="file" multiple />
+            <span>+ Add files or images</span>
+          </label>
+          <div id="attachmentEditorList" class="attachment-editor-list"></div>
+
+          <div class="link-editor">
+            <input id="itemLinkLabel" type="text" placeholder="Link label (optional)" />
+            <input id="itemLinkUrl" type="url" inputmode="url" placeholder="https://…" />
+            <button id="addItemLink" class="secondary-button" type="button">Add link</button>
+          </div>
+          <div id="linkEditorList" class="attachment-editor-list"></div>
+        </div>
+      </details>
+
+      <input id="itemRecommended" type="checkbox" hidden />
+
+      <label id="itemDateField" class="field">
+        <span>Date <em>optional</em></span>
+        <input id="itemDate" type="date" />
+      </label>
+
+      <label id="queueStatusField" class="field">
+        <span>Save to</span>
+        <select id="itemQueueStatus">
+          <option value="library">Library only</option>
+          <option value="upnext">Up Next</option>
+          <option value="tbr">TBR</option>
+        </select>
+      </label>
+
+      <p id="formMessage" class="form-message" hidden></p>
+
+      <div class="modal-actions">
+        <button id="deleteItem" class="delete-button" type="button" hidden>Delete</button>
+        <div class="actions-right">
+          <button class="quiet-button" type="button" data-close="itemModal">Cancel</button>
+          <button class="primary-button" type="submit">Save</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- EDIT PAST TRACKED ENTRY -->
+  <dialog id="historyEditModal" class="modal history-edit-modal">
+    <button class="modal-x" type="button" data-close="historyEditModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">TRACKED HISTORY</p>
+      <h2>Edit past entry</h2>
+      <p class="field-hint">Changes update the calendar immediately. Changing the date moves the sticker to that day.</p>
+    </div>
+    <form id="historyEditForm" class="item-form history-edit-form">
+      <input id="historyEditId" type="hidden" />
+      <label class="field">
+        <span>Title</span>
+        <input id="historyEditTitle" type="text" required />
+      </label>
+      <div class="two-column-fields">
+        <label class="field compact-field">
+          <span>Type</span>
+          <input id="historyEditType" type="text" required />
+        </label>
+        <label class="field compact-field">
+          <span>Date</span>
+          <input id="historyEditDate" type="date" />
+        </label>
+      </div>
+      <label class="field">
+        <span>Subcategory <em>optional</em></span>
+        <input id="historyEditSubcategory" type="text" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span>Episode / subtitle <em>optional</em></span>
+        <input id="historyEditSubtitle" type="text" />
+      </label>
+      <fieldset class="rating-fieldset">
+        <legend>Rating</legend>
+        <div id="historyRatingPicker" class="star-picker" aria-label="Rating out of five stars">
+          <button type="button" data-history-rating="1" aria-label="1 star">★</button>
+          <button type="button" data-history-rating="2" aria-label="2 stars">★</button>
+          <button type="button" data-history-rating="3" aria-label="3 stars">★</button>
+          <button type="button" data-history-rating="4" aria-label="4 stars">★</button>
+          <button type="button" data-history-rating="5" aria-label="5 stars">★</button>
+          <button id="historyClearRating" type="button" class="clear-rating">clear</button>
+          <button id="historyRecommendHeart" class="rating-heart-button" type="button" aria-label="Add source item to Recommended" aria-pressed="false" title="Recommended">♡</button>
+        </div>
+        <input id="historyEditRating" type="hidden" value="0" />
+      </fieldset>
+      <label class="field">
+        <span>Notes <em>optional</em></span>
+        <textarea id="historyEditNote" rows="5" placeholder="Anything you want to remember"></textarea>
+      </label>
+      <label class="history-calendar-toggle">
+        <input id="historyEditShowCalendar" type="checkbox" checked />
+        <span>Show this entry on the calendar</span>
+      </label>
+      <div class="modal-actions">
+        <button id="historyEditDelete" class="delete-button" type="button">Delete entry</button>
+        <div class="actions-right">
+          <button class="quiet-button" type="button" data-close="historyEditModal">Cancel</button>
+          <button class="primary-button" type="submit">Save changes</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- DETAILS -->
+  <dialog id="dnfChoiceModal" class="modal small-modal dnf-choice-modal">
+    <div class="modal-header">
+      <div><h2>DNF</h2></div>
+      <button class="icon-button modal-close-button" type="button" data-close="dnfChoiceModal" aria-label="Close">×</button>
+    </div>
+    <div class="dnf-choice-actions">
+      <button class="secondary-button" type="button" data-dnf-choice="pause">Pause</button>
+      <button class="secondary-button danger-button" type="button" data-dnf-choice="stop">Stop</button>
+    </div>
+  </dialog>
+
+  <dialog id="detailModal" class="modal detail-modal">
+    <button class="modal-x" type="button" data-close="detailModal" aria-label="Close">×</button>
+    <div id="detailBody" class="detail-body"></div>
+  </dialog>
+
+  <!-- ATTACHMENT VIEWER -->
+  <dialog id="attachmentModal" class="modal attachment-modal">
+    <button class="modal-x" type="button" data-close="attachmentModal" aria-label="Close">×</button>
+    <div class="attachment-viewer-heading">
+      <p class="modal-eyebrow">ATTACHMENT</p>
+      <h2 id="attachmentTitle">File</h2>
+    </div>
+    <div id="attachmentBody" class="attachment-viewer-body"></div>
+  </dialog>
+
+  <!-- BOOK PAGE UPDATE -->
+  <dialog id="bookProgressModal" class="modal small-modal">
+    <button class="modal-x" type="button" data-close="bookProgressModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">BOOK PROGRESS</p>
+      <h2 id="bookProgressTitle">Update pages &amp; dates</h2>
+    </div>
+    <form id="bookProgressForm" class="book-progress-form">
+      <input id="bookProgressId" type="hidden" />
+      <button class="secondary-button whole-item-complete-button" type="button" data-book-mark-complete-progress>✓ Mark book complete</button>
+      <label class="field">
+        <span>Current page</span>
+        <input id="progressCurrentPage" type="number" min="0" step="1" required />
+      </label>
+      <label class="field">
+        <span>Total pages</span>
+        <input id="progressTotalPages" type="number" min="1" step="1" />
+      </label>
+      <section class="book-period-editor" aria-label="Reading dates">
+        <div class="book-period-editor-heading">
+          <div>
+            <strong>Reading dates</strong>
+            <small>Use separate periods if you pause and resume later.</small>
+          </div>
+          <div class="book-period-editor-actions">
+            <button id="bookPauseResume" class="quiet-button" type="button">Pause today</button>
+            <button id="bookAddPeriod" class="secondary-button" type="button">+ Add period</button>
+          </div>
+        </div>
+        <div id="bookPeriodsList" class="book-period-list"></div>
+      </section>
+      <div class="modal-actions end-only">
+        <div class="actions-right">
+          <button class="quiet-button" type="button" data-close="bookProgressModal">Cancel</button>
+          <button class="primary-button" type="submit">Update</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js?v=omni-structure-overhaul-22"></script>
+</body>
+</html>

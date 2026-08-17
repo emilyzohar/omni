@@ -1,4 +1,4 @@
-import { TrackerAPI } from './api.js?v=omni-unique-library-status-19';
+import { TrackerAPI } from './api.js?v=omni-structure-overhaul-22';
 import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
@@ -10,6 +10,11 @@ const DISCOVER_PREFS_KEY = 'zoharTracker.discoverPrefs.v1';
 const STICKER_PREFS_KEY = 'zoharTracker.stickerPrefs.v1';
 const STREAK_PREFS_KEY = 'zoharTracker.streakPrefs.v1';
 const LIBRARY_PREFS_KEY = 'zoharTracker.libraryPrefs.v1';
+const ALBUMS_KEY = 'zoharTracker.albums.v1';
+const TYPE_USAGE_KEY = 'zoharTracker.typeUsage.v1';
+const PHOTO_UPLOAD_LOG_KEY = 'zoharTracker.photoUploadLog.v1';
+const ONBOARDING_KEY = 'zoharTracker.onboarding.v1';
+const PHOTO_WEEKLY_LIMIT = 20;
 const ATTACHMENT_DB_NAME = 'zoharTracker.attachments.v1';
 const ATTACHMENT_STORE_NAME = 'files';
 const STATE_DB_NAME = 'zoharTracker.state.v1';
@@ -27,6 +32,7 @@ const TYPE_LABELS = {
   event: 'Events',
   activity: 'Activities',
   workout: 'Workouts',
+  shopping: 'Shopping',
   other: 'Other'
 };
 
@@ -42,10 +48,12 @@ const SOURCE_ITEM_LABELS = {
   activity: 'Activity',
   food: 'Food',
   restaurant: 'Restaurant',
+  place: 'Place',
+  shopping: 'Shopping',
   recipe: 'Recipe'
 };
 
-const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'food', 'restaurant', 'recipe', 'other']);
+const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'food', 'restaurant', 'recipe', 'shopping', 'other']);
 const STICKER_COLORS = ['rust', 'burgundy', 'red', 'coral', 'orange', 'yellow', 'cream', 'sand', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'slate', 'teal', 'green', 'forest', 'mint', 'olive', 'stone', 'brown', 'charcoal', 'black', 'white'];
 const CALENDAR_THEMES = [
   { id: 'blue', label: 'Dusty blue' },
@@ -56,7 +64,7 @@ const CALENDAR_THEMES = [
   { id: 'espresso', label: 'Espresso' }
 ];
 
-const CLOUD_STATE_VERSION = 2;
+const CLOUD_STATE_VERSION = 3;
 const TICKETMASTER_EVENT_CATEGORIES = [
   { key: 'music', label: 'Music', classificationName: 'Music' },
   { key: 'sports', label: 'Sports', classificationName: 'Sports' },
@@ -143,6 +151,9 @@ const state = {
   settings: API_CONFIG,
   cache: loadJSON(CACHE_KEY, {}),
   customTypes: loadJSON(CUSTOM_TYPES_KEY, []),
+  albums: loadJSON(ALBUMS_KEY, []),
+  typeUsage: loadJSON(TYPE_USAGE_KEY, {}),
+  photoUploadLog: loadJSON(PHOTO_UPLOAD_LOG_KEY, []),
   history: loadJSON(HISTORY_KEY, []),
   discoverPrefs: loadJSON(DISCOVER_PREFS_KEY, DEFAULT_DISCOVER_PREFS),
   stickerPrefs: loadJSON(STICKER_PREFS_KEY, {}),
@@ -281,6 +292,12 @@ const els = {
   libraryViewTabs: $$('.library-folder-tab[data-library-view]'),
   libraryGroups: $('#libraryGroups'),
   libraryEmpty: $('#libraryEmpty'),
+  openLibraryMap: $('#openLibraryMap'),
+  statsSummary: $('#statsSummary'),
+  statsTypes: $('#statsTypes'),
+  albumsGrid: $('#albumsGrid'),
+  albumsEmpty: $('#albumsEmpty'),
+  openAlbumCreate: $('#openAlbumCreate'),
   refreshDiscover: $('#refreshDiscover'),
   discoverStatus: $('#discoverStatus'),
   discoverFeed: $('#discoverFeed'),
@@ -370,6 +387,12 @@ const els = {
   displayTypeLabel: $('#displayTypeLabel'),
   displayTypeHint: $('#displayTypeHint'),
   catalogueSearchBlock: $('#catalogueSearchBlock'),
+  itemFindSource: $('#itemFindSource'),
+  itemFeaturesDisclosure: $('#itemFeaturesDisclosure'),
+  itemFeaturesSummary: $('#itemFeaturesSummary'),
+  itemProgressMode: $('#itemProgressMode'),
+  itemUseDateRange: $('#itemUseDateRange'),
+  itemUsePlaylist: $('#itemUsePlaylist'),
   catalogueQuery: $('#catalogueQuery'),
   catalogueSearchButton: $('#catalogueSearchButton'),
   searchResults: $('#searchResults'),
@@ -541,6 +564,7 @@ async function handleAuthSubmit(event) {
         return;
       }
 
+      if (data.user?.id) localStorage.setItem(`${ONBOARDING_KEY}.${data.user.id}`, 'pending');
       if (data.session?.user) {
         await startForUser(data.session.user);
       } else if (data.user) {
@@ -612,6 +636,7 @@ async function startForUser(user) {
     await hydrateCloudProfile(user.id);
     unlockApp();
     startAppOnce();
+    maybeShowOnboarding(user);
     initializeSocialForUser().catch(error => console.warn('[Social] background initialization failed:', error));
     setSyncStatus('Synced');
     window.addEventListener('focus', refreshCloudProfile);
@@ -623,6 +648,38 @@ async function startForUser(user) {
     lockApp();
     setAuthMessage(`Signed in, but your cloud profile could not load: ${error.message}`, true);
   }
+}
+
+function ensureOnboardingModal() {
+  let modal = $('#onboardingModal');
+  if (modal) return modal;
+  modal = document.createElement('dialog');
+  modal.id = 'onboardingModal';
+  modal.className = 'modal small-modal onboarding-modal';
+  modal.innerHTML = `<div class="onboarding-pages"><section data-onboarding-page="0"><p class="modal-eyebrow">WELCOME</p><h2>Omni</h2><p>Add what you watch, read, do, visit, or want to remember.</p></section><section data-onboarding-page="1" hidden><h2>Add</h2><p>Use +. Pick a type, or make your own. Find it can pull details from the source you choose.</p></section><section data-onboarding-page="2" hidden><h2>Track</h2><p>Log progress and dates. Your calendar, Library, and Stats update together.</p></section><section data-onboarding-page="3" hidden><h2>Discover + Social</h2><p>Browse Discover, follow people, and use Buddy Watch when you want to stay in sync.</p></section></div><div class="onboarding-dots" aria-hidden="true"></div><div class="modal-actions"><button id="onboardingSkip" class="quiet-button" type="button">Skip</button><div class="actions-right"><button id="onboardingNext" class="primary-button" type="button">Next</button></div></div>`;
+  document.body.appendChild(modal);
+  let page = 0;
+  const show = next => {
+    page = Math.max(0, Math.min(3, next));
+    modal.querySelectorAll('[data-onboarding-page]').forEach(section => section.hidden = Number(section.dataset.onboardingPage) !== page);
+    modal.querySelector('.onboarding-dots').textContent = '•'.repeat(page + 1) + '○'.repeat(3 - page);
+    modal.querySelector('#onboardingNext').textContent = page === 3 ? 'Done' : 'Next';
+  };
+  const finish = () => {
+    if (currentUser?.id) localStorage.setItem(`${ONBOARDING_KEY}.${currentUser.id}`, 'done');
+    modal.close();
+  };
+  modal.querySelector('#onboardingSkip').addEventListener('click', finish);
+  modal.querySelector('#onboardingNext').addEventListener('click', () => page === 3 ? finish() : show(page + 1));
+  modal.addEventListener('close', () => { if (currentUser?.id) localStorage.setItem(`${ONBOARDING_KEY}.${currentUser.id}`, 'done'); });
+  show(0);
+  return modal;
+}
+
+function maybeShowOnboarding(user = currentUser) {
+  if (!user?.id) return;
+  if (localStorage.getItem(`${ONBOARDING_KEY}.${user.id}`) !== 'pending') return;
+  requestAnimationFrame(() => showDialogAtTop(ensureOnboardingModal()));
 }
 
 function startAppOnce() {
@@ -778,7 +835,7 @@ function migrateSavedMusicClassification() {
 }
 
 const CANONICAL_LIBRARY_ENTITY_TYPES = new Set([
-  'tv','movie','book','youtube','music','artist','song','concert','event','restaurant','recipe','food'
+  'tv','movie','book','youtube','music','artist','song','concert','event','restaurant','place','recipe','food','shopping'
 ]);
 
 function canonicalLibraryIdentity(value) {
@@ -809,7 +866,7 @@ function canonicalLibraryIdentity(value) {
     const venue = normalizeSearchText(value.venueName || value.eventMeta?.venueName || '');
     return `${sourceType}:manual:${title}:${date}:${venue}`;
   }
-  if (sourceType === 'restaurant') {
+  if (['restaurant','place'].includes(sourceType)) {
     const address = normalizeSearchText(value.address || value.raw?.formattedAddress || value.eventMeta?.address || '');
     return `restaurant:manual:${title}:${address}`;
   }
@@ -950,18 +1007,29 @@ function migrateDuplicateLibraryItems() {
   let itemsChanged = false;
   let historyChanged = false;
   const removeIds = new Set();
+  const replacementIds = new Map();
   for (const items of groups.values()) {
     if (items.length < 2) continue;
     const sorted = [...items].sort((a, b) => libraryItemPreservationScore(b) - libraryItemPreservationScore(a) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
     const primary = sorted[0];
     for (const duplicate of sorted.slice(1)) {
       mergeLibraryItemRecords(primary, duplicate);
+      replacementIds.set(duplicate.id, primary.id);
       removeIds.add(duplicate.id);
       itemsChanged = true;
       historyChanged = true;
     }
   }
-  if (removeIds.size) state.items = state.items.filter(item => !removeIds.has(item.id));
+  if (removeIds.size) {
+    state.items = state.items.filter(item => !removeIds.has(item.id));
+    let albumsChanged = false;
+    state.albums = (state.albums || []).map(album => {
+      const nextIds = [...new Set((album.itemIds || []).map(id => replacementIds.get(id) || id).filter(id => state.items.some(item => item.id === id)))];
+      if (nextIds.join('|') !== (album.itemIds || []).join('|')) albumsChanged = true;
+      return { ...album, itemIds: nextIds };
+    });
+    if (albumsChanged) saveAlbums();
+  }
   if (annotateRepeatedHistoryRecords()) historyChanged = true;
   if (itemsChanged) saveItems();
   if (historyChanged) saveHistory();
@@ -971,6 +1039,8 @@ function init() {
   migrateSavedMusicClassification();
   migrateSavedFoodClassification();
   migrateDuplicateLibraryItems();
+  migrateCustomTypesFromLibrary();
+  seedTypeUsageFromLibrary();
   reconcileLocalProgressQueues();
   const now = new Date();
   if (els.monthPicker) {
@@ -1112,6 +1182,13 @@ function bindEvents() {
     clearSourceSelectionForTypeChange();
     updateItemFormForType();
   });
+  els.itemFindSource?.addEventListener('change', () => {
+    clearSourceSelectionForTypeChange();
+    updateItemFormForType();
+  });
+  els.itemProgressMode?.addEventListener('change', updateItemFormForType);
+  els.itemUseDateRange?.addEventListener('change', updateItemFormForType);
+  els.itemUsePlaylist?.addEventListener('change', updateItemFormForType);
   els.catalogueSearchButton?.addEventListener('click', searchCatalogue);
   els.catalogueQuery?.addEventListener('keydown', event => {
     if (event.key === 'Enter') {
@@ -1181,6 +1258,9 @@ function bindEvents() {
   els.upNextList?.addEventListener('click', handleUpNextClick);
   els.trackerGrid?.addEventListener('click', handleTrackerClick);
   els.libraryGroups?.addEventListener('click', handleLibraryClick);
+  els.openAlbumCreate?.addEventListener('click', () => openAlbumEditor());
+  els.albumsGrid?.addEventListener('click', handleAlbumsClick);
+  els.openLibraryMap?.addEventListener('click', () => openLibraryMap().catch(error => alert(error?.message || 'Could not load map.')));
   els.refreshDiscover?.addEventListener('click', () => renderDiscover(true));
   els.discoverCalendarPrevious?.addEventListener('click', () => shiftDiscoverCalendarMonth(-1));
   els.discoverCalendarToday?.addEventListener('click', () => jumpDiscoverCalendarToToday());
@@ -1718,12 +1798,200 @@ function bindEvents() {
   });
 }
 
+function saveAlbums() {
+  safeLocalSet(ALBUMS_KEY, state.albums);
+  scheduleCloudSync();
+}
+
+function albumItemPreviewMarkup(item) {
+  if (!item) return '';
+  return item.image
+    ? `<img src="${escapeAttr(item.image)}" alt="" loading="lazy" />`
+    : `<span class="album-preview-text">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`;
+}
+
+function renderAlbums() {
+  if (!els.albumsGrid) return;
+  state.albums = (Array.isArray(state.albums) ? state.albums : []).map(album => ({ ...album, itemIds: [...new Set((album.itemIds || []).filter(id => findItem(id)))] }));
+  els.albumsGrid.innerHTML = state.albums.map(album => {
+    const items = (album.itemIds || []).map(findItem).filter(Boolean);
+    const previews = items.slice(0,4).map(albumItemPreviewMarkup).join('');
+    return `<button class="album-card" type="button" data-album-open="${escapeAttr(album.id)}"><span class="album-cover-grid">${previews || '<span class="album-preview-text">+</span>'}</span><span class="album-card-copy"><strong>${escapeHtml(album.title || 'Album')}</strong><small>${items.length} ${items.length === 1 ? 'item' : 'items'}</small></span></button>`;
+  }).join('');
+  if (els.albumsEmpty) els.albumsEmpty.hidden = state.albums.length > 0;
+}
+
+function ensureAlbumEditorModal() {
+  let modal = $('#albumEditorModal');
+  if (modal) return modal;
+  modal = document.createElement('dialog');
+  modal.id = 'albumEditorModal';
+  modal.className = 'modal album-editor-modal';
+  modal.innerHTML = `<button class="modal-x" type="button" data-close="albumEditorModal" aria-label="Close">×</button><div class="modal-heading"><h2 id="albumEditorTitle">New album</h2></div><form id="albumEditorForm" class="item-form"><input id="albumEditingId" type="hidden"/><label class="field"><span>Name</span><input id="albumName" type="text" maxlength="80" required/></label><label class="field"><span>Note</span><input id="albumNote" type="text" maxlength="160"/></label><div id="albumItemChoices" class="album-item-choices"></div><div class="modal-actions"><button id="albumDelete" class="delete-button" type="button" hidden>Delete</button><div class="actions-right"><button class="quiet-button" type="button" data-close="albumEditorModal">Cancel</button><button class="primary-button" type="submit">Save</button></div></div></form>`;
+  document.body.appendChild(modal);
+  modal.querySelector('[data-close="albumEditorModal"]')?.addEventListener('click', () => modal.close());
+  modal.querySelector('#albumEditorForm')?.addEventListener('submit', event => {
+    event.preventDefault();
+    const id = $('#albumEditingId')?.value || '';
+    const existing = state.albums.find(album => album.id === id);
+    const title = String($('#albumName')?.value || '').trim();
+    if (!title) return;
+    const itemIds = [...modal.querySelectorAll('[data-album-item]:checked')].map(input => input.value);
+    const album = existing || { id: makeId(), createdAt: new Date().toISOString() };
+    album.title = title;
+    album.description = String($('#albumNote')?.value || '').trim();
+    album.itemIds = itemIds;
+    album.updatedAt = new Date().toISOString();
+    if (!existing) state.albums.unshift(album);
+    saveAlbums();
+    renderAlbums();
+    modal.close();
+  });
+  modal.querySelector('#albumDelete')?.addEventListener('click', () => {
+    const id = $('#albumEditingId')?.value || '';
+    if (!id) return;
+    state.albums = state.albums.filter(album => album.id !== id);
+    saveAlbums(); renderAlbums(); modal.close();
+  });
+  return modal;
+}
+
+function albumChoiceMarkup(item, selected) {
+  return `<label class="album-item-choice"><input type="checkbox" data-album-item value="${escapeAttr(item.id)}" ${selected ? 'checked' : ''}/>${item.image ? `<img src="${escapeAttr(item.image)}" alt=""/>` : '<span class="album-choice-placeholder"></span>'}<span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(getItemTypeLabel(item))}</small></span></label>`;
+}
+
+function openAlbumEditor(id = '') {
+  const modal = ensureAlbumEditorModal();
+  const album = state.albums.find(entry => entry.id === id) || null;
+  $('#albumEditingId').value = album?.id || '';
+  $('#albumEditorTitle').textContent = album ? 'Edit album' : 'New album';
+  $('#albumName').value = album?.title || '';
+  $('#albumNote').value = album?.description || '';
+  $('#albumDelete').hidden = !album;
+  const selected = new Set(album?.itemIds || []);
+  $('#albumItemChoices').innerHTML = state.items.slice().sort((a,b) => String(a.title).localeCompare(String(b.title))).map(item => albumChoiceMarkup(item, selected.has(item.id))).join('') || '<p class="empty-state">Add something to your Library first.</p>';
+  showDialogAtTop(modal);
+}
+
+function ensureAlbumDetailModal() {
+  let modal = $('#albumDetailModal');
+  if (modal) return modal;
+  modal = document.createElement('dialog');
+  modal.id = 'albumDetailModal'; modal.className = 'modal album-detail-modal';
+  modal.innerHTML = `<button class="modal-x" type="button" data-close="albumDetailModal" aria-label="Close">×</button><div id="albumDetailBody"></div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('[data-close="albumDetailModal"]')?.addEventListener('click', () => modal.close());
+  modal.addEventListener('click', event => {
+    const itemButton = event.target.closest('[data-album-open-item]');
+    if (itemButton) { modal.close(); openDetails(itemButton.dataset.albumOpenItem); return; }
+    const edit = event.target.closest('[data-album-edit]');
+    if (edit) { modal.close(); openAlbumEditor(edit.dataset.albumEdit); }
+  });
+  return modal;
+}
+
+function appleMusicSearchUrl(item) {
+  const term = [item.title, item.artistName || item.subtitle || ''].filter(Boolean).join(' ');
+  return `https://music.apple.com/ca/search?term=${encodeURIComponent(term)}`;
+}
+
+function openAlbumDetail(id) {
+  const album = state.albums.find(entry => entry.id === id);
+  if (!album) return;
+  const modal = ensureAlbumDetailModal();
+  const items = (album.itemIds || []).map(findItem).filter(Boolean);
+  const allSongs = items.length > 0 && items.every(item => getSourceType(item) === 'song');
+  $('#albumDetailBody').innerHTML = `<div class="modal-heading"><h2>${escapeHtml(album.title)}</h2>${album.description ? `<p>${escapeHtml(album.description)}</p>` : ''}</div><div class="album-detail-actions"><button class="secondary-button" type="button" data-album-edit="${escapeAttr(album.id)}">Edit</button></div><div class="album-detail-items">${items.map(item => `<article class="album-detail-item"><button type="button" data-album-open-item="${escapeAttr(item.id)}">${item.image ? `<img src="${escapeAttr(item.image)}" alt=""/>` : '<span class="album-choice-placeholder"></span>'}<span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(getItemTypeLabel(item))}</small></span></button>${getSourceType(item) === 'song' ? `<a href="${escapeAttr(appleMusicSearchUrl(item))}" target="_blank" rel="noopener">Apple Music ↗</a>` : ''}</article>`).join('') || '<p class="empty-state">Empty album.</p>'}</div>${allSongs ? '<p class="album-apple-note">Apple Music opens these songs individually. Creating one Apple Music playlist requires MusicKit account authorization.</p>' : ''}`;
+  showDialogAtTop(modal);
+}
+
+function handleAlbumsClick(event) {
+  const button = event.target.closest('[data-album-open]');
+  if (button) openAlbumDetail(button.dataset.albumOpen);
+}
+
+function renderStats() {
+  if (!els.statsSummary) return;
+  const now = new Date();
+  const cutoff = new Date(now); cutoff.setDate(cutoff.getDate() - 30);
+  const cutoffDate = cutoff.toISOString().slice(0,10);
+  const logged30 = state.history.filter(entry => String(entry.date || '').slice(0,10) >= cutoffDate).length;
+  const rated = state.items.filter(item => Number(item.rating || 0) > 0);
+  const avg = rated.length ? rated.reduce((sum,item) => sum + Number(item.rating || 0),0) / rated.length : 0;
+  const repeats = state.history.filter(entry => entry.rewatch).length;
+  els.statsSummary.innerHTML = [
+    ['Library', state.items.length], ['Last 30 days', logged30], ['Average rating', avg ? avg.toFixed(1) : '—'], ['Rewatches / rereads', repeats]
+  ].map(([label,value]) => `<div class="stat-card"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`).join('');
+  if (els.statsTypes) {
+    const counts = new Map();
+    state.items.forEach(item => counts.set(getItemTypeLabel(item), (counts.get(getItemTypeLabel(item)) || 0) + 1));
+    els.statsTypes.innerHTML = [...counts.entries()].sort((a,b) => b[1]-a[1]).slice(0,12).map(([label,count]) => `<div class="stat-type-row"><span>${escapeHtml(label)}</span><strong>${count}</strong></div>`).join('');
+  }
+}
+
+function ensureLibraryMapModal() {
+  let modal = $('#libraryMapModal');
+  if (modal) return modal;
+  modal = document.createElement('dialog'); modal.id = 'libraryMapModal'; modal.className = 'modal library-map-modal';
+  modal.innerHTML = `<button class="modal-x" type="button" data-close="libraryMapModal" aria-label="Close">×</button><div class="modal-heading"><h2>Places</h2></div><div id="libraryMapCanvas" class="library-map-canvas"></div><div id="libraryMapList" class="library-map-list"></div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('[data-close="libraryMapModal"]')?.addEventListener('click', () => modal.close());
+  return modal;
+}
+
+let leafletPromise = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  if (leafletPromise) return leafletPromise;
+  leafletPromise = new Promise((resolve,reject) => {
+    if (!document.querySelector('link[data-omni-leaflet]')) {
+      const link = document.createElement('link'); link.rel='stylesheet'; link.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'; link.dataset.omniLeaflet='1'; document.head.appendChild(link);
+    }
+    const script = document.createElement('script'); script.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'; script.onload=()=>resolve(window.L); script.onerror=reject; document.head.appendChild(script);
+  });
+  return leafletPromise;
+}
+
+async function openLibraryMap() {
+  const modal = ensureLibraryMapModal();
+  const canvas = $('#libraryMapCanvas'); const list = $('#libraryMapList');
+  const items = state.items.filter(item => item.provider === 'googlePlaces' || ['restaurant','place'].includes(getSourceType(item)));
+  if (!items.length) { canvas.innerHTML='<p class="empty-state">No saved places.</p>'; list.innerHTML=''; showDialogAtTop(modal); return; }
+  canvas.innerHTML='<p class="loading-detail">Loading map…</p>'; list.innerHTML=''; showDialogAtTop(modal);
+  const details = [];
+  for (const item of items) {
+    let live = item.placeMeta || null;
+    if ((!live?.location) && item.providerId && state.settings.googlePlacesKey) {
+      try { live = await TrackerAPI.getPlaceDetails(item.providerId, state.settings, getSourceType(item) === 'restaurant' ? 'restaurant' : 'place'); } catch {}
+    }
+    if (live) {
+      item.placeMeta = { formattedAddress: live.formattedAddress || '', googleMapsUrl: live.googleMapsUrl || '', websiteUrl: live.websiteUrl || '', location: live.location || null };
+      details.push({ item, ...item.placeMeta });
+    }
+  }
+  saveItems();
+  list.innerHTML = details.map(entry => `<button type="button" data-map-open-item="${escapeAttr(entry.item.id)}"><strong>${escapeHtml(entry.item.title)}</strong><span>${escapeHtml(entry.formattedAddress || '')}</span></button>`).join('');
+  list.onclick = event => { const b=event.target.closest('[data-map-open-item]'); if (b) { modal.close(); openDetails(b.dataset.mapOpenItem); } };
+  const points = details.filter(entry => Number.isFinite(Number(entry.location?.latitude)) && Number.isFinite(Number(entry.location?.longitude)));
+  if (!points.length) { canvas.innerHTML='<p class="empty-state">Saved places do not have map coordinates yet.</p>'; return; }
+  const L = await loadLeaflet();
+  canvas.innerHTML='';
+  const map = L.map(canvas).setView([points[0].location.latitude, points[0].location.longitude], 11);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+  const bounds=[];
+  points.forEach(entry => { const latlng=[entry.location.latitude,entry.location.longitude]; bounds.push(latlng); L.marker(latlng).addTo(map).bindPopup(`<strong>${escapeHtml(entry.item.title)}</strong>`); });
+  if (bounds.length > 1) map.fitBounds(bounds,{padding:[24,24]});
+  setTimeout(()=>map.invalidateSize(),100);
+}
+
 function renderAll() {
   reconcileLocalProgressQueues();
   if (els.upNextList) renderUpNext();
   if (els.trackerGrid) renderTracker();
   if (els.trackStreakSummary) renderTrackStreakSummary();
   if (els.libraryGroups) renderLibrary();
+  if (els.albumsGrid) renderAlbums();
+  if (els.statsSummary) renderStats();
   if (els.discoverStatus) renderDiscover();
 }
 
@@ -1849,7 +2117,7 @@ async function renderUpNext(options = {}) {
   const cards = new Map();
   for (const item of items) {
     const card = document.createElement('article');
-    card.className = `upnext-card${view === 'tbr' ? ' tbr-card queue-loading' : ' queue-loading'}`;
+    card.className = `upnext-card${view === 'tbr' ? ' tbr-card queue-loading' : ' queue-loading'}${!view.includes('tbr') && buddyWatchContextForItem(item) ? ' is-buddy-watch' : ''}`;
     card.dataset.id = item.id;
     card.innerHTML = queueCardMarkup(item, {
       title: item.title,
@@ -2320,6 +2588,30 @@ function formatQueueCalendarDate(dateString) {
   return new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric' }).format(parseLocalDateString(dateString));
 }
 
+function buddyWatchContextForItem(item) {
+  if (!item || !Array.isArray(socialState.buddyWatches)) return null;
+  const match = socialState.buddyWatches.find(watch => {
+    if (watch.status && watch.status !== 'active') return false;
+    if (watch.myMembership?.status && !['accepted','pending'].includes(watch.myMembership.status)) return false;
+    const shared = watch.item || {};
+    if (shared.providerId && item.providerId && String(shared.providerId) === String(item.providerId) && String(shared.provider || '') === String(item.provider || '')) return true;
+    return normalizeSearchText(shared.title || '') === normalizeSearchText(item.title || '') && String(shared.sourceType || '') === String(getSourceType(item));
+  });
+  if (!match) return null;
+  const other = (match.members || []).find(member => String(member.user_id) !== String(currentUser?.id || ''));
+  const mine = (match.progress || []).find(row => String(row.user_id) === String(currentUser?.id || ''));
+  const theirs = other ? (match.progress || []).find(row => String(row.user_id) === String(other.user_id)) : null;
+  return { watch: match, other, mine, theirs };
+}
+
+function buddyQueueMarkup(item) {
+  const context = buddyWatchContextForItem(item);
+  if (!context) return '';
+  const person = context.other?.profile?.display_name || context.other?.profile?.username || 'Buddy';
+  const positions = [context.mine?.progress_text ? `You: ${context.mine.progress_text}` : '', context.theirs?.progress_text ? `${person}: ${context.theirs.progress_text}` : ''].filter(Boolean).join(' · ');
+  return `<div class="buddy-queue-link" aria-label="Buddy Watch with ${escapeAttr(person)}"><span class="buddy-queue-link-icon" aria-hidden="true">🔗</span><span>${escapeHtml(person)}${positions ? ` · ${escapeHtml(positions)}` : ''}</span></div>`;
+}
+
 function queueCardMarkup(item, info) {
   const image = info.image || item.image;
   const art = image
@@ -2349,6 +2641,7 @@ function queueCardMarkup(item, info) {
         <p class="upnext-title">${escapeHtml(info.title || item.title)}</p>
         <p class="upnext-meta">${escapeHtml(info.meta || progressFallback(item))}</p>
         <p class="upnext-category">${escapeHtml([getItemTypeLabel(item), isTBR ? 'TBR' : '', info.streaming || ''].filter(Boolean).join(' · '))}</p>
+        ${!isTBR ? buddyQueueMarkup(item) : ''}
         ${info.error ? `<div class="queue-error">${escapeHtml(info.error)}</div>` : ''}
       </div>
       <button class="upnext-arrow" type="button" data-action="details" data-id="${item.id}" aria-label="Open details">→</button>
@@ -2395,7 +2688,7 @@ function tbrMeta(item) {
   const sourceType = getSourceType(item);
   if (sourceType === 'tv') return [item.subtitle, 'Not started'].filter(Boolean).join(' · ');
   if (sourceType === 'book') return [item.subtitle, 'To be read'].filter(Boolean).join(' · ');
-  if (sourceType === 'youtube') return [item.subtitle, 'Playlist'].filter(Boolean).join(' · ');
+  if (sourceType === 'youtube') return isYouTubePlaylistItem(item) ? [item.subtitle, 'Playlist'].filter(Boolean).join(' · ') : (item.subtitle || 'YouTube');
   if (sourceType === 'reminder') return reminderScheduleLabel(item);
   if (['event', 'concert'].includes(sourceType)) return eventQueueMeta(item);
   return item.subtitle || 'Saved for later';
@@ -2445,6 +2738,9 @@ async function getUpNextInfo(item) {
   }
 
   if (getSourceType(item) === 'youtube') {
+    if (!isYouTubePlaylistItem(item)) {
+      return { title: item.title, meta: item.subtitle || 'YouTube', image: item.image };
+    }
     const playlist = await getPlaylistCached(item.providerId);
     let index = Math.max(0, Number(item.progress?.currentIndex || 0));
     while (index < playlist.items.length && isYouTubeVideoLogged(item, playlist.items[index].videoId)) index += 1;
@@ -2544,11 +2840,11 @@ async function handleUpNextClick(event) {
     try {
       let completed = null;
       if (getSourceType(item) === 'tv') completed = await advanceTV(item);
-      else if (getSourceType(item) === 'youtube') completed = await advanceWorkout(item);
+      else if (getSourceType(item) === 'youtube') completed = isYouTubePlaylistItem(item) ? await advanceWorkout(item) : genericCompletionRecord(item, true);
       else if (getSourceType(item) === 'reminder') completed = reminderCompletionRecord(item);
       else completed = genericCompletionRecord(item, true);
       if (completed) addHistoryRecord(completed);
-      if (!['tv','youtube','reminder'].includes(getSourceType(item))) {
+      if (!['tv','youtube','reminder'].includes(getSourceType(item)) || (getSourceType(item) === 'youtube' && !isYouTubePlaylistItem(item))) {
         item.completedAt = todayString();
         setItemQueueStatus(item, 'library');
       }
@@ -3540,7 +3836,7 @@ async function moveItemToQueue(item, status) {
   renderAll();
   if (els.detailModal?.open && state.openDetailId === item.id) {
     if (sourceType === 'tv') await renderTVDetails(item);
-    else if (sourceType === 'youtube') await renderWorkoutDetails(item);
+    else if (sourceType === 'youtube') { if (isYouTubePlaylistItem(item)) await renderWorkoutDetails(item); else await renderStandaloneYouTubeDetails(item); }
     else if (sourceType === 'book') await renderBookDetails(item);
     else if (sourceType === 'movie') await renderMovieDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
@@ -3549,6 +3845,7 @@ async function moveItemToQueue(item, status) {
     else if (sourceType === 'reminder') renderReminderDetails(item);
     else if (['event', 'concert'].includes(sourceType)) await renderEventDetails(item);
     else if (sourceType === 'restaurant') await renderRestaurantDetails(item);
+    else if (sourceType === 'place') await renderPlaceDetails(item);
     else renderManualDetails(item);
   }
 }
@@ -3574,6 +3871,61 @@ function queueMoveControls(item) {
     <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-move-queue="tbr" data-item-id="${escapeAttr(item.id)}" aria-pressed="${current === 'tbr'}" ${(item.completedAt || unreleased) ? 'disabled' : ''}>TBR</button>
     <button class="secondary-button queue-toggle-button${dnfState === 'stopped' ? ' is-selected' : ''}" type="button" data-library-dnf="${escapeAttr(item.id)}" aria-pressed="${dnfState === 'stopped'}" ${(item.completedAt || unreleased) ? 'disabled' : ''}>DNF</button>
   </div>`;
+}
+
+function isYouTubePlaylistItem(item) {
+  if (!item || getSourceType(item) !== 'youtube') return false;
+  if (item.featureConfig?.youtubePlaylist === true) return true;
+  // Legacy playlist/workout items predate featureConfig.
+  if (item.type === 'workout' || Array.isArray(item.playlistItems)) return true;
+  return false;
+}
+
+async function renderStandaloneYouTubeDetails(item) {
+  let video = null;
+  if (item.provider === 'youtube' && item.providerId) {
+    try { video = await getCached(`youtube:video:${item.providerId}`, () => TrackerAPI.getYouTubeVideo(item.providerId, state.settings)); }
+    catch (error) { console.warn('YouTube video details unavailable:', error?.message || error); }
+  }
+  const snippet = video?.snippet || {};
+  const image = snippet.thumbnails?.high?.url || snippet.thumbnails?.medium?.url || item.image || '';
+  const meta = [snippet.channelTitle || item.subtitle || '', snippet.publishedAt ? new Date(snippet.publishedAt).toLocaleDateString() : ''].filter(Boolean).join(' · ');
+  els.detailBody.innerHTML = `
+    ${libraryDetailHero({ type:getItemTypeLabel(item).toUpperCase(), title:snippet.title || item.title, image, subtitle:meta, overview:snippet.description || '' })}
+    <div class="detail-actions library-detail-actions">
+      ${item.providerId ? `<a class="secondary-button detail-link-button" href="https://www.youtube.com/watch?v=${encodeURIComponent(item.providerId)}" target="_blank" rel="noopener">YouTube ↗</a>` : ''}
+      ${libraryDetailActionContents(item)}
+    </div>`;
+}
+
+function flexibleFeatureProgressMarkup(item) {
+  const mode = item?.featureConfig?.progressMode || '';
+  const sourceType = getSourceType(item);
+  const rows = [];
+  if (mode === 'book' && sourceType !== 'book') {
+    const current = Math.max(0, Number(item.progress?.currentPage || 0));
+    const total = Math.max(0, Number(item.progress?.totalPages || 0));
+    rows.push(total ? `Page ${current} of ${total} · ${Math.min(100, Math.round((current / total) * 100))}%` : `Page ${current}`);
+  }
+  if (mode === 'tv' && sourceType !== 'tv') {
+    rows.push(`S${Math.max(1, Number(item.progress?.nextSeason || 1))} E${Math.max(1, Number(item.progress?.nextEpisode || 1))}`);
+  }
+  if (item?.featureConfig?.dateRange && sourceType !== 'activity') {
+    const start = item.activityMeta?.startDate || item.date || '';
+    const end = item.activityMeta?.endDate || start;
+    if (start) rows.push(end && end !== start ? `${formatLongDate(start)} – ${formatLongDate(end)}` : formatLongDate(start));
+  }
+  if (!rows.length) return '';
+  return `<div class="detail-progress flexible-feature-progress"><strong>Progress</strong>${rows.map(escapeHtml).join(' · ')}</div>`;
+}
+
+function appendFlexibleFeatureProgress(item) {
+  if (!els.detailBody || !item || els.detailBody.querySelector('.flexible-feature-progress')) return;
+  const markup = flexibleFeatureProgressMarkup(item);
+  if (!markup) return;
+  const hero = els.detailBody.querySelector('.detail-hero');
+  if (hero) hero.insertAdjacentHTML('afterend', markup);
+  else els.detailBody.insertAdjacentHTML('afterbegin', markup);
 }
 
 async function advanceWorkout(item) {
@@ -3668,6 +4020,95 @@ async function toggleSpecificYouTubeVideo(item, videoId) {
 // ---------------------------
 // ADD / EDIT
 // ---------------------------
+const BASE_ITEM_TYPE_OPTIONS = [
+  ['tv','TV'], ['movie','Movie'], ['book','Book'], ['music','Music'], ['food','Food'],
+  ['event','Event'], ['activity','Activity'], ['shopping','Shopping'], ['youtube','YouTube'], ['workout','Workouts'], ['reminder','Reminder'], ['other','New type']
+];
+
+function itemTypeOptionUsageKey(value) {
+  return String(value || '').startsWith('custom:') ? String(value) : `builtin:${value}`;
+}
+
+function typeUsageCount(value) {
+  return Number(state.typeUsage?.[itemTypeOptionUsageKey(value)]?.count || 0);
+}
+
+function selectedSavedTypeEntry() {
+  const raw = String(els.itemSourceType?.value || '');
+  if (!raw.startsWith('custom:')) return null;
+  const type = raw.slice(7);
+  return state.customTypes.find(entry => entry.type === type) || { type, label: getTypeLabel(type) };
+}
+
+function formParentType() {
+  return selectedSavedTypeEntry() ? 'other' : (els.itemSourceType?.value || 'tv');
+}
+
+function refreshItemTypeOptions(preferredValue = '') {
+  if (!els.itemSourceType) return;
+  const current = preferredValue || els.itemSourceType.value || 'tv';
+  const base = BASE_ITEM_TYPE_OPTIONS.map(([value,label], order) => ({ value, label, order, custom: false }));
+  const custom = state.customTypes.map((entry, index) => ({ value: `custom:${entry.type}`, label: entry.label || getTypeLabel(entry.type), order: 100 + index, custom: true }));
+  const options = [...base, ...custom].sort((a,b) => {
+    const au = typeUsageCount(a.value), bu = typeUsageCount(b.value);
+    if (au !== bu) return bu - au;
+    if (a.custom !== b.custom) return a.custom ? -1 : 1;
+    return a.custom ? a.label.localeCompare(b.label) : a.order - b.order;
+  });
+  els.itemSourceType.innerHTML = options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
+  if (options.some(option => option.value === current)) els.itemSourceType.value = current;
+  else els.itemSourceType.value = options[0]?.value || 'tv';
+}
+
+function migrateCustomTypesFromLibrary() {
+  const known = new Set((state.customTypes || []).map(entry => entry.type));
+  let changed = false;
+  for (const item of state.items || []) {
+    const type = String(item?.type || '').trim();
+    if (!type || isBuiltInType(type) || known.has(type)) continue;
+    state.customTypes.push({ type, label: cleanTypeLabel(item.typeLabel || getTypeLabel(type)) || type });
+    known.add(type);
+    changed = true;
+  }
+  if (changed) {
+    safeLocalSet(CUSTOM_TYPES_KEY, state.customTypes);
+    scheduleCloudSync();
+  }
+}
+
+function seedTypeUsageFromLibrary() {
+  if (Object.keys(state.typeUsage || {}).length || !state.items.length) return;
+  const seeded = {};
+  for (const item of state.items) {
+    const value = isBuiltInType(item.type)
+      ? item.type
+      : state.customTypes.some(entry => entry.type === item.type)
+        ? `custom:${item.type}`
+        : (BASE_ITEM_TYPE_OPTIONS.some(([candidate]) => candidate === getSourceType(item)) ? getSourceType(item) : `custom:${item.type}`);
+    const key = itemTypeOptionUsageKey(value);
+    const current = seeded[key] || { count: 0, lastUsedAt: '' };
+    current.count += 1;
+    const date = String(item.updatedAt || item.createdAt || '');
+    if (date > current.lastUsedAt) current.lastUsedAt = date;
+    seeded[key] = current;
+  }
+  state.typeUsage = seeded;
+  safeLocalSet(TYPE_USAGE_KEY, state.typeUsage);
+}
+
+function recordTypeUse(item) {
+  if (!item) return;
+  const value = isBuiltInType(item.type)
+    ? item.type
+    : state.customTypes.some(entry => entry.type === item.type)
+      ? `custom:${item.type}`
+      : (BASE_ITEM_TYPE_OPTIONS.some(([value]) => value === getSourceType(item)) ? getSourceType(item) : `custom:${item.type}`);
+  const key = itemTypeOptionUsageKey(value);
+  const existing = state.typeUsage[key] || { count: 0, lastUsedAt: '' };
+  state.typeUsage[key] = { count: Number(existing.count || 0) + 1, lastUsedAt: new Date().toISOString() };
+  safeLocalSet(TYPE_USAGE_KEY, state.typeUsage);
+}
+
 function openItemModal(id = '', defaultQueueStatus = 'library') {
   resetItemForm(defaultQueueStatus);
   const item = id ? findItem(id) : null;
@@ -3678,7 +4119,11 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     els.itemModalTitle.textContent = item.title;
     const sourceType = getSourceType(item);
     setItemFormSourceType(sourceType, item);
-    if (['youtube', 'reminder', 'other'].includes(sourceType)) els.itemDisplayType.value = getItemTypeLabel(item);
+    if (els.itemFindSource) els.itemFindSource.value = item.featureConfig?.findSource || (sourceType === 'place' ? 'google-places' : 'auto');
+    if (els.itemProgressMode) els.itemProgressMode.value = item.featureConfig?.progressMode || 'auto';
+    if (els.itemUseDateRange) els.itemUseDateRange.checked = Boolean(item.featureConfig?.dateRange || (item.activityMeta && sourceType !== 'activity'));
+    if (els.itemUsePlaylist) els.itemUsePlaylist.checked = Boolean(item.featureConfig?.youtubePlaylist || (sourceType === 'youtube' && (item.type === 'workout' || item.playlistItems)));
+    if (['youtube', 'reminder', 'other', 'place'].includes(sourceType) || selectedSavedTypeEntry()) els.itemDisplayType.value = getItemTypeLabel(item);
     els.provider.value = item.provider || 'manual';
     els.providerId.value = item.providerId || '';
     els.providerImage.value = item.image || '';
@@ -3688,7 +4133,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     if (els.itemPeople) els.itemPeople.value = getItemPeople(item).join(', ');
     els.itemNote.value = item.notes || '';
     els.itemDate.value = item.date || '';
-    if (sourceType === 'activity') {
+    if (sourceType === 'activity' || els.itemUseDateRange?.checked) {
       if (els.activityStartDate) els.activityStartDate.value = item.activityMeta?.startDate || item.date || '';
       if (els.activityEndDate) els.activityEndDate.value = item.activityMeta?.endDate || item.date || '';
     }
@@ -3698,11 +4143,12 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     els.itemQueueStatus.value = getQueueStatus(item);
     setRating(Number(item.rating || 0));
 
-    if (sourceType === 'tv') {
+    const itemProgressMode = item.featureConfig?.progressMode || (sourceType === 'tv' ? 'tv' : sourceType === 'book' ? 'book' : 'none');
+    if (itemProgressMode === 'tv') {
       els.nextSeason.value = item.progress?.nextSeason || 1;
       els.nextEpisode.value = item.progress?.nextEpisode || 1;
     }
-    if (sourceType === 'book') {
+    if (itemProgressMode === 'book') {
       els.bookCurrentPage.value = item.progress?.currentPage || 0;
       els.bookTotalPages.value = item.progress?.totalPages || '';
       const periods = getBookReadingPeriods(item);
@@ -3750,7 +4196,9 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
 function resetItemForm(defaultQueueStatus = 'library') {
   els.itemForm.reset();
   els.editingId.value = '';
-  els.itemSourceType.value = 'tv';
+  refreshItemTypeOptions();
+  const ranked = [...els.itemSourceType.options].sort((a,b) => typeUsageCount(b.value) - typeUsageCount(a.value));
+  els.itemSourceType.value = ranked[0]?.value || 'tv';
   configureItemSubtype(true);
   els.itemDisplayType.value = 'Workout';
   if (els.itemSubcategory) els.itemSubcategory.value = '';
@@ -3758,6 +4206,11 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.open = false;
   if (els.itemAttachmentsDisclosure) els.itemAttachmentsDisclosure.open = false;
   if (els.itemBuddyWatchToggle) els.itemBuddyWatchToggle.checked = false;
+  if (els.itemFindSource) els.itemFindSource.value = 'auto';
+  if (els.itemProgressMode) els.itemProgressMode.value = 'auto';
+  if (els.itemUseDateRange) els.itemUseDateRange.checked = false;
+  if (els.itemUsePlaylist) els.itemUsePlaylist.checked = false;
+  if (els.itemFeaturesDisclosure) els.itemFeaturesDisclosure.open = false;
   if (els.itemBuddyWatchPerson) els.itemBuddyWatchPerson.innerHTML = '';
   if (els.itemBuddyWatchPersonField) els.itemBuddyWatchPersonField.hidden = true;
   if (els.activityStartDate) els.activityStartDate.value = todayString();
@@ -3837,7 +4290,7 @@ function formSubtypeForItem(sourceType, item = null) {
 
 function configureItemSubtype(reset = false, sourceTypeHint = '', item = null) {
   if (!els.itemSubtypeBlock || !els.itemSubtype) return;
-  const parent = els.itemSourceType?.value || 'tv';
+  const parent = formParentType();
   const options = FORM_SUBTYPE_OPTIONS[parent] || null;
   els.itemSubtypeBlock.hidden = !options;
   if (!options) {
@@ -3853,8 +4306,24 @@ function configureItemSubtype(reset = false, sourceTypeHint = '', item = null) {
   if (els.itemSubtypeLabel) els.itemSubtypeLabel.textContent = parent === 'music' ? 'Music type' : 'Food type';
 }
 
-function selectedFormSourceType() {
-  const parent = els.itemSourceType?.value || 'tv';
+const FIND_SOURCE_CONFIG = Object.freeze({
+  'tmdb-tv': { sourceType: 'tv', label: 'TV' },
+  'tmdb-movie': { sourceType: 'movie', label: 'Movies' },
+  'google-books': { sourceType: 'book', label: 'Books' },
+  'apple-albums': { sourceType: 'music', label: 'Albums' },
+  'lastfm-artists': { sourceType: 'artist', label: 'Artists' },
+  'apple-songs': { sourceType: 'song', label: 'Songs' },
+  'youtube-videos': { sourceType: 'youtube', label: 'YouTube videos' },
+  'google-places': { sourceType: 'place', label: 'Places' },
+  'ticketmaster-events': { sourceType: 'event', label: 'Events' },
+  'ticketmaster-concerts': { sourceType: 'concert', label: 'Concerts' },
+  'manual': { sourceType: 'other', label: 'No lookup' }
+});
+
+function automaticFormSourceType() {
+  const parent = formParentType();
+  if (parent === 'shopping') return 'place';
+  if (parent === 'workout') return 'youtube';
   if (parent === 'music') {
     const subtype = els.itemSubtype?.value || 'manual';
     if (['artist','song','concert'].includes(subtype)) return subtype;
@@ -3868,11 +4337,60 @@ function selectedFormSourceType() {
   return parent;
 }
 
+function defaultFindSourceForType(sourceType = automaticFormSourceType()) {
+  return ({
+    tv: 'tmdb-tv', movie: 'tmdb-movie', book: 'google-books', music: 'apple-albums',
+    artist: 'lastfm-artists', song: 'apple-songs', concert: 'ticketmaster-concerts',
+    event: 'ticketmaster-events', restaurant: 'google-places', place: 'google-places', shopping: 'google-places', youtube: 'youtube-videos'
+  })[sourceType] || 'manual';
+}
+
+function selectedFormSourceType() {
+  const automatic = automaticFormSourceType();
+  const findSource = els.itemFindSource?.value || 'auto';
+  if (findSource === 'auto') return automatic;
+  if (findSource === 'google-places' && automatic === 'restaurant') return 'restaurant';
+  return FIND_SOURCE_CONFIG[findSource]?.sourceType || automatic;
+}
+
+function effectiveItemProgressMode(sourceType = selectedFormSourceType()) {
+  const explicit = els.itemProgressMode?.value || 'auto';
+  if (explicit === 'tv' || explicit === 'book' || explicit === 'none') return explicit;
+  const parent = formParentType();
+  // Type and lookup source are independent, but Auto should preserve the familiar
+  // progress behavior for TV/Book while also doing the sensible thing when a
+  // custom Type is backed by one of those catalogue sources.
+  if (parent === 'tv' || sourceType === 'tv') return 'tv';
+  if (parent === 'book' || sourceType === 'book') return 'book';
+  return 'none';
+}
+
+function syncItemFeatureSummary() {
+  if (!els.itemFeaturesSummary) return;
+  const bits = [];
+  const progress = effectiveItemProgressMode();
+  if (progress === 'tv') bits.push('episodes');
+  if (progress === 'book') bits.push('pages');
+  if (els.itemUseDateRange?.checked) bits.push('date range');
+  if (els.itemUsePlaylist?.checked) bits.push('playlist');
+  els.itemFeaturesSummary.textContent = bits.length ? bits.join(' · ') : 'automatic';
+}
+
+
 function setItemFormSourceType(sourceType, item = null) {
   if (!els.itemSourceType) return;
-  if (['music','artist','song','concert'].includes(sourceType)) els.itemSourceType.value = 'music';
+  refreshItemTypeOptions();
+  // Display Type and lookup source are independent. When editing, restore the
+  // saved display Type first even if that item was found through another API.
+  if (item?.type && !isBuiltInType(item.type) && state.customTypes.some(entry => entry.type === item.type)) {
+    els.itemSourceType.value = `custom:${item.type}`;
+  } else if (item?.type && BASE_ITEM_TYPE_OPTIONS.some(([value]) => value === item.type)) {
+    els.itemSourceType.value = item.type;
+  } else if (['music','artist','song','concert'].includes(sourceType)) els.itemSourceType.value = 'music';
   else if (['food','restaurant','recipe'].includes(sourceType)) els.itemSourceType.value = 'food';
-  else els.itemSourceType.value = sourceType;
+  else if (sourceType === 'place') els.itemSourceType.value = 'shopping';
+  else if (BASE_ITEM_TYPE_OPTIONS.some(([value]) => value === sourceType)) els.itemSourceType.value = sourceType;
+  else els.itemSourceType.value = 'other';
   configureItemSubtype(true, sourceType, item);
 }
 
@@ -3962,6 +4480,36 @@ async function refreshItemBuddyWatchOptions() {
   syncItemBuddyWatchToggle();
 }
 
+function ensureFlexibleEpisodeProgressFields() {
+  let block = $('#flexEpisodeProgressFields');
+  if (block) return block;
+  block = document.createElement('div');
+  block.id = 'flexEpisodeProgressFields';
+  block.className = 'progress-fields generic-episode-progress';
+  block.hidden = true;
+  block.innerHTML = `<div class="two-column-fields"><label class="field compact-field"><span>Season</span><input id="flexNextSeason" type="number" min="1" step="1" value="1" /></label><label class="field compact-field"><span>Episode</span><input id="flexNextEpisode" type="number" min="1" step="1" value="1" /></label></div>`;
+  const before = els.bookProgressFields || els.itemRating?.closest('.rating-fieldset') || null;
+  if (before?.parentNode) before.parentNode.insertBefore(block, before);
+  else els.itemForm?.appendChild(block);
+  const sync = () => {
+    if (els.nextSeason) els.nextSeason.value = String(Math.max(1, Number($('#flexNextSeason')?.value || 1)));
+    if (els.nextEpisode) els.nextEpisode.value = String(Math.max(1, Number($('#flexNextEpisode')?.value || 1)));
+  };
+  block.addEventListener('input', sync);
+  return block;
+}
+
+function syncFlexibleEpisodeProgressFields(sourceType, progressMode) {
+  const block = ensureFlexibleEpisodeProgressFields();
+  const visible = progressMode === 'tv' && sourceType !== 'tv';
+  block.hidden = !visible;
+  if (!visible) return;
+  const season = block.querySelector('#flexNextSeason');
+  const episode = block.querySelector('#flexNextEpisode');
+  if (season) season.value = String(Math.max(1, Number(els.nextSeason?.value || 1)));
+  if (episode) episode.value = String(Math.max(1, Number(els.nextEpisode?.value || 1)));
+}
+
 function syncTVDraftHistoryVisibility(sourceType = selectedFormSourceType()) {
   if (!els.tvProgressFields) return;
   const loaded = sourceType === 'tv' && Boolean(state.tvDraftDetails) && state.tvDraftSeasons.length > 0;
@@ -3970,34 +4518,46 @@ function syncTVDraftHistoryVisibility(sourceType = selectedFormSourceType()) {
 
 function updateItemFormForType() {
   configureItemSubtype(false);
-  const parentType = els.itemSourceType.value;
+  const savedType = selectedSavedTypeEntry();
+  const parentType = formParentType();
   const subtype = els.itemSubtype?.value || '';
-  const sourceType = selectedFormSourceType();
+  let sourceType = selectedFormSourceType();
+  if (els.itemFindSource && els.itemFindSource.value === 'auto') {
+    els.itemFindSource.dataset.defaultSource = defaultFindSourceForType(automaticFormSourceType());
+  }
   const musicManual = parentType === 'music' && subtype === 'manual';
   const musicAlbum = parentType === 'music' && subtype === 'album';
   const foodManual = parentType === 'food' && subtype === 'manual';
-  const isCatalogue = ['tv', 'book', 'movie', 'artist', 'song', 'concert', 'event', 'restaurant'].includes(sourceType) || musicAlbum;
+  const findSource = els.itemFindSource?.value || 'auto';
+  const isCatalogue = findSource !== 'manual';
   const isYouTube = sourceType === 'youtube';
   const isReminder = sourceType === 'reminder';
   const isActivity = sourceType === 'activity';
-  const isManual = sourceType === 'other';
+  const isManual = sourceType === 'other' || Boolean(savedType);
   const isFoodManual = sourceType === 'food' || sourceType === 'recipe';
 
-  els.catalogueSearchBlock.hidden = !isCatalogue;
-  els.workoutBlock.hidden = !isYouTube;
+  els.catalogueSearchBlock.hidden = false;
+  if (els.catalogueQuery) els.catalogueQuery.disabled = !isCatalogue;
+  if (els.catalogueSearchButton) els.catalogueSearchButton.disabled = !isCatalogue;
+  els.workoutBlock.hidden = !(isYouTube && Boolean(els.itemUsePlaylist?.checked));
   if (els.reminderBlock) els.reminderBlock.hidden = !isReminder;
-  if (els.activityFields) els.activityFields.hidden = !isActivity;
-  if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.hidden = sourceType === 'book';
-  if (els.itemPeopleBlock) els.itemPeopleBlock.hidden = sourceType === 'book';
-  if (els.itemPeopleSuggestions && sourceType === 'book') els.itemPeopleSuggestions.hidden = true;
+  if (els.activityFields) els.activityFields.hidden = !(isActivity || Boolean(els.itemUseDateRange?.checked));
+  const bookDisplay = parentType === 'book' || sourceType === 'book';
+  if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.hidden = bookDisplay;
+  if (els.itemPeopleBlock) els.itemPeopleBlock.hidden = bookDisplay;
+  if (els.itemPeopleSuggestions && bookDisplay) els.itemPeopleSuggestions.hidden = true;
   else if (els.itemPeopleSuggestions && els.itemModal?.open) refreshItemPeopleSuggestions().catch(() => {});
-  els.displayTypeBlock.hidden = !(isYouTube || isReminder || isManual);
+  const showDisplayType = parentType === 'youtube' || parentType === 'reminder' || (parentType === 'other' && !savedType);
+  els.displayTypeBlock.hidden = !showDisplayType;
   els.manualTitleBlock.hidden = false;
-  syncTVDraftHistoryVisibility(sourceType);
-  els.bookProgressFields.hidden = sourceType !== 'book';
+  const progressMode = effectiveItemProgressMode(sourceType);
+  syncTVDraftHistoryVisibility(progressMode === 'tv' && sourceType === 'tv' ? 'tv' : sourceType);
+  if (els.tvProgressFields && (progressMode !== 'tv' || sourceType !== 'tv')) els.tvProgressFields.hidden = true;
+  syncFlexibleEpisodeProgressFields(sourceType, progressMode);
+  els.bookProgressFields.hidden = progressMode !== 'book';
   if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder || isActivity;
   if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = !['tv','movie','book','music','artist','song'].includes(sourceType);
-  if (sourceType === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
+  if (progressMode === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
     els.bookStartDate.value = todayString();
   }
   if (isActivity && !els.editingId.value && els.activityStartDate && !els.activityStartDate.value) {
@@ -4030,18 +4590,18 @@ function updateItemFormForType() {
   }
   syncItemSubcategoryDisclosure();
 
-  if (isYouTube) {
+  if (parentType === 'youtube') {
     els.displayTypeLabel.textContent = 'Display as';
-    els.displayTypeHint.textContent = 'Name this kind of YouTube content. For example: Workout, Pilates, Yoga, Tutorials.';
+    if (els.displayTypeHint) els.displayTypeHint.textContent = '';
     if (!els.itemDisplayType.value.trim()) els.itemDisplayType.value = 'Workout';
-  } else if (isReminder) {
+  } else if (parentType === 'reminder') {
     els.displayTypeLabel.textContent = 'Type';
-    els.displayTypeHint.textContent = 'This is the calendar/streak category for the reminder. For example: Chores, Medication, Cleaning.';
+    if (els.displayTypeHint) els.displayTypeHint.textContent = '';
     if (!els.editingId.value || !els.itemDisplayType.value.trim()) els.itemDisplayType.value = 'Chores';
     if (els.itemQueueStatus) els.itemQueueStatus.value = 'upnext';
-  } else if (isManual) {
+  } else if (parentType === 'other' && !savedType) {
     els.displayTypeLabel.textContent = 'New type name';
-    els.displayTypeHint.textContent = 'This creates a reusable type for the tracker and library.';
+    if (els.displayTypeHint) els.displayTypeHint.textContent = '';
     if (!els.editingId.value) els.itemDisplayType.value = '';
   }
 
@@ -4060,18 +4620,9 @@ function updateItemFormForType() {
 
   updateReminderFormFields();
 
-  const placeholders = {
-    tv: 'Search TV shows',
-    movie: 'Search movies',
-    book: 'Search books',
-    music: 'Search albums',
-    artist: 'Search artists',
-    song: 'Search songs',
-    concert: 'Search concerts — past or upcoming',
-    event: 'Search events',
-    restaurant: 'Search restaurants'
-  };
-  els.catalogueQuery.placeholder = placeholders[sourceType] || 'Search title';
+  const placeholders = { tv: 'Search TV', movie: 'Search movies', book: 'Search books', music: 'Search albums', artist: 'Search artists', song: 'Search songs', concert: 'Search concerts', event: 'Search events', restaurant: 'Search restaurants', place: 'Search places', youtube: 'Search YouTube' };
+  els.catalogueQuery.placeholder = isCatalogue ? (placeholders[sourceType] || 'Search') : 'Manual';
+  syncItemFeatureSummary();
 
   if (els.manualTitle) {
     els.manualTitle.placeholder = sourceType === 'recipe'
@@ -4107,20 +4658,47 @@ function updateReminderFormFields() {
 }
 
 async function searchCatalogue() {
-  const type = selectedFormSourceType();
   const query = els.catalogueQuery.value.trim();
   if (!query) return;
+  const requested = els.itemFindSource?.value || 'auto';
+  const sourceKey = requested === 'auto' ? defaultFindSourceForType(automaticFormSourceType()) : requested;
+  if (sourceKey === 'manual') {
+    showFormMessage('Enter it manually.', false);
+    return;
+  }
+  const sourceType = sourceKey === 'google-places' && automaticFormSourceType() === 'restaurant'
+    ? 'restaurant'
+    : (FIND_SOURCE_CONFIG[sourceKey]?.sourceType || automaticFormSourceType());
   showFormMessage('Searching…', false);
   els.catalogueSearchButton.disabled = true;
-
   try {
-    const liveSearch = ['concert', 'event'].includes(type);
-    const restaurantSearch = type === 'restaurant';
-    const results = await TrackerAPI.searchCatalogue(query, type, state.settings, (liveSearch || restaurantSearch) ? {
+    const options = {
       city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
       countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA',
       region: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA',
-    } : {});
+      maxResultCount: 20,
+      pages: sourceKey === 'google-places' ? 2 : 1
+    };
+    let results = [];
+    if (sourceKey === 'tmdb-tv') results = await TrackerAPI.searchCatalogue(query, 'tv', state.settings);
+    else if (sourceKey === 'tmdb-movie') results = await TrackerAPI.searchCatalogue(query, 'movie', state.settings);
+    else if (sourceKey === 'google-books') results = await TrackerAPI.searchCatalogue(query, 'book', state.settings);
+    else if (sourceKey === 'apple-albums') results = await TrackerAPI.searchCatalogue(query, 'music', state.settings);
+    else if (sourceKey === 'lastfm-artists') {
+      try {
+        const lastfm = await TrackerAPI.searchLastFmArtists(query, state.settings, 30, 1);
+        results = (lastfm || []).map(lastFmArtistDiscoverCandidate).filter(Boolean);
+      } catch {
+        results = await TrackerAPI.searchCatalogue(query, 'artist', state.settings);
+      }
+    }
+    else if (sourceKey === 'apple-songs') results = await TrackerAPI.searchCatalogue(query, 'song', state.settings);
+    else if (sourceKey === 'youtube-videos') results = await TrackerAPI.searchCatalogue(query, 'youtube', state.settings, { maxResults: 20 });
+    else if (sourceKey === 'google-places') results = sourceType === 'restaurant'
+      ? await TrackerAPI.searchRestaurants(query, state.settings, options)
+      : await TrackerAPI.searchPlaces(query, state.settings, options);
+    else if (sourceKey === 'ticketmaster-concerts') results = await TrackerAPI.searchCatalogue(query, 'concert', state.settings, options);
+    else if (sourceKey === 'ticketmaster-events') results = await TrackerAPI.searchCatalogue(query, 'event', state.settings, options);
     renderSearchResults(results);
     showFormMessage('', false);
   } catch (error) {
@@ -4164,7 +4742,7 @@ function renderSearchResults(results) {
     button.addEventListener('click', () => selectCatalogueResult(result));
     els.searchResults.appendChild(button);
   });
-  if (selectedFormSourceType() === 'restaurant') {
+  if (['restaurant','place'].includes(selectedFormSourceType())) {
     const attribution = document.createElement('div');
     attribution.className = 'gmp-attribution';
     attribution.setAttribute('translate', 'no');
@@ -4184,9 +4762,10 @@ function selectCatalogueResult(result) {
   }
   state.selectedSource = result;
   const selectingRestaurant = formSourceType === 'restaurant' && result.provider === 'googlePlaces';
+  const selectingPlace = formSourceType === 'place' && result.provider === 'googlePlaces';
   // Selecting a restaurant should behave like selecting a movie: use the
   // catalogue result's actual display name as the prefilled tracker title.
-  if (selectingRestaurant) {
+  if (selectingRestaurant || selectingPlace) {
     els.manualTitle.value = result.title || String(els.catalogueQuery?.value || '').trim();
     els.manualTitle.placeholder = 'Restaurant name';
   } else {
@@ -4194,8 +4773,8 @@ function selectCatalogueResult(result) {
   }
   els.provider.value = result.provider;
   els.providerId.value = result.providerId;
-  els.providerImage.value = selectingRestaurant ? '' : (result.image || '');
-  els.providerSubtitle.value = selectingRestaurant ? '' : (result.subtitle || '');
+  els.providerImage.value = (selectingRestaurant || selectingPlace) ? '' : (result.image || '');
+  els.providerSubtitle.value = (selectingRestaurant || selectingPlace) ? (result.subtitle || '') : (result.subtitle || '');
   els.searchResults.hidden = true;
   showSelectedSource(result);
 
@@ -4493,78 +5072,69 @@ async function saveItemFromForm(event) {
   let image = els.providerImage.value;
   let subtitle = els.providerSubtitle.value;
 
-  let type = sourceType;
-  let typeLabel = SOURCE_ITEM_LABELS[sourceType] || '';
+  const displayParent = formParentType();
+  const savedDisplayType = selectedSavedTypeEntry();
+  const automaticSourceType = automaticFormSourceType();
+  let type = displayParent;
+  let typeLabel = SOURCE_ITEM_LABELS[displayParent] || getTypeLabel(displayParent);
   let fixedSubcategory = '';
 
-  if (['music', 'artist', 'song', 'concert'].includes(sourceType)) {
+  if (savedDisplayType) {
+    type = savedDisplayType.type;
+    typeLabel = savedDisplayType.label || getTypeLabel(savedDisplayType.type);
+  } else if (displayParent === 'music') {
     type = 'music';
     typeLabel = 'Music';
-    fixedSubcategory = musicSubcategoryForSourceType(sourceType);
-    if (sourceType === 'music' && (state.selectedSource?.provider === 'itunes' || (editing?.provider === 'itunes' && editing?.providerId))) {
-      fixedSubcategory = 'Album';
-    }
-  }
-  if (['food','restaurant','recipe'].includes(sourceType)) {
+    fixedSubcategory = musicSubcategoryForSourceType(automaticSourceType);
+    if (automaticSourceType === 'music' && (state.selectedSource?.provider === 'itunes' || (editing?.provider === 'itunes' && editing?.providerId))) fixedSubcategory = 'Album';
+  } else if (displayParent === 'food') {
     type = 'food';
     typeLabel = 'Food';
-    fixedSubcategory = foodSubcategoryForSourceType(sourceType);
-  }
-
-  if (sourceType === 'youtube') {
-    typeLabel = cleanTypeLabel(els.itemDisplayType.value) || 'Workout';
+    fixedSubcategory = foodSubcategoryForSourceType(automaticSourceType);
+  } else if (displayParent === 'youtube') {
+    typeLabel = cleanTypeLabel(els.itemDisplayType.value) || 'YouTube';
     type = displayTypeSlug(typeLabel, 'youtube');
     registerCustomType(type, typeLabel);
-
-    if (state.loadedPlaylist) {
-      provider = 'youtube';
-      providerId = state.loadedPlaylist.providerId;
-      image = state.loadedPlaylist.image || '';
-      subtitle = state.loadedPlaylist.subtitle || '';
-    } else if (editing) {
-      provider = editing.provider;
-      providerId = editing.providerId;
-      image = editing.image;
-      subtitle = editing.subtitle;
-    }
-  } else if (sourceType === 'reminder') {
-    typeLabel = cleanTypeLabel(els.itemDisplayType.value) || 'Chores';
+  } else if (displayParent === 'reminder') {
+    typeLabel = cleanTypeLabel(els.itemDisplayType.value) || 'Reminder';
     type = displayTypeSlug(typeLabel, 'other');
     registerCustomType(type, typeLabel);
-    provider = 'reminder';
-    providerId = '';
-    image = '';
-    subtitle = '';
-  } else if (['food','recipe','activity'].includes(sourceType)) {
-    provider = 'manual';
-    providerId = editing?.providerId || '';
-    image = editing?.image || '';
-    subtitle = editing?.subtitle || '';
-  } else if (sourceType === 'other') {
+  } else if (displayParent === 'other') {
     typeLabel = cleanTypeLabel(els.itemDisplayType.value);
     if (!typeLabel) {
-      showFormMessage('Enter a name for the new type.', true);
+      showFormMessage('Name the type.', true);
       return;
     }
     type = displayTypeSlug(typeLabel, 'other');
     registerCustomType(type, typeLabel);
-    provider = 'manual';
+  }
+
+  const selectedSource = state.selectedSource;
+  if (sourceType === 'reminder') {
+    provider = 'reminder';
     providerId = '';
     image = '';
     subtitle = '';
-  } else {
-    const source = state.selectedSource;
-    if (source) {
-      provider = source.provider;
-      providerId = source.providerId;
-      image = source.image || '';
-      subtitle = source.subtitle || '';
-    } else if (editing) {
-      provider = editing.provider;
-      providerId = editing.providerId;
-      image = editing.image;
-      subtitle = editing.subtitle;
-    }
+  } else if (sourceType === 'activity' || sourceType === 'food' || sourceType === 'recipe' || sourceType === 'other') {
+    provider = selectedSource?.provider || editing?.provider || 'manual';
+    providerId = selectedSource?.providerId || editing?.providerId || '';
+    image = selectedSource?.image || editing?.image || image || '';
+    subtitle = selectedSource?.subtitle || editing?.subtitle || subtitle || '';
+  } else if (sourceType === 'youtube' && els.itemUsePlaylist?.checked && state.loadedPlaylist) {
+    provider = 'youtube';
+    providerId = state.loadedPlaylist.providerId;
+    image = state.loadedPlaylist.image || '';
+    subtitle = state.loadedPlaylist.subtitle || '';
+  } else if (selectedSource) {
+    provider = selectedSource.provider;
+    providerId = selectedSource.providerId;
+    image = selectedSource.image || '';
+    subtitle = selectedSource.subtitle || '';
+  } else if (editing) {
+    provider = editing.provider;
+    providerId = editing.providerId;
+    image = editing.image;
+    subtitle = editing.subtitle;
   }
 
   // Music and Concert can be entered manually. Search is optional for these
@@ -4580,27 +5150,33 @@ async function saveItemFromForm(event) {
     return;
   }
   if (sourceType === 'youtube' && (provider !== 'youtube' || !providerId)) {
-    showFormMessage('Load a YouTube playlist first.', true);
+    showFormMessage(els.itemUsePlaylist?.checked ? 'Load a playlist first.' : 'Choose a YouTube video first.', true);
     return;
   }
-  const validProvider = sourceType === 'book'
-    ? provider === 'googleBooks'
-    : sourceType === 'music'
-      ? ['itunes', 'manual'].includes(provider)
-      : ['artist', 'song'].includes(sourceType)
-        ? ['itunes', 'lastfm'].includes(provider)
-        : sourceType === 'concert'
-          ? ['ticketmaster', 'manual'].includes(provider)
-          : sourceType === 'restaurant'
-            ? provider === 'googlePlaces'
-          : sourceType === 'event'
-            ? provider === 'ticketmaster'
-            : ['tv', 'movie'].includes(sourceType)
-              ? provider === 'tmdb'
-              : true;
-  const requiresCatalogueSelection = ['tv','book','movie','artist','song','event','restaurant'].includes(sourceType);
+  const requestedFindSource = els.itemFindSource?.value || 'auto';
+  const manualLookup = requestedFindSource === 'manual';
+  const validProvider = manualLookup
+    ? true
+    : sourceType === 'book'
+      ? provider === 'googleBooks'
+      : sourceType === 'music'
+        ? ['itunes', 'manual'].includes(provider)
+        : ['artist', 'song'].includes(sourceType)
+          ? ['itunes', 'lastfm'].includes(provider)
+          : sourceType === 'concert'
+            ? ['ticketmaster', 'manual'].includes(provider)
+            : ['restaurant','place'].includes(sourceType)
+              ? provider === 'googlePlaces'
+              : sourceType === 'event'
+                ? provider === 'ticketmaster'
+                : ['tv', 'movie'].includes(sourceType)
+                  ? provider === 'tmdb'
+                  : sourceType === 'youtube'
+                    ? provider === 'youtube'
+                    : true;
+  const requiresCatalogueSelection = !manualLookup && ['tv','book','movie','artist','song','event','restaurant','place','youtube'].includes(sourceType);
   if ((requiresCatalogueSelection && !providerId) || !validProvider) {
-    showFormMessage(['music', 'concert','food','recipe'].includes(sourceType) ? 'Search for a result or enter the item manually.' : 'Choose a search result first.', true);
+    showFormMessage('Choose a Find it result first, or switch Find it to Manual.', true);
     return;
   }
   if (sourceType === 'reminder' && !els.reminderDueDate?.value) {
@@ -4615,7 +5191,7 @@ async function saveItemFromForm(event) {
     showFormMessage('Choose a person for Buddy Watch.', true);
     return;
   }
-  if (sourceType === 'activity') {
+  if (sourceType === 'activity' || els.itemUseDateRange?.checked) {
     const startDate = els.activityStartDate?.value || '';
     const endDate = els.activityEndDate?.value || '';
     if (!startDate) {
@@ -4654,7 +5230,7 @@ async function saveItemFromForm(event) {
     return;
   }
 
-  const people = sourceType === 'book' ? [] : parseItemPeople(els.itemPeople?.value || '');
+  const people = (formParentType() === 'book' || sourceType === 'book') ? [] : parseItemPeople(els.itemPeople?.value || '');
 
   const item = {
     id: editing?.id || makeId(),
@@ -4677,9 +5253,15 @@ async function saveItemFromForm(event) {
       : normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)),
     attachments: attachmentFiles,
     links: state.attachmentDraft.links.map(link => ({ ...link })),
-    date: sourceType === 'reminder' ? '' : sourceType === 'activity' ? (els.activityStartDate?.value || '') : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
+    date: sourceType === 'reminder' ? '' : (sourceType === 'activity' || els.itemUseDateRange?.checked) ? (els.activityStartDate?.value || '') : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
     queueStatus: sourceType === 'reminder' ? 'upnext' : sourceType === 'activity' ? 'library' : (sourceType === 'restaurant' ? (els.itemQueueStatus.value === 'tbr' ? 'tbr' : 'library') : (['music','artist','song','concert','food','recipe'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'))),
-    active: sourceType === 'reminder' || (sourceType !== 'activity' && sourceType !== 'restaurant' && !['music','artist','song','concert','food','recipe'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
+    active: sourceType === 'reminder' || (sourceType !== 'activity' && !['restaurant','place'].includes(sourceType) && !['music','artist','song','concert','food','recipe'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
+    featureConfig: {
+      findSource: requestedFindSource,
+      progressMode: effectiveItemProgressMode(sourceType),
+      dateRange: Boolean(els.itemUseDateRange?.checked),
+      youtubePlaylist: Boolean(els.itemUsePlaylist?.checked)
+    },
     createdAt: editing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     completedAt: editing?.completedAt || '',
@@ -4705,7 +5287,7 @@ async function saveItemFromForm(event) {
         priceRange: state.selectedSource?.priceRange || editing?.eventMeta?.priceRange || null
       }
     } : {}),
-    ...(sourceType === 'activity' ? {
+    ...((sourceType === 'activity' || els.itemUseDateRange?.checked) ? {
       activityMeta: {
         startDate: els.activityStartDate?.value || '',
         endDate: els.activityEndDate?.value || els.activityStartDate?.value || '',
@@ -4731,11 +5313,12 @@ async function saveItemFromForm(event) {
         : undefined
     };
   }
-  if (sourceType === 'tv') {
+  const progressMode = effectiveItemProgressMode(sourceType);
+  if (progressMode === 'tv') {
     item.progress.nextSeason = Math.max(1, Number(els.nextSeason.value || 1));
     item.progress.nextEpisode = Math.max(1, Number(els.nextEpisode.value || 1));
   }
-  if (sourceType === 'book') {
+  if (progressMode === 'book') {
     item.progress.currentPage = Math.max(0, Number(els.bookCurrentPage.value || 0));
     item.progress.totalPages = Math.max(0, Number(els.bookTotalPages.value || 0));
     const priorPeriods = getBookReadingPeriods(editing || item);
@@ -4764,9 +5347,11 @@ async function saveItemFromForm(event) {
       }
     }
   }
-  if (sourceType === 'youtube') {
+  if (sourceType === 'youtube' && item.featureConfig.youtubePlaylist) {
     item.progress.currentIndex = editing?.progress?.currentIndex || 0;
     if (state.loadedPlaylist && editing?.providerId !== state.loadedPlaylist.providerId) item.progress.currentIndex = 0;
+  } else if (sourceType === 'youtube') {
+    delete item.progress.currentIndex;
   }
 
   // Food history is event-like: the Library keeps the place/recipe while each
@@ -4891,6 +5476,8 @@ async function saveItemFromForm(event) {
     }
   }
 
+  recordTypeUse(item);
+  refreshItemTypeOptions();
   saveItems();
   await deleteRemovedDraftAttachments();
 
@@ -5032,7 +5619,7 @@ async function openDetails(id) {
   try {
     const sourceType = getSourceType(item);
     if (sourceType === 'tv') await renderTVDetails(item);
-    else if (sourceType === 'youtube') await renderWorkoutDetails(item);
+    else if (sourceType === 'youtube') { if (isYouTubePlaylistItem(item)) await renderWorkoutDetails(item); else await renderStandaloneYouTubeDetails(item); }
     else if (sourceType === 'book') await renderBookDetails(item);
     else if (sourceType === 'movie') await renderMovieDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
@@ -5041,8 +5628,10 @@ async function openDetails(id) {
     else if (sourceType === 'reminder') renderReminderDetails(item);
     else if (['event', 'concert'].includes(sourceType)) await renderEventDetails(item);
     else if (sourceType === 'restaurant') await renderRestaurantDetails(item);
+    else if (sourceType === 'place') await renderPlaceDetails(item);
     else if (sourceType === 'activity') renderActivityDetails(item);
     else renderManualDetails(item);
+    appendFlexibleFeatureProgress(item);
     appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
     appendLibraryPeopleSummary(item);
@@ -5052,6 +5641,7 @@ async function openDetails(id) {
     appendItemResources(item);
   } catch (error) {
     els.detailBody.innerHTML = `${basicDetailHero(item)}<div class="api-error">${escapeHtml(error.message)}</div>${detailEditButton(item)}`;
+    appendFlexibleFeatureProgress(item);
     appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
     appendLibraryPeopleSummary(item);
@@ -5480,6 +6070,18 @@ function renderReminderDetails(item) {
     </div>`;
 }
 
+async function renderPlaceDetails(item) {
+  let live = item.placeMeta || null;
+  if (item.provider === 'googlePlaces' && item.providerId && state.settings.googlePlacesKey) {
+    try { live = await TrackerAPI.getPlaceDetails(item.providerId, state.settings, 'place'); }
+    catch (error) { console.warn('Google Places details unavailable:', error?.message || error); }
+  }
+  if (live) item.placeMeta = { formattedAddress: live.formattedAddress || '', googleMapsUrl: live.googleMapsUrl || '', websiteUrl: live.websiteUrl || '', location: live.location || null };
+  const ratingText = Number(live?.rating || 0) ? `${Number(live.rating).toFixed(1)}★` : '';
+  els.detailBody.innerHTML = `${libraryDetailHero({ type:getItemTypeLabel(item).toUpperCase(), title:item.title, image:item.image || '', subtitle:[ratingText, live?.primaryTypeDisplayName || '', live?.formattedAddress || item.subtitle || ''].filter(Boolean).join(' · '), overview:'' })}${live ? '<div class="gmp-attribution detail-gmp-attribution" translate="no">Google Maps</div>' : ''}${detailEditButton(item)}${(live?.googleMapsUrl || live?.websiteUrl) ? `<section class="detail-section restaurant-links">${live.googleMapsUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(live.googleMapsUrl)}" target="_blank" rel="noopener">Map ↗</a>` : ''}${live.websiteUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(live.websiteUrl)}" target="_blank" rel="noopener">Website ↗</a>` : ''}</section>` : ''}`;
+  if (live) saveItems();
+}
+
 async function renderRestaurantDetails(item) {
   let live = null;
   if (item.provider === 'googlePlaces' && item.providerId && state.settings.googlePlacesKey) {
@@ -5885,18 +6487,38 @@ function emptyAttachmentDraft() {
   return { existingFiles: [], newFiles: [], removedFileIds: new Set(), links: [] };
 }
 
+function prunePhotoUploadLog() {
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  state.photoUploadLog = (Array.isArray(state.photoUploadLog) ? state.photoUploadLog : []).filter(value => {
+    const time = Date.parse(value);
+    return Number.isFinite(time) && time >= cutoff;
+  });
+  safeLocalSet(PHOTO_UPLOAD_LOG_KEY, state.photoUploadLog);
+}
+
+function remainingWeeklyPhotos() {
+  prunePhotoUploadLog();
+  const pending = (state.attachmentDraft?.newFiles || []).filter(entry => String(entry.mime || '').startsWith('image/')).length;
+  return Math.max(0, PHOTO_WEEKLY_LIMIT - state.photoUploadLog.length - pending);
+}
+
 function addDraftFiles(event) {
   const files = [...(event.target.files || [])];
+  let photosLeft = remainingWeeklyPhotos();
+  let blockedPhotos = 0;
   for (const file of files) {
+    const isPhoto = String(file.type || '').startsWith('image/');
+    if (isPhoto && photosLeft <= 0) {
+      blockedPhotos += 1;
+      continue;
+    }
+    if (isPhoto) photosLeft -= 1;
     state.attachmentDraft.newFiles.push({
-      id: makeId(),
-      file,
-      name: file.name || 'File',
-      mime: file.type || 'application/octet-stream',
-      size: file.size || 0
+      id: makeId(), file, name: file.name || 'File', mime: file.type || 'application/octet-stream', size: file.size || 0
     });
   }
   event.target.value = '';
+  if (blockedPhotos) showFormMessage(`Photo limit: ${PHOTO_WEEKLY_LIMIT} per 7 days.`, true);
   renderAttachmentEditor();
 }
 
@@ -5962,9 +6584,13 @@ function renderAttachmentEditor() {
 }
 
 async function persistDraftAttachments() {
+  const savedAt = new Date().toISOString();
   for (const entry of state.attachmentDraft.newFiles) {
     await putAttachmentBlob(entry.id, entry.file);
+    if (String(entry.mime || '').startsWith('image/')) state.photoUploadLog.push(savedAt);
   }
+  prunePhotoUploadLog();
+  safeLocalSet(PHOTO_UPLOAD_LOG_KEY, state.photoUploadLog);
   return [
     ...state.attachmentDraft.existingFiles.map(file => ({ id: file.id, name: file.name, mime: file.mime, size: file.size })),
     ...state.attachmentDraft.newFiles.map(file => ({ id: file.id, name: file.name, mime: file.mime, size: file.size }))
@@ -12922,7 +13548,7 @@ function libraryProgressText(item) {
     const next = item.tvMeta?.hasUnwatched ? `Next: S${item.progress?.nextSeason || 1} E${item.progress?.nextEpisode || 1}` : '';
     return [labels.join(' · '), next].filter(Boolean).join(' · ');
   }
-  if (sourceType === 'youtube') return `Video ${(item.progress?.currentIndex || 0) + 1}`;
+  if (sourceType === 'youtube') return isYouTubePlaylistItem(item) ? `Video ${(item.progress?.currentIndex || 0) + 1}` : (item.completedAt ? 'Watched' : (item.subtitle || 'YouTube'));
   if (sourceType === 'book') {
     const current = item.progress?.currentPage || 0;
     const total = item.progress?.totalPages || 0;
@@ -13013,6 +13639,7 @@ function registerCustomType(type, label) {
   else state.customTypes.push({ type, label: cleanLabel });
   state.customTypes.sort((a,b) => a.label.localeCompare(b.label));
   localStorage.setItem(CUSTOM_TYPES_KEY, JSON.stringify(state.customTypes));
+  refreshItemTypeOptions?.();
   scheduleCloudSync();
 }
 
@@ -13075,6 +13702,9 @@ function buildCloudState() {
     items: state.items,
     history: state.history,
     customTypes: state.customTypes,
+    albums: state.albums,
+    typeUsage: state.typeUsage,
+    photoUploadLog: state.photoUploadLog,
     discoverPrefs: state.discoverPrefs,
     stickerPrefs: state.stickerPrefs,
     streakPrefs: state.streakPrefs,
@@ -13087,6 +13717,9 @@ function hasMeaningfulLocalState(snapshot = buildCloudState()) {
     snapshot.items?.length ||
     snapshot.history?.length ||
     snapshot.customTypes?.length ||
+    snapshot.albums?.length ||
+    Object.keys(snapshot.typeUsage || {}).length ||
+    snapshot.photoUploadLog?.length ||
     Object.keys(snapshot.stickerPrefs || {}).length ||
     Object.keys(snapshot.streakPrefs || {}).length ||
     Array.isArray(snapshot.libraryPrefs?.defaultTypeKeys) ||
@@ -13098,6 +13731,9 @@ async function persistCloudStateLocally(snapshot) {
   state.items = Array.isArray(snapshot?.items) ? snapshot.items : [];
   state.history = Array.isArray(snapshot?.history) ? snapshot.history : [];
   state.customTypes = Array.isArray(snapshot?.customTypes) ? snapshot.customTypes : [];
+  state.albums = Array.isArray(snapshot?.albums) ? snapshot.albums : [];
+  state.typeUsage = snapshot?.typeUsage && typeof snapshot.typeUsage === 'object' ? snapshot.typeUsage : {};
+  state.photoUploadLog = Array.isArray(snapshot?.photoUploadLog) ? snapshot.photoUploadLog : [];
   state.discoverPrefs = snapshot?.discoverPrefs && typeof snapshot.discoverPrefs === 'object'
     ? { ...DEFAULT_DISCOVER_PREFS, ...snapshot.discoverPrefs }
     : { ...DEFAULT_DISCOVER_PREFS };
@@ -13112,6 +13748,9 @@ async function persistCloudStateLocally(snapshot) {
 
   safeLocalSet(ITEMS_KEY, state.items);
   safeLocalSet(CUSTOM_TYPES_KEY, state.customTypes);
+  safeLocalSet(ALBUMS_KEY, state.albums);
+  safeLocalSet(TYPE_USAGE_KEY, state.typeUsage);
+  safeLocalSet(PHOTO_UPLOAD_LOG_KEY, state.photoUploadLog);
   safeLocalSet(DISCOVER_PREFS_KEY, state.discoverPrefs);
   safeLocalSet(STICKER_PREFS_KEY, state.stickerPrefs);
   safeLocalSet(STREAK_PREFS_KEY, state.streakPrefs);
@@ -13220,7 +13859,7 @@ async function refreshCloudProfile() {
 }
 
 function clearLocalSyncedState() {
-  [ITEMS_KEY, HISTORY_KEY, CUSTOM_TYPES_KEY, DISCOVER_PREFS_KEY, STICKER_PREFS_KEY, STREAK_PREFS_KEY].forEach(key => {
+  [ITEMS_KEY, HISTORY_KEY, CUSTOM_TYPES_KEY, ALBUMS_KEY, TYPE_USAGE_KEY, PHOTO_UPLOAD_LOG_KEY, DISCOVER_PREFS_KEY, STICKER_PREFS_KEY, STREAK_PREFS_KEY, LIBRARY_PREFS_KEY].forEach(key => {
     localStorage.removeItem(key);
   });
   deleteLargeState(HISTORY_IDB_KEY).catch(() => {});
@@ -13361,7 +14000,7 @@ function todayString() { return localDateString(new Date()); }
 function progressFallback(item) {
   const sourceType = getSourceType(item);
   if (sourceType === 'tv') return `S${item.progress?.nextSeason || 1} E${item.progress?.nextEpisode || 1}`;
-  if (sourceType === 'youtube') return `Video ${(item.progress?.currentIndex || 0) + 1}`;
+  if (sourceType === 'youtube') return isYouTubePlaylistItem(item) ? `Video ${(item.progress?.currentIndex || 0) + 1}` : (item.completedAt ? 'Watched' : (item.subtitle || 'YouTube'));
   if (sourceType === 'book') return `Page ${item.progress?.currentPage || 0}`;
   if (['event', 'concert'].includes(sourceType)) return eventQueueMeta(item);
   return '';
@@ -13439,13 +14078,14 @@ const socialState = {
   profile: null,
   shareSettings: null,
   snapshot: null,
-  activeTab: 'following',
+  activeTab: 'feed',
   publishTimer: null,
   publishing: false,
   publishQueued: false,
   initializedPage: false,
   peopleResults: [],
   followingProfiles: [],
+  followingSnapshots: new Map(),
   acceptedConnections: [],
   buddyWatches: [],
   viewedProfile: null,
@@ -13587,6 +14227,7 @@ async function initializeSocialForUser() {
     socialState.shareSettings = normalizeSocialShareSettings(profile.share_settings);
     scheduleSocialSnapshotPublish(80);
     loadFollowingSocialContext().catch(error => console.warn('[Social] follower context failed to load:', error));
+    loadBuddyWatches().then(() => { if (els.upNextList) renderUpNext({ skipReconcile: true }); }).catch(error => console.warn('[Buddy Watch] background load failed:', error));
     if ($('#socialRoot')) await loadSocialPage();
     else {
       renderUpNext().catch(() => {});
@@ -13720,6 +14361,13 @@ function socialItemSummary(item, settings = null, section = '') {
   const progress = upNextAllowed
     ? (sourceType === 'tv' ? (activelyWatching ? (progressFallback(item) || '') : '') : (progressFallback(item) || ''))
     : '';
+  const bookCurrent = Number(item.progress?.currentPage || 0);
+  const bookTotal = Number(item.progress?.totalPages || 0);
+  const progressBadge = sourceType === 'book' && bookTotal > 0
+    ? `${Math.min(100, Math.round(bookCurrent / bookTotal * 100))}%`
+    : sourceType === 'tv'
+      ? `S${Number(item.progress?.nextSeason || 1)} E${Number(item.progress?.nextEpisode || 1)}`
+      : (progressFallback(item) || '');
 
   return {
     key: `${item.provider || 'manual'}:${item.providerId || item.id}`,
@@ -13739,8 +14387,9 @@ function socialItemSummary(item, settings = null, section = '') {
     releaseDate: libraryAllowed ? String(item.releaseDate || '') : '',
     pageCount: sourceType === 'book' ? Number(item.progress?.totalPages || 0) : 0,
     artistName: sourceType === 'artist' ? item.title || '' : String(item.artistName || ''),
-    rating: section === 'activity' ? (activityAllowed ? Number(item.rating || 0) : 0) : (ratingAllowed ? Number(item.rating || 0) : 0),
+    rating: ratingAllowed ? Number(item.rating || 0) : 0,
     progress,
+    progressBadge,
     recommended: recommendedAllowed,
     queueStatus: libraryAllowed ? getQueueStatus(item) : '',
     statusKey,
@@ -13856,6 +14505,7 @@ function initSocialPage() {
   $('#socialShareSettings')?.addEventListener('change', handleSocialShareFormChange);
   $('#socialPeopleSearchForm')?.addEventListener('submit', handleSocialPeopleSearch);
   $('#socialPeopleResults')?.addEventListener('click', handleSocialActionClick);
+  $('#socialFeed')?.addEventListener('click', handleSocialActionClick);
   $('#socialFollowingList')?.addEventListener('click', handleSocialActionClick);
   $('#socialFollowRequests')?.addEventListener('click', handleSocialActionClick);
   $('#socialViewProfileBody')?.addEventListener('click', handleSocialActionClick);
@@ -13869,7 +14519,7 @@ function initSocialPage() {
 }
 
 function setSocialTab(tabName) {
-  socialState.activeTab = ['following','people','buddy','me'].includes(tabName) ? tabName : 'following';
+  socialState.activeTab = ['feed','following','people','me'].includes(tabName) ? tabName : 'feed';
   $$('.social-tab[data-social-tab]').forEach(tab => {
     const active = tab.dataset.socialTab === socialState.activeTab;
     tab.classList.toggle('is-active', active);
@@ -13877,8 +14527,8 @@ function setSocialTab(tabName) {
   });
   $$('[data-social-panel]').forEach(panel => { panel.hidden = panel.dataset.socialPanel !== socialState.activeTab; });
   if (!socialState.schemaReady) return;
+  if (socialState.activeTab === 'feed') loadSocialFeed().catch(handleSocialLoadError);
   if (socialState.activeTab === 'following') loadSocialFollowing().catch(handleSocialLoadError);
-  if (socialState.activeTab === 'buddy') loadBuddyWatches().catch(handleSocialLoadError);
   if (socialState.activeTab === 'me') renderSocialMyProfile();
 }
 
@@ -13886,6 +14536,7 @@ async function loadSocialPage() {
   initSocialPage();
   if (!socialState.schemaReady) return;
   await Promise.allSettled([loadSocialFollowing(), loadBuddyWatches()]);
+  renderSocialFeed();
   renderSocialMyProfile();
 }
 
@@ -14153,6 +14804,7 @@ async function loadSocialFollowing() {
   }
   socialState.followingProfiles = profiles;
   const snapshotMap = new Map(snapshots.map(row => [row.user_id, row]));
+  socialState.followingSnapshots = snapshotMap;
   const relationMap = new Map(accepted.map(row => [row.following_id, row]));
   const host = $('#socialFollowingList');
   if (host) host.innerHTML = profiles.map(profile => socialProfileCardMarkup(profile, snapshotMap.get(profile.user_id), relationMap.get(profile.user_id))).join('');
@@ -14170,6 +14822,52 @@ async function loadSocialFollowing() {
     }
   }
   await loadAcceptedSocialConnections();
+  renderSocialFeed();
+}
+
+async function loadSocialFeed() {
+  if (!socialState.schemaReady) return;
+  if (!socialState.followingProfiles.length) await loadSocialFollowing();
+  renderSocialFeed();
+}
+
+function socialFeedProgressBadge(item) {
+  if (!item) return '';
+  if (item.progressBadge) return item.progressBadge;
+  return item.progress || '';
+}
+
+function socialFeedCardMarkup(entry) {
+  const { profile, item } = entry;
+  const badge = socialFeedProgressBadge(item);
+  const rating = Number(item.rating || 0);
+  const meta = [item.typeLabel || getTypeLabel(item.type), badge].filter(Boolean).join(' · ');
+  return `<article class="social-feed-card"><button class="social-feed-content" type="button" data-social-open-item="${escapeAttr(item.key)}" data-social-profile-id="${escapeAttr(profile.user_id)}">${item.image ? `<img class="social-feed-image" src="${escapeAttr(item.image)}" alt=""/>` : ''}<span class="social-feed-copy"><strong>${escapeHtml(item.title || 'Untitled')}</strong>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}<span class="social-feed-badges">${rating ? `<b>${escapeHtml(String(rating))}★</b>` : ''}${item.recommended ? '<b>♥</b>' : ''}</span></span></button><button class="social-feed-person" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span>${escapeHtml(profile.display_name || profile.username)}</span></button></article>`;
+}
+
+function socialBuddyInviteMarkup(watch) {
+  const item = watch?.item || {};
+  const other = (watch?.members || []).find(member => String(member.user_id) !== String(currentUser?.id || ''));
+  const person = other?.profile?.display_name || other?.profile?.username || 'Someone';
+  return `<article class="social-buddy-invite"><div class="social-buddy-invite-main">${item.image ? `<img src="${escapeAttr(item.image)}" alt="" />` : ''}<span><small>Buddy Watch · ${escapeHtml(person)}</small><strong>${escapeHtml(item.title || watch.title || 'Buddy Watch')}</strong></span></div><div class="social-buddy-invite-actions"><button class="primary-button social-small-button" type="button" data-buddy-accept="${escapeAttr(watch.id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-buddy-decline="${escapeAttr(watch.id)}">Decline</button></div></article>`;
+}
+
+function renderSocialFeed() {
+  const host = $('#socialFeed');
+  if (!host) return;
+  const entries = [];
+  for (const profile of socialState.followingProfiles || []) {
+    const row = socialState.followingSnapshots.get(profile.user_id);
+    const items = row?.payload?.sections?.activity || [];
+    for (const item of items) {
+      if (!item?.trackedDate) continue;
+      entries.push({ profile, item, date: item.trackedDate });
+    }
+  }
+  entries.sort((a,b) => String(b.date).localeCompare(String(a.date)));
+  const invites = (socialState.buddyWatches || []).filter(watch => watch.myMembership?.status === 'pending');
+  host.innerHTML = invites.map(socialBuddyInviteMarkup).join('') + entries.slice(0,120).map(socialFeedCardMarkup).join('');
+  if ($('#socialFeedEmpty')) $('#socialFeedEmpty').hidden = invites.length > 0 || entries.length > 0;
 }
 
 async function handleSocialPeopleSearch(event) {
@@ -14197,6 +14895,10 @@ async function handleSocialPeopleSearch(event) {
 }
 
 async function handleSocialActionClick(event) {
+  const buddyAccept = event.target.closest('[data-buddy-accept]');
+  if (buddyAccept) { await respondBuddyInvite(buddyAccept.dataset.buddyAccept, true); renderSocialFeed(); return; }
+  const buddyDecline = event.target.closest('[data-buddy-decline]');
+  if (buddyDecline) { await respondBuddyInvite(buddyDecline.dataset.buddyDecline, false); renderSocialFeed(); return; }
   const openItem = event.target.closest('[data-social-open-item]');
   if (openItem) {
     await openSocialSharedItemDetail(openItem.dataset.socialProfileId || currentUser?.id || '', openItem.dataset.socialOpenItem || '');
@@ -14674,7 +15376,7 @@ async function socialFetchSynopsis(item) {
       const details = await getCached(`book:${item.providerId}`, () => TrackerAPI.getBookDetails(item.providerId, state.settings));
       return details?.volumeInfo?.description || '';
     }
-    if (sourceType === 'youtube') {
+    if (sourceType === 'youtube' && !isYouTubePlaylistItem(item)) {
       const details = await getCached(`youtube:video:${item.providerId}`, () => TrackerAPI.getYouTubeVideo(item.providerId, state.settings));
       return details?.snippet?.description || details?.description || '';
     }
@@ -15169,6 +15871,7 @@ async function loadBuddyWatches() {
     updates: (updatesResult.data || []).filter(row => row.buddy_watch_id === watch.id).slice(0,8).map(row => ({ ...row, profile: profileMap.get(row.user_id) }))
   }));
   renderBuddyWatches();
+  if (els.upNextList && !$('#socialRoot')) renderUpNext({ skipReconcile: true }).catch(() => {});
 }
 
 function renderBuddyWatches() {
@@ -15201,10 +15904,15 @@ async function handleBuddyWatchClick(event) {
 
 async function respondBuddyInvite(watchId, accept) {
   if (!watchId || !currentUser) return;
+  const watch = (socialState.buddyWatches || []).find(entry => String(entry.id) === String(watchId)) || null;
   const result = accept
     ? await supabase.from('buddy_watch_members').update({ status:'accepted', joined_at:new Date().toISOString() }).eq('buddy_watch_id', watchId).eq('user_id', currentUser.id)
     : await supabase.from('buddy_watch_members').delete().eq('buddy_watch_id', watchId).eq('user_id', currentUser.id);
   if (result.error) throw result.error;
+  if (accept && watch) {
+    const linked = ensureLocalItemForBuddyWatch(watch);
+    if (linked) { recordTypeUse(linked); saveItems(); renderAll(); }
+  }
   await loadBuddyWatches();
 }
 

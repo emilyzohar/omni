@@ -269,6 +269,15 @@ export const TrackerAPI = (() => {
     };
   }
 
+  async function searchLastFmArtists(query, settings, limit = 30, page = 1) {
+    const data = await fetchLastFm('artist.search', {
+      artist: String(query || '').trim(),
+      limit: Math.max(1, Math.min(50, Number(limit || 30))),
+      page: Math.max(1, Number(page || 1))
+    }, settings);
+    return (data?.results?.artistmatches?.artist || []).map(mapLastFmArtist).filter(Boolean);
+  }
+
   async function getLastFmSimilarArtists(artistName, settings, limit = 24) {
     const data = await fetchLastFm('artist.getsimilar', {
       artist: artistName,
@@ -723,6 +732,38 @@ export const TrackerAPI = (() => {
     return (data.items || []).map(mapBook).slice(0, 12);
   }
 
+  async function searchYouTubeVideos(query, settings, options = {}) {
+    const key = required(settings.youtubeKey, 'YouTube Data API key');
+    const q = String(query || '').trim();
+    if (!q) return [];
+    const maxResults = Math.max(1, Math.min(25, Number(options.maxResults || 15)));
+    const params = new URLSearchParams({
+      part: 'snippet',
+      q,
+      type: 'video',
+      maxResults: String(maxResults),
+      safeSearch: 'moderate',
+      key
+    });
+    const data = await fetchJson(`${YOUTUBE_ROOT}/search?${params.toString()}`);
+    return (data.items || []).map(entry => {
+      const snippet = entry.snippet || {};
+      const videoId = entry.id?.videoId || '';
+      if (!videoId) return null;
+      return {
+        sourceType: 'youtube',
+        provider: 'youtube',
+        providerId: videoId,
+        title: snippet.title || 'Untitled video',
+        subtitle: snippet.channelTitle || '',
+        image: snippet.thumbnails?.high?.url || snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || '',
+        description: snippet.description || '',
+        publishedAt: snippet.publishedAt || '',
+        raw: entry
+      };
+    }).filter(Boolean);
+  }
+
   async function getYouTubeVideo(videoId, settings) {
     const key = required(settings.youtubeKey, 'YouTube Data API key');
     const params = new URLSearchParams({
@@ -938,11 +979,14 @@ export const TrackerAPI = (() => {
     });
   }
 
-  function mapGoogleRestaurant(place) {
+  function mapGooglePlace(place, sourceType = 'place') {
     if (!place?.id || !place?.displayName?.text) return null;
     const typeLabel = place.primaryTypeDisplayName?.text || '';
+    const location = place.location && Number.isFinite(Number(place.location.latitude)) && Number.isFinite(Number(place.location.longitude))
+      ? { latitude: Number(place.location.latitude), longitude: Number(place.location.longitude) }
+      : null;
     return {
-      sourceType: 'restaurant',
+      sourceType,
       provider: 'googlePlaces',
       providerId: String(place.id),
       title: place.displayName.text,
@@ -956,11 +1000,12 @@ export const TrackerAPI = (() => {
       userRatingCount: Number(place.userRatingCount || 0),
       googleMapsUrl: place.googleMapsUri || '',
       websiteUrl: place.websiteUri || '',
+      location,
       raw: place
     };
   }
 
-  async function searchRestaurants(query, settings, options = {}) {
+  async function searchPlaces(query, settings, options = {}) {
     const key = required(settings.googlePlacesKey, 'Google Places API key');
     const rawQuery = String(query || '').trim();
     if (!rawQuery) return [];
@@ -974,11 +1019,7 @@ export const TrackerAPI = (() => {
     const pageSize = Math.max(1, Math.min(20, Number.isFinite(requestedSize) ? requestedSize : 20));
     const maxPages = Math.max(1, Math.min(3, Number(options.pages || 1)));
 
-    const baseBody = {
-      textQuery,
-      pageSize,
-      languageCode: 'en'
-    };
+    const baseBody = { textQuery, pageSize, languageCode: 'en' };
     if (/^[A-Z]{2}$/.test(region)) baseBody.regionCode = region;
 
     const lat = Number(options.lat ?? settings.homeLat);
@@ -1003,12 +1044,12 @@ export const TrackerAPI = (() => {
         headers: {
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': key,
-          'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.googleMapsUri,places.websiteUri,nextPageToken'
+          'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.googleMapsUri,places.websiteUri,places.location,nextPageToken'
         },
         body: JSON.stringify(body)
       });
       for (const place of data.places || []) {
-        const mapped = mapGoogleRestaurant(place);
+        const mapped = mapGooglePlace(place, options.sourceType || 'place');
         const id = String(mapped?.providerId || '');
         if (!mapped || !id || seen.has(id)) continue;
         seen.add(id);
@@ -1022,7 +1063,11 @@ export const TrackerAPI = (() => {
     return collected.filter(place => !minRating || Number(place.rating || 0) >= minRating);
   }
 
-  async function getRestaurantDetails(placeId, settings) {
+  async function searchRestaurants(query, settings, options = {}) {
+    return searchPlaces(query, settings, { ...options, sourceType: 'restaurant' });
+  }
+
+  async function getPlaceDetails(placeId, settings, sourceType = 'place') {
     const key = required(settings.googlePlacesKey, 'Google Places API key');
     const id = String(placeId || '').trim().replace(/^places\//, '');
     if (!id) throw new Error('Google Place ID is missing.');
@@ -1030,10 +1075,14 @@ export const TrackerAPI = (() => {
       headers: {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': key,
-        'X-Goog-FieldMask': 'id,displayName,formattedAddress,primaryType,primaryTypeDisplayName,rating,userRatingCount,googleMapsUri,websiteUri'
+        'X-Goog-FieldMask': 'id,displayName,formattedAddress,primaryType,primaryTypeDisplayName,rating,userRatingCount,googleMapsUri,websiteUri,location'
       }
     });
-    return mapGoogleRestaurant(place);
+    return mapGooglePlace(place, sourceType);
+  }
+
+  async function getRestaurantDetails(placeId, settings) {
+    return getPlaceDetails(placeId, settings, 'restaurant');
   }
 
   async function searchCatalogue(query, type, settings, options = {}) {
@@ -1046,13 +1095,17 @@ export const TrackerAPI = (() => {
     if (type === 'concert') return searchTicketmasterCatalogue(query, settings, { ...options, classificationName: 'Music' });
     if (type === 'event') return searchTicketmasterCatalogue(query, settings, options);
     if (type === 'restaurant') return searchRestaurants(query, settings, options);
+    if (type === 'place') return searchPlaces(query, settings, options);
+    if (type === 'youtube') return searchYouTubeVideos(query, settings, options);
     return [];
   }
 
   return {
     searchCatalogue,
     searchRestaurants,
+    searchPlaces,
     getRestaurantDetails,
+    getPlaceDetails,
     searchTMDB,
     getTVDetails,
     getTVSeason,
@@ -1064,6 +1117,7 @@ export const TrackerAPI = (() => {
     searchMusic,
     searchArtists,
     searchSongs,
+    searchLastFmArtists,
     getLastFmSimilarArtists,
     getLastFmSimilarTracks,
     getLastFmTopArtistsByTag,
@@ -1075,6 +1129,7 @@ export const TrackerAPI = (() => {
     getSongDetails,
     parsePlaylistId,
     getPlaylist,
+    searchYouTubeVideos,
     getYouTubeVideo,
     searchTicketmasterEvents,
     searchTicketmasterAttractions,
