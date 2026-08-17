@@ -2528,17 +2528,92 @@ function watchedTitleHasConsumption(item) {
   return false;
 }
 
+function canonicalStatsGenreLabels(value) {
+  const label = cleanTypeLabel(value || '');
+  if (!label) return [];
+  // TMDB uses combined TV labels that do not match its movie taxonomy. Normalize
+  // them before Stats so the same genre never appears under two names.
+  if (label === 'Sci-Fi & Fantasy') return ['Science Fiction', 'Fantasy'];
+  if (label === 'Action & Adventure') return ['Action', 'Adventure'];
+  if (label === 'Kids') return ['Family'];
+  if (label === 'War & Politics') return ['War'];
+  return [label];
+}
+
+function statsItemGenreLabels(item) {
+  const labels = new Set();
+  for (const genre of item?.genres || []) {
+    const raw = typeof genre === 'string' ? genre : genre?.name || '';
+    for (const label of canonicalStatsGenreLabels(raw)) labels.add(label);
+  }
+  return [...labels];
+}
+
 function watchedGenreCounts() {
   const counts = new Map();
   for (const item of state.items) {
     if (!watchedTitleHasConsumption(item)) continue;
-    for (const genre of item.genres || []) {
-      const label = cleanTypeLabel(typeof genre === 'string' ? genre : genre?.name || '');
-      if (!label) continue;
+    for (const label of statsItemGenreLabels(item)) {
       counts.set(label, (counts.get(label) || 0) + 1);
     }
   }
   return [...counts.entries()].sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+async function enrichWatchedTVStatsGenres() {
+  if (!state.settings.tmdbToken) return false;
+  const watchedTV = state.items.filter(item => getSourceType(item) === 'tv' && watchedTitleHasConsumption(item) && item.providerId);
+  if (!watchedTV.length) return false;
+
+  let horrorIds = [];
+  let thrillerIds = [];
+  if (TrackerAPI.getTMDBKeywordIds && TrackerAPI.getTMDBItemKeywords) {
+    try {
+      [horrorIds, thrillerIds] = await Promise.all([
+        TrackerAPI.getTMDBKeywordIds(['horror', 'supernatural horror', 'psychological horror', 'slasher', 'zombie'], state.settings),
+        TrackerAPI.getTMDBKeywordIds(['thriller', 'suspense', 'psychological thriller', 'crime thriller'], state.settings)
+      ]);
+    } catch {}
+  }
+
+  const horrorSet = new Set((horrorIds || []).map(String));
+  const thrillerSet = new Set((thrillerIds || []).map(String));
+  let changed = false;
+
+  await Promise.allSettled(watchedTV.map(async item => {
+    const genres = new Set((item.genres || []).map(value => cleanTypeLabel(typeof value === 'string' ? value : value?.name || '')).filter(Boolean));
+    const before = [...genres].sort().join('|');
+
+    // Always merge TMDB's current official TV genres, even when this item already
+    // has some saved genres. This repairs older items that were missing Reality.
+    try {
+      const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
+      for (const genre of details?.genres || []) {
+        const label = cleanTypeLabel(genre?.name || '');
+        if (label) genres.add(label);
+      }
+    } catch {}
+
+    // TV has no official Horror or Thriller genre IDs, so supplement those two
+    // categories from TMDB keywords.
+    if (TrackerAPI.getTMDBItemKeywords && (horrorSet.size || thrillerSet.size)) {
+      try {
+        const keywords = await getCached(`tmdb:stats-keywords:tv:${item.providerId}`, () => TrackerAPI.getTMDBItemKeywords('tv', item.providerId, state.settings));
+        const keywordIds = new Set((keywords || []).map(keyword => String(keyword.id || '')).filter(Boolean));
+        if ([...horrorSet].some(id => keywordIds.has(id))) genres.add('Horror');
+        if ([...thrillerSet].some(id => keywordIds.has(id))) genres.add('Thriller');
+      } catch {}
+    }
+
+    const after = [...genres].sort().join('|');
+    if (after !== before) {
+      item.genres = [...genres];
+      changed = true;
+    }
+  }));
+
+  if (changed) saveItems();
+  return changed;
 }
 
 function iso8601DurationMinutes(value) {
@@ -2644,13 +2719,16 @@ async function estimatedWatchMinutes() {
   return total;
 }
 
-function statsGenreItems(labels = []) {
-  const wanted = new Set((labels || []).map(value => cleanTypeLabel(value).toLowerCase()).filter(Boolean));
+function statsGenreItems(labels = [], excludeLabels = []) {
+  const wanted = new Set((labels || []).flatMap(canonicalStatsGenreLabels).map(value => value.toLowerCase()).filter(Boolean));
+  const excluded = new Set((excludeLabels || []).flatMap(canonicalStatsGenreLabels).map(value => value.toLowerCase()).filter(Boolean));
   if (!wanted.size) return [];
-  return state.items.filter(item => watchedTitleHasConsumption(item) && (item.genres || []).some(genre => {
-    const label = cleanTypeLabel(typeof genre === 'string' ? genre : genre?.name || '').toLowerCase();
-    return wanted.has(label);
-  }));
+  return state.items.filter(item => {
+    if (!watchedTitleHasConsumption(item)) return false;
+    const itemLabels = statsItemGenreLabels(item).map(value => value.toLowerCase());
+    if (!itemLabels.some(label => wanted.has(label))) return false;
+    return !itemLabels.some(label => excluded.has(label));
+  });
 }
 
 function statsPiePath(cx, cy, radius, startAngle, endAngle) {
@@ -2672,9 +2750,20 @@ function renderGenrePie(genres = []) {
     els.statsGenres.innerHTML = '<p class="empty-state">No watched genres yet.</p>';
     return;
   }
-  const visible = genres.slice(0, 9).map(([label,count]) => ({ label, count, labels:[label] }));
+
+  // Keep the main nine genre memberships visible. "Other" is deliberately
+  // exclusive: a title is counted there only when it belongs to an overflow
+  // genre AND to none of the visible primary genres.
+  const primary = genres.slice(0, 9);
+  const visible = primary.map(([label,count]) => ({ label, count, labels:[label], excludeLabels:[] }));
   const overflow = genres.slice(9);
-  if (overflow.length) visible.push({ label:'Other', count:overflow.reduce((sum,entry) => sum + entry[1],0), labels:overflow.map(entry => entry[0]) });
+  if (overflow.length) {
+    const primaryLabels = primary.map(entry => entry[0]);
+    const overflowLabels = overflow.map(entry => entry[0]);
+    const otherCount = statsGenreItems(overflowLabels, primaryLabels).length;
+    if (otherCount) visible.push({ label:'Other', count:otherCount, labels:overflowLabels, excludeLabels:primaryLabels });
+  }
+
   const total = visible.reduce((sum,entry) => sum + entry.count,0) || 1;
   const genreColors = {
     Action: '#307351',
@@ -2691,7 +2780,7 @@ function renderGenrePie(genres = []) {
     Mystery: '#67597A',
     Romance: '#780000',
     'Science Fiction': '#A09BE7',
-    Thriller: '#003049', 
+    Thriller: '#003049',
     War: '#6d7480',
     Western: '#9c7450',
     'TV Movie': '#8fa8bc',
@@ -2699,21 +2788,17 @@ function renderGenrePie(genres = []) {
     Reality: '#F786AA',
     Other: '#b0a79a'
   };
-  const genreAliases = {
-    'Sci-Fi & Fantasy': 'Science Fiction',
-    'Action & Adventure': 'Action',
-    Kids: 'Family'
-  };
-  const genreColor = label => genreColors[genreAliases[label] || label] || genreColors.Other;
+  const genreColor = label => genreColors[label] || genreColors.Other;
   let angle = -Math.PI / 2;
   const paths = visible.map(entry => {
     const next = angle + (entry.count / total) * Math.PI * 2;
     const d = statsPiePath(100,100,82,angle,next);
     angle = next;
-    const encoded = escapeAttr(JSON.stringify(entry.labels));
-    return `<path class="stats-genre-slice" d="${d}" fill="${genreColor(entry.label)}" tabindex="0" role="button" data-stats-genre-list="${encoded}" aria-label="${escapeAttr(`${entry.label}: ${entry.count}`)}"><title>${escapeHtml(entry.label)} · ${entry.count}</title></path>`;
+    const labels = escapeAttr(JSON.stringify(entry.labels));
+    const excludes = escapeAttr(JSON.stringify(entry.excludeLabels || []));
+    return `<path class="stats-genre-slice" d="${d}" fill="${genreColor(entry.label)}" tabindex="0" role="button" data-stats-genre-list="${labels}" data-stats-genre-exclude="${excludes}" aria-label="${escapeAttr(`${entry.label}: ${entry.count}`)}"><title>${escapeHtml(entry.label)} · ${entry.count}</title></path>`;
   }).join('');
-  const legend = visible.map(entry => `<button class="stats-genre-legend-row" type="button" data-stats-genre-list="${escapeAttr(JSON.stringify(entry.labels))}"><span class="stats-genre-swatch" style="--genre-color:${genreColor(entry.label)}"></span><span>${escapeHtml(entry.label)}</span><strong>${entry.count}</strong></button>`).join('');
+  const legend = visible.map(entry => `<button class="stats-genre-legend-row" type="button" data-stats-genre-list="${escapeAttr(JSON.stringify(entry.labels))}" data-stats-genre-exclude="${escapeAttr(JSON.stringify(entry.excludeLabels || []))}"><span class="stats-genre-swatch" style="--genre-color:${genreColor(entry.label)}"></span><span>${escapeHtml(entry.label)}</span><strong>${entry.count}</strong></button>`).join('');
   els.statsGenres.innerHTML = `<div class="stats-genre-pie-layout"><svg class="stats-genre-pie" viewBox="0 0 200 200" role="img" aria-label="Genres watched pie chart">${paths}</svg><div class="stats-genre-legend">${legend}</div></div>`;
 }
 
@@ -2771,9 +2856,11 @@ function handleStatsBreakdownClick(event) {
   const genreTarget = event.target.closest('[data-stats-genre-list]');
   if (genreTarget) {
     let labels = [];
+    let excludeLabels = [];
     try { labels = JSON.parse(genreTarget.dataset.statsGenreList || '[]'); } catch {}
-    const title = labels.length === 1 ? labels[0] : 'Other genres';
-    openStatsCatalogue(title, statsGenreItems(labels));
+    try { excludeLabels = JSON.parse(genreTarget.dataset.statsGenreExclude || '[]'); } catch {}
+    const title = labels.length === 1 && !excludeLabels.length ? labels[0] : 'Other genres';
+    openStatsCatalogue(title, statsGenreItems(labels, excludeLabels));
   }
 }
 
@@ -2944,7 +3031,10 @@ async function renderStats() {
       .map(group => `<button class="stat-type-row" type="button" data-stats-type-key="${escapeAttr(group.key)}" data-stats-label="${escapeAttr(group.label)}"><span>${escapeHtml(group.label)}</span><strong>${group.items.length}</strong></button>`).join('');
   }
   renderGenrePie(genres);
-  const minutes = await estimatedWatchMinutes();
+  const [minutes] = await Promise.all([
+    estimatedWatchMinutes(),
+    enrichWatchedTVStatsGenres()
+  ]);
   if (els.statsSummary?.dataset.renderToken !== requestToken) return;
   const hours = formatWatchHours(minutes);
   const cards = [...els.statsSummary.querySelectorAll('.stat-card')];
@@ -9541,14 +9631,15 @@ const DISCOVER_GENRES = [
   { value: 'family', label: 'Family', tmdb: ['Family'], keywords: ['family'], book: ['family'] },
   { value: 'fantasy', label: 'Fantasy', tmdb: ['Fantasy', 'Sci-Fi & Fantasy'], keywords: ['fantasy'], book: ['fantasy'] },
   { value: 'history', label: 'History', tmdb: ['History', 'War & Politics'], keywords: ['history', 'historical'], book: ['history'] },
-  { value: 'horror', label: 'Horror', tmdb: ['Horror'], keywords: ['horror'], book: ['horror'] },
+  { value: 'horror', label: 'Horror', tmdb: ['Horror'], keywords: ['horror', 'supernatural horror', 'psychological horror', 'slasher', 'zombie'], book: ['horror'] },
   { value: 'mystery', label: 'Mystery', tmdb: ['Mystery'], keywords: ['mystery'], book: ['mystery'] },
   { value: 'philosophy', label: 'Philosophy', tmdb: [], keywords: ['philosophy'], book: ['philosophy'] },
   { value: 'psychology', label: 'Psychology', tmdb: [], keywords: ['psychology'], book: ['psychology'] },
   { value: 'romance', label: 'Romance', tmdb: ['Romance'], keywords: ['romance'], book: ['romance'] },
+  { value: 'reality', label: 'Reality', tmdb: ['Reality'], keywords: ['reality television', 'reality tv'], book: [] },
   { value: 'science', label: 'Science', tmdb: [], keywords: ['science'], book: ['science'] },
   { value: 'science-fiction', label: 'Science Fiction', tmdb: ['Science Fiction', 'Sci-Fi & Fantasy'], keywords: ['science fiction'], book: ['science fiction'] },
-  { value: 'thriller', label: 'Thriller', tmdb: ['Thriller'], keywords: ['thriller', 'suspense'], book: ['thriller', 'suspense'] }
+  { value: 'thriller', label: 'Thriller', tmdb: ['Thriller'], keywords: ['thriller', 'suspense', 'psychological thriller', 'crime thriller'], book: ['thriller', 'suspense'] }
 ]
 
 function selectedDiscoverGenre() {
