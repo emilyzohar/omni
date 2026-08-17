@@ -10,7 +10,8 @@ export default defineConfig({
       input: {
         main: resolve(process.cwd(), 'index.html'),
         discover: resolve(process.cwd(), 'discover.html'),
-        social: resolve(process.cwd(), 'social.html')
+        social: resolve(process.cwd(), 'social.html'),
+        library: resolve(__dirname, 'library.html')
       }
     }
   }
