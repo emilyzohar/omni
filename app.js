@@ -3777,12 +3777,6 @@ function syncTVDraftHistoryVisibility(sourceType = selectedFormSourceType()) {
   els.tvProgressFields.hidden = !loaded;
 }
 
-function syncBookProgressVisibility(sourceType = selectedFormSourceType()) {
-  if (!els.bookProgressFields) return;
-  const loaded = sourceType === 'book' && Boolean(state.selectedSource?.providerId);
-  els.bookProgressFields.hidden = !loaded;
-}
-
 function updateItemFormForType() {
   configureItemSubtype(false);
   const parentType = els.itemSourceType.value;
@@ -3809,10 +3803,10 @@ function updateItemFormForType() {
   els.displayTypeBlock.hidden = !(isYouTube || isReminder || isManual);
   els.manualTitleBlock.hidden = false;
   syncTVDraftHistoryVisibility(sourceType);
-  syncBookProgressVisibility(sourceType);
+  els.bookProgressFields.hidden = sourceType !== 'book';
   if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder || isActivity;
   if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = !['tv','movie','book','music','artist','song'].includes(sourceType);
-  if (sourceType === 'book' && state.selectedSource?.providerId && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
+  if (sourceType === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
     els.bookStartDate.value = todayString();
   }
   if (isActivity && !els.editingId.value && els.activityStartDate && !els.activityStartDate.value) {
@@ -4008,10 +4002,8 @@ function selectCatalogueResult(result) {
   els.searchResults.hidden = true;
   showSelectedSource(result);
 
-  if (formSourceType === 'book') {
-    if (result.pageCount && !els.bookTotalPages.value) els.bookTotalPages.value = result.pageCount;
-    if (!els.editingId.value && els.bookStartDate && !els.bookStartDate.value) els.bookStartDate.value = todayString();
-    syncBookProgressVisibility(formSourceType);
+  if (formSourceType === 'book' && result.pageCount && !els.bookTotalPages.value) {
+    els.bookTotalPages.value = result.pageCount;
   }
   if (['event', 'concert'].includes(formSourceType) && result.eventDate && els.itemDate) {
     els.itemDate.value = result.eventDate;
