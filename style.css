@@ -11517,3 +11517,80 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
     font-size: .72rem !important;
   }
 }
+
+
+/* =========================================================
+   Uniform subtype badges + Library date footer v44
+   ========================================================= */
+.library-subcategory-badge {
+  background: rgba(47,61,92,.92) !important;
+  color: #fff8ea !important;
+  border-color: rgba(255,248,234,.12) !important;
+}
+
+/* The visual card is always exactly poster height. The date is a separate,
+   reserved footer row beneath it for both artwork and text-only cards. */
+.library-groups .library-card-shell,
+.library-groups .library-card-shell.is-text-card {
+  display: grid !important;
+  grid-template-rows: var(--library-row-height) 18px !important;
+  align-content: start !important;
+  height: calc(var(--library-row-height) + 18px) !important;
+  min-height: calc(var(--library-row-height) + 18px) !important;
+}
+.library-groups .library-card-shell > .library-poster-button,
+.library-groups .library-card-shell.is-text-card > .library-poster-button.library-text-card-button {
+  grid-row: 1 !important;
+  width: 100% !important;
+  height: var(--library-row-height) !important;
+  min-height: var(--library-row-height) !important;
+  max-height: var(--library-row-height) !important;
+  align-self: stretch !important;
+  overflow: hidden !important;
+}
+.library-groups .library-card-shell.is-text-card .library-text-card {
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+}
+.library-groups .library-card-shell.is-text-card .library-text-card-notes {
+  overflow: hidden !important;
+}
+.library-groups .library-card-shell > .library-card-album-button {
+  bottom: 23px !important;
+}
+.library-groups .library-card-tracked-date {
+  position: static !important;
+  grid-row: 2 !important;
+  display: block !important;
+  align-self: end !important;
+  width: 100% !important;
+  min-height: 14px !important;
+  padding: 4px 2px 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  color: rgba(21,36,58,.45) !important;
+  font: 500 .56rem/1.1 var(--sans) !important;
+  letter-spacing: .01em !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  pointer-events: none !important;
+}
+.library-groups .library-card-tracked-date.is-empty {
+  visibility: hidden !important;
+  opacity: 0 !important;
+}
+.library-groups .library-poster-grid.is-expanded {
+  grid-auto-rows: calc(var(--library-row-height) + 18px) !important;
+}
+.library-groups .library-poster-grid:not(.is-expanded) {
+  align-items: flex-start !important;
+  padding-bottom: 10px !important;
+}
+
+/* The Last 30 days modal already supplies date headings, so it never gets card
+   footer dates even though it reuses Library cards. */
+.stats-recent-day-grid .library-card-tracked-date {
+  display: none !important;
+}

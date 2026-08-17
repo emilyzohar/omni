@@ -14501,29 +14501,32 @@ function itemLastTrackedDate(item) {
 // date, never the date the item happened to be added to the Library.
 function itemLastLoggedDate(item) {
   if (!item) return '';
+  const sourceType = getSourceType(item);
+
+  // Books already communicate their reading period/progress in the detail view;
+  // do not add a separate date underneath the Library card.
+  if (sourceType === 'book') return '';
+
   const dates = state.history
     .filter(entry => entry.sourceItemId === item.id && entry.date)
     .map(entry => String(entry.date).slice(0,10))
     .filter(Boolean);
 
-  // Older completed items may predate their history record, so completion is a
-  // valid fallback. Do not fall back to item.date/createdAt here: those can be
-  // scheduling or Library-add dates rather than the date experienced.
+  // item.date is the user-facing Date/Visit/Tracked value used by the Library
+  // detail date strip. When present, it represents the experienced/logged date
+  // chosen by the user, not createdAt (the date the item entered the Library).
+  if (item.date) dates.push(String(item.date).slice(0,10));
+
+  if (sourceType === 'activity') {
+    const activityDate = item.activityMeta?.endDate || item.activityMeta?.startDate || '';
+    if (activityDate) dates.push(String(activityDate).slice(0,10));
+  }
+
+  // Older completed records can predate history-date storage. Use completedAt
+  // only as a last-resort consumption-date fallback; never use createdAt.
   if (!dates.length && item.completedAt) dates.push(String(item.completedAt).slice(0,10));
 
-  if (!dates.length && getSourceType(item) === 'activity') {
-    const end = item.activityMeta?.endDate || item.activityMeta?.startDate || '';
-    if (end) dates.push(String(end).slice(0,10));
-  }
-  if (!dates.length && getSourceType(item) === 'book') {
-    for (const period of getBookReadingPeriods(item)) {
-      const start = String(period?.startDate || '').slice(0,10);
-      if (!start) continue;
-      const end = String(period?.endDate || start).slice(0,10);
-      if (end >= start) dates.push(end);
-    }
-  }
-  return dates.sort().at(-1) || '';
+  return [...new Set(dates)].sort().at(-1) || '';
 }
 
 function normalizeLibraryPrefs(value) {
@@ -14824,55 +14827,10 @@ function libraryTextCardWidth(itemOrTitle) {
   return Math.max(132, Math.min(680, Math.ceil(fallback)));
 }
 
-function librarySubcategoryBadgeStyle(item, label = '') {
-  const sourceType = String(item?.sourceType || item?.type || getSourceType(item) || '').toLowerCase();
-  const subcategory = cleanTypeLabel(label || item?.subcategory || '');
-  const normalized = normalizeSearchText([sourceType, subcategory, ...(Array.isArray(item?.genres) ? item.genres : [])].join(' '));
-
-  const has = pattern => pattern.test(normalized);
-  let bg = 'rgba(47,61,92,.92)';
-  let color = '#fff8ea';
-  let border = 'rgba(255,248,234,.12)';
-
-  if (has(/restaurant|food|dinner|lunch|brunch|supper|salumeria|grill|bbq|barbecue|steak|indian|thai|italian|sushi|ramen|burger|taco|pizza|seafood/)) {
-    bg = 'rgba(132,84,32,.92)';
-    border = 'rgba(255,243,220,.16)';
-  } else if (has(/cafe|coffee|tea|bakery|dessert|ice cream|gelato|pastry|donut/)) {
-    bg = 'rgba(164,108,42,.92)';
-    border = 'rgba(255,244,220,.18)';
-  } else if (has(/bar|pub|cocktail|wine|brewery|beer/)) {
-    bg = 'rgba(107,65,92,.92)';
-    border = 'rgba(255,240,247,.14)';
-  } else if (has(/spin|cycle|cycling|bike|cardio|run|running/)) {
-    bg = 'rgba(55,97,121,.92)';
-    border = 'rgba(237,246,252,.14)';
-  } else if (has(/yoga|pilates|stretch|meditation|wellness|recovery/)) {
-    bg = 'rgba(88,122,96,.92)';
-    border = 'rgba(239,247,236,.14)';
-  } else if (has(/strength|gym|workout|bootcamp|hiit|training|crossfit/)) {
-    bg = 'rgba(151,40,12,.92)';
-    border = 'rgba(255,240,233,.14)';
-  } else if (has(/class|workshop|course|lesson|lecture|seminar|pottery|ceramic|art|craft|drawing|painting/)) {
-    bg = 'rgba(73,112,110,.92)';
-    border = 'rgba(236,247,245,.14)';
-  } else if (has(/concert|music|album|song|playlist|dj|opera|musical/)) {
-    bg = 'rgba(102,77,122,.92)';
-    border = 'rgba(244,239,249,.14)';
-  } else if (sourceType === 'book' || has(/book|novel|poetry|essay|memoir|reading/)) {
-    bg = 'rgba(88,104,63,.92)';
-    border = 'rgba(241,246,232,.14)';
-  } else if (sourceType === 'movie' || sourceType === 'tv' || has(/movie|film|tv|series|show|anime|documentary/)) {
-    bg = 'rgba(54,64,92,.92)';
-    border = 'rgba(238,241,248,.14)';
-  } else if (sourceType === 'event' || has(/event|festival|theatre|theater|comedy|sports|game|match|exhibit|museum/)) {
-    bg = 'rgba(122,94,35,.92)';
-    border = 'rgba(251,244,224,.16)';
-  } else if (sourceType === 'shopping' || has(/shopping|store|market|shop/)) {
-    bg = 'rgba(100,109,72,.92)';
-    border = 'rgba(243,246,234,.14)';
-  }
-
-  return `--library-badge-bg:${bg};--library-badge-color:${color};--library-badge-border:${border};`;
+function librarySubcategoryBadgeStyle() {
+  // Subtypes are labels, not a second colour-coding system. Keep every subtype
+  // badge in the same Omni navy so colour remains reserved for other meaning.
+  return '--library-badge-bg:rgba(47,61,92,.92);--library-badge-color:#fff8ea;--library-badge-border:rgba(255,248,234,.12);';
 }
 
 function makeLibraryPoster(item) {
