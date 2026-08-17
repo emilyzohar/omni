@@ -11373,16 +11373,27 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
   background: linear-gradient(145deg, rgba(139,153,202,.18), rgba(247,231,196,.64));
 }
 
-/* Keep the shelf's existing row height: cards with a tracked date reserve a
-   very small strip beneath the poster rather than making the row taller. */
-.library-card-shell:has(> .library-card-tracked-date) > .library-poster-button {
-  height: calc(100% - 14px) !important;
+/* The logged date lives outside the visual card. Image and text-only cards
+   keep the same poster-height face, with a small dedicated line underneath. */
+.library-groups .library-card-shell:has(> .library-card-tracked-date) {
+  height: calc(var(--library-row-height) + 18px) !important;
+  min-height: calc(var(--library-row-height) + 18px) !important;
+}
+.library-groups .library-card-shell:has(> .library-card-tracked-date) > .library-poster-button {
+  height: var(--library-row-height) !important;
+}
+.library-groups .library-card-shell:has(> .library-card-tracked-date) > .library-card-album-button {
+  bottom: 23px;
+}
+.library-groups .library-poster-grid.is-expanded {
+  grid-auto-rows: calc(var(--library-row-height) + 18px);
 }
 .library-card-tracked-date {
   position: absolute;
   left: 2px;
   right: 2px;
-  bottom: 0;
+  top: calc(var(--library-row-height) + 4px);
+  bottom: auto;
   z-index: 2;
   overflow: hidden;
   color: rgba(21,36,58,.42);

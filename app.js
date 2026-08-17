@@ -2763,6 +2763,9 @@ function makeRecentTrackedPoster(entry) {
       };
   const shell = makeLibraryPoster(display);
   shell.classList.add('stats-recent-card');
+  // The Last 30 days view is already grouped under date headings, so do not
+  // repeat the logged date underneath every card in this modal.
+  shell.querySelector('.library-card-tracked-date')?.remove();
   const poster = shell.querySelector('.library-poster-button');
   if (poster) {
     poster.title = [entry.title || display.title, entry.subtitle || '', getItemTypeLabel(source || display)].filter(Boolean).join(' · ');
@@ -14485,6 +14488,35 @@ function itemLastTrackedDate(item) {
   return dates.sort().at(-1) || '';
 }
 
+// Date shown beneath a Library card should reflect an actual logged/consumed
+// date, never the date the item happened to be added to the Library.
+function itemLastLoggedDate(item) {
+  if (!item) return '';
+  const dates = state.history
+    .filter(entry => entry.sourceItemId === item.id && entry.date)
+    .map(entry => String(entry.date).slice(0,10))
+    .filter(Boolean);
+
+  // Older completed items may predate their history record, so completion is a
+  // valid fallback. Do not fall back to item.date/createdAt here: those can be
+  // scheduling or Library-add dates rather than the date experienced.
+  if (!dates.length && item.completedAt) dates.push(String(item.completedAt).slice(0,10));
+
+  if (!dates.length && getSourceType(item) === 'activity') {
+    const end = item.activityMeta?.endDate || item.activityMeta?.startDate || '';
+    if (end) dates.push(String(end).slice(0,10));
+  }
+  if (!dates.length && getSourceType(item) === 'book') {
+    for (const period of getBookReadingPeriods(item)) {
+      const start = String(period?.startDate || '').slice(0,10);
+      if (!start) continue;
+      const end = String(period?.endDate || start).slice(0,10);
+      if (end >= start) dates.push(end);
+    }
+  }
+  return dates.sort().at(-1) || '';
+}
+
 function normalizeLibraryPrefs(value) {
   const keys = Array.isArray(value?.defaultTypeKeys)
     ? [...new Set(value.defaultTypeKeys.map(key => slugifyType(key)).filter(Boolean))]
@@ -14842,22 +14874,13 @@ function makeLibraryPoster(item) {
   albumButton.setAttribute('aria-label', `Add ${item.title} to album`);
   albumButton.title = 'Add to collection';
   shell.append(poster, albumButton);
-  const watchedDate = state.history
-  .filter(entry =>
-    entry.sourceItemId === item.id &&
-    ['episode-watched', 'movie-watched', 'series-watched'].includes(entry.kind) &&
-    entry.date
-  )
-  .map(entry => String(entry.date).slice(0, 10))
-  .sort()
-  .at(-1);
-
-if (watchedDate) {
-  const tracked = document.createElement('span');
-  tracked.className = 'library-card-tracked-date';
-  tracked.textContent = formatShortCalendarDate(watchedDate);
-  shell.appendChild(tracked);
-}
+  const loggedDate = itemLastLoggedDate(item);
+  if (loggedDate) {
+    const tracked = document.createElement('span');
+    tracked.className = 'library-card-tracked-date';
+    tracked.textContent = formatShortCalendarDate(loggedDate);
+    shell.appendChild(tracked);
+  }
   return shell;
 }
 
