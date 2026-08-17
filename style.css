@@ -9859,3 +9859,269 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
   .queue-buddy-button { min-height: 28px; padding: 4px 7px; font-size: .62rem; }
   .save-buddy-watch-item { order: -1; }
 }
+
+
+/* =========================================================
+   Social profile polish v8 — roomy stats, no streak stickers,
+   embedded Buddy Watch, people tags, clearer profile tabs
+   ========================================================= */
+
+/* Profile totals and streaks stay pill-shaped but get enough breathing room to
+   read as profile metadata rather than tiny utility chips. */
+.social-total-summary,
+.social-track-streak-summary {
+  gap: 10px;
+}
+.social-total-pill,
+.social-streak-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px 14px;
+  border: 1px solid var(--profile-border, rgba(21,36,58,.12));
+  border-radius: 999px;
+  background: rgba(255,255,255,.56);
+  color: #606773;
+  white-space: nowrap;
+}
+.social-total-pill strong,
+.social-streak-pill strong {
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 1.16rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.social-total-pill span,
+.social-streak-pill span {
+  color: #5f6670;
+  font-size: .72rem;
+  font-weight: 700;
+}
+.social-streak-pill small {
+  color: #7b7d78;
+  font-size: .61rem;
+  font-weight: 650;
+}
+.social-track-streak-card,
+.social-track-streak-card .track-streak-sticker { display: none !important; }
+
+/* Make All / Recommended state unmistakable inside a themed profile. */
+.social-profile-surface .social-library-folder-tabs {
+  border-color: var(--profile-border, rgba(21,36,58,.13));
+  background: rgba(255,255,255,.58);
+}
+.social-profile-surface .social-library-folder-tabs .library-folder-tab {
+  color: rgba(21,36,58,.66);
+  transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.social-profile-surface .social-library-folder-tabs .library-folder-tab.is-active {
+  background: var(--profile-accent, var(--ink)) !important;
+  color: #fff9ea !important;
+  box-shadow: 0 2px 7px color-mix(in srgb, var(--profile-accent, var(--ink)) 28%, transparent);
+}
+
+/* Buddy Watch belongs inside the Up Next card copy; the completion/log control
+   remains the only control in the far-right action column. */
+.upnext-card-social-actions {
+  display: flex;
+  align-items: center;
+  margin-top: 7px;
+}
+.queue-buddy-inline-button {
+  min-height: 27px;
+  padding: 5px 9px;
+  border: 1px solid rgba(21,36,58,.11);
+  background: rgba(139,153,202,.11);
+  font-size: .62rem;
+}
+.queue-buddy-inline-button:hover,
+.queue-buddy-inline-button:focus-visible {
+  background: rgba(139,153,202,.19);
+}
+
+/* Connected people are optional shortcuts into the existing comma-separated
+   With people field. Manual names remain fully supported. */
+.people-tag-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.people-tag-suggestions[hidden] { display: none !important; }
+.people-tag-suggestion {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  max-width: 100%;
+  padding: 4px 9px 4px 5px;
+  border: 1px solid rgba(21,36,58,.12);
+  border-radius: 999px;
+  background: rgba(255,255,255,.58);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+.people-tag-suggestion:hover,
+.people-tag-suggestion:focus-visible {
+  background: rgba(139,153,202,.11);
+  outline: none;
+}
+.people-tag-suggestion.is-selected {
+  border-color: rgba(114,0,20,.24);
+  background: rgba(114,0,20,.075);
+}
+.people-tag-avatar {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--blue);
+  color: #fff9ea;
+  font-size: .62rem;
+  font-weight: 800;
+}
+.people-tag-suggestion > span:last-child {
+  min-width: 0;
+  display: grid;
+  line-height: 1.05;
+}
+.people-tag-suggestion strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .68rem;
+}
+.people-tag-suggestion small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #777a7c;
+  font-size: .57rem;
+}
+
+@media (max-width: 620px) {
+  .social-total-pill,
+  .social-streak-pill {
+    min-height: 40px;
+    padding: 7px 12px;
+  }
+  .upnext-card-social-actions { margin-top: 5px; }
+  .queue-buddy-inline-button { min-height: 25px; padding: 4px 8px; }
+  .people-tag-suggestions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scrollbar-width: none;
+  }
+  .people-tag-suggestions::-webkit-scrollbar { display: none; }
+  .people-tag-suggestion { flex: 0 0 auto; }
+}
+
+
+/* Social profile search */
+.social-profile-search-row {
+  display: flex;
+  align-items: center;
+  margin: -2px 0 2px;
+}
+.social-profile-search-control {
+  width: min(460px, 100%);
+  min-width: 0;
+}
+.social-profile-search-control input {
+  background: color-mix(in srgb, #fffdf7 88%, var(--profile-bg));
+  border-color: var(--profile-border);
+}
+.social-profile-search-control input:focus {
+  outline-color: color-mix(in srgb, var(--profile-accent) 34%, transparent);
+  border-color: color-mix(in srgb, var(--profile-accent) 38%, transparent);
+}
+.social-profile-search-empty {
+  margin: 2px 0 8px;
+}
+@media (max-width: 760px) {
+  .social-profile-search-control { width: 100%; }
+  .social-profile-search-control input { min-height: 42px; }
+}
+
+/* =========================================================
+   Friend activity inside Library + Discover item details
+   ========================================================= */
+.social-follower-item-context {
+  margin-top: 18px;
+  padding: 0;
+  border-top: 1px solid rgba(21,36,58,.09);
+  border-bottom: 1px solid rgba(21,36,58,.09);
+}
+.social-follower-item-context > summary {
+  list-style: none;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  cursor: pointer;
+  font-family: var(--serif);
+  font-size: 1rem;
+  font-weight: 700;
+}
+.social-follower-item-context > summary::-webkit-details-marker { display: none; }
+.social-follower-item-context > summary::after {
+  content: '+';
+  margin-left: 4px;
+  color: #77756c;
+  font-family: var(--sans);
+  font-size: 1rem;
+}
+.social-follower-item-context[open] > summary::after { content: '−'; }
+.social-follower-item-context > summary small {
+  margin-left: auto;
+  color: #7a7f87;
+  font-family: var(--sans);
+  font-size: .7rem;
+  font-weight: 650;
+}
+.social-follower-item-list { display: grid; padding: 0 0 8px; }
+.social-follower-item-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0,1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px 2px;
+  border-top: 1px solid rgba(21,36,58,.07);
+}
+.social-avatar.social-avatar-small {
+  width: 32px;
+  height: 32px;
+  font-size: .72rem;
+}
+.social-follower-item-copy { min-width: 0; }
+.social-follower-item-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.social-follower-item-head strong { font-size: .85rem; }
+.social-follower-item-head span {
+  flex: 0 0 auto;
+  color: #6c7075;
+  font-size: .72rem;
+  font-weight: 700;
+}
+.social-follower-item-copy p {
+  margin: 5px 0 0;
+  color: #505762;
+  font-size: .82rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+@media (max-width: 620px) {
+  .social-follower-item-context > summary { min-height: 44px; }
+  .social-follower-item-head { align-items: flex-start; flex-direction: column; gap: 2px; }
+}

@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-with-people-jitter-1';
-import { API_CONFIG } from './config.js?v=omni-with-people-jitter-1';
+import { TrackerAPI } from './api.js?v=omni-social-friend-context-10';
+import { API_CONFIG } from './config.js?v=omni-social-friend-context-10';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -390,6 +390,7 @@ const els = {
   activityEndDate: $('#activityEndDate'),
   itemPeopleBlock: $('#itemPeopleBlock'),
   itemPeople: $('#itemPeople'),
+  itemPeopleSuggestions: $('#itemPeopleSuggestions'),
   manualTitleBlock: $('#manualTitleBlock'),
   manualTitle: $('#manualTitle'),
   tvProgressFields: $('#tvProgressFields'),
@@ -923,6 +924,8 @@ function bindEvents() {
   els.tvMarkAllWatched?.addEventListener('click', toggleAllTVDraftEpisodes);
   els.tvClearWatched?.addEventListener('click', () => { state.tvDraftBulkBaseline = null; setAllTVDraftEpisodes(false); });
   els.itemForm?.addEventListener('submit', saveItemFromForm);
+  els.itemPeopleSuggestions?.addEventListener('click', handleItemPeopleSuggestionClick);
+  els.itemPeople?.addEventListener('input', renderItemPeopleSuggestions);
   els.deleteItem?.addEventListener('click', deleteEditingItem);
   document.addEventListener('click', event => {
     const shortcut = event.target.closest('[data-buddy-watch-item]');
@@ -2132,7 +2135,7 @@ function queueCardMarkup(item, info) {
   }
 
   const buddyAction = !isTBR && socialState.schemaReady && socialState.profile && ['tv','movie','youtube'].includes(sourceType)
-    ? `<button class="queue-buddy-button" type="button" data-action="buddy" data-id="${escapeAttr(item.id)}" aria-label="Start Buddy Watch">Buddy</button>`
+    ? `<button class="queue-buddy-button queue-buddy-inline-button" type="button" data-action="buddy" data-id="${escapeAttr(item.id)}" aria-label="Start Buddy Watch">Buddy Watch</button>`
     : '';
 
   return `
@@ -2143,10 +2146,11 @@ function queueCardMarkup(item, info) {
         <p class="upnext-meta">${escapeHtml(info.meta || progressFallback(item))}</p>
         <p class="upnext-category">${escapeHtml([getItemTypeLabel(item), isTBR ? 'TBR' : '', info.streaming || ''].filter(Boolean).join(' · '))}</p>
         ${info.error ? `<div class="queue-error">${escapeHtml(info.error)}</div>` : ''}
+        ${buddyAction ? `<div class="upnext-card-social-actions">${buddyAction}</div>` : ''}
       </div>
       <button class="upnext-arrow" type="button" data-action="details" data-id="${item.id}" aria-label="Open details">→</button>
     </div>
-    <div class="upnext-actions">${buddyAction}${action}</div>
+    <div class="upnext-actions">${action}</div>
   `;
 }
 
@@ -3525,6 +3529,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
 
   updateItemFormForType();
   showDialogAtTop(els.itemModal);
+  refreshItemPeopleSuggestions().catch(error => console.warn('[Social] people tags unavailable:', error));
   if (item && getSourceType(item) === 'tv' && item.providerId) {
     prepareTVWatchSetup(item.providerId, item.id).catch(error => {
       if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = error.message;
@@ -3691,6 +3696,8 @@ function updateItemFormForType() {
   if (els.reminderBlock) els.reminderBlock.hidden = !isReminder;
   if (els.activityFields) els.activityFields.hidden = !isActivity;
   if (els.itemPeopleBlock) els.itemPeopleBlock.hidden = sourceType === 'book';
+  if (els.itemPeopleSuggestions && sourceType === 'book') els.itemPeopleSuggestions.hidden = true;
+  else if (els.itemPeopleSuggestions && els.itemModal?.open) refreshItemPeopleSuggestions().catch(() => {});
   els.displayTypeBlock.hidden = !(isYouTube || isReminder || isManual);
   els.manualTitleBlock.hidden = false;
   els.tvProgressFields.hidden = sourceType !== 'tv';
@@ -4700,6 +4707,7 @@ async function openDetails(id) {
     appendLibraryDateSummary(item);
     appendLibraryPeopleSummary(item);
     appendLibraryPersonalMetadata(item);
+    await appendSocialFollowerContext(item, () => state.openDetailId === item.id && Boolean(els.detailModal?.open));
     await appendLibrarySimilarRecommendations(item);
     appendItemResources(item);
   } catch (error) {
@@ -4708,6 +4716,7 @@ async function openDetails(id) {
     appendLibraryDateSummary(item);
     appendLibraryPeopleSummary(item);
     appendLibraryPersonalMetadata(item);
+    await appendSocialFollowerContext(item, () => state.openDetailId === item.id && Boolean(els.detailModal?.open));
     appendItemResources(item);
   }
 }
@@ -8636,6 +8645,7 @@ function discoverGenreAffinity(result, profiles) {
 }
 
 async function rankDiscoverFeedCandidates(results, batchSize) {
+  await loadFollowingSocialContext().catch(() => []);
   const readAuthors = getReadAuthors();
   const authorSet = new Set(readAuthors.map(author => author.toLowerCase()));
   const mode = DISCOVER_MODES.has(state.discoverMode) ? state.discoverMode : 'for-you';
@@ -8646,6 +8656,8 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
   } : {};
   const prelim = (results || []).map(result => {
     let score = Number(result._discoverBoost || 0);
+    const followerLoggedCount = socialFollowerLoggedCount(result);
+    if (followerLoggedCount) score += Math.min(3.2, followerLoggedCount * 1.15);
     const rating = Number(result.rating || 0);
     if (rating) score += Math.min(3, rating / 3.5);
 
@@ -8676,7 +8688,7 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
 
     const jitterMax = mode === 'for-you' ? 2.2 : .6;
     const jitter = Math.random() * jitterMax;
-    return { ...result, _discoverScore: score + jitter, _discoverJitter: jitter };
+    return { ...result, _discoverScore: score + jitter, _discoverJitter: jitter, _discoverFollowerLoggedCount: followerLoggedCount };
   }).sort((a,b) => b._discoverScore - a._discoverScore);
 
   // Pick the batch first, then resolve watch-provider names only for TV/movies
@@ -10360,6 +10372,7 @@ async function openDiscoverDetail(key) {
     else if (result.sourceType === 'concert') await renderDiscoverConcertDetail(key);
     else if (result.sourceType === 'restaurant') await renderDiscoverRestaurantDetail(key);
     else if (result.sourceType === 'event') await renderDiscoverEventDetail(key);
+    await appendSocialFollowerContext(result, () => state.openDiscoverKey === key && Boolean(els.detailModal?.open));
   } catch (error) {
     els.detailBody.innerHTML = `<div class="api-error">${escapeHtml(error.message)}</div>`;
   }
@@ -10562,6 +10575,7 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
       <h3>Season ${seasonNumber} episodes</h3>
       <div class="episode-list">${episodeRows || 'No episodes found.'}</div>
     </section>`;
+  await appendSocialFollowerContext(result, () => state.openDiscoverKey === key && Boolean(els.detailModal?.open));
 }
 
 async function renderDiscoverTVEpisodeDetail(key, seasonNumber, episodeNumber) {
@@ -10589,6 +10603,7 @@ async function renderDiscoverTVEpisodeDetail(key, seasonNumber, episodeNumber) {
     <div class="detail-actions">
       <button class="primary-button${watched ? ' is-complete' : ''}" type="button" data-discover-check-tv-episode="${episodeNumber}" data-tv-season-number="${seasonNumber}" data-discover-key="${escapeAttr(key)}">${watched ? '✓ Mark not watched' : '✓ Mark watched'}</button>
     </div>`;
+  await appendSocialFollowerContext(result, () => state.openDiscoverKey === key && Boolean(els.detailModal?.open));
 }
 
 async function logDiscoverTVEpisode(key, seasonNumber, episodeNumber) {
@@ -11794,6 +11809,58 @@ function getItemPeople(item) {
   return [...new Set([...direct, ...legacyActivity].map(name => cleanTypeLabel(name)).filter(Boolean))];
 }
 
+function socialPeopleTagValue(profile) {
+  const username = String(profile?.username || '').trim();
+  return username ? `@${username}` : cleanTypeLabel(profile?.display_name || '');
+}
+
+function renderItemPeopleSuggestions() {
+  const host = els.itemPeopleSuggestions;
+  if (!host || !els.itemPeople || els.itemPeopleBlock?.hidden) return;
+  const profiles = Array.isArray(socialState.acceptedConnections) ? socialState.acceptedConnections : [];
+  if (!profiles.length) {
+    host.innerHTML = '';
+    host.hidden = true;
+    return;
+  }
+  const selected = new Set(parseItemPeople(els.itemPeople.value).map(value => value.toLowerCase()));
+  host.innerHTML = profiles
+    .slice()
+    .sort((a,b) => String(a.display_name || a.username || '').localeCompare(String(b.display_name || b.username || '')))
+    .map(profile => {
+      const tag = socialPeopleTagValue(profile);
+      const active = selected.has(tag.toLowerCase());
+      const label = profile.display_name || profile.username || 'Omni user';
+      return `<button class="people-tag-suggestion${active ? ' is-selected' : ''}" type="button" data-item-people-tag="${escapeAttr(tag)}" aria-pressed="${active}"><span class="people-tag-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(label)}</strong><small>@${escapeHtml(profile.username || '')}</small></span></button>`;
+    }).join('');
+  host.hidden = false;
+}
+
+async function refreshItemPeopleSuggestions() {
+  const host = els.itemPeopleSuggestions;
+  if (!host || els.itemPeopleBlock?.hidden) return;
+  if (!currentUser || !socialState.schemaReady || !supabase) {
+    host.innerHTML = '';
+    host.hidden = true;
+    return;
+  }
+  if (!socialState.acceptedConnections.length) await loadAcceptedSocialConnections();
+  renderItemPeopleSuggestions();
+}
+
+function handleItemPeopleSuggestionClick(event) {
+  const button = event.target.closest('[data-item-people-tag]');
+  if (!button || !els.itemPeople) return;
+  const tag = cleanTypeLabel(button.dataset.itemPeopleTag || '');
+  if (!tag) return;
+  const values = parseItemPeople(els.itemPeople.value);
+  const index = values.findIndex(value => value.toLowerCase() === tag.toLowerCase());
+  if (index >= 0) values.splice(index, 1);
+  else values.push(tag);
+  els.itemPeople.value = values.join(', ');
+  renderItemPeopleSuggestions();
+}
+
 function extractItemGenres(sourceType, source, editing) {
   if (!source && editing?.genres?.length) return [...editing.genres];
   if (sourceType === 'book') {
@@ -12912,11 +12979,13 @@ function escapeAttr(value) { return escapeHtml(value); }
 // =========================================================
 // SOCIAL — profiles, sharing snapshots, following, Buddy Watch
 // =========================================================
-const SOCIAL_SNAPSHOT_VERSION = 7;
+const SOCIAL_SNAPSHOT_VERSION = 8;
 const SOCIAL_SHARE_SECTION_META = Object.freeze({
+  activity: { label: 'Watched & ratings', description: 'Shared with followers by default, even if your Library/profile sections are private. Uncheck types or individual items to hide them.', items: true, contextOnly: true },
+  notes: { label: 'Notes', description: 'Off by default. Turn this on to let followers see your notes about matching items, then uncheck anything you want private.', items: true, contextOnly: true },
   recommended: { label: 'Recommended', description: 'Share all recommended types by default; uncheck anything you want private.', items: true },
   upnext: { label: 'Up Next', description: 'Share all Up Next types by default; uncheck anything you want private.', items: true },
-  ratings: { label: 'Ratings', description: 'Share all rated types by default; uncheck anything you want private.', items: true },
+  ratings: { label: 'Ratings shelf', description: 'Controls the Ratings shelf on your profile. Matching-item ratings are controlled separately by Watched & ratings above.', items: true },
   streaks: { label: 'Streaks', description: 'Share all active streak types by default; uncheck any you want private.', items: false, streaks: true },
   library: { label: 'Library', description: 'Share all Library types by default; uncheck types or individual items to hide them while shared-type totals remain visible.', items: true }
 });
@@ -12940,13 +13009,21 @@ const socialState = {
   viewedProfile: null,
   activeSharedItem: null,
   profileViewModes: new Map(),
-  profileExpandedGroups: new Map()
+  profileExpandedGroups: new Map(),
+  profileSearchQueries: new Map(),
+  followingContextLoaded: false,
+  followingContextPromise: null,
+  followingContextProfiles: [],
+  followingContextSnapshots: new Map(),
+  followingContextLoadedAt: 0
 };
 
 function emptySocialShareSettings() {
   return {
     profileTheme: 'blue',
     shareWithPeople: false,
+    activity: { enabled: true, excludedTypes: [], hiddenItemIds: [] },
+    notes: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
     recommended: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
     upnext: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
     ratings: { enabled: false, excludedTypes: [], hiddenItemIds: [] },
@@ -12961,7 +13038,7 @@ function normalizeSocialShareSettings(raw = {}) {
   base.shareWithPeople = Boolean(raw?.shareWithPeople);
   for (const key of Object.keys(SOCIAL_SHARE_SECTION_META)) {
     const incoming = raw?.[key] && typeof raw[key] === 'object' ? raw[key] : {};
-    const enabled = Boolean(incoming.enabled);
+    const enabled = incoming.enabled === undefined ? Boolean(base[key]?.enabled) : Boolean(incoming.enabled);
     let excludedTypes = [];
     if (Array.isArray(incoming.excludedTypes)) {
       excludedTypes = incoming.excludedTypes;
@@ -13066,6 +13143,7 @@ async function initializeSocialForUser() {
     socialState.profile = profile;
     socialState.shareSettings = normalizeSocialShareSettings(profile.share_settings);
     scheduleSocialSnapshotPublish(80);
+    loadFollowingSocialContext().catch(error => console.warn('[Social] follower context failed to load:', error));
     if ($('#socialRoot')) await loadSocialPage();
     else {
       renderUpNext().catch(() => {});
@@ -13099,7 +13177,15 @@ function socialTrackedLibraryItems() {
   return state.items.filter(item => !socialIsTbrOnlyItem(item));
 }
 
+function socialItemWasLogged(item) {
+  if (!item) return false;
+  if (socialLatestLoggedDate(item)) return true;
+  return state.history.some(entry => entry.sourceItemId === item.id && entry.date);
+}
+
 function socialShareCandidates(section) {
+  if (section === 'activity') return state.items.filter(item => socialItemWasLogged(item) || Number(item.rating || 0) > 0);
+  if (section === 'notes') return state.items.filter(item => String(item.notes || '').trim());
   if (section === 'recommended') return state.items.filter(item => Boolean(item.recommended));
   if (section === 'upnext') return state.items.filter(item => getQueueStatus(item) === 'upnext');
   if (section === 'ratings') return state.items.filter(item => Number(item.rating || 0) > 0);
@@ -13142,7 +13228,7 @@ function socialItemIsAllowed(section, item, settings = socialState.shareSettings
   if (!prefs?.enabled || !item) return false;
   // Pure TBR entries never leak through Recommended/Ratings/Library unless the
   // profile owner has explicitly opted into sharing TBR.
-  if (socialIsTbrOnlyItem(item) && !settings?.library?.includeTbr) return false;
+  if (['recommended','ratings','library'].includes(section) && socialIsTbrOnlyItem(item) && !settings?.library?.includeTbr) return false;
   if (!socialTypeIsAllowed(section, item.type, settings)) return false;
   if (prefs.hiddenItemIds?.includes(item.id)) return false;
   return true;
@@ -13159,6 +13245,8 @@ function socialTVIsActivelyWatching(item) {
 function socialItemSummary(item, settings = null, section = '') {
   const sourceType = getSourceType(item);
   const shareWithPeople = Boolean(settings?.shareWithPeople);
+  const activityAllowed = socialItemIsAllowed('activity', item, settings);
+  const notesAllowed = Boolean(String(item.notes || '').trim() && socialItemIsAllowed('notes', item, settings));
   const libraryAllowed = socialItemIsAllowed('library', item, settings);
   const recommendedAllowed = Boolean(item.recommended && socialItemIsAllowed('recommended', item, settings));
   const ratingAllowed = Boolean(Number(item.rating || 0) > 0 && socialItemIsAllowed('ratings', item, settings));
@@ -13196,7 +13284,7 @@ function socialItemSummary(item, settings = null, section = '') {
     subtitle: item.subtitle || '',
     image: item.image || '',
     description: item.description || '',
-    notes: libraryAllowed ? String(item.notes || '') : '',
+    notes: notesAllowed ? String(item.notes || '') : '',
     sourceType,
     type: item.type,
     typeLabel: getItemTypeLabel(item),
@@ -13208,14 +13296,15 @@ function socialItemSummary(item, settings = null, section = '') {
     releaseDate: libraryAllowed ? String(item.releaseDate || '') : '',
     pageCount: sourceType === 'book' ? Number(item.progress?.totalPages || 0) : 0,
     artistName: sourceType === 'artist' ? item.title || '' : String(item.artistName || ''),
-    rating: ratingAllowed ? Number(item.rating || 0) : 0,
+    rating: section === 'activity' ? (activityAllowed ? Number(item.rating || 0) : 0) : (ratingAllowed ? Number(item.rating || 0) : 0),
     progress,
     recommended: recommendedAllowed,
     queueStatus: libraryAllowed ? getQueueStatus(item) : '',
     statusKey,
     statusLabel,
     activelyWatching,
-    trackedDate: libraryAllowed ? socialLatestLoggedDate(item) : '',
+    trackedDate: section === 'activity' ? (activityAllowed ? socialLatestLoggedDate(item) : '') : (libraryAllowed ? socialLatestLoggedDate(item) : ''),
+    logged: section === 'activity' ? Boolean(activityAllowed && socialItemWasLogged(item)) : undefined,
     people: shareWithPeople ? getItemPeople(item) : [],
     sharedVia: section || ''
   };
@@ -13232,6 +13321,13 @@ function buildSocialSnapshotPayload(settings = socialState.shareSettings || empt
   })).filter(total => total.count > 0).sort((a,b) => a.label.localeCompare(b.label));
 
   const sections = {};
+  const contextItems = new Map();
+  for (const item of socialShareCandidates('activity')) contextItems.set(item.id, item);
+  for (const item of socialShareCandidates('notes')) contextItems.set(item.id, item);
+  sections.activity = [...contextItems.values()]
+    .filter(item => socialItemIsAllowed('activity', item, normalized) || socialItemIsAllowed('notes', item, normalized))
+    .map(item => socialItemSummary(item, normalized, 'activity'))
+    .filter(item => item.logged || Number(item.rating || 0) > 0 || String(item.notes || '').trim());
   for (const section of ['recommended','upnext','ratings']) {
     sections[section] = socialShareCandidates(section)
       .filter(item => socialItemIsAllowed(section, item, normalized))
@@ -13263,6 +13359,8 @@ function buildSocialSnapshotPayload(settings = socialState.shareSettings || empt
     theme: normalized.profileTheme,
     totals,
     sharing: {
+      activity: Boolean(normalized.activity.enabled),
+      notes: Boolean(normalized.notes.enabled),
       recommended: Boolean(normalized.recommended.enabled),
       upnext: Boolean(normalized.upnext.enabled),
       ratings: Boolean(normalized.ratings.enabled),
@@ -13318,6 +13416,7 @@ function initSocialPage() {
   $('#socialFollowingList')?.addEventListener('click', handleSocialActionClick);
   $('#socialFollowRequests')?.addEventListener('click', handleSocialActionClick);
   $('#socialViewProfileBody')?.addEventListener('click', handleSocialActionClick);
+  $('#socialViewProfileBody')?.addEventListener('input', handleSocialProfileSearchInput);
   $('#socialMyProfile')?.addEventListener('click', handleSocialActionClick);
   $('#socialItemDetailBody')?.addEventListener('click', handleSocialItemDetailClick);
   $('#socialCreateBuddyWatch')?.addEventListener('click', openBuddyWatchCreate);
@@ -13707,6 +13806,8 @@ async function toggleSocialFollow(button) {
       const { error } = await supabase.from('follows').insert({ follower_id: currentUser.id, following_id: targetId, status: nextStatus, updated_at: new Date().toISOString() });
       if (error) throw error;
     }
+    resetFollowingSocialContext();
+    loadFollowingSocialContext().catch(() => {});
     await loadSocialFollowing();
     if ($('#socialPeopleSearchInput')?.value) await handleSocialPeopleSearch(new Event('submit'));
     const modal = $('#socialViewProfileModal');
@@ -13749,6 +13850,47 @@ async function openSocialProfileView(userId, openModal = true) {
   const body = $('#socialViewProfileBody');
   if (body) body.innerHTML = socialProfileViewMarkup(profile, snapshot?.payload || null, relation, false);
   if (openModal) showDialogAtTop($('#socialViewProfileModal'));
+}
+
+function socialProfileSearchQuery(userId) {
+  return String(socialState.profileSearchQueries.get(String(userId || '')) || '').trim();
+}
+
+function socialSharedItemMatchesSearch(item, query) {
+  const needle = normalizeSearchText(query || '');
+  if (!needle) return true;
+  const people = Array.isArray(item?.people) ? item.people : [];
+  const haystack = normalizeSearchText([
+    item?.title,
+    item?.subtitle,
+    item?.notes,
+    item?.subcategory,
+    item?.typeLabel,
+    item?.libraryGroupLabel,
+    item?.statusLabel,
+    item?.progress,
+    item?.artistName,
+    ...people
+  ].filter(Boolean).join(' '));
+  return haystack.includes(needle);
+}
+
+function handleSocialProfileSearchInput(event) {
+  const input = event.target.closest('[data-social-profile-search]');
+  if (!input) return;
+  const userId = String(input.dataset.socialProfileId || '');
+  if (!userId) return;
+  socialState.profileSearchQueries.set(userId, input.value || '');
+  const caret = Number.isFinite(input.selectionStart) ? input.selectionStart : input.value.length;
+  const modal = $('#socialViewProfileModal');
+  const scrollTop = modal?.scrollTop || 0;
+  rerenderSocialProfileView(userId);
+  const next = $('#socialViewProfileBody')?.querySelector(`[data-social-profile-search][data-social-profile-id="${CSS.escape(userId)}"]`);
+  if (next) {
+    next.focus({ preventScroll: true });
+    try { next.setSelectionRange(caret, caret); } catch {}
+  }
+  if (modal) modal.scrollTop = scrollTop;
 }
 
 function socialProfileExpandedSet(userId) {
@@ -13856,17 +13998,22 @@ function socialLibraryShelfMarkup(groupKey, items, profileId, scope = 'library')
 
 function socialLibraryBrowserMarkup(profileId, payload) {
   const sections = payload?.sections || {};
-  const recommended = sections.recommended || [];
-  const all = sections.library || [];
-  const tbr = sections.tbr || [];
+  const query = socialProfileSearchQuery(profileId);
+  const recommendedRaw = sections.recommended || [];
+  const allRaw = sections.library || [];
+  const tbrRaw = sections.tbr || [];
   const sharing = payload?.sharing || {};
-  const recommendedAvailable = sharing.recommended ?? Boolean(recommended.length);
-  const libraryAvailable = sharing.library ?? Boolean(all.length || tbr.length);
+  const recommendedAvailable = sharing.recommended ?? Boolean(recommendedRaw.length);
+  const libraryAvailable = sharing.library ?? Boolean(allRaw.length || tbrRaw.length);
   if (!recommendedAvailable && !libraryAvailable) return '';
   const mode = socialProfileViewMode(profileId, payload);
+  const recommended = query ? recommendedRaw.filter(item => socialSharedItemMatchesSearch(item, query)) : recommendedRaw;
+  const all = query ? allRaw.filter(item => socialSharedItemMatchesSearch(item, query)) : allRaw;
+  const tbr = query ? tbrRaw.filter(item => socialSharedItemMatchesSearch(item, query)) : tbrRaw;
   // Shared TBR belongs inside the appropriate Library type. It is visually
   // distinguished only when expanded, where it becomes "Not started yet".
   const entries = mode === 'recommended' ? recommended : [...all, ...tbr];
+  if (query && !entries.length) return '';
   const tabs = recommendedAvailable && libraryAvailable ? `<div class="library-folder-tabs social-library-folder-tabs" role="tablist" aria-label="Shared library"><button class="library-folder-tab${mode === 'all' ? ' is-active' : ''}" type="button" data-social-profile-view-mode="all" data-social-profile-id="${escapeAttr(profileId)}" aria-selected="${mode === 'all'}">All</button><button class="library-folder-tab${mode === 'recommended' ? ' is-active' : ''}" type="button" data-social-profile-view-mode="recommended" data-social-profile-id="${escapeAttr(profileId)}" aria-selected="${mode === 'recommended'}">Recommended</button></div>` : '';
   const grouped = new Map();
   for (const item of entries) {
@@ -13880,10 +14027,12 @@ function socialLibraryBrowserMarkup(profileId, payload) {
 }
 
 function socialSecondaryShelfMarkup(title, entries, profileId, scope) {
-  if (!entries?.length) return '';
+  const query = socialProfileSearchQuery(profileId);
+  const visibleEntries = query ? (entries || []).filter(item => socialSharedItemMatchesSearch(item, query)) : (entries || []);
+  if (!visibleEntries.length) return '';
   const key = `${scope}:root`;
   const expanded = socialProfileExpandedSet(profileId).has(key);
-  return `<section class="social-profile-secondary-shelf library-shelf${expanded ? ' is-expanded' : ''}"><div class="library-group-heading-row"><div class="library-group-title-wrap"><h2 class="library-group-title">${escapeHtml(title)}</h2><span class="library-group-count">${entries.length}</span></div><div class="library-shelf-controls">${expanded ? '' : `<button class="library-carousel-button" type="button" data-social-library-carousel="prev">‹</button><button class="library-carousel-button" type="button" data-social-library-carousel="next">›</button>`}<button class="library-expand-button" type="button" data-social-library-expand="${escapeAttr(key)}" data-social-profile-id="${escapeAttr(profileId)}">${expanded ? 'Collapse' : 'View all'}</button></div></div><div class="library-poster-grid${expanded ? ' is-expanded' : ''}">${entries.map(item => socialLibraryPosterMarkup(item, profileId)).join('')}</div></section>`;
+  return `<section class="social-profile-secondary-shelf library-shelf${expanded ? ' is-expanded' : ''}"><div class="library-group-heading-row"><div class="library-group-title-wrap"><h2 class="library-group-title">${escapeHtml(title)}</h2><span class="library-group-count">${visibleEntries.length}</span></div><div class="library-shelf-controls">${expanded ? '' : `<button class="library-carousel-button" type="button" data-social-library-carousel="prev">‹</button><button class="library-carousel-button" type="button" data-social-library-carousel="next">›</button>`}<button class="library-expand-button" type="button" data-social-library-expand="${escapeAttr(key)}" data-social-profile-id="${escapeAttr(profileId)}">${expanded ? 'Collapse' : 'View all'}</button></div></div><div class="library-poster-grid${expanded ? ' is-expanded' : ''}">${visibleEntries.map(item => socialLibraryPosterMarkup(item, profileId)).join('')}</div></section>`;
 }
 
 function socialProfileViewMarkup(profile, snapshot, relation = null, isSelf = false) {
@@ -13897,22 +14046,24 @@ function socialProfileViewMarkup(profile, snapshot, relation = null, isSelf = fa
   const totals = payload.totals || [];
   const totalMarkup = totals.length ? `<div class="social-total-summary" aria-label="Shared tracked totals">${totals.map(total => `<span class="social-total-pill"><strong>${Number(total.count || 0)}</strong><span>${escapeHtml(total.label || total.type)}</span></span>`).join('')}</div>` : '';
   const privateMessage = !canSee && profile.is_private ? '<p class="social-private-message">This profile is private. Follow to see the sections they choose to share.</p>' : '';
+  const searchQuery = !isSelf ? socialProfileSearchQuery(profileId) : '';
+  const searchMarkup = canSee && !isSelf ? `<div class="social-profile-search-row"><label class="library-search-control social-profile-search-control"><input type="search" data-social-profile-search data-social-profile-id="${escapeAttr(profileId)}" value="${escapeAttr(searchQuery)}" placeholder="Search @${escapeAttr(profile.username || 'profile')}" autocomplete="off" aria-label="Search ${escapeAttr(profile.display_name || profile.username || 'profile')}'s shared items" /></label></div>` : '';
   const streakMarkup = canSee ? socialSharedSectionMarkup('streaks', sections.streaks || []) : '';
   const upNextMarkup = canSee ? socialSecondaryShelfMarkup('Up Next', sections.upnext || [], profileId, 'upnext') : '';
   const ratingOnly = canSee ? (sections.ratings || []).filter(item => !(sections.library || []).some(lib => lib.key === item.key) && !(sections.recommended || []).some(rec => rec.key === item.key)) : [];
   const ratingMarkup = canSee ? socialSecondaryShelfMarkup('Ratings', ratingOnly, profileId, 'ratings') : '';
   const libraryMarkup = canSee ? socialLibraryBrowserMarkup(profileId, payload) : '';
-  return `<div class="social-profile-surface" data-social-profile-theme="${escapeAttr(profileTheme)}"><div class="social-profile-hero"><span class="social-avatar social-avatar-large">${escapeHtml(socialProfileInitial(profile))}</span><div><h2>${escapeHtml(profile.display_name || profile.username)}</h2><p>@${escapeHtml(profile.username)}${profile.is_private ? ' · private' : ''}</p>${profile.bio ? `<div class="social-profile-bio">${escapeHtml(profile.bio)}</div>` : ''}</div><div class="social-profile-hero-action">${followButton}</div></div>${privateMessage}${totalMarkup}${streakMarkup}${upNextMarkup}${ratingMarkup}${libraryMarkup}</div>`;
+  const noSearchMatches = canSee && !isSelf && searchQuery && !upNextMarkup && !ratingMarkup && !libraryMarkup
+    ? `<p class="empty-state social-profile-search-empty">No shared items match “${escapeHtml(searchQuery)}”.</p>`
+    : '';
+  return `<div class="social-profile-surface" data-social-profile-theme="${escapeAttr(profileTheme)}"><div class="social-profile-hero"><span class="social-avatar social-avatar-large">${escapeHtml(socialProfileInitial(profile))}</span><div><h2>${escapeHtml(profile.display_name || profile.username)}</h2><p>@${escapeHtml(profile.username)}${profile.is_private ? ' · private' : ''}</p>${profile.bio ? `<div class="social-profile-bio">${escapeHtml(profile.bio)}</div>` : ''}</div><div class="social-profile-hero-action">${followButton}</div></div>${privateMessage}${searchMarkup}${totalMarkup}${streakMarkup}${noSearchMatches}${upNextMarkup}${ratingMarkup}${libraryMarkup}</div>`;
 }
 
 function socialSharedSectionMarkup(section, entries) {
   const meta = SOCIAL_SHARE_SECTION_META[section];
   if (!meta || !entries?.length) return '';
   if (section === 'streaks') {
-    return `<section class="social-shared-section social-shared-streaks"><div class="social-shared-section-heading"><h3>${escapeHtml(meta.label)}</h3></div><div class="track-streak-summary social-track-streak-summary">${entries.map(entry => {
-      const representative = { type: entry.type || entry.key || 'other', typeLabel: entry.label || 'Streak' };
-      return `<div class="track-streak-card social-track-streak-card"><span class="track-streak-sticker">${calendarStickerMarkup(representative.type, representative)}</span><span class="track-streak-copy"><strong>${escapeHtml(entry.label || 'Streak')}</strong><small>${Number(entry.count || 0)} day${Number(entry.count || 0) === 1 ? '' : 's'}${entry.restToday ? ' · rest day' : ''}</small></span></div>`;
-    }).join('')}</div></section>`;
+    return `<section class="social-shared-section social-shared-streaks"><div class="social-shared-section-heading"><h3>${escapeHtml(meta.label)}</h3></div><div class="social-track-streak-summary">${entries.map(entry => `<div class="social-streak-pill"><strong>${Number(entry.count || 0)}</strong><span>${escapeHtml(entry.label || 'Streak')}</span>${entry.restToday ? '<small>rest day</small>' : ''}</div>`).join('')}</div></section>`;
   }
   return `<section class="social-shared-section"><h3>${escapeHtml(meta.label)}</h3><div class="social-item-grid">${entries.map(entry => socialSharedItemMarkup(entry, section)).join('')}</div></section>`;
 }
@@ -14138,6 +14289,155 @@ function renderSocialMyProfile() {
   const snapshot = socialState.snapshot || buildSocialSnapshotPayload();
   host.innerHTML = socialProfileViewMarkup(socialState.profile, snapshot, null, true);
   host.querySelector('[data-social-open-settings]')?.addEventListener('click', openSocialProfileSettings);
+}
+
+function resetFollowingSocialContext() {
+  socialState.followingContextLoaded = false;
+  socialState.followingContextPromise = null;
+  socialState.followingContextProfiles = [];
+  socialState.followingContextSnapshots = new Map();
+  socialState.followingContextLoadedAt = 0;
+}
+
+async function loadFollowingSocialContext(force = false) {
+  if (!supabase || !currentUser || !socialState.schemaReady || localOnlyMode) return [];
+  if (force) resetFollowingSocialContext();
+  if (socialState.followingContextLoaded && Date.now() - Number(socialState.followingContextLoadedAt || 0) < 60000) return socialState.followingContextProfiles;
+  if (socialState.followingContextPromise) return socialState.followingContextPromise;
+
+  socialState.followingContextPromise = (async () => {
+    const followsResult = await supabase
+      .from('follows')
+      .select('following_id, status')
+      .eq('follower_id', currentUser.id)
+      .eq('status', 'accepted');
+    if (followsResult.error) throw followsResult.error;
+    const ids = [...new Set((followsResult.data || []).map(row => row.following_id).filter(Boolean))];
+    if (!ids.length) {
+      socialState.followingContextProfiles = [];
+      socialState.followingContextSnapshots = new Map();
+      socialState.followingContextLoaded = true;
+      socialState.followingContextLoadedAt = Date.now();
+      return [];
+    }
+
+    const [profilesResult, snapshotsResult] = await Promise.all([
+      supabase.from('profiles').select('user_id, username, display_name, avatar_url').in('user_id', ids),
+      supabase.from('social_snapshots').select('user_id, payload, updated_at').in('user_id', ids)
+    ]);
+    if (profilesResult.error) throw profilesResult.error;
+    if (snapshotsResult.error && !socialSchemaMissing(snapshotsResult.error)) throw snapshotsResult.error;
+
+    socialState.followingContextProfiles = profilesResult.data || [];
+    socialState.followingContextSnapshots = new Map((snapshotsResult.data || []).map(row => [String(row.user_id), row.payload || null]));
+    socialState.followingContextLoaded = true;
+    socialState.followingContextLoadedAt = Date.now();
+    return socialState.followingContextProfiles;
+  })();
+
+  try {
+    return await socialState.followingContextPromise;
+  } finally {
+    socialState.followingContextPromise = null;
+  }
+}
+
+function socialComparableSourceType(item) {
+  return String(item?.sourceType || (item?.id ? getSourceType(item) : '') || item?.type || '').trim();
+}
+
+function socialItemsRepresentSameTitle(shared, target) {
+  if (!shared || !target) return false;
+  const sharedType = socialComparableSourceType(shared);
+  const targetType = socialComparableSourceType(target);
+  if (sharedType && targetType && sharedType !== targetType) return false;
+  const sharedProvider = String(shared.provider || '').trim();
+  const targetProvider = String(target.provider || '').trim();
+  const sharedProviderId = String(shared.providerId || '').trim();
+  const targetProviderId = String(target.providerId || '').trim();
+  if (sharedProviderId && targetProviderId) {
+    return sharedProviderId === targetProviderId && (!sharedProvider || !targetProvider || sharedProvider === targetProvider);
+  }
+  return Boolean(normalizeSearchText(shared.title || '') && normalizeSearchText(shared.title || '') === normalizeSearchText(target.title || ''));
+}
+
+async function socialFollowerContextForItem(target) {
+  if (!target || !currentUser || !socialState.schemaReady) return [];
+  try {
+    const profiles = await loadFollowingSocialContext();
+    const rows = [];
+    for (const profile of profiles) {
+      const payload = socialState.followingContextSnapshots.get(String(profile.user_id)) || null;
+      const activity = payload?.sections?.activity || [];
+      const match = activity.find(entry => socialItemsRepresentSameTitle(entry, target));
+      if (!match) continue;
+      if (!match.logged && !Number(match.rating || 0) && !String(match.notes || '').trim()) continue;
+      rows.push({ profile, item: match });
+    }
+    return rows.sort((a, b) => {
+      const aLogged = a.item.logged ? 1 : 0;
+      const bLogged = b.item.logged ? 1 : 0;
+      if (aLogged !== bLogged) return bLogged - aLogged;
+      return Number(b.item.rating || 0) - Number(a.item.rating || 0);
+    });
+  } catch (error) {
+    console.warn('[Social] could not load follower item context:', error);
+    return [];
+  }
+}
+
+function socialFollowerContextMarkup(rows) {
+  if (!rows?.length) return '';
+  const watchedCount = rows.filter(row => row.item.logged).length;
+  const ratedCount = rows.filter(row => Number(row.item.rating || 0) > 0).length;
+  const summaryBits = [];
+  if (watchedCount) summaryBits.push(`${watchedCount} logged`);
+  if (ratedCount) summaryBits.push(`${ratedCount} rated`);
+  return `<details class="detail-section social-follower-item-context">
+    <summary><span>People you follow</span>${summaryBits.length ? `<small>${escapeHtml(summaryBits.join(' · '))}</small>` : ''}</summary>
+    <div class="social-follower-item-list">${rows.map(({ profile, item }) => {
+      const rating = Number(item.rating || 0);
+      const sourceType = socialComparableSourceType(item);
+      const loggedLabel = ['tv','movie','youtube'].includes(sourceType) ? 'Watched' : sourceType === 'book' ? 'Finished' : 'Logged';
+      const status = item.logged ? loggedLabel : rating ? 'Rated' : 'Shared';
+      return `<article class="social-follower-item-row">
+        <span class="social-avatar social-avatar-small">${escapeHtml(socialProfileInitial(profile))}</span>
+        <div class="social-follower-item-copy">
+          <div class="social-follower-item-head"><strong>${escapeHtml(profile.display_name || profile.username || 'Omni user')}</strong><span>${escapeHtml(status)}${rating ? ` · ★ ${escapeHtml(formatPersonalRating(rating))}` : ''}</span></div>
+          ${item.notes ? `<p>${escapeHtml(item.notes)}</p>` : ''}
+        </div>
+      </article>`;
+    }).join('')}</div>
+  </details>`;
+}
+
+async function appendSocialFollowerContext(target, guard = null) {
+  if (!els.detailBody || !target || els.detailBody.querySelector('[data-social-follower-context]')) return;
+  const rows = await socialFollowerContextForItem(target);
+  if (!rows.length || (typeof guard === 'function' && !guard())) return;
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = socialFollowerContextMarkup(rows);
+  const section = wrapper.firstElementChild;
+  if (!section) return;
+  section.dataset.socialFollowerContext = 'true';
+  const personal = els.detailBody.querySelector('.library-personal-meta, .discover-personal-meta');
+  if (personal) personal.insertAdjacentElement('afterend', section);
+  else {
+    const hero = els.detailBody.querySelector('.detail-hero');
+    if (hero) hero.insertAdjacentElement('afterend', section);
+    else els.detailBody.appendChild(section);
+  }
+}
+
+function socialFollowerLoggedCount(target) {
+  if (!target || !socialState.followingContextLoaded) return 0;
+  let count = 0;
+  for (const profile of socialState.followingContextProfiles) {
+    const payload = socialState.followingContextSnapshots.get(String(profile.user_id));
+    const match = (payload?.sections?.activity || []).find(entry => entry.logged && socialItemsRepresentSameTitle(entry, target));
+    if (match) count += 1;
+  }
+  return count;
 }
 
 async function loadAcceptedSocialConnections() {

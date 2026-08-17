@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-social-buddy-entrypoints-7" />
+  <link rel="stylesheet" href="style.css?v=omni-social-friend-context-10" />
 </head>
 <body class="discover-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -338,8 +338,9 @@
       <div id="itemPeopleBlock">
         <label class="field">
           <span>With people <em>optional</em></span>
-          <input id="itemPeople" type="text" autocomplete="off" placeholder="Names, separated by commas" />
+          <input id="itemPeople" type="text" autocomplete="off" placeholder="Names, separated by commas or @username" />
         </label>
+        <div id="itemPeopleSuggestions" class="people-tag-suggestions" hidden aria-label="Tag people you follow or who follow you"></div>
       </div>
 
       <div class="item-calendar-meta-fields">
@@ -649,6 +650,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-social-buddy-entrypoints-7"></script>
+  <script type="module" src="app.js?v=omni-social-friend-context-10"></script>
 </body>
 </html>
