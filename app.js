@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-calendar-row-groups-1';
-import { API_CONFIG } from './config.js?v=omni-calendar-row-groups-1';
+import { TrackerAPI } from './api.js?v=omni-with-people-jitter-1';
+import { API_CONFIG } from './config.js?v=omni-with-people-jitter-1';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -46,7 +46,15 @@ const SOURCE_ITEM_LABELS = {
 };
 
 const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'food', 'restaurant', 'recipe', 'other']);
-const STICKER_COLORS = ['rust', 'red', 'coral', 'orange', 'yellow', 'cream', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'teal', 'green', 'mint', 'brown', 'black', 'white'];
+const STICKER_COLORS = ['rust', 'burgundy', 'red', 'coral', 'orange', 'yellow', 'cream', 'sand', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'slate', 'teal', 'green', 'forest', 'mint', 'olive', 'stone', 'brown', 'charcoal', 'black', 'white'];
+const CALENDAR_THEMES = [
+  { id: 'blue', label: 'Dusty blue' },
+  { id: 'burgundy', label: 'Burgundy' },
+  { id: 'slate', label: 'Slate' },
+  { id: 'charcoal', label: 'Charcoal' },
+  { id: 'forest', label: 'Forest' },
+  { id: 'espresso', label: 'Espresso' }
+];
 
 const CLOUD_STATE_VERSION = 2;
 const TICKETMASTER_EVENT_CATEGORIES = [
@@ -238,6 +246,7 @@ const els = {
   stickerSettingsModal: $('#stickerSettingsModal'),
   stickerSettingsForm: $('#stickerSettingsForm'),
   stickerSettingsRows: $('#stickerSettingsRows'),
+  calendarThemePicker: $('#calendarThemePicker'),
   resetStickerSettings: $('#resetStickerSettings'),
   openStreakSettings: $('#openStreakSettings'),
   streakSettingsModal: $('#stickerSettingsModal'),
@@ -247,6 +256,7 @@ const els = {
   calendarRowSettingsForm: $('#calendarRowSettingsForm'),
   calendarRowSettingsRows: $('#calendarRowSettingsRows'),
   resetCalendarRowSettings: $('#resetCalendarRowSettings'),
+  addCalendarRow: $('#addCalendarRow'),
   monthPicker: $('#monthPicker'),
   monthLabel: $('#monthLabel'),
   previousMonth: $('#previousMonth'),
@@ -378,7 +388,8 @@ const els = {
   activityFields: $('#activityFields'),
   activityStartDate: $('#activityStartDate'),
   activityEndDate: $('#activityEndDate'),
-  activityPeople: $('#activityPeople'),
+  itemPeopleBlock: $('#itemPeopleBlock'),
+  itemPeople: $('#itemPeople'),
   manualTitleBlock: $('#manualTitleBlock'),
   manualTitle: $('#manualTitle'),
   tvProgressFields: $('#tvProgressFields'),
@@ -870,13 +881,21 @@ function bindEvents() {
   els.stickerSettingsForm?.addEventListener('submit', saveStickerSettings);
   els.stickerSettingsRows?.addEventListener('input', previewStickerSettings);
   els.stickerSettingsRows?.addEventListener('change', previewStickerSettings);
+  els.calendarThemePicker?.addEventListener('click', chooseCalendarThemeDraft);
   els.resetStickerSettings?.addEventListener('click', resetStickerSettings);
+  els.stickerSettingsModal?.addEventListener('close', () => { calendarThemeDraft = ''; applyCalendarTheme(); });
   els.openStreakSettings?.addEventListener('click', openStreakSettings);
   els.streakSettingsForm?.addEventListener('submit', saveStreakSettings);
   els.streakSettingsRows?.addEventListener('change', previewStreakSettings);
   els.resetStreakSettings?.addEventListener('click', resetStreakSettings);
   els.calendarRowSettingsForm?.addEventListener('submit', saveCalendarRowSettings);
   els.resetCalendarRowSettings?.addEventListener('click', resetCalendarRowSettings);
+  els.addCalendarRow?.addEventListener('click', addCalendarRowSettingsGroup);
+  els.calendarRowSettingsRows?.addEventListener('pointerdown', beginCalendarRowChipDrag);
+  els.calendarRowSettingsRows?.addEventListener('click', handleCalendarRowSettingsClick);
+  document.addEventListener('pointermove', moveCalendarRowChipDrag, { passive: false });
+  document.addEventListener('pointerup', endCalendarRowChipDrag);
+  document.addEventListener('pointercancel', cancelCalendarRowChipDrag);
   els.itemSourceType?.addEventListener('change', () => {
     clearSourceSelectionForTypeChange();
     configureItemSubtype(true);
@@ -1081,6 +1100,22 @@ function bindEvents() {
         updateItemFormForType();
         selectCatalogueResult(result);
       } catch {}
+      return;
+    }
+
+    const artistFavorite = event.target.closest('[data-artist-favorite]');
+    if (artistFavorite) {
+      const item = findItem(artistFavorite.dataset.artistItemId || state.openDetailId);
+      if (item) {
+        try {
+          const payload = JSON.parse(decodeURIComponent(artistFavorite.dataset.artistFavorite || ''));
+          toggleArtistFavorite(item, payload);
+          saveItems();
+          await openDetails(item.id);
+        } catch (error) {
+          console.warn('[Artist favorites] Could not update favorite', error);
+        }
+      }
       return;
     }
 
@@ -3421,12 +3456,12 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     els.providerSubtitle.value = item.subtitle || '';
     els.manualTitle.value = item.title || '';
     if (els.itemSubcategory) els.itemSubcategory.value = item.subcategory || '';
+    if (els.itemPeople) els.itemPeople.value = getItemPeople(item).join(', ');
     els.itemNote.value = item.notes || '';
     els.itemDate.value = item.date || '';
     if (sourceType === 'activity') {
       if (els.activityStartDate) els.activityStartDate.value = item.activityMeta?.startDate || item.date || '';
       if (els.activityEndDate) els.activityEndDate.value = item.activityMeta?.endDate || item.date || '';
-      if (els.activityPeople) els.activityPeople.value = (item.activityMeta?.people || []).join(', ');
     }
     if (els.itemReleaseDate) els.itemReleaseDate.value = normalizedReleaseDate(item.releaseDate);
     if (els.itemRecommended) els.itemRecommended.checked = Boolean(item.recommended);
@@ -3488,7 +3523,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.itemSubcategory) els.itemSubcategory.value = '';
   if (els.activityStartDate) els.activityStartDate.value = todayString();
   if (els.activityEndDate) els.activityEndDate.value = '';
-  if (els.activityPeople) els.activityPeople.value = '';
+  if (els.itemPeople) els.itemPeople.value = '';
   els.itemQueueStatus.value = ['upnext','tbr','library'].includes(defaultQueueStatus) ? defaultQueueStatus : 'library';
   els.nextSeason.value = 1;
   els.nextEpisode.value = 1;
@@ -3637,6 +3672,7 @@ function updateItemFormForType() {
   els.workoutBlock.hidden = !isYouTube;
   if (els.reminderBlock) els.reminderBlock.hidden = !isReminder;
   if (els.activityFields) els.activityFields.hidden = !isActivity;
+  if (els.itemPeopleBlock) els.itemPeopleBlock.hidden = sourceType === 'book';
   els.displayTypeBlock.hidden = !(isYouTube || isReminder || isManual);
   els.manualTitleBlock.hidden = false;
   els.tvProgressFields.hidden = sourceType !== 'tv';
@@ -4262,6 +4298,8 @@ async function saveItemFromForm(event) {
     return;
   }
 
+  const people = sourceType === 'book' ? [] : parseItemPeople(els.itemPeople?.value || '');
+
   const item = {
     id: editing?.id || makeId(),
     sourceType,
@@ -4275,6 +4313,7 @@ async function saveItemFromForm(event) {
     subtitle,
     rating: Number(els.itemRating.value || 0),
     notes: els.itemNote.value.trim(),
+    people,
     recommended: Boolean(els.itemRecommended?.checked),
     genres: extractItemGenres(sourceType, state.selectedSource, editing),
     releaseDate: ['tv','movie','book','music','artist','song'].includes(sourceType)
@@ -4314,7 +4353,7 @@ async function saveItemFromForm(event) {
       activityMeta: {
         startDate: els.activityStartDate?.value || '',
         endDate: els.activityEndDate?.value || els.activityStartDate?.value || '',
-        people: String(els.activityPeople?.value || '').split(',').map(name => cleanTypeLabel(name)).filter(Boolean)
+        people
       }
     } : {}),
 
@@ -4636,6 +4675,7 @@ async function openDetails(id) {
     else renderManualDetails(item);
     appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
+    appendLibraryPeopleSummary(item);
     appendLibraryPersonalMetadata(item);
     await appendLibrarySimilarRecommendations(item);
     appendItemResources(item);
@@ -4643,6 +4683,7 @@ async function openDetails(id) {
     els.detailBody.innerHTML = `${basicDetailHero(item)}<div class="api-error">${escapeHtml(error.message)}</div>${detailEditButton(item)}`;
     appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
+    appendLibraryPeopleSummary(item);
     appendLibraryPersonalMetadata(item);
     appendItemResources(item);
   }
@@ -4954,21 +4995,95 @@ async function renderMusicDetails(item) {
   els.detailBody.innerHTML = `
     ${libraryDetailHero({ type:'ALBUM', title:collection.collectionName || item.title, image, subtitle:collection.artistName || item.subtitle || '', overview:collection.primaryGenreName || '' })}
     ${detailEditButton(item)}
+    ${collection.collectionViewUrl ? `<section class="detail-section artist-open-music"><a class="secondary-button detail-link-button" href="${escapeAttr(collection.collectionViewUrl)}" target="_blank" rel="noopener">Open album in Apple Music ↗</a></section>` : ''}
     <section class="detail-section"><h3>Tracks</h3><div class="track-list">${tracks || 'No tracks returned.'}</div></section>
   `;
 }
 
+function artistFavoritesFor(item, kind) {
+  const source = item?.artistFavorites && typeof item.artistFavorites === 'object' ? item.artistFavorites : {};
+  return Array.isArray(source[kind]) ? source[kind] : [];
+}
+
+function artistFavoriteId(entry = {}) {
+  return String(entry.id || entry.collectionId || entry.trackId || '').trim();
+}
+
+function artistFavoriteIsSaved(item, kind, id) {
+  const target = String(id || '');
+  return artistFavoritesFor(item, kind).some(entry => artistFavoriteId(entry) === target);
+}
+
+function toggleArtistFavorite(item, payload = {}) {
+  const kind = payload.kind === 'song' ? 'songs' : 'albums';
+  const id = String(payload.id || '');
+  if (!id) return;
+  const favorites = {
+    albums: [...artistFavoritesFor(item, 'albums')],
+    songs: [...artistFavoritesFor(item, 'songs')]
+  };
+  const index = favorites[kind].findIndex(entry => artistFavoriteId(entry) === id);
+  if (index >= 0) favorites[kind].splice(index, 1);
+  else favorites[kind].unshift({ ...payload, id });
+  item.artistFavorites = favorites;
+  item.updatedAt = new Date().toISOString();
+}
+
+function mergeArtistCatalogWithFavorites(current, saved, idGetter) {
+  const output = [];
+  const seen = new Set();
+  for (const entry of [...saved, ...current]) {
+    const id = String(idGetter(entry) || artistFavoriteId(entry));
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    output.push(entry);
+  }
+  return output;
+}
+
+function artistFavoriteButtonMarkup(item, payload) {
+  const kind = payload.kind === 'song' ? 'songs' : 'albums';
+  const selected = artistFavoriteIsSaved(item, kind, payload.id);
+  return `<button class="artist-favorite-button${selected ? ' is-favorite' : ''}" type="button" data-artist-item-id="${escapeAttr(item.id)}" data-artist-favorite="${escapeAttr(encodeURIComponent(JSON.stringify(payload)))}" aria-label="${selected ? 'Remove from' : 'Add to'} favorite ${payload.kind === 'song' ? 'songs' : 'albums'}">♥</button>`;
+}
+
 async function renderArtistDetails(item) {
-  const data = await getCached(`artist:${item.providerId}`, () => TrackerAPI.getArtistDetails(item.providerId, state.settings));
+  const data = await getCached(`artist:v2:${item.providerId}`, () => TrackerAPI.getArtistDetails(item.providerId, state.settings));
   const artist = (data.results || []).find(result => result.wrapperType === 'artist') || {};
-  const albums = (data.results || []).filter(result => result.wrapperType === 'collection');
-  const image = (albums.find(album => album.artworkUrl100)?.artworkUrl100 || item.image || '').replace('100x100bb', '600x600bb');
+  const liveAlbums = (data.results || []).filter(result => result.wrapperType === 'collection');
+  const liveSongs = (data.results || []).filter(result => result.wrapperType === 'track');
+  const savedAlbums = artistFavoritesFor(item, 'albums');
+  const savedSongs = artistFavoritesFor(item, 'songs');
+  const albums = mergeArtistCatalogWithFavorites(liveAlbums, savedAlbums, entry => entry.collectionId || entry.id);
+  const songs = mergeArtistCatalogWithFavorites(liveSongs, savedSongs, entry => entry.trackId || entry.id);
+  const image = (liveAlbums.find(album => album.artworkUrl100)?.artworkUrl100 || savedAlbums.find(album => album.image)?.image || item.image || '').replace('100x100bb', '600x600bb');
   if (!item.image && image) { item.image = image; saveItems(); }
-  const albumRows = albums.slice(0, 8).map(album => `<div class="track-row"><div>•</div><div><div class="list-title">${escapeHtml(album.collectionName || 'Album')}</div><div class="list-meta">${escapeHtml(String(album.releaseDate || '').slice(0, 4))}</div></div></div>`).join('');
+  const artistUrl = artist.artistLinkUrl || artist.artistViewUrl || item.artistViewUrl || '';
+
+  const albumRows = albums.slice(0, 14).map(album => {
+    const id = String(album.collectionId || album.id || '');
+    const title = album.collectionName || album.title || 'Album';
+    const year = String(album.releaseDate || album.year || '').slice(0, 4);
+    const url = album.collectionViewUrl || album.url || '';
+    const payload = { kind: 'album', id, title, year, image: album.artworkUrl100 || album.image || '', url };
+    return `<div class="artist-catalog-row${artistFavoriteIsSaved(item, 'albums', id) ? ' is-favorite' : ''}"><div class="artist-catalog-copy"><div class="list-title">${escapeHtml(title)}</div><div class="list-meta">${escapeHtml(year)}</div></div><div class="artist-catalog-actions">${url ? `<a class="artist-music-link" href="${escapeAttr(url)}" target="_blank" rel="noopener" aria-label="Open ${escapeAttr(title)} in Apple Music">↗ Music</a>` : ''}${artistFavoriteButtonMarkup(item, payload)}</div></div>`;
+  }).join('');
+
+  const songRows = songs.slice(0, 16).map(song => {
+    const id = String(song.trackId || song.id || '');
+    const title = song.trackName || song.title || 'Song';
+    const albumName = song.collectionName || song.albumName || '';
+    const url = song.trackViewUrl || song.url || '';
+    const payload = { kind: 'song', id, title, albumName, image: song.artworkUrl100 || song.image || '', url };
+    return `<div class="artist-catalog-row${artistFavoriteIsSaved(item, 'songs', id) ? ' is-favorite' : ''}"><div class="artist-catalog-copy"><div class="list-title">${escapeHtml(title)}</div><div class="list-meta">${escapeHtml(albumName)}</div></div><div class="artist-catalog-actions">${url ? `<a class="artist-music-link" href="${escapeAttr(url)}" target="_blank" rel="noopener" aria-label="Open ${escapeAttr(title)} in Apple Music">↗ Music</a>` : ''}${artistFavoriteButtonMarkup(item, payload)}</div></div>`;
+  }).join('');
+
   els.detailBody.innerHTML = `
     ${libraryDetailHero({ type:'ARTIST', title:artist.artistName || item.title, image, subtitle:artist.primaryGenreName || item.subtitle || '', overview:'' })}
     ${detailEditButton(item)}
-    ${albumRows ? `<section class="detail-section"><h3>Recent albums</h3><div class="track-list">${albumRows}</div></section>` : ''}`;
+    ${artistUrl ? `<section class="detail-section artist-open-music"><a class="secondary-button detail-link-button" href="${escapeAttr(artistUrl)}" target="_blank" rel="noopener">Open artist in Apple Music ↗</a></section>` : ''}
+    ${albumRows ? `<section class="detail-section"><div class="detail-section-heading"><h3>Albums</h3><span class="artist-favorite-hint">♥ saves inside this artist</span></div><div class="artist-catalog-list">${albumRows}</div></section>` : ''}
+    ${songRows ? `<section class="detail-section"><div class="detail-section-heading"><h3>Songs</h3><span class="artist-favorite-hint">♥ saves inside this artist</span></div><div class="artist-catalog-list">${songRows}</div></section>` : ''}`;
 }
 
 async function renderSongDetails(item) {
@@ -4978,7 +5093,7 @@ async function renderSongDetails(item) {
   els.detailBody.innerHTML = `
     ${libraryDetailHero({ type:'SONG', title:track.trackName || item.title, image, subtitle:[track.artistName || item.subtitle || '', track.collectionName || '', track.primaryGenreName || ''].filter(Boolean).join(' · '), overview:'' })}
     ${detailEditButton(item)}
-    ${track.trackViewUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(track.trackViewUrl)}" target="_blank" rel="noopener">Open in Apple Music / iTunes ↗</a></section>` : ''}`;
+    ${track.trackViewUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(track.trackViewUrl)}" target="_blank" rel="noopener">Open song in Apple Music ↗</a></section>` : ''}`;
 }
 
 function renderReminderDetails(item) {
@@ -5023,9 +5138,8 @@ function renderActivityDetails(item) {
   const dateText = startDate
     ? (endDate && endDate !== startDate ? `${formatLongDate(startDate)} – ${formatLongDate(endDate)}` : formatLongDate(startDate))
     : '';
-  const people = (item.activityMeta?.people || []).filter(Boolean);
   els.detailBody.innerHTML = `
-    ${libraryDetailHero({ type:'ACTIVITY', title:item.title, image:item.image || '', subtitle:[dateText, people.length ? `with ${people.join(', ')}` : '', item.subcategory || ''].filter(Boolean).join(' · '), overview:'' })}
+    ${libraryDetailHero({ type:'ACTIVITY', title:item.title, image:item.image || '', subtitle:[dateText, item.subcategory || ''].filter(Boolean).join(' · '), overview:'' })}
     ${detailEditButton(item)}
   `;
 }
@@ -5254,6 +5368,30 @@ function appendLibraryDateSummary(item) {
   // Keep the date log visually attached to the item title. This is deliberately
   // inside the hero text column, directly below the H2, rather than below the
   // entire hero/poster block.
+  const title = els.detailBody.querySelector('.detail-hero h2');
+  if (title) title.insertAdjacentHTML('afterend', markup);
+  else {
+    const hero = els.detailBody.querySelector('.detail-hero');
+    if (hero) hero.insertAdjacentHTML('afterend', markup);
+    else els.detailBody.insertAdjacentHTML('afterbegin', markup);
+  }
+}
+
+function libraryPeopleSummaryMarkup(item) {
+  const people = getItemPeople(item);
+  if (!people.length) return '';
+  return `<div class="library-detail-date-strip library-people-strip" data-library-people-summary="${escapeAttr(item.id)}"><span>With</span><strong>${escapeHtml(people.join(', '))}</strong></div>`;
+}
+
+function appendLibraryPeopleSummary(item) {
+  if (!els.detailBody || !item || getSourceType(item) === 'book' || els.detailBody.querySelector(`[data-library-people-summary="${CSS.escape(item.id)}"]`)) return;
+  const markup = libraryPeopleSummaryMarkup(item);
+  if (!markup) return;
+  const dateSummary = els.detailBody.querySelector(`[data-library-date-summary="${CSS.escape(item.id)}"]`);
+  if (dateSummary) {
+    dateSummary.insertAdjacentHTML('afterend', markup);
+    return;
+  }
   const title = els.detailBody.querySelector('.detail-hero h2');
   if (title) title.insertAdjacentHTML('afterend', markup);
   else {
@@ -5893,7 +6031,8 @@ function getCalendarEntries() {
     };
   });
 
-  return [...savedItems, ...historyEntries, ...bookRanges, ...activityRanges];
+  return [...savedItems, ...historyEntries, ...bookRanges, ...activityRanges]
+    .filter(entry => isCalendarTypeVisible(entry.type));
 }
 
 function activityCalendarEntries(item) {
@@ -5916,7 +6055,7 @@ function activityCalendarEntries(item) {
       date,
       kind: 'activity-day',
       title: item.title,
-      subtitle: (item.activityMeta?.people || []).length ? `with ${(item.activityMeta.people || []).join(', ')}` : (item.subtitle || ''),
+      subtitle: getItemPeople(item).length ? `with ${getItemPeople(item).join(', ')}` : (item.subtitle || ''),
       notes: item.notes || '',
       rating: Number(item.rating || 0),
       image: item.image || '',
@@ -6001,6 +6140,7 @@ function bookRangeSegmentMarkup(entry) {
 }
 
 function renderTracker() {
+  applyCalendarTheme();
   if (mobileCalendarQuery.matches) {
     renderWeekTracker();
   } else {
@@ -6039,7 +6179,7 @@ function renderMonthTracker() {
     ? [...groupsByKey.values()]
     : (() => {
         const defaults = new Map();
-        ['workout', 'tv', 'book', 'movie'].forEach(type => {
+        ['workout', 'tv', 'book', 'movie'].filter(isCalendarTypeVisible).forEach(type => {
           const entry = { type, typeLabel: getTypeLabel(type) };
           const key = getCalendarTypeGroupKey(entry);
           if (!defaults.has(key)) {
@@ -6356,15 +6496,40 @@ function getCalendarCategoryLabel(type, fallbackLabel = '') {
   return custom || cleanTypeLabel(fallbackLabel || getTypeLabel(type)) || 'Other';
 }
 
-function defaultCalendarRowName(type, fallbackLabel = '') {
-  if (type === 'tv' || type === 'movie') return 'TV + Movies';
-  return getCalendarCategoryLabel(type, fallbackLabel);
+function defaultCalendarGroupId(type) {
+  if (type === 'tv' || type === 'movie') return 'default:tv-movie';
+  return `type:${String(type || 'other')}`;
+}
+
+function getCalendarGroupId(type) {
+  const saved = state.stickerPrefs?.[type] || {};
+  const explicit = String(saved.calendarGroup || '').trim();
+  if (explicit) return explicit;
+  // Preserve row groupings created by the earlier name-based Rows UI.
+  const legacy = cleanTypeLabel(saved.calendarRow || '');
+  if (legacy) return `legacy:${slugifyType(legacy)}`;
+  return defaultCalendarGroupId(type);
+}
+
+function isCalendarTypeVisible(type) {
+  return state.stickerPrefs?.[type]?.calendarVisible !== false;
+}
+
+function calendarGroupMemberTypes(groupId) {
+  return getRecognizedTypes().filter(({ type }) => isCalendarTypeVisible(type) && getCalendarGroupId(type) === groupId);
+}
+
+function calendarGroupDisplayLabel(groupId, fallbackType = '', fallbackLabel = '') {
+  const members = calendarGroupMemberTypes(groupId);
+  const custom = members.map(({ type }) => cleanTypeLabel(state.stickerPrefs?.[type]?.calendarGroupLabel || '')).find(Boolean);
+  if (custom) return custom;
+  if (members.length) return members.map(({ label }) => cleanTypeLabel(label)).filter(Boolean).join(' + ');
+  return getCalendarCategoryLabel(fallbackType, fallbackLabel);
 }
 
 function getCalendarRowName(type, fallbackLabel = '') {
-  const saved = state.stickerPrefs?.[type] || {};
-  const custom = cleanTypeLabel(saved.calendarRow || '');
-  return custom || defaultCalendarRowName(type, fallbackLabel);
+  const groupId = getCalendarGroupId(type);
+  return calendarGroupDisplayLabel(groupId, type, fallbackLabel);
 }
 
 function getCalendarTypeGroupLabel(entry) {
@@ -6372,8 +6537,7 @@ function getCalendarTypeGroupLabel(entry) {
 }
 
 function getCalendarTypeGroupKey(entry) {
-  const rowName = getCalendarRowName(entry?.type, entry?.typeLabel || getTypeLabel(entry?.type));
-  return `row-${slugifyType(rowName || 'Other')}`;
+  return `row:${getCalendarGroupId(entry?.type)}`;
 }
 
 // Streaks intentionally keep their original type-level grouping. Calendar-row
@@ -10576,7 +10740,7 @@ async function renderDiscoverArtistDetail(key) {
       }
     }
     if (itunesArtistId) {
-      const data = await getCached(`artist:${itunesArtistId}`, () => TrackerAPI.getArtistDetails(itunesArtistId, state.settings));
+      const data = await getCached(`artist:v2:${itunesArtistId}`, () => TrackerAPI.getArtistDetails(itunesArtistId, state.settings));
       artist = (data.results || []).find(r => r.wrapperType === 'artist') || {};
       albums = (data.results || []).filter(r => r.wrapperType === 'collection');
       musicDiscoverDebug('lazy iTunes artist detail resolution complete', { artist: result.title, itunesArtistId, albums: albums.length });
@@ -10725,6 +10889,36 @@ async function renderDiscoverBookDetail(key) {
 }
 
 // ---------------------------
+// TRACK APPEARANCE
+// ---------------------------
+let calendarThemeDraft = '';
+
+function savedCalendarThemeId() {
+  const value = String(state.stickerPrefs?.__calendar?.theme || 'blue');
+  return CALENDAR_THEMES.some(theme => theme.id === value) ? value : 'blue';
+}
+
+function applyCalendarTheme(themeId = savedCalendarThemeId()) {
+  const valid = CALENDAR_THEMES.some(theme => theme.id === themeId) ? themeId : 'blue';
+  document.querySelectorAll('.track-section').forEach(section => { section.dataset.calendarTheme = valid; });
+  if (els.stickerSettingsModal) els.stickerSettingsModal.dataset.calendarTheme = valid;
+}
+
+function renderCalendarThemePicker() {
+  if (!els.calendarThemePicker) return;
+  const selected = calendarThemeDraft || savedCalendarThemeId();
+  els.calendarThemePicker.innerHTML = CALENDAR_THEMES.map(theme => `<button class="calendar-theme-swatch${selected === theme.id ? ' is-selected' : ''}" type="button" data-calendar-theme="${escapeAttr(theme.id)}" aria-pressed="${selected === theme.id ? 'true' : 'false'}"><span class="calendar-theme-dot" aria-hidden="true"></span><span>${escapeHtml(theme.label)}</span></button>`).join('');
+}
+
+function chooseCalendarThemeDraft(event) {
+  const button = event.target.closest('[data-calendar-theme]');
+  if (!button) return;
+  calendarThemeDraft = button.dataset.calendarTheme || 'blue';
+  applyCalendarTheme(calendarThemeDraft);
+  renderCalendarThemePicker();
+}
+
+// ---------------------------
 // STICKER SETTINGS
 // ---------------------------
 function setTrackSettingsTab(tabName = 'stickers') {
@@ -10741,12 +10935,13 @@ function setTrackSettingsTab(tabName = 'stickers') {
   });
   if (active === 'streaks') renderStreakSettingsRows();
   else if (active === 'rows') renderCalendarRowSettingsRows();
-  else renderStickerSettingsRows();
+  else { renderStickerSettingsRows(); renderCalendarThemePicker(); }
   resetDialogScrollPosition(modal);
 }
 
 function openStickerSettings() {
   if (!els.stickerSettingsModal || !els.stickerSettingsRows) return;
+  calendarThemeDraft = savedCalendarThemeId();
   setTrackSettingsTab('stickers');
   showDialogAtTop(els.stickerSettingsModal);
 }
@@ -10867,52 +11062,263 @@ function saveStickerSettings(event) {
     }
   });
 
+  const calendarPrefs = { ...(next.__calendar || {}) };
+  calendarPrefs.theme = calendarThemeDraft || savedCalendarThemeId();
+  next.__calendar = calendarPrefs;
   state.stickerPrefs = next;
   localStorage.setItem(STICKER_PREFS_KEY, JSON.stringify(state.stickerPrefs));
   scheduleCloudSync();
   els.stickerSettingsModal.close();
+  applyCalendarTheme();
   renderTracker();
 }
 
 function resetStickerSettings() {
   if (!confirm('Reset every sticker to its default style?')) return;
-  state.stickerPrefs = {};
-  localStorage.removeItem(STICKER_PREFS_KEY);
+  const preservedRows = {};
+  Object.entries(state.stickerPrefs || {}).forEach(([key, prefs]) => {
+    if (!prefs || typeof prefs !== 'object' || key === '__calendar' || key.includes('::subcategory::')) return;
+    const keep = {};
+    ['calendarGroup', 'calendarGroupLabel', 'calendarVisible'].forEach(field => {
+      if (prefs[field] !== undefined) keep[field] = prefs[field];
+    });
+    if (Object.keys(keep).length) preservedRows[key] = keep;
+  });
+  state.stickerPrefs = { ...preservedRows, __calendar: { theme: 'blue' } };
+  localStorage.setItem(STICKER_PREFS_KEY, JSON.stringify(state.stickerPrefs));
   scheduleCloudSync();
+  calendarThemeDraft = 'blue';
   renderStickerSettingsRows();
+  renderCalendarThemePicker();
+  applyCalendarTheme('blue');
   renderTracker();
+}
+
+let calendarRowChipDrag = null;
+
+function calendarRowChipMarkup(type, label, groupId, hidden = false) {
+  const previewEntry = state.history.find(entry => entry.type === type) || state.items.find(item => item.type === type) || { type, typeLabel: label };
+  return `<button class="calendar-row-chip${hidden ? ' is-hidden' : ''}" type="button" data-calendar-row-type="${escapeAttr(type)}" data-calendar-group-id="${escapeAttr(groupId)}" aria-label="${escapeAttr(label)}. Drag to move to another calendar row.">
+    <span class="calendar-row-chip-handle" data-calendar-row-drag-handle aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+    <span class="calendar-row-chip-preview" aria-hidden="true">${calendarStickerMarkup(type, previewEntry)}</span>
+    <span class="calendar-row-chip-label">${escapeHtml(label)}</span>
+  </button>`;
+}
+
+function calendarRowGroupMarkup(groupId, members, index) {
+  const generatedLabel = members.map(member => cleanTypeLabel(member.label)).filter(Boolean).join(' + ') || `Row ${index + 1}`;
+  const customLabel = members.map(member => cleanTypeLabel(state.stickerPrefs?.[member.type]?.calendarGroupLabel || '')).find(Boolean) || '';
+  return `<section class="calendar-row-group" data-calendar-row-group="${escapeAttr(groupId)}">
+    <div class="calendar-row-group-head">
+      <label class="calendar-row-name-wrap" title="Optional custom row name">
+        <span class="calendar-row-name-pencil" aria-hidden="true">✎</span>
+        <input class="calendar-row-group-name" data-calendar-row-name type="text" maxlength="28" value="${escapeAttr(customLabel)}" placeholder="${escapeAttr(generatedLabel)}" aria-label="Optional calendar row name" />
+      </label>
+      <span class="calendar-row-group-count">${members.length}</span>
+    </div>
+    <div class="calendar-row-dropzone" data-calendar-row-dropzone>${members.map(({ type, label: memberLabel }) => calendarRowChipMarkup(type, memberLabel, groupId, false)).join('')}</div>
+  </section>`;
 }
 
 function renderCalendarRowSettingsRows() {
   if (!els.calendarRowSettingsRows) return;
   const types = getRecognizedTypes();
-  const rowNames = [...new Set(types.map(({ type, label }) => getCalendarRowName(type, label)))].sort((a, b) => a.localeCompare(b));
-  const datalistId = 'calendarRowNameSuggestions';
+  const groups = new Map();
+  const hidden = [];
+  for (const entry of types) {
+    const groupId = getCalendarGroupId(entry.type);
+    if (!isCalendarTypeVisible(entry.type)) {
+      hidden.push({ ...entry, groupId });
+      continue;
+    }
+    if (!groups.has(groupId)) groups.set(groupId, []);
+    groups.get(groupId).push(entry);
+  }
+
+  const orderedGroups = [...groups.entries()].sort((a, b) => {
+    const aTV = a[1].some(entry => entry.type === 'tv' || entry.type === 'movie');
+    const bTV = b[1].some(entry => entry.type === 'tv' || entry.type === 'movie');
+    if (aTV !== bTV) return aTV ? -1 : 1;
+    return a[1][0]?.label.localeCompare(b[1][0]?.label || '') || 0;
+  });
+
   els.calendarRowSettingsRows.innerHTML = `
-    <datalist id="${datalistId}">${rowNames.map(name => `<option value="${escapeAttr(name)}"></option>`).join('')}</datalist>
-    ${types.map(({ type, label }) => {
-      const rowName = getCalendarRowName(type, label);
-      return `<label class="calendar-row-setting" data-calendar-row-type="${escapeAttr(type)}">
-        <span class="calendar-row-setting-type">${escapeHtml(label)}</span>
-        <input data-calendar-row-field="name" type="text" maxlength="30" list="${datalistId}" value="${escapeAttr(rowName)}" aria-label="Calendar row for ${escapeAttr(label)}" />
-      </label>`;
-    }).join('')}`;
+    <div class="calendar-row-visible-groups" data-calendar-visible-groups>
+      ${orderedGroups.map(([groupId, members], index) => calendarRowGroupMarkup(groupId, members, index)).join('')}
+    </div>
+    <section class="calendar-row-hidden-group" data-calendar-hidden-group>
+      <div class="calendar-row-group-head">
+        <span class="calendar-row-group-title">Hidden from Track</span>
+        <span class="calendar-row-group-count">${hidden.length}</span>
+      </div>
+      <div class="calendar-row-dropzone calendar-row-hidden-dropzone" data-calendar-row-dropzone data-calendar-hidden-dropzone>
+        ${hidden.map(({ type, label, groupId }) => calendarRowChipMarkup(type, label, groupId, true)).join('')}
+        <span class="calendar-row-hidden-empty">Drop categories here to hide them</span>
+      </div>
+    </section>`;
+  refreshCalendarRowSettingsUI();
+}
+
+function addCalendarRowSettingsGroup() {
+  const host = els.calendarRowSettingsRows?.querySelector('[data-calendar-visible-groups]');
+  if (!host) return;
+  const groupId = `custom:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const section = document.createElement('section');
+  section.className = 'calendar-row-group is-empty';
+  section.dataset.calendarRowGroup = groupId;
+  section.innerHTML = `<div class="calendar-row-group-head"><label class="calendar-row-name-wrap"><span class="calendar-row-name-pencil" aria-hidden="true">✎</span><input class="calendar-row-group-name" data-calendar-row-name type="text" maxlength="28" value="" placeholder="New row" aria-label="Optional calendar row name" /></label><span class="calendar-row-group-count">0</span></div><div class="calendar-row-dropzone" data-calendar-row-dropzone></div>`;
+  host.appendChild(section);
+  section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  refreshCalendarRowSettingsUI();
+}
+
+function refreshCalendarRowSettingsUI() {
+  if (!els.calendarRowSettingsRows) return;
+  els.calendarRowSettingsRows.querySelectorAll('.calendar-row-group').forEach((group, index) => {
+    const chips = [...group.querySelectorAll('.calendar-row-chip')];
+    group.classList.toggle('is-empty', chips.length === 0);
+    const nameInput = group.querySelector('[data-calendar-row-name]');
+    const count = group.querySelector('.calendar-row-group-count');
+    const generatedName = chips.length ? chips.map(chip => chip.querySelector('.calendar-row-chip-label')?.textContent || '').filter(Boolean).join(' + ') : 'New row';
+    if (nameInput) nameInput.placeholder = generatedName;
+    if (count) count.textContent = String(chips.length);
+    chips.forEach(chip => {
+      chip.classList.remove('is-hidden');
+      chip.dataset.calendarGroupId = group.dataset.calendarRowGroup || chip.dataset.calendarGroupId || defaultCalendarGroupId(chip.dataset.calendarRowType);
+    });
+  });
+  const hiddenGroup = els.calendarRowSettingsRows.querySelector('[data-calendar-hidden-group]');
+  if (hiddenGroup) {
+    const chips = [...hiddenGroup.querySelectorAll('.calendar-row-chip')];
+    hiddenGroup.classList.toggle('is-empty', chips.length === 0);
+    const count = hiddenGroup.querySelector('.calendar-row-group-count');
+    if (count) count.textContent = String(chips.length);
+    chips.forEach(chip => chip.classList.add('is-hidden'));
+  }
+}
+
+function moveCalendarRowChipToDropzone(chip, dropzone) {
+  if (!chip || !dropzone || !els.calendarRowSettingsRows?.contains(chip) || !els.calendarRowSettingsRows.contains(dropzone)) return;
+  const sourceGroup = chip.closest('[data-calendar-row-group]');
+  if (dropzone.hasAttribute('data-calendar-hidden-dropzone')) {
+    if (sourceGroup?.dataset.calendarRowGroup) chip.dataset.calendarGroupId = sourceGroup.dataset.calendarRowGroup;
+    dropzone.appendChild(chip);
+  } else {
+    const targetGroup = dropzone.closest('[data-calendar-row-group]');
+    if (!targetGroup) return;
+    chip.dataset.calendarGroupId = targetGroup.dataset.calendarRowGroup || defaultCalendarGroupId(chip.dataset.calendarRowType);
+    dropzone.appendChild(chip);
+  }
+  els.calendarRowSettingsRows.querySelectorAll('.calendar-row-group.is-empty').forEach(group => {
+    if (group.querySelectorAll('.calendar-row-chip').length === 0 && group !== dropzone.closest('.calendar-row-group')) group.remove();
+  });
+  refreshCalendarRowSettingsUI();
+}
+
+function handleCalendarRowSettingsClick(event) {
+  if (event.target.closest('[data-calendar-row-drag-handle]')) return;
+  const chip = event.target.closest('.calendar-row-chip');
+  const dropzone = event.target.closest('[data-calendar-row-dropzone]');
+  if (chip && !event.target.closest('[data-calendar-row-drag-handle]')) {
+    const wasSelected = chip.classList.contains('is-selected');
+    els.calendarRowSettingsRows?.querySelectorAll('.calendar-row-chip.is-selected').forEach(entry => entry.classList.remove('is-selected'));
+    if (!wasSelected) chip.classList.add('is-selected');
+    return;
+  }
+  if (dropzone) {
+    const selected = els.calendarRowSettingsRows?.querySelector('.calendar-row-chip.is-selected');
+    if (selected && !dropzone.contains(selected)) {
+      moveCalendarRowChipToDropzone(selected, dropzone);
+      selected.classList.remove('is-selected');
+    }
+  }
+}
+
+function beginCalendarRowChipDrag(event) {
+  const handle = event.target.closest('[data-calendar-row-drag-handle]');
+  const chip = handle?.closest('.calendar-row-chip');
+  if (!handle || !chip || event.button > 0) return;
+  event.preventDefault();
+  const rect = chip.getBoundingClientRect();
+  const ghost = chip.cloneNode(true);
+  ghost.classList.add('calendar-row-chip-ghost');
+  ghost.classList.remove('is-selected');
+  ghost.style.width = `${rect.width}px`;
+  document.body.appendChild(ghost);
+  chip.classList.add('is-dragging');
+  calendarRowChipDrag = { chip, ghost, pointerId: event.pointerId, offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top, dropzone: null };
+  positionCalendarRowChipGhost(event.clientX, event.clientY);
+}
+
+function positionCalendarRowChipGhost(x, y) {
+  if (!calendarRowChipDrag) return;
+  calendarRowChipDrag.ghost.style.left = `${x - calendarRowChipDrag.offsetX}px`;
+  calendarRowChipDrag.ghost.style.top = `${y - calendarRowChipDrag.offsetY}px`;
+}
+
+function moveCalendarRowChipDrag(event) {
+  if (!calendarRowChipDrag || event.pointerId !== calendarRowChipDrag.pointerId) return;
+  event.preventDefault();
+  positionCalendarRowChipGhost(event.clientX, event.clientY);
+  calendarRowChipDrag.ghost.style.display = 'none';
+  const target = document.elementFromPoint(event.clientX, event.clientY);
+  calendarRowChipDrag.ghost.style.display = '';
+  const dropzone = target?.closest?.('[data-calendar-row-dropzone]') || null;
+  if (dropzone !== calendarRowChipDrag.dropzone) {
+    calendarRowChipDrag.dropzone?.classList.remove('is-drag-over');
+    dropzone?.classList.add('is-drag-over');
+    calendarRowChipDrag.dropzone = dropzone;
+  }
+}
+
+function endCalendarRowChipDrag(event) {
+  if (!calendarRowChipDrag || event.pointerId !== calendarRowChipDrag.pointerId) return;
+  const { chip, ghost, dropzone } = calendarRowChipDrag;
+  dropzone?.classList.remove('is-drag-over');
+  chip.classList.remove('is-dragging');
+  ghost.remove();
+  calendarRowChipDrag = null;
+  if (dropzone) moveCalendarRowChipToDropzone(chip, dropzone);
+}
+
+function cancelCalendarRowChipDrag(event) {
+  if (!calendarRowChipDrag || (event.pointerId != null && event.pointerId !== calendarRowChipDrag.pointerId)) return;
+  calendarRowChipDrag.dropzone?.classList.remove('is-drag-over');
+  calendarRowChipDrag.chip.classList.remove('is-dragging');
+  calendarRowChipDrag.ghost.remove();
+  calendarRowChipDrag = null;
 }
 
 function saveCalendarRowSettings(event) {
   event.preventDefault();
   const next = { ...state.stickerPrefs };
-  els.calendarRowSettingsRows?.querySelectorAll('[data-calendar-row-type]').forEach(row => {
-    const type = row.dataset.calendarRowType;
-    const input = row.querySelector('[data-calendar-row-field="name"]');
-    if (!type || !input) return;
-    const entered = cleanTypeLabel(input.value || '');
-    const fallback = defaultCalendarRowName(type, getTypeLabel(type));
+
+  els.calendarRowSettingsRows?.querySelectorAll('.calendar-row-group[data-calendar-row-group]').forEach(group => {
+    const groupId = group.dataset.calendarRowGroup || '';
+    const customLabel = cleanTypeLabel(group.querySelector('[data-calendar-row-name]')?.value || '');
+    group.querySelectorAll('.calendar-row-chip[data-calendar-row-type]').forEach(chip => {
+      const type = chip.dataset.calendarRowType;
+      if (!type) return;
+      const existing = { ...(next[type] || {}) };
+      existing.calendarGroup = groupId || defaultCalendarGroupId(type);
+      delete existing.calendarRow;
+      delete existing.calendarVisible;
+      if (customLabel) existing.calendarGroupLabel = customLabel;
+      else delete existing.calendarGroupLabel;
+      next[type] = existing;
+    });
+  });
+
+  els.calendarRowSettingsRows?.querySelectorAll('[data-calendar-hidden-group] .calendar-row-chip[data-calendar-row-type]').forEach(chip => {
+    const type = chip.dataset.calendarRowType;
+    if (!type) return;
     const existing = { ...(next[type] || {}) };
-    if (entered && entered !== fallback) existing.calendarRow = entered;
-    else delete existing.calendarRow;
+    existing.calendarGroup = chip.dataset.calendarGroupId || existing.calendarGroup || defaultCalendarGroupId(type);
+    delete existing.calendarRow;
+    existing.calendarVisible = false;
     next[type] = existing;
   });
+
   state.stickerPrefs = next;
   localStorage.setItem(STICKER_PREFS_KEY, JSON.stringify(state.stickerPrefs));
   scheduleCloudSync();
@@ -10922,13 +11328,16 @@ function saveCalendarRowSettings(event) {
 }
 
 function resetCalendarRowSettings() {
-  if (!confirm('Reset calendar rows to their defaults?')) return;
+  if (!confirm('Reset Track rows and show every category?')) return;
   const next = { ...state.stickerPrefs };
   Object.keys(next).forEach(key => {
     if (key.includes('::subcategory::')) return;
     if (!next[key] || typeof next[key] !== 'object') return;
     const copy = { ...next[key] };
     delete copy.calendarRow;
+    delete copy.calendarGroup;
+    delete copy.calendarVisible;
+    delete copy.calendarGroupLabel;
     next[key] = copy;
   });
   state.stickerPrefs = next;
@@ -11228,6 +11637,22 @@ const TMDB_TV_GENRES = {
   18:'Drama', 10751:'Family', 10762:'Kids', 9648:'Mystery', 10763:'News', 10764:'Reality',
   10765:'Sci-Fi & Fantasy', 10766:'Soap', 10767:'Talk', 10768:'War & Politics', 37:'Western'
 };
+
+function parseItemPeople(value) {
+  return [...new Set(String(value || '')
+    .split(',')
+    .map(name => cleanTypeLabel(name))
+    .filter(Boolean))];
+}
+
+function getItemPeople(item) {
+  if (!item || getSourceType(item) === 'book') return [];
+  const direct = Array.isArray(item.people) ? item.people : [];
+  const legacyActivity = getSourceType(item) === 'activity' && Array.isArray(item.activityMeta?.people)
+    ? item.activityMeta.people
+    : [];
+  return [...new Set([...direct, ...legacyActivity].map(name => cleanTypeLabel(name)).filter(Boolean))];
+}
 
 function extractItemGenres(sourceType, source, editing) {
   if (!source && editing?.genres?.length) return [...editing.genres];
@@ -11605,7 +12030,7 @@ function renderLibrary() {
     .filter(item => !(item.calendarQueueOnly === true && item.calendarTracked !== true))
     .filter(item => state.libraryView !== 'recommended' || item.recommended)
     .filter(item => visibleTypes.has(libraryTypeGroupKey(item)))
-    .filter(item => !libraryQuery || normalizeSearchText([item.title, item.subtitle, item.notes, item.subcategory, getItemTypeLabel(item), item.artistName].filter(Boolean).join(' ')).includes(libraryQuery));
+    .filter(item => !libraryQuery || normalizeSearchText([item.title, item.subtitle, item.notes, item.subcategory, getItemTypeLabel(item), item.artistName, ...getItemPeople(item)].filter(Boolean).join(' ')).includes(libraryQuery));
 
   // For Recent, dated/calendar-associated items always come first in descending
   // date order. Undated items are deliberately shuffled at the end instead of

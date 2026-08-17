@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
 
-export default defineConfig(({ command }) => ({
+export default defineConfig({
   envPrefix: ['VITE_', 'EXPO_PUBLIC_'],
-  base: command === 'build' ? '/omni/' : '/',
+  // Relative asset paths keep GitHub Pages working if the repository path changes.
+  base: './',
   build: {
     rollupOptions: {
       input: {
@@ -12,4 +13,4 @@ export default defineConfig(({ command }) => ({
       }
     }
   }
-}));
+});

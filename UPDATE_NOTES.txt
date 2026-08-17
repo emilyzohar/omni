@@ -1,0 +1,41 @@
+OMNI — ARTIST FAVORITES + TRACK APPEARANCE UPDATE
+
+TRACK ROWS
+- Row grouping stays drag/drop (tap a category then a row also works on touch devices).
+- Each visible row now has an optional editable name in its heading.
+- Leave the name blank to use the automatic combined label (for example, TV + Movies).
+- Hidden from Track remains independent of grouping and naming.
+
+ARTIST FAVORITES
+- Artist Library details now load both recent albums and songs.
+- Heart an album or song inside the Artist detail view.
+- Those favorites are stored in `artistFavorites` on the one Artist Library item; they do not create separate Album/Song Library items.
+- Saved favorites stay surfaced even when they fall outside the current recent iTunes lookup window.
+
+APPLE MUSIC
+- Artist, Album, and Song details expose Apple Music/iTunes view links when Apple returns one.
+- Albums and songs listed inside an Artist also have compact Music links.
+
+TRACK CALENDAR COLOUR
+- Track Settings > Stickers now includes calendar colour choices:
+  Dusty blue, Burgundy, Slate, Charcoal, Forest, Espresso.
+- Themes use light grid/text lines with sufficient contrast against the dark calendar backgrounds.
+- Sticker previews use the selected calendar background.
+
+STICKERS
+- Added Burgundy, Sand, Slate, Forest, Olive, Stone, and Charcoal.
+- Palette now has 26 colours total.
+- Sticker foreground/background pairs were checked to meet at least 4.5:1 contrast for sticker text.
+- Stickers also get a light/dark edge treatment so light and dark stickers stay distinct across every calendar theme.
+
+DEPLOYMENT
+- Vite uses relative `base: './'` paths so the build works from the /omni/ GitHub Pages path.
+- `vite.config.js` includes index.html and discover.html as build entries.
+- This package includes package.json, config.js, supabase.js, and vite.config.js along with the app source.
+
+VALIDATION
+- node --check passed for app.js, api.js, config.js, supabase.js, and vite.config.js.
+- No duplicate HTML IDs.
+- CSS braces balanced.
+- All 26 sticker palettes have CSS definitions and passed the foreground/background contrast check.
+- A local npm install/build could not be completed in this environment because package installation timed out; GitHub Actions/local npm with network access should run the production build.

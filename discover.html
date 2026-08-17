@@ -16,13 +16,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-library-activity-recs-1" />
+  <link rel="stylesheet" href="style.css?v=omni-with-people-jitter-1" />
 </head>
 <body class="discover-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
     <div class="auth-card">
       <div class="auth-brand">
-        <span class="auth-mark">OM</span>
+        <span class="auth-mark">CA</span>
         <div>
           <p class="eyebrow">OMNI</p>
           <h1>Your tracker</h1>
@@ -325,16 +325,19 @@
             <input id="activityEndDate" type="date" />
           </label>
         </div>
-        <label class="field">
-          <span>With <em>optional</em></span>
-          <input id="activityPeople" type="text" autocomplete="off" placeholder="Names, separated by commas" />
-        </label>
       </div>
 
       <div id="manualTitleBlock">
         <label class="field">
           <span>Title</span>
           <input id="manualTitle" type="text" placeholder="Title" required />
+        </label>
+      </div>
+
+      <div id="itemPeopleBlock">
+        <label class="field">
+          <span>With people <em>optional</em></span>
+          <input id="itemPeople" type="text" autocomplete="off" placeholder="Names, separated by commas" />
         </label>
       </div>
 
@@ -418,7 +421,7 @@
 
       <input id="itemRecommended" type="checkbox" hidden />
 
-      <label id="itemDateField" class="field">
+      <label class="field">
         <span>Date <em>optional</em></span>
         <input id="itemDate" type="date" />
       </label>
@@ -644,6 +647,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-library-activity-recs-1"></script>
+  <script type="module" src="app.js?v=omni-with-people-jitter-1"></script>
 </body>
 </html>

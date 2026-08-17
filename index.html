@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Caslon+Text:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-rows-visible-1" />
+  <link rel="stylesheet" href="style.css?v=omni-with-people-jitter-1" />
 </head>
 <body class="auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -214,6 +214,10 @@
 
     <section class="track-settings-panel" data-track-settings-panel="stickers">
       <form id="stickerSettingsForm" class="sticker-settings-form">
+        <div class="calendar-theme-setting">
+          <div class="calendar-theme-setting-copy"><strong>Calendar colour</strong><small>Dark palettes keep the grid lines readable.</small></div>
+          <div id="calendarThemePicker" class="calendar-theme-picker" aria-label="Track calendar colour"></div>
+        </div>
         <div class="sticker-settings-head" aria-hidden="true">
           <span>Type</span><span>Calendar name</span><span>Preview</span><span>Shape</span><span>Text</span><span>Color</span>
         </div>
@@ -230,7 +234,10 @@
 
     <section class="track-settings-panel" data-track-settings-panel="rows" hidden>
       <form id="calendarRowSettingsForm" class="calendar-row-settings-form">
-        <p class="calendar-row-settings-hint">Give types the same row name to combine them on one Track calendar row.</p>
+        <div class="calendar-row-settings-toolbar">
+          <p class="calendar-row-settings-hint">Drag categories together to group them. Row names are automatic, or type your own name in the row heading.</p>
+          <button id="addCalendarRow" class="calendar-row-add-button" type="button">+ Row</button>
+        </div>
         <div id="calendarRowSettingsRows" class="calendar-row-settings-rows"></div>
         <div class="modal-actions">
           <button id="resetCalendarRowSettings" class="quiet-button" type="button">Reset</button>
@@ -371,16 +378,19 @@
             <input id="activityEndDate" type="date" />
           </label>
         </div>
-        <label class="field">
-          <span>With <em>optional</em></span>
-          <input id="activityPeople" type="text" autocomplete="off" placeholder="Names, separated by commas" />
-        </label>
       </div>
 
       <div id="manualTitleBlock">
         <label class="field">
           <span>Title</span>
           <input id="manualTitle" type="text" placeholder="Title" required />
+        </label>
+      </div>
+
+      <div id="itemPeopleBlock">
+        <label class="field">
+          <span>With people <em>optional</em></span>
+          <input id="itemPeople" type="text" autocomplete="off" placeholder="Names, separated by commas" />
         </label>
       </div>
 
@@ -631,6 +641,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-rows-visible-1"></script>
+  <script type="module" src="app.js?v=omni-with-people-jitter-1"></script>
 </body>
 </html>
