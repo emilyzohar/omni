@@ -6,6 +6,7 @@ export const TrackerAPI = (() => {
   const ITUNES_ROOT = 'https://itunes.apple.com';
   const LASTFM_ROOT = 'https://ws.audioscrobbler.com/2.0/';
   const TICKETMASTER_ROOT = 'https://app.ticketmaster.com/discovery/v2';
+  const IGDB_IMAGE_ROOT = 'https://images.igdb.com/igdb/image/upload';
 
   function required(value, label) {
     if (!value) throw new Error(`${label} is missing from .env.`);
@@ -1098,10 +1099,143 @@ export const TrackerAPI = (() => {
     return getPlaceDetails(placeId, settings, 'restaurant');
   }
 
+  function gameCatalogueProxyUrl(settings) {
+    return required(settings.gameCatalogueProxyUrl, 'Game catalogue proxy URL');
+  }
+
+  async function gameCatalogueProxy(settings, payload) {
+    const url = gameCatalogueProxyUrl(settings);
+    return fetchJson(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload || {})
+    });
+  }
+
+  function igdbCoverUrl(imageId, size = 't_cover_big') {
+    const id = String(imageId || '').trim();
+    return id ? `${IGDB_IMAGE_ROOT}/${size}/${id}.jpg` : '';
+  }
+
+  function timestampDate(value) {
+    const seconds = Number(value || 0);
+    if (!Number.isFinite(seconds) || seconds <= 0) return '';
+    return new Date(seconds * 1000).toISOString().slice(0, 10);
+  }
+
+  function mapIGDBGame(result = {}) {
+    const releaseDate = timestampDate(result.first_release_date);
+    const platforms = (result.platforms || []).map(entry => entry?.name).filter(Boolean);
+    const genres = (result.genres || []).map(entry => entry?.name).filter(Boolean);
+    const year = releaseDate.slice(0, 4);
+    return {
+      sourceType: 'video-game',
+      provider: 'igdb',
+      providerId: String(result.id || ''),
+      title: result.name || 'Untitled game',
+      subtitle: [year, platforms.slice(0, 3).join(', ')].filter(Boolean).join(' · '),
+      image: igdbCoverUrl(result.cover?.image_id),
+      description: result.summary || result.storyline || '',
+      genres,
+      releaseDate,
+      platforms,
+      catalogueRating: Number(result.total_rating || result.rating || 0),
+      catalogueUrl: result.url || '',
+      gameKind: 'video-game',
+      raw: result
+    };
+  }
+
+  async function searchVideoGames(query, settings, limit = 20) {
+    const data = await gameCatalogueProxy(settings, { provider: 'igdb', action: 'search', query, limit });
+    return (data.results || []).map(mapIGDBGame).filter(result => result.providerId);
+  }
+
+  async function getVideoGameDetails(id, settings) {
+    const data = await gameCatalogueProxy(settings, { provider: 'igdb', action: 'details', id: String(id || '') });
+    const result = data.result || data.results?.[0] || null;
+    return result ? mapIGDBGame(result) : null;
+  }
+
+  function parseXml(xml) {
+    const doc = new DOMParser().parseFromString(String(xml || ''), 'application/xml');
+    const parseError = doc.querySelector('parsererror');
+    if (parseError) throw new Error('BoardGameGeek returned invalid XML.');
+    return doc;
+  }
+
+  function xmlValue(node, selector, attr = 'value') {
+    const found = node?.querySelector?.(selector);
+    return found?.getAttribute?.(attr) || found?.textContent || '';
+  }
+
+  function mapBGGSearchItem(item) {
+    const id = String(item?.getAttribute?.('id') || '');
+    const title = xmlValue(item, 'name[type="primary"]') || xmlValue(item, 'name');
+    const year = xmlValue(item, 'yearpublished');
+    return {
+      sourceType: 'board-game',
+      provider: 'bgg',
+      providerId: id,
+      title: title || 'Untitled board game',
+      subtitle: year || 'Board Game',
+      image: '',
+      description: '',
+      genres: [],
+      releaseDate: /^\d{4}$/.test(year) ? `${year}-01-01` : '',
+      gameKind: 'board-game',
+      catalogueUrl: id ? `https://boardgamegeek.com/boardgame/${encodeURIComponent(id)}` : '',
+      raw: { id, yearpublished: year }
+    };
+  }
+
+  function mapBGGThing(item) {
+    const base = mapBGGSearchItem(item);
+    const minPlayers = Number(xmlValue(item, 'minplayers') || 0);
+    const maxPlayers = Number(xmlValue(item, 'maxplayers') || 0);
+    const playTime = Number(xmlValue(item, 'playingtime') || 0);
+    const categories = [...item.querySelectorAll('link[type="boardgamecategory"]')].map(link => link.getAttribute('value')).filter(Boolean);
+    const mechanics = [...item.querySelectorAll('link[type="boardgamemechanic"]')].map(link => link.getAttribute('value')).filter(Boolean);
+    const designers = [...item.querySelectorAll('link[type="boardgamedesigner"]')].map(link => link.getAttribute('value')).filter(Boolean);
+    const playerText = minPlayers && maxPlayers
+      ? (minPlayers === maxPlayers ? `${minPlayers} player${minPlayers === 1 ? '' : 's'}` : `${minPlayers}–${maxPlayers} players`)
+      : '';
+    const year = base.releaseDate.slice(0, 4);
+    return {
+      ...base,
+      subtitle: [year, playerText, playTime ? `${playTime} min` : ''].filter(Boolean).join(' · '),
+      image: xmlValue(item, 'image') || xmlValue(item, 'thumbnail') || '',
+      description: xmlValue(item, 'description'),
+      genres: categories,
+      designers,
+      mechanics,
+      minPlayers,
+      maxPlayers,
+      playTime,
+      catalogueRating: Number(xmlValue(item, 'statistics ratings average') || 0),
+      raw: { ...base.raw, categories, mechanics, designers, minPlayers, maxPlayers, playTime }
+    };
+  }
+
+  async function searchBoardGames(query, settings, limit = 20) {
+    const data = await gameCatalogueProxy(settings, { provider: 'bgg', action: 'search', query, limit });
+    const doc = parseXml(data.xml || '');
+    return [...doc.querySelectorAll('items > item')].slice(0, Math.max(1, Number(limit) || 20)).map(mapBGGSearchItem).filter(result => result.providerId);
+  }
+
+  async function getBoardGameDetails(id, settings) {
+    const data = await gameCatalogueProxy(settings, { provider: 'bgg', action: 'details', id: String(id || '') });
+    const doc = parseXml(data.xml || '');
+    const item = doc.querySelector('items > item');
+    return item ? mapBGGThing(item) : null;
+  }
+
   async function searchCatalogue(query, type, settings, options = {}) {
     if (!query.trim()) return [];
     if (type === 'tv' || type === 'movie') return searchTMDB(query, type, settings);
     if (type === 'book') return searchBooks(query, settings);
+    if (type === 'video-game') return searchVideoGames(query, settings, options.maxResults || 20);
+    if (type === 'board-game') return searchBoardGames(query, settings, options.maxResults || 20);
     if (type === 'music') return searchMusic(query, settings);
     if (type === 'artist') return searchArtists(query, settings);
     if (type === 'song') return searchSongs(query, settings);
@@ -1127,6 +1261,10 @@ export const TrackerAPI = (() => {
     tmdbImage,
     searchBooks,
     getBookDetails,
+    searchVideoGames,
+    getVideoGameDetails,
+    searchBoardGames,
+    getBoardGameDetails,
     searchMusic,
     searchArtists,
     searchSongs,

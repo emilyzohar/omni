@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-library-stats-30';
-import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
+import { TrackerAPI } from './api.js?v=omni-games-31';
+import { API_CONFIG } from './config.js?v=omni-games-12';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -28,6 +28,7 @@ const TYPE_LABELS = {
   tv: 'TV',
   book: 'Books',
   movie: 'Movies',
+  game: 'Games',
   music: 'Music',
   food: 'Food',
   event: 'Events',
@@ -42,6 +43,9 @@ const SOURCE_ITEM_LABELS = {
   tv: 'TV',
   movie: 'Movie',
   book: 'Book',
+  'video-game': 'Video Game',
+  'board-game': 'Board Game',
+  game: 'Game',
   music: 'Music',
   artist: 'Artist',
   song: 'Song',
@@ -56,7 +60,7 @@ const SOURCE_ITEM_LABELS = {
   recipe: 'Recipe'
 };
 
-const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class', 'food', 'restaurant', 'recipe', 'shopping', 'other']);
+const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'game', 'video-game', 'board-game', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class', 'food', 'restaurant', 'recipe', 'shopping', 'other']);
 const STICKER_COLORS = ['rust', 'burgundy', 'red', 'coral', 'orange', 'yellow', 'cream', 'sand', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'slate', 'teal', 'green', 'forest', 'mint', 'olive', 'stone', 'brown', 'charcoal', 'black', 'white'];
 const CALENDAR_THEMES = [
   { id: 'blue', label: 'Dusty blue' },
@@ -226,6 +230,7 @@ console.log('[Config] API availability', {
   googlePlacesKeyWasNormalized: Boolean(API_CONFIG.googlePlacesKeyWasNormalized),
   tmdbConfigured: Boolean(API_CONFIG.tmdbToken),
   googleBooksConfigured: Boolean(API_CONFIG.googleBooksKey),
+  gameCatalogueProxyConfigured: Boolean(API_CONFIG.gameCatalogueProxyUrl),
   note: 'API keys are intentionally not logged'
 });
 if (!API_CONFIG.lastfmApiKey) {
@@ -1147,7 +1152,7 @@ function migrateSavedMusicClassification() {
 }
 
 const CANONICAL_LIBRARY_ENTITY_TYPES = new Set([
-  'tv','movie','book','youtube','music','artist','song','concert','event','restaurant','place','recipe','food','shopping'
+  'tv','movie','book','video-game','board-game','youtube','music','artist','song','concert','event','restaurant','place','recipe','food','shopping'
 ]);
 
 function canonicalLibraryIdentity(value) {
@@ -4811,7 +4816,7 @@ async function trackLibraryItem(item, button = null) {
   }
 }
 
-const RELEASE_QUEUE_SOURCE_TYPES = new Set(['tv', 'movie', 'book']);
+const RELEASE_QUEUE_SOURCE_TYPES = new Set(['tv', 'movie', 'book', 'video-game']);
 
 function normalizedReleaseDate(value) {
   const date = String(value || '').trim().slice(0, 10);
@@ -4971,6 +4976,7 @@ async function moveItemToQueue(item, status) {
     else if (sourceType === 'youtube') { if (isYouTubePlaylistItem(item)) await renderWorkoutDetails(item); else await renderStandaloneYouTubeDetails(item); }
     else if (sourceType === 'book') await renderBookDetails(item);
     else if (sourceType === 'movie') await renderMovieDetails(item);
+    else if (['video-game','board-game'].includes(sourceType)) await renderGameDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
     else if (sourceType === 'artist') await renderArtistDetails(item);
     else if (sourceType === 'song') await renderSongDetails(item);
@@ -4991,6 +4997,13 @@ function queueMoveControls(item) {
     return `<div class="queue-toggle-buttons" aria-label="Library placement">
       <button class="secondary-button queue-toggle-button${current === 'library' ? ' is-selected' : ''}" type="button" data-move-queue="library" data-item-id="${item.id}" aria-pressed="${current === 'library'}">Track</button>
       <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-move-queue="tbr" data-item-id="${item.id}" aria-pressed="${current === 'tbr'}">TBR</button>
+    </div>`;
+  }
+
+  if (['video-game','board-game'].includes(sourceType)) {
+    return `<div class="queue-toggle-buttons library-status-actions" aria-label="Status">
+      <button class="secondary-button queue-toggle-button${current === 'upnext' ? ' is-selected' : ''}" type="button" data-move-queue="upnext" data-item-id="${escapeAttr(item.id)}" aria-pressed="${current === 'upnext'}">Track</button>
+      <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-move-queue="tbr" data-item-id="${escapeAttr(item.id)}" aria-pressed="${current === 'tbr'}">TBR</button>
     </div>`;
   }
 
@@ -5153,7 +5166,7 @@ async function toggleSpecificYouTubeVideo(item, videoId) {
 // ADD / EDIT
 // ---------------------------
 const BASE_ITEM_TYPE_OPTIONS = [
-  ['tv','TV'], ['movie','Movie'], ['book','Book'], ['music','Music'], ['food','Food'],
+  ['tv','TV'], ['movie','Movie'], ['book','Book'], ['game','Games'], ['music','Music'], ['food','Food'],
   ['event','Event'], ['activity','Activity'], ['class','Class'], ['shopping','Shopping'], ['youtube','YouTube'], ['workout','Workouts'], ['reminder','Reminder'], ['other','New type']
 ];
 
@@ -5174,6 +5187,10 @@ const ADD_ACTION_KIND_OPTIONS = Object.freeze({
   ],
   read: [
     { value: 'book', label: 'Book', parent: 'book' }
+  ],
+  played: [
+    { value: 'video-game', label: 'Video game', parent: 'game', subtype: 'video-game' },
+    { value: 'board-game', label: 'Board game', parent: 'game', subtype: 'board-game' }
   ],
   went: [
     { value: 'restaurant', label: 'Restaurant', parent: 'food', subtype: 'restaurant' },
@@ -5207,7 +5224,7 @@ function addKindUsageValue(option) {
   return option.parent || option.value || '';
 }
 
-const ADD_ACTION_CATEGORIES = Object.freeze(['watched','read','went','completed','other']);
+const ADD_ACTION_CATEGORIES = Object.freeze(['watched','read','played','went','completed','other']);
 
 function normalizeAddActionCategory(value, fallback = 'other') {
   const clean = String(value || '').trim().toLowerCase();
@@ -5238,6 +5255,7 @@ function inferCustomTypeActionCategory(entry) {
     const findSource = String(item?.featureConfig?.findSource || '');
     if (['tv','movie','youtube'].includes(source) || /tmdb|youtube/.test(findSource)) return 'watched';
     if (source === 'book' || findSource === 'google-books') return 'read';
+    if (['video-game','board-game'].includes(source) || /igdb|boardgamegeek|bgg/.test(findSource)) return 'played';
     if (['restaurant','place','shopping','event','concert'].includes(source) || /google-places|ticketmaster/.test(findSource)) return 'went';
     if (source === 'workout') return 'completed';
   }
@@ -5278,6 +5296,7 @@ function kindForCurrentForm(item = null) {
   if (raw.startsWith('custom:')) return raw;
   const parent = formParentType();
   const subtype = els.itemSubtype?.value || formSubtypeForItem(getSourceType(item), item);
+  if (parent === 'game' && ['video-game','board-game'].includes(subtype)) return subtype;
   if (parent === 'food' && subtype === 'restaurant') return 'restaurant';
   if (parent === 'food' && subtype === 'recipe') return 'recipe';
   if (parent === 'music' && ['artist','song','concert'].includes(subtype)) return subtype;
@@ -5330,7 +5349,7 @@ function syncAddActionControls(item = null) {
   if (!els.itemActionChoice || !els.itemKindChoice) return;
   const kind = kindForCurrentForm(item);
   const storedAction = String(item?.actionCategory || '');
-  const action = ['watched','read','went','completed','other'].includes(storedAction) ? storedAction : addActionForKind(kind);
+  const action = ['watched','read','played','went','completed','other'].includes(storedAction) ? storedAction : addActionForKind(kind);
   els.itemActionChoice.value = action;
   refreshItemKindChoices(kind, action);
 }
@@ -5603,6 +5622,10 @@ function resetItemForm(defaultQueueStatus = 'library') {
 }
 
 const FORM_SUBTYPE_OPTIONS = {
+  game: [
+    { value: 'video-game', label: 'Video Game' },
+    { value: 'board-game', label: 'Board Game' }
+  ],
   music: [
     { value: 'manual', label: 'Manual' },
     { value: 'album', label: 'Album' },
@@ -5618,6 +5641,7 @@ const FORM_SUBTYPE_OPTIONS = {
 };
 
 function formSubtypeForItem(sourceType, item = null) {
+  if (sourceType === 'video-game' || sourceType === 'board-game') return sourceType;
   if (sourceType === 'artist' || sourceType === 'song' || sourceType === 'concert' || sourceType === 'restaurant' || sourceType === 'recipe') return sourceType;
   if (sourceType === 'music') {
     if (item?.provider === 'itunes' || cleanTypeLabel(item?.subcategory || '') === 'Album') return 'album';
@@ -5642,15 +5666,18 @@ function configureItemSubtype(reset = false, sourceTypeHint = '', item = null) {
   const previous = reset ? '' : els.itemSubtype.value;
   els.itemSubtype.innerHTML = options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
   const hinted = formSubtypeForItem(sourceTypeHint, item);
-  const preferred = hinted || (options.some(option => option.value === previous) ? previous : 'manual');
-  els.itemSubtype.value = options.some(option => option.value === preferred) ? preferred : 'manual';
-  if (els.itemSubtypeLabel) els.itemSubtypeLabel.textContent = parent === 'music' ? 'Music type' : 'Food type';
+  const fallback = options.some(option => option.value === 'manual') ? 'manual' : (options[0]?.value || '');
+  const preferred = hinted || (options.some(option => option.value === previous) ? previous : fallback);
+  els.itemSubtype.value = options.some(option => option.value === preferred) ? preferred : fallback;
+  if (els.itemSubtypeLabel) els.itemSubtypeLabel.textContent = parent === 'music' ? 'Music type' : parent === 'game' ? 'Game type' : 'Food type';
 }
 
 const FIND_SOURCE_CONFIG = Object.freeze({
   'tmdb-tv': { sourceType: 'tv', label: 'TV' },
   'tmdb-movie': { sourceType: 'movie', label: 'Movies' },
   'google-books': { sourceType: 'book', label: 'Books' },
+  'igdb-games': { sourceType: 'video-game', label: 'Video games · IGDB' },
+  'bgg-games': { sourceType: 'board-game', label: 'Board games · BoardGameGeek' },
   'apple-albums': { sourceType: 'music', label: 'Albums' },
   'lastfm-artists': { sourceType: 'artist', label: 'Artists' },
   'apple-songs': { sourceType: 'song', label: 'Songs' },
@@ -5664,6 +5691,7 @@ const FIND_SOURCE_CONFIG = Object.freeze({
 function automaticFormSourceType() {
   const parent = formParentType();
   if (parent === 'shopping') return 'place';
+  if (parent === 'game') return els.itemSubtype?.value === 'board-game' ? 'board-game' : 'video-game';
   if (parent === 'workout') return 'workout';
   if (parent === 'music') {
     const subtype = els.itemSubtype?.value || 'manual';
@@ -5680,7 +5708,7 @@ function automaticFormSourceType() {
 
 function defaultFindSourceForType(sourceType = automaticFormSourceType()) {
   return ({
-    tv: 'tmdb-tv', movie: 'tmdb-movie', book: 'google-books', music: 'apple-albums',
+    tv: 'tmdb-tv', movie: 'tmdb-movie', book: 'google-books', 'video-game': 'igdb-games', 'board-game': 'bgg-games', music: 'apple-albums',
     artist: 'lastfm-artists', song: 'apple-songs', concert: 'ticketmaster-concerts',
     event: 'ticketmaster-events', restaurant: 'google-places', place: 'google-places', shopping: 'google-places', youtube: 'youtube-videos'
   })[sourceType] || 'manual';
@@ -5739,7 +5767,8 @@ function setItemFormSourceType(sourceType, item = null) {
     els.itemSourceType.value = `custom:${item.type}`;
   } else if (item?.type && BASE_ITEM_TYPE_OPTIONS.some(([value]) => value === item.type)) {
     els.itemSourceType.value = item.type;
-  } else if (['music','artist','song','concert'].includes(sourceType)) els.itemSourceType.value = 'music';
+  } else if (['video-game','board-game'].includes(sourceType)) els.itemSourceType.value = 'game';
+  else if (['music','artist','song','concert'].includes(sourceType)) els.itemSourceType.value = 'music';
   else if (['food','restaurant','recipe'].includes(sourceType)) els.itemSourceType.value = 'food';
   else if (sourceType === 'place') els.itemSourceType.value = 'shopping';
   else if (BASE_ITEM_TYPE_OPTIONS.some(([value]) => value === sourceType)) els.itemSourceType.value = sourceType;
@@ -5913,7 +5942,7 @@ function updateItemFormForType() {
   syncFlexibleEpisodeProgressFields(sourceType, progressMode);
   els.bookProgressFields.hidden = progressMode !== 'book';
   if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder || isActivity;
-  if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = !['tv','movie','book','music','artist','song'].includes(sourceType);
+  if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = !['tv','movie','book','video-game','board-game','music','artist','song'].includes(sourceType);
   if (progressMode === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
     els.bookStartDate.value = todayString();
   }
@@ -5931,9 +5960,11 @@ function updateItemFormForType() {
     if (sourceType === 'restaurant' && els.itemQueueStatus.value === 'upnext') els.itemQueueStatus.value = 'library';
   }
 
-  const fixedSubcategory = musicAlbum
-    ? 'Album'
-    : musicSubcategoryForSourceType(sourceType) || foodSubcategoryForSourceType(sourceType) || '';
+  const fixedSubcategory = parentType === 'game'
+    ? (sourceType === 'board-game' ? 'Board Game' : 'Video Game')
+    : musicAlbum
+      ? 'Album'
+      : musicSubcategoryForSourceType(sourceType) || foodSubcategoryForSourceType(sourceType) || '';
   if (els.itemSubcategory) {
     if (fixedSubcategory) {
       els.itemSubcategory.value = fixedSubcategory;
@@ -5979,7 +6010,7 @@ function updateItemFormForType() {
 
   updateReminderFormFields();
 
-  const placeholders = { tv: 'Search TV', movie: 'Search movies', book: 'Search books', music: 'Search albums', artist: 'Search artists', song: 'Search songs', concert: 'Search concerts', event: 'Search events', restaurant: 'Search restaurants', place: 'Search places', youtube: 'Search YouTube' };
+  const placeholders = { tv: 'Search TV', movie: 'Search movies', book: 'Search books', 'video-game': 'Search video games', 'board-game': 'Search board games', music: 'Search albums', artist: 'Search artists', song: 'Search songs', concert: 'Search concerts', event: 'Search events', restaurant: 'Search restaurants', place: 'Search places', youtube: 'Search YouTube' };
   els.catalogueQuery.placeholder = isCatalogue ? (placeholders[sourceType] || 'Search') : 'Manual';
   syncItemFeatureSummary();
   syncItemFindSourceSummary();
@@ -6045,6 +6076,8 @@ async function searchCatalogue() {
     if (sourceKey === 'tmdb-tv') results = await TrackerAPI.searchCatalogue(query, 'tv', state.settings);
     else if (sourceKey === 'tmdb-movie') results = await TrackerAPI.searchCatalogue(query, 'movie', state.settings);
     else if (sourceKey === 'google-books') results = await TrackerAPI.searchCatalogue(query, 'book', state.settings);
+    else if (sourceKey === 'igdb-games') results = await TrackerAPI.searchCatalogue(query, 'video-game', state.settings, { maxResults: 20 });
+    else if (sourceKey === 'bgg-games') results = await TrackerAPI.searchCatalogue(query, 'board-game', state.settings, { maxResults: 20 });
     else if (sourceKey === 'apple-albums') results = await TrackerAPI.searchCatalogue(query, 'music', state.settings);
     else if (sourceKey === 'lastfm-artists') {
       try {
@@ -6098,6 +6131,7 @@ function renderSearchResults(results) {
         <div class="search-result-title">${escapeHtml(result.title)}</div>
         <div class="search-result-meta">${escapeHtml([
           result.eventDate && result.eventDate < todayString() ? 'Past' : '',
+          result.gameKind === 'video-game' ? 'Video Game' : result.gameKind === 'board-game' ? 'Board Game' : '',
           result.subtitle || ''
         ].filter(Boolean).join(' · '))}</div>
       </div>`;
@@ -6114,7 +6148,15 @@ function renderSearchResults(results) {
   els.searchResults.hidden = false;
 }
 
-function selectCatalogueResult(result) {
+async function selectCatalogueResult(result) {
+  if (result?.provider === 'bgg' && result?.providerId && !result.description) {
+    try {
+      const detailed = await TrackerAPI.getBoardGameDetails(result.providerId, state.settings);
+      if (detailed) result = { ...result, ...detailed };
+    } catch (error) {
+      console.warn('[Games][BGG] details unavailable during selection:', error?.message || error);
+    }
+  }
   const formSourceType = selectedFormSourceType();
   const existingMatch = findCanonicalLibraryItem({ ...result, sourceType: formSourceType }, els.editingId?.value || '');
   if (existingMatch) {
@@ -6146,7 +6188,7 @@ function selectCatalogueResult(result) {
   if (['event', 'concert'].includes(formSourceType) && result.eventDate && els.itemDate) {
     els.itemDate.value = result.eventDate;
   }
-  if (els.itemReleaseDate && ['tv','movie','book','music','artist','song'].includes(formSourceType)) {
+  if (els.itemReleaseDate && ['tv','movie','book','video-game','board-game','music','artist','song'].includes(formSourceType)) {
     const releaseDate = normalizedReleaseDate(extractItemReleaseDate(formSourceType, result, null));
     if (releaseDate) els.itemReleaseDate.value = releaseDate;
   }
@@ -6448,6 +6490,10 @@ async function saveItemFromForm(event) {
     // If the user changes I… while editing a custom Type, remember the new home
     // category so that Type appears under the same choice next time.
     registerCustomType(type, typeLabel, selectedActionCategory);
+  } else if (displayParent === 'game') {
+    type = 'game';
+    typeLabel = 'Games';
+    fixedSubcategory = sourceType === 'board-game' ? 'Board Game' : 'Video Game';
   } else if (displayParent === 'music') {
     type = 'music';
     typeLabel = 'Music';
@@ -6530,22 +6576,26 @@ async function saveItemFromForm(event) {
     ? true
     : sourceType === 'book'
       ? provider === 'googleBooks'
-      : sourceType === 'music'
-        ? ['itunes', 'manual'].includes(provider)
-        : ['artist', 'song'].includes(sourceType)
-          ? ['itunes', 'lastfm'].includes(provider)
-          : sourceType === 'concert'
-            ? ['ticketmaster', 'manual'].includes(provider)
-            : ['restaurant','place'].includes(sourceType)
-              ? provider === 'googlePlaces'
-              : sourceType === 'event'
-                ? provider === 'ticketmaster'
-                : ['tv', 'movie'].includes(sourceType)
-                  ? provider === 'tmdb'
-                  : sourceType === 'youtube'
-                    ? provider === 'youtube'
-                    : true;
-  const requiresCatalogueSelection = !manualLookup && ['tv','book','movie','artist','song','event','restaurant','place','youtube'].includes(sourceType);
+      : sourceType === 'video-game'
+        ? provider === 'igdb'
+        : sourceType === 'board-game'
+          ? provider === 'bgg'
+          : sourceType === 'music'
+            ? ['itunes', 'manual'].includes(provider)
+            : ['artist', 'song'].includes(sourceType)
+              ? ['itunes', 'lastfm'].includes(provider)
+              : sourceType === 'concert'
+                ? ['ticketmaster', 'manual'].includes(provider)
+                : ['restaurant','place'].includes(sourceType)
+                  ? provider === 'googlePlaces'
+                  : sourceType === 'event'
+                    ? provider === 'ticketmaster'
+                    : ['tv', 'movie'].includes(sourceType)
+                      ? provider === 'tmdb'
+                      : sourceType === 'youtube'
+                        ? provider === 'youtube'
+                        : true;
+  const requiresCatalogueSelection = !manualLookup && ['tv','book','movie','video-game','board-game','artist','song','event','restaurant','place','youtube'].includes(sourceType);
   if ((requiresCatalogueSelection && !providerId) || !validProvider) {
     showFormMessage('Choose a Find it result first, or switch Find it to Manual.', true);
     return;
@@ -6625,7 +6675,7 @@ async function saveItemFromForm(event) {
     people,
     recommended: Boolean(els.itemRecommended?.checked),
     genres: extractItemGenres(sourceType, state.selectedSource, editing),
-    releaseDate: ['tv','movie','book','music','artist','song'].includes(sourceType)
+    releaseDate: ['tv','movie','book','video-game','board-game','music','artist','song'].includes(sourceType)
       ? (normalizedReleaseDate(els.itemReleaseDate?.value) || normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)))
       : normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)),
     attachments: attachmentFiles,
@@ -6646,6 +6696,21 @@ async function saveItemFromForm(event) {
     updatedAt: new Date().toISOString(),
     completedAt: editing?.completedAt || '',
     progress: { ...(editing?.progress || {}) },
+    ...(['video-game','board-game'].includes(sourceType) ? {
+      gameMeta: {
+        ...(editing?.gameMeta || {}),
+        kind: sourceType,
+        description: state.selectedSource?.description || editing?.gameMeta?.description || '',
+        platforms: state.selectedSource?.platforms || editing?.gameMeta?.platforms || [],
+        designers: state.selectedSource?.designers || editing?.gameMeta?.designers || [],
+        mechanics: state.selectedSource?.mechanics || editing?.gameMeta?.mechanics || [],
+        minPlayers: Number(state.selectedSource?.minPlayers || editing?.gameMeta?.minPlayers || 0),
+        maxPlayers: Number(state.selectedSource?.maxPlayers || editing?.gameMeta?.maxPlayers || 0),
+        playTime: Number(state.selectedSource?.playTime || editing?.gameMeta?.playTime || 0),
+        catalogueRating: Number(state.selectedSource?.catalogueRating || editing?.gameMeta?.catalogueRating || 0),
+        catalogueUrl: state.selectedSource?.catalogueUrl || editing?.gameMeta?.catalogueUrl || ''
+      }
+    } : {}),
     ...(sourceType === 'tv' ? {
       watchDisposition: editing?.watchDisposition || ((els.itemQueueStatus.value || 'library') === 'tbr' ? 'watch-later' : 'following'),
       tvMeta: { ...(editing?.tvMeta || {}) }
@@ -7121,6 +7186,7 @@ async function openDetails(id) {
     else if (sourceType === 'youtube') { if (isYouTubePlaylistItem(item)) await renderWorkoutDetails(item); else await renderStandaloneYouTubeDetails(item); }
     else if (sourceType === 'book') await renderBookDetails(item);
     else if (sourceType === 'movie') await renderMovieDetails(item);
+    else if (['video-game','board-game'].includes(sourceType)) await renderGameDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
     else if (sourceType === 'artist') await renderArtistDetails(item);
     else if (sourceType === 'song') await renderSongDetails(item);
@@ -7389,6 +7455,68 @@ async function renderMovieDetails(item) {
   `;
 }
 
+
+async function renderGameDetails(item) {
+  const sourceType = getSourceType(item);
+  let catalogue = null;
+  if (item.providerId && state.settings.gameCatalogueProxyUrl) {
+    try {
+      catalogue = sourceType === 'video-game'
+        ? await getCached(`game:igdb:${item.providerId}`, () => TrackerAPI.getVideoGameDetails(item.providerId, state.settings))
+        : await getCached(`game:bgg:${item.providerId}`, () => TrackerAPI.getBoardGameDetails(item.providerId, state.settings));
+    } catch (error) {
+      console.warn('[Games] catalogue details unavailable:', error?.message || error);
+    }
+  }
+
+  if (catalogue) {
+    let changed = false;
+    if (catalogue.image && catalogue.image !== item.image) { item.image = catalogue.image; changed = true; }
+    if (catalogue.subtitle && catalogue.subtitle !== item.subtitle) { item.subtitle = catalogue.subtitle; changed = true; }
+    if (catalogue.releaseDate && catalogue.releaseDate !== item.releaseDate) { item.releaseDate = catalogue.releaseDate; changed = true; }
+    if (catalogue.genres?.length && JSON.stringify(catalogue.genres) !== JSON.stringify(item.genres || [])) { item.genres = [...catalogue.genres]; changed = true; }
+    const nextMeta = {
+      ...(item.gameMeta || {}),
+      kind: sourceType,
+      description: catalogue.description || item.gameMeta?.description || '',
+      platforms: catalogue.platforms || item.gameMeta?.platforms || [],
+      designers: catalogue.designers || item.gameMeta?.designers || [],
+      mechanics: catalogue.mechanics || item.gameMeta?.mechanics || [],
+      minPlayers: Number(catalogue.minPlayers || item.gameMeta?.minPlayers || 0),
+      maxPlayers: Number(catalogue.maxPlayers || item.gameMeta?.maxPlayers || 0),
+      playTime: Number(catalogue.playTime || item.gameMeta?.playTime || 0),
+      catalogueRating: Number(catalogue.catalogueRating || item.gameMeta?.catalogueRating || 0),
+      catalogueUrl: catalogue.catalogueUrl || item.gameMeta?.catalogueUrl || ''
+    };
+    if (JSON.stringify(nextMeta) !== JSON.stringify(item.gameMeta || {})) { item.gameMeta = nextMeta; changed = true; }
+    if (changed) saveItems();
+  }
+
+  const meta = item.gameMeta || {};
+  const year = String(item.releaseDate || '').slice(0, 4);
+  const players = meta.minPlayers && meta.maxPlayers
+    ? (meta.minPlayers === meta.maxPlayers ? `${meta.minPlayers} player${meta.minPlayers === 1 ? '' : 's'}` : `${meta.minPlayers}–${meta.maxPlayers} players`)
+    : '';
+  const subtitle = sourceType === 'video-game'
+    ? [year, ...(meta.platforms || []).slice(0, 4)].filter(Boolean).join(' · ')
+    : [year, players, meta.playTime ? `${meta.playTime} min` : ''].filter(Boolean).join(' · ');
+  const fallbackUrl = sourceType === 'video-game'
+    ? (item.providerId ? `https://www.igdb.com/games/${encodeURIComponent(String(item.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''))}` : '')
+    : (item.providerId ? `https://boardgamegeek.com/boardgame/${encodeURIComponent(item.providerId)}` : '');
+  const catalogueUrl = meta.catalogueUrl || fallbackUrl;
+  const sourceLabel = sourceType === 'video-game' ? 'IGDB' : 'BoardGameGeek';
+  els.detailBody.innerHTML = `
+    ${libraryDetailHero({
+      type: sourceType === 'video-game' ? 'VIDEO GAME' : 'BOARD GAME',
+      title: item.title,
+      image: displayImageForItem(item),
+      subtitle: subtitle || item.subtitle || '',
+      overview: meta.description || ''
+    })}
+    ${libraryDetailActions(item, {
+      leading: catalogueUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(catalogueUrl)}" target="_blank" rel="noopener">${escapeHtml(sourceLabel)} ↗</a>` : ''
+    })}`;
+}
 
 async function renderEventDetails(item) {
   let event = null;
@@ -9009,6 +9137,7 @@ function getDefaultStickerConfig(type, entry = {}) {
   if (type === 'tv') return { shape: 'square', label: 'TV', color: 'rust', tilt: 'left' };
   if (type === 'book') return { shape: 'square', label: 'B', color: 'yellow', tilt: 'right' };
   if (type === 'movie') return { shape: 'circle', label: '', color: 'cream', tilt: 'none' };
+  if (type === 'game') return { shape: 'square', label: 'G', color: 'blue', tilt: 'left' };
   if (type === 'music') return { shape: 'star', label: '★', color: 'lavender', tilt: 'left' };
   if (sourceType === 'youtube') return { shape: 'star', label: '★', color: 'yellow', tilt: 'right' };
 
@@ -14479,6 +14608,10 @@ function extractItemGenres(sourceType, source, editing) {
     const categories = source?.categories || source?.raw?.volumeInfo?.categories || editing?.genres || [];
     return [...new Set(categories.map(value => String(value || '').trim()).filter(Boolean))];
   }
+  if (['video-game','board-game'].includes(sourceType)) {
+    const direct = source?.genres || editing?.genres || [];
+    return [...new Set(direct.map(value => typeof value === 'string' ? value : value?.name).map(value => String(value || '').trim()).filter(Boolean))];
+  }
   if (sourceType === 'tv' || sourceType === 'movie') {
     const direct = source?.genres?.map?.(genre => typeof genre === 'string' ? genre : genre?.name).filter(Boolean) || [];
     if (direct.length) return [...new Set(direct)];
@@ -14501,6 +14634,7 @@ function extractItemGenres(sourceType, source, editing) {
 function extractItemReleaseDate(sourceType, source, editing) {
   if (sourceType === 'book') return normalizedReleaseDate(source?.publishedDate || source?.raw?.volumeInfo?.publishedDate || editing?.releaseDate || '');
   if (sourceType === 'tv') return normalizedReleaseDate(source?.raw?.first_air_date || editing?.releaseDate || '');
+  if (['video-game','board-game'].includes(sourceType)) return normalizedReleaseDate(source?.releaseDate || editing?.releaseDate || '');
   if (sourceType === 'movie') return normalizedReleaseDate(source?.raw?.release_date || editing?.releaseDate || '');
   if (sourceType === 'music' || sourceType === 'song') return normalizedReleaseDate(source?.releaseDate || source?.raw?.releaseDate || editing?.releaseDate || '');
   if (sourceType === 'artist') return normalizedReleaseDate(editing?.releaseDate || '');
@@ -14591,7 +14725,7 @@ function normalizeLibraryPrefs(value) {
 
 function isCoreLibraryGroupKey(key) {
   const normalized = slugifyType(key).replace(/s$/, '');
-  return ['tv','movie','book','music'].includes(normalized);
+  return ['tv','movie','book','game','music'].includes(normalized);
 }
 
 function libraryAvailableTypeGroups() {
@@ -14603,7 +14737,7 @@ function libraryAvailableTypeGroups() {
 
   // Keep the three core content types available even before the user has saved
   // something in each category.
-  [['tv', 'TV'], ['movie', 'Movie'], ['book', 'Book'], ['music', 'Music']].forEach(([key, label]) => {
+  [['tv', 'TV'], ['movie', 'Movie'], ['book', 'Book'], ['game', 'Games'], ['music', 'Music']].forEach(([key, label]) => {
     if (!groups.has(key) && ![...groups.keys()].some(existing => slugifyType(existing).replace(/s$/, '') === key)) {
       groups.set(key, label);
     }
@@ -15270,14 +15404,17 @@ function getSourceType(item) {
   if (item.sourceType) return item.sourceType;
   if (item.provider === 'youtube' || item.type === 'workout') return 'youtube';
   if (item.provider === 'ticketmaster') return 'event';
-  if (['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class'].includes(item.type)) return item.type;
+  if (['video-game','board-game'].includes(item.sourceType)) return item.sourceType;
+  if (item.type === 'game' && item.provider === 'igdb') return 'video-game';
+  if (item.type === 'game' && item.provider === 'bgg') return 'board-game';
+  if (['tv', 'movie', 'book', 'game', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class'].includes(item.type)) return item.type;
   return 'other';
 }
 
 function getQueueStatus(item) {
   if (!item) return 'library';
   if (['upnext', 'tbr', 'library'].includes(item.queueStatus)) return item.queueStatus;
-  if (item.active !== false && ['tv', 'youtube', 'book', 'reminder', 'event'].includes(getSourceType(item))) return 'upnext';
+  if (item.active !== false && ['tv', 'youtube', 'book', 'video-game', 'board-game', 'reminder', 'event'].includes(getSourceType(item))) return 'upnext';
   return 'library';
 }
 
@@ -17074,7 +17211,7 @@ function socialSharedItemDetailMarkup(item, ownerProfile) {
     dispositionLabel ? `<span class="social-detail-badge">${escapeHtml(dispositionLabel)}</span>` : ''
   ].filter(Boolean).join('');
   const trackedDate = String(item?.trackedDate || '').slice(0, 10);
-  const dateLabel = ['tv','movie','youtube'].includes(sourceType) ? 'Watched' : sourceType === 'book' ? 'Finished' : 'Tracked';
+  const dateLabel = ['tv','movie','youtube'].includes(sourceType) ? 'Watched' : sourceType === 'book' ? 'Finished' : ['video-game','board-game'].includes(sourceType) ? 'Played' : 'Tracked';
   const trackedDateMarkup = trackedDate ? `<div class="library-detail-date-strip social-shared-watch-date"><span>${escapeHtml(dateLabel)}</span><strong>${escapeHtml(formatLongDate(trackedDate))}</strong></div>` : '';
   const personal = (rating || item?.notes || people.length)
     ? `<section class="detail-section social-shared-personal-detail"><h3>${escapeHtml(ownerName)}'s details</h3>${rating ? `<div class="social-detail-rating"><span>Rating</span><strong>★ ${escapeHtml(formatPersonalRating(rating))} / 5</strong></div>` : ''}${people.length ? `<div class="library-detail-date-strip library-people-strip"><span>With</span><strong>${escapeHtml(people.join(', '))}</strong></div>` : ''}${item?.comment ? `<div class="social-detail-notes"><span>Comment</span><p>${escapeHtml(item.comment)}</p></div>` : ''}</section>`
@@ -17340,7 +17477,7 @@ function socialFollowerContextMarkup(rows) {
     <div class="social-follower-item-list">${rows.map(({ profile, item }) => {
       const rating = Number(item.rating || 0);
       const sourceType = socialComparableSourceType(item);
-      const loggedLabel = ['tv','movie','youtube'].includes(sourceType) ? 'Watched' : sourceType === 'book' ? 'Finished' : 'Logged';
+      const loggedLabel = ['tv','movie','youtube'].includes(sourceType) ? 'Watched' : sourceType === 'book' ? 'Finished' : ['video-game','board-game'].includes(sourceType) ? 'Played' : 'Logged';
       const status = item.logged ? loggedLabel : rating ? 'Rated' : 'Shared';
       return `<article class="social-follower-item-row">
         <span class="social-avatar social-avatar-small">${escapeHtml(socialProfileInitial(profile))}</span>
