@@ -288,6 +288,8 @@ const els = {
   streakSettingsForm: $('#streakSettingsForm'),
   streakSettingsRows: $('#streakSettingsRows'),
   resetStreakSettings: $('#resetStreakSettings'),
+  cleanUnusedTrackTypes: $('#cleanUnusedTrackTypes'),
+  trackSettingsCleanupStatus: $('#trackSettingsCleanupStatus'),
   calendarRowSettingsForm: $('#calendarRowSettingsForm'),
   calendarRowSettingsRows: $('#calendarRowSettingsRows'),
   resetCalendarRowSettings: $('#resetCalendarRowSettings'),
@@ -1501,6 +1503,7 @@ function bindEvents() {
   els.streakSettingsRows?.addEventListener('change', previewStreakSettings);
   els.streakSettingsRows?.addEventListener('click', handleStreakSettingsClick);
   els.resetStreakSettings?.addEventListener('click', resetStreakSettings);
+  els.cleanUnusedTrackTypes?.addEventListener('click', () => cleanUpUnusedTypes({ origin: 'track' }));
   els.calendarRowSettingsForm?.addEventListener('submit', saveCalendarRowSettings);
   els.resetCalendarRowSettings?.addEventListener('click', resetCalendarRowSettings);
   els.addCalendarRow?.addEventListener('click', addCalendarRowSettingsGroup);
@@ -15068,8 +15071,33 @@ function getStreakConfig(typeOrGroupKey) {
     subcategories: Array.isArray(saved.subcategories)
       ? saved.subcategories.map(normalizedStreakSubcategory).filter(Boolean)
       : [...(group.subcategories || [])],
-    label: cleanTypeLabel(saved.label || group.label || '') || group.label || 'Streak'
+    label: cleanTypeLabel(saved.label || group.label || '') || group.label || 'Streak',
+    sticker: saved.sticker && typeof saved.sticker === 'object' ? { ...saved.sticker } : null
   };
+}
+
+function getStreakStickerConfig(targetOrKey, overrideConfig = null) {
+  const target = resolveStreakGroup(targetOrKey);
+  const config = overrideConfig || getStreakConfig(target.key);
+  const representative = getCalendarEntries().find(entry => streakTargetMatchesEntry(target, entry))
+    || target.representativeEntry
+    || { type: target.representativeType || 'other', typeLabel: target.label, subcategory: target.scope === 'subcategory' ? target.subcategories?.[0] || '' : '' };
+  const base = getStickerConfig(representative.type || target.representativeType || 'other', representative);
+  const saved = config?.sticker || {};
+  const shape = STICKER_SHAPES.includes(saved.shape) ? saved.shape : base.shape;
+  const color = STICKER_COLORS.includes(saved.color) ? saved.color : base.color;
+  const label = STICKER_SYMBOL_SHAPES.has(shape)
+    ? ''
+    : cleanStickerLabel(saved.label !== undefined ? saved.label : base.label);
+  return { shape, color, label, tilt: base.tilt || 'none' };
+}
+
+function streakStickerMarkup(targetOrKey, overrideConfig = null) {
+  const target = resolveStreakGroup(targetOrKey);
+  const config = getStreakStickerConfig(target, overrideConfig);
+  const text = config.shape === 'star' ? '★' : config.shape === 'heart' ? '♥' : escapeHtml(config.label || '');
+  const name = cleanTypeLabel(overrideConfig?.label || getStreakConfig(target.key).label || target.label || 'Streak');
+  return `<span class="sticker sticker-${config.shape} sticker-palette-${config.color} sticker-tilt-${config.tilt}" aria-label="${escapeAttr(`${name} streak sticker`)}">${text}</span>`;
 }
 
 function streakTargetMatchesEntry(targetOrKey, entry) {
@@ -15166,7 +15194,10 @@ function streakBadgeMarkup(typeOrGroupKey) {
 function renderTrackStreakSummary() {
   if (!els.trackStreakSummary) return;
   const active = getRecognizedStreakGroups()
-    .map(group => ({ ...group, text: streakText(group.key) }))
+    .map(group => {
+      const config = getStreakConfig(group.key);
+      return { ...group, config, text: streakText(group.key, config) };
+    })
     .filter(entry => entry.text);
 
   els.trackStreakSummary.hidden = active.length === 0;
@@ -15175,16 +15206,11 @@ function renderTrackStreakSummary() {
     return;
   }
 
-  els.trackStreakSummary.innerHTML = active.map(group => {
-    const representative = getCalendarEntries().find(entry => streakTargetMatchesEntry(group, entry))
-      || group.representativeEntry
-      || { type: group.representativeType, typeLabel: group.label };
-    return `
+  els.trackStreakSummary.innerHTML = active.map(group => `
       <div class="track-streak-card">
-        <span class="track-streak-sticker">${calendarStickerMarkup(representative.type, representative)}</span>
-        <span class="track-streak-copy"><strong>${escapeHtml(group.label)}</strong><small>${escapeHtml(group.text)}</small></span>
-      </div>`;
-  }).join('');
+        <span class="track-streak-sticker">${streakStickerMarkup(group, group.config)}</span>
+        <span class="track-streak-copy"><strong>${escapeHtml(group.config.label || group.label)}</strong><small>${escapeHtml(group.text)}</small></span>
+      </div>`).join('');
 }
 
 function openStreakSettings() {
@@ -15200,7 +15226,7 @@ function streakRowTargetFromElement(row) {
     key: row.dataset.streakType || '',
     baseKey: row.dataset.streakBaseKey || row.dataset.streakType || '',
     scope: row.dataset.streakScope || 'type',
-    label: row.dataset.streakLabel || row.querySelector('.streak-setting-name')?.textContent?.trim() || 'Streak',
+    label: cleanTypeLabel(row.querySelector('[data-streak-field="name"]')?.value || row.dataset.streakLabel || '') || 'Streak',
     subcategories: Array.isArray(subcategories) ? subcategories : []
   };
 }
@@ -15219,17 +15245,33 @@ function createStreakSettingRow(target, config = null) {
     : target.scope === 'group'
       ? (target.subcategories || []).join(' + ')
       : 'subcategory';
+  const sticker = getStreakStickerConfig(target, saved);
   row.innerHTML = `
     <div class="streak-setting-type">
-      <span class="streak-setting-name">${escapeHtml(target.label)}</span>
+      <div class="streak-setting-identity">
+        <span class="streak-setting-sticker-preview">${streakStickerMarkup(target, saved)}</span>
+        <input class="streak-setting-name-input" data-streak-field="name" type="text" maxlength="60" value="${escapeAttr(saved.label || target.label || 'Streak')}" aria-label="Streak name" />
+      </div>
       <small>${escapeHtml(scopeNote)}</small>
+      <details class="streak-style-editor">
+        <summary>Change sticker</summary>
+        <div class="streak-style-controls">
+          <label><span>Shape</span><select data-streak-field="sticker-shape">
+            ${STICKER_SHAPES.map(shape => `<option value="${shape}" ${sticker.shape === shape ? 'selected' : ''}>${shape[0].toUpperCase()+shape.slice(1)}</option>`).join('')}
+          </select></label>
+          <label><span>Color</span><select data-streak-field="sticker-color">
+            ${STICKER_COLORS.map(color => `<option value="${color}" ${sticker.color === color ? 'selected' : ''}>${color[0].toUpperCase()+color.slice(1)}</option>`).join('')}
+          </select></label>
+          <label><span>Text</span><input data-streak-field="sticker-label" type="text" maxlength="3" value="${escapeAttr(STICKER_SYMBOL_SHAPES.has(sticker.shape) ? '' : sticker.label)}" placeholder="Up to 3" ${STICKER_SYMBOL_SHAPES.has(sticker.shape) ? 'disabled' : ''} /></label>
+        </div>
+      </details>
       ${target.scope === 'group' ? '<button class="streak-group-delete" type="button" data-delete-streak-group aria-label="Delete grouped streak" title="Delete grouped streak">×</button>' : ''}
     </div>
     <label class="streak-toggle">
       <input data-streak-field="enabled" type="checkbox" ${saved.enabled ? 'checked' : ''} />
       <span>On</span>
     </label>
-    <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(target.label)}">
+    <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(saved.label || target.label)}">
       ${WEEKDAY_OPTIONS.map(day => `
         <label class="rest-day-chip" title="${day.label}">
           <input data-streak-rest-day="${day.value}" type="checkbox" ${saved.restDays.includes(day.value) ? 'checked' : ''} />
@@ -15303,6 +15345,10 @@ function renderStreakSettingsRows() {
 
 function readStreakRowConfig(row) {
   const target = streakRowTargetFromElement(row);
+  const shape = row.querySelector('[data-streak-field="sticker-shape"]')?.value || 'square';
+  const color = row.querySelector('[data-streak-field="sticker-color"]')?.value || 'cream';
+  const labelInput = row.querySelector('[data-streak-field="sticker-label"]');
+  const stickerLabel = STICKER_SYMBOL_SHAPES.has(shape) ? '' : cleanStickerLabel(labelInput?.value || '');
   return {
     enabled: Boolean(row.querySelector('[data-streak-field="enabled"]')?.checked),
     restDays: [...row.querySelectorAll('[data-streak-rest-day]:checked')]
@@ -15310,17 +15356,23 @@ function readStreakRowConfig(row) {
     scope: target.scope,
     baseKey: target.baseKey,
     subcategories: target.subcategories,
-    label: target.label
+    label: target.label,
+    sticker: { shape, color, label: stickerLabel }
   };
 }
 
 function previewStreakSettings(event) {
   const row = event.target.closest('.streak-setting-row[data-streak-type]');
   if (!row) return;
+  const shape = row.querySelector('[data-streak-field="sticker-shape"]')?.value || 'square';
+  const labelInput = row.querySelector('[data-streak-field="sticker-label"]');
+  if (labelInput) labelInput.disabled = STICKER_SYMBOL_SHAPES.has(shape);
   const config = readStreakRowConfig(row);
   row.classList.toggle('is-enabled', config.enabled);
   const current = row.querySelector('.streak-setting-current');
   if (current) current.textContent = streakText(streakRowTargetFromElement(row), config) || 'Off';
+  const preview = row.querySelector('.streak-setting-sticker-preview');
+  if (preview) preview.innerHTML = streakStickerMarkup(streakRowTargetFromElement(row), config);
 }
 
 function handleStreakSettingsClick(event) {
@@ -15377,9 +15429,15 @@ function saveStreakSettings(event) {
   const next = {};
   els.streakSettingsRows?.querySelectorAll('.streak-setting-row[data-streak-type]').forEach(row => {
     const config = readStreakRowConfig(row);
-    // Derived subcategory rows do not need stored records until they are used.
-    // Custom groups are retained even while off so their definition survives.
-    if (config.enabled || config.scope === 'group') next[row.dataset.streakType] = config;
+    const defaultName = cleanTypeLabel(row.dataset.streakLabel || '') || 'Streak';
+    const target = streakRowTargetFromElement(row);
+    const defaultSticker = getStreakStickerConfig({ ...target, label: defaultName }, { ...config, label: defaultName, sticker: null });
+    const customized = config.label !== defaultName
+      || config.sticker.shape !== defaultSticker.shape
+      || config.sticker.color !== defaultSticker.color
+      || config.sticker.label !== defaultSticker.label;
+    // Keep definitions for grouped streaks and preserve any custom name/sticker even while off.
+    if (config.enabled || config.scope === 'group' || customized) next[row.dataset.streakType] = config;
   });
   state.streakPrefs = next;
   localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
@@ -15747,16 +15805,27 @@ function unusedCustomTypes() {
   });
 }
 
-function cleanUpUnusedTypes() {
+function trackSettingsCleanupStatus(message = '') {
+  const status = els.trackSettingsCleanupStatus;
+  if (!status) return;
+  status.textContent = message;
+  if (message) setTimeout(() => { if (status.textContent === message) status.textContent = ''; }, 2600);
+}
+
+function cleanUpUnusedTypes({ origin = 'library' } = {}) {
   const unused = unusedCustomTypes();
+  const setStatus = message => {
+    if (origin === 'track') trackSettingsCleanupStatus(message);
+    else libraryFilterStatus(message);
+  };
   if (!unused.length) {
-    libraryFilterStatus('No unused types');
+    setStatus('No unused types');
     return;
   }
   const labels = unused.map(entry => cleanTypeLabel(entry.label || getTypeLabel(entry.type))).filter(Boolean);
   const preview = labels.slice(0, 8).join(', ');
   const more = labels.length > 8 ? ` +${labels.length - 8} more` : '';
-  if (!confirm(`Remove ${unused.length} unused ${unused.length === 1 ? 'type' : 'types'}?\n\n${preview}${more}\n\nNo Library items or tracked history will be deleted.`)) return;
+  if (!confirm(`Remove ${unused.length} unused ${unused.length === 1 ? 'type' : 'types'}?\n\n${preview}${more}\n\nTheir Sticker, Streak, and Row settings will also be removed. No Library items or tracked history will be deleted.`)) return;
 
   const removedTypes = new Set(unused.map(entry => String(entry.type || '')));
   const removedGroupKeys = new Set(unused.map(entry => slugifyType(entry.label || getTypeLabel(entry.type))));
@@ -15770,6 +15839,9 @@ function cleanUpUnusedTypes() {
   }
   state.typeUsage = nextUsage;
 
+  // Sticker and Track-row preferences share the same per-type preference object,
+  // so deleting the parent key clears both the sticker styling and any custom
+  // row/group/visibility settings. Subcategory sticker overrides go with it.
   const nextStickerPrefs = { ...(state.stickerPrefs || {}) };
   for (const key of Object.keys(nextStickerPrefs)) {
     if (key === '__calendar') continue;
@@ -15804,7 +15876,8 @@ function cleanUpUnusedTypes() {
   renderLibrary();
   if (els.stickerSettingsRows) renderStickerSettingsRows();
   if (els.streakSettingsRows) renderStreakSettingsRows();
-  libraryFilterStatus(`Removed ${unused.length} unused ${unused.length === 1 ? 'type' : 'types'}`);
+  if (els.calendarRowSettingsRows) renderCalendarRowSettingsRows();
+  setStatus(`Removed ${unused.length} unused ${unused.length === 1 ? 'type' : 'types'}`);
 }
 
 function handleLibraryTypeFilterAction(event) {

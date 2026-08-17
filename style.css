@@ -2274,7 +2274,7 @@ body.auth-locked > main {
 .streak-settings-head,
 .streak-setting-row {
   display: grid;
-  grid-template-columns: minmax(130px, .9fr) 100px minmax(300px, 1.6fr) minmax(120px, .8fr);
+  grid-template-columns: minmax(230px, 1.25fr) 74px minmax(250px, 1.35fr) minmax(100px, .65fr);
   gap: 14px;
   align-items: center;
 }
@@ -7018,6 +7018,25 @@ dialog.modal:not([open]) {
 }
 .track-settings-panel[hidden] { display: none !important; }
 
+.track-settings-maintenance {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  margin: -4px 0 12px;
+}
+.track-settings-cleanup-status {
+  color: var(--muted);
+  font-size: .76rem;
+}
+.track-settings-cleanup-button {
+  padding: 5px 9px !important;
+  min-height: 28px;
+  font-size: .76rem !important;
+  white-space: nowrap;
+}
+
 /* Library title owns All / Recommended. Controls are two right-aligned rows. */
 .library-heading {
   align-items: flex-start;
@@ -7203,6 +7222,10 @@ dialog.modal:not([open]) {
     width: 100%;
   }
   .track-settings-tab { flex: 1; }
+  .track-settings-maintenance {
+    justify-content: space-between;
+    margin-top: 0;
+  }
 }
 
 @media (max-width: 420px) {
@@ -12290,4 +12313,80 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
   .album-detail-actions {
     justify-content: flex-start;
   }
+}
+
+/* Streak identity customization */
+.streak-setting-identity {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+.streak-setting-sticker-preview {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+}
+.streak-setting-sticker-preview .sticker {
+  transform: scale(.82) !important;
+  transform-origin: center;
+}
+.streak-setting-name-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(21,36,58,.14);
+  border-radius: 9px;
+  background: #fffdf7;
+  padding: 7px 8px;
+  color: var(--ink);
+  font-size: .82rem;
+  font-weight: 650;
+}
+.streak-style-editor {
+  margin-top: 4px;
+}
+.streak-style-editor > summary {
+  width: max-content;
+  cursor: pointer;
+  list-style: none;
+  color: #737267;
+  font-size: .68rem;
+  font-weight: 650;
+}
+.streak-style-editor > summary::-webkit-details-marker { display: none; }
+.streak-style-editor > summary::before { content: '+ '; }
+.streak-style-editor[open] > summary::before { content: '− '; }
+.streak-style-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 7px;
+}
+.streak-style-controls label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.streak-style-controls label > span {
+  color: #89857b;
+  font-size: .59rem;
+}
+.streak-style-controls select,
+.streak-style-controls input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(21,36,58,.13);
+  border-radius: 8px;
+  background: #fffdf7;
+  padding: 5px 6px;
+  font-size: .68rem;
+}
+.streak-setting-row { min-height: 82px; }
+
+@media (max-width: 760px) {
+  .streak-setting-identity { grid-template-columns: 38px minmax(0, 1fr); }
+  .streak-setting-sticker-preview { width: 38px; height: 38px; }
+  .streak-style-controls { grid-template-columns: 1fr 1fr; }
+  .streak-style-controls label:last-child { grid-column: 1 / -1; }
 }
