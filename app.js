@@ -1720,11 +1720,12 @@ function bindEvents() {
       try {
         const result = JSON.parse(librarySimilar.dataset.librarySimilar || '{}');
         const sourceType = result.sourceType || 'other';
-        els.detailModal?.close();
-        openItemModal('', 'library');
-        setItemFormSourceType(sourceType, sourceType === 'music' ? { provider: result.provider, subcategory: 'Album' } : null);
-        updateItemFormForType();
-        selectCatalogueResult(result);
+        // Recommendations should behave like Discover cards: open the full item
+        // detail first so the user can read the synopsis/details and then decide
+        // whether to Track, add to TBR/Up Next, rate, or otherwise save it.
+        state.openDetailId = null;
+        const key = rememberDiscoverResult({ ...result, sourceType }, sourceType);
+        await openDiscoverDetail(key);
       } catch (error) {
         console.warn('[Library Recommendations] could not open recommendation', error);
       }
@@ -2462,29 +2463,32 @@ function watchedTitleHasConsumption(item) {
   return false;
 }
 
-function statsCanonicalGenreLabels(value) {
+function canonicalStatsGenreLabels(value) {
   const label = cleanTypeLabel(value || '');
   if (!label) return [];
-  // TMDB uses combined TV genres where its movie taxonomy uses separate genres.
-  // Expand them so Stats has one consistent set of labels instead of showing
-  // both “Sci-Fi & Fantasy” and “Science Fiction”, etc.
   if (label === 'Sci-Fi & Fantasy') return ['Science Fiction', 'Fantasy'];
   if (label === 'Action & Adventure') return ['Action', 'Adventure'];
   if (label === 'Kids') return ['Family'];
-  if (label === 'War & Politics') return ['War', 'Politics'];
+  if (label === 'War & Politics') return ['War'];
   return [label];
+}
+
+function statsItemGenreLabels(item) {
+  const labels = new Set();
+  for (const genre of item?.genres || []) {
+    const raw = typeof genre === 'string' ? genre : genre?.name || '';
+    for (const label of canonicalStatsGenreLabels(raw)) labels.add(label);
+  }
+  return [...labels];
 }
 
 function watchedGenreCounts() {
   const counts = new Map();
   for (const item of state.items) {
     if (!watchedTitleHasConsumption(item)) continue;
-    const itemLabels = new Set();
-    for (const genre of item.genres || []) {
-      const raw = typeof genre === 'string' ? genre : genre?.name || '';
-      for (const label of statsCanonicalGenreLabels(raw)) itemLabels.add(label);
+    for (const label of statsItemGenreLabels(item)) {
+      counts.set(label, (counts.get(label) || 0) + 1);
     }
-    for (const label of itemLabels) counts.set(label, (counts.get(label) || 0) + 1);
   }
   return [...counts.entries()].sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
@@ -2592,13 +2596,16 @@ async function estimatedWatchMinutes() {
   return total;
 }
 
-function statsGenreItems(labels = []) {
-  const wanted = new Set((labels || []).map(value => cleanTypeLabel(value).toLowerCase()).filter(Boolean));
+function statsGenreItems(labels = [], excludeLabels = []) {
+  const wanted = new Set((labels || []).flatMap(canonicalStatsGenreLabels).map(value => value.toLowerCase()).filter(Boolean));
+  const excluded = new Set((excludeLabels || []).flatMap(canonicalStatsGenreLabels).map(value => value.toLowerCase()).filter(Boolean));
   if (!wanted.size) return [];
-  return state.items.filter(item => watchedTitleHasConsumption(item) && (item.genres || []).some(genre => {
-    const label = cleanTypeLabel(typeof genre === 'string' ? genre : genre?.name || '').toLowerCase();
-    return wanted.has(label);
-  }));
+  return state.items.filter(item => {
+    if (!watchedTitleHasConsumption(item)) return false;
+    const itemLabels = statsItemGenreLabels(item).map(value => value.toLowerCase());
+    if (!itemLabels.some(label => wanted.has(label))) return false;
+    return !itemLabels.some(label => excluded.has(label));
+  });
 }
 
 function statsPiePath(cx, cy, radius, startAngle, endAngle) {
@@ -2620,9 +2627,22 @@ function renderGenrePie(genres = []) {
     els.statsGenres.innerHTML = '<p class="empty-state">No watched genres yet.</p>';
     return;
   }
-  const visible = genres.slice(0, 9).map(([label,count]) => ({ label, count, labels:[label] }));
+  const primary = genres.slice(0, 9);
+  const visible = primary.map(([label,count]) => ({ label, count, labels:[label], excludeLabels:[] }));
   const overflow = genres.slice(9);
-  if (overflow.length) visible.push({ label:'Other', count:overflow.reduce((sum,entry) => sum + entry[1],0), labels:overflow.map(entry => entry[0]) });
+  if (overflow.length) {
+    const primaryLabels = primary.map(entry => entry[0]);
+    const overflowLabels = overflow.map(entry => entry[0]);
+    const primarySet = new Set(primaryLabels.map(label => label.toLowerCase()));
+    const overflowSet = new Set(overflowLabels.map(label => label.toLowerCase()));
+    const otherCount = state.items.filter(item => {
+      if (!watchedTitleHasConsumption(item)) return false;
+      const itemLabels = statsItemGenreLabels(item).map(label => label.toLowerCase());
+      if (!itemLabels.some(label => overflowSet.has(label))) return false;
+      return !itemLabels.some(label => primarySet.has(label));
+    }).length;
+    if (otherCount) visible.push({ label:'Other', count:otherCount, labels:overflowLabels, excludeLabels:primaryLabels });
+  }
   const total = visible.reduce((sum,entry) => sum + entry.count,0) || 1;
   const genreColors = {
     Action: '#307351',
@@ -2646,17 +2666,10 @@ function renderGenrePie(genres = []) {
     Politics: '#9a4353',
     Other: '#b0a79a'
   };
-  
-
   const genreAliases = {
     'Sci-Fi & Fantasy': 'Science Fiction',
     'Action & Adventure': 'Action',
-    Kids: 'Family',
-    'War & Politics': 'War',
-    Soap: 'Drama',
-    Reality: 'Documentary',
-    News: 'Documentary',
-    Talk: 'Documentary'
+    Kids: 'Family'
   };
   const genreColor = label => genreColors[genreAliases[label] || label] || genreColors.Other;
   let angle = -Math.PI / 2;
@@ -2665,9 +2678,10 @@ function renderGenrePie(genres = []) {
     const d = statsPiePath(100,100,82,angle,next);
     angle = next;
     const encoded = escapeAttr(JSON.stringify(entry.labels));
-    return `<path class="stats-genre-slice" d="${d}" fill="${genreColor(entry.label)}" tabindex="0" role="button" data-stats-genre-list="${encoded}" aria-label="${escapeAttr(`${entry.label}: ${entry.count}`)}"><title>${escapeHtml(entry.label)} · ${entry.count}</title></path>`;
+    const excluded = escapeAttr(JSON.stringify(entry.excludeLabels || []));
+    return `<path class="stats-genre-slice" d="${d}" fill="${genreColor(entry.label)}" tabindex="0" role="button" data-stats-genre-list="${encoded}" data-stats-genre-exclude="${excluded}" aria-label="${escapeAttr(`${entry.label}: ${entry.count}`)}"><title>${escapeHtml(entry.label)} · ${entry.count}</title></path>`;
   }).join('');
-  const legend = visible.map(entry => `<button class="stats-genre-legend-row" type="button" data-stats-genre-list="${escapeAttr(JSON.stringify(entry.labels))}"><span class="stats-genre-swatch" style="--genre-color:${genreColor(entry.label)}"></span><span>${escapeHtml(entry.label)}</span><strong>${entry.count}</strong></button>`).join('');
+  const legend = visible.map(entry => `<button class="stats-genre-legend-row" type="button" data-stats-genre-list="${escapeAttr(JSON.stringify(entry.labels))}" data-stats-genre-exclude="${escapeAttr(JSON.stringify(entry.excludeLabels || []))}"><span class="stats-genre-swatch" style="--genre-color:${genreColor(entry.label)}"></span><span>${escapeHtml(entry.label)}</span><strong>${entry.count}</strong></button>`).join('');
   els.statsGenres.innerHTML = `<div class="stats-genre-pie-layout"><svg class="stats-genre-pie" viewBox="0 0 200 200" role="img" aria-label="Genres watched pie chart">${paths}</svg><div class="stats-genre-legend">${legend}</div></div>`;
 }
 
@@ -2725,9 +2739,11 @@ function handleStatsBreakdownClick(event) {
   const genreTarget = event.target.closest('[data-stats-genre-list]');
   if (genreTarget) {
     let labels = [];
+    let excludeLabels = [];
     try { labels = JSON.parse(genreTarget.dataset.statsGenreList || '[]'); } catch {}
-    const title = labels.length === 1 ? labels[0] : 'Other genres';
-    openStatsCatalogue(title, statsGenreItems(labels));
+    try { excludeLabels = JSON.parse(genreTarget.dataset.statsGenreExclude || '[]'); } catch {}
+    const title = labels.length === 1 && !excludeLabels.length ? labels[0] : 'Other genres';
+    openStatsCatalogue(title, statsGenreItems(labels, excludeLabels));
   }
 }
 
@@ -2788,9 +2804,6 @@ function makeRecentTrackedPoster(entry) {
       };
   const shell = makeLibraryPoster(display);
   shell.classList.add('stats-recent-card');
-  // The Last 30 days view is already grouped under date headings, so do not
-  // repeat the logged date underneath every card in this modal.
-  shell.querySelector('.library-card-tracked-date')?.remove();
   const poster = shell.querySelector('.library-poster-button');
   if (poster) {
     poster.title = [entry.title || display.title, entry.subtitle || '', getItemTypeLabel(source || display)].filter(Boolean).join(' · ');
@@ -2806,7 +2819,8 @@ function makeRecentTrackedPoster(entry) {
       poster.appendChild(badge);
     }
   }
-  if (!source) shell.querySelector('.library-card-album-button')?.remove();
+  shell.querySelector('.library-card-tracked-date')?.remove();
+  shell.querySelector('.library-card-album-button')?.remove();
   return shell;
 }
 
@@ -6131,7 +6145,7 @@ async function prepareTVWatchSetup(providerId, itemId = '') {
   state.tvDraftBulkBaseline = null;
   state.tvDraftLocked = new Set();
   state.tvDraftSeasons = [];
-  if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = `Loading seasons and episodes… · Tip: ${loadingTipText()}`;
+  if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = `Tip · ${loadingTipText()}`;
   els.tvWatchSetupList.innerHTML = loadingMarkup('Loading episode history…');
 
   const details = await getCached(`tv:${providerId}`, () => TrackerAPI.getTVDetails(providerId, state.settings));
@@ -7041,7 +7055,7 @@ function loadingTipText() {
 }
 
 function loadingMarkup(label = 'Loading…') {
-  return `<div class=\"loading-with-tip\"><p class=\"loading-detail\">${escapeHtml(label)}</p><p class=\"loading-tip\"><strong>Tip</strong> ${escapeHtml(loadingTipText())}</p></div>`;
+  return `<div class="loading-with-tip"><p class="loading-tip"><strong>Tip</strong> ${escapeHtml(loadingTipText())}</p></div>`;
 }
 
 // ---------------------------
@@ -7766,12 +7780,7 @@ function libraryAssociatedDateInfo(item) {
       const latest = periods[periods.length - 1];
       const start = latest.startDate ? formatLongDate(latest.startDate) : '';
       const end = latest.endDate ? formatLongDate(latest.endDate) : '';
-      return {
-        label: 'Reading',
-        values: [start && end ? `${start} – ${end}` : start || end].filter(Boolean),
-        rawDates: [latest.endDate || latest.startDate].filter(Boolean),
-        extra: Math.max(0, periods.length - 1)
-      };
+      return { label: 'Reading', values: [start && end ? `${start} – ${end}` : start || end].filter(Boolean), extra: Math.max(0, periods.length - 1) };
     }
   }
 
@@ -7782,15 +7791,14 @@ function libraryAssociatedDateInfo(item) {
       const value = endDate && endDate !== startDate
         ? `${formatLongDate(startDate)} – ${formatLongDate(endDate)}`
         : formatLongDate(startDate);
-      return { label: 'Date', values: [value], rawDates: [startDate], extra: 0 };
+      return { label: 'Date', values: [value], extra: 0 };
     }
   }
 
   const historyDates = state.history
     .filter(entry => entry.sourceItemId === item.id && entry.date)
-    .map(entry => String(entry.date).slice(0,10));
-  const dates = [...new Set([item.date ? String(item.date).slice(0,10) : '', ...historyDates].filter(Boolean))]
-    .sort((a, b) => String(b).localeCompare(String(a)));
+    .map(entry => entry.date);
+  const dates = [...new Set([item.date, ...historyDates].filter(Boolean))].sort((a, b) => String(b).localeCompare(String(a)));
   if (!dates.length) return null;
 
   let label = 'Tracked';
@@ -7801,7 +7809,6 @@ function libraryAssociatedDateInfo(item) {
   return {
     label,
     values: dates.slice(0, 3).map(formatLongDate),
-    rawDates: dates,
     extra: Math.max(0, dates.length - 3)
   };
 }
@@ -9556,7 +9563,7 @@ async function renderDiscoverCalendar(force = false) {
   }
   if (els.discoverStatus) {
     els.discoverStatus.hidden = false;
-    els.discoverStatus.textContent = `Loading upcoming concerts and releases… · Tip: ${loadingTipText()}`;
+    els.discoverStatus.textContent = `Tip · ${loadingTipText()}`;
   }
   if (els.discoverCalendarMessage) els.discoverCalendarMessage.textContent = '';
   els.discoverCalendarGrid.innerHTML = loadingMarkup('Loading calendar…');
@@ -9827,7 +9834,7 @@ async function handleDiscoverCalendarClick(event) {
 
 async function renderLegacyDiscover(force = false) {
   els.discoverStatus.hidden = false;
-  els.discoverStatus.textContent = `Loading recommendations… · Tip: ${loadingTipText()}`;
+  els.discoverStatus.textContent = `Tip · ${loadingTipText()}`;
   if (force) {
     for (const key of Object.keys(state.cache)) {
       if (key.startsWith('discover:')) delete state.cache[key];
@@ -11024,7 +11031,7 @@ async function collectForYouDiscoverCandidates(batchNumber) {
 }
 
 function discoverLoadingLabel() {
-  return `Loading… · Tip: ${loadingTipText()}`;
+  return `Tip · ${loadingTipText()}`;
 }
 
 function discoverEndlessLabel() {
@@ -13097,7 +13104,7 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
     </div>
     ${discoverTVPersonalMetadataMarkup(existing, key)}
     <section class="detail-section streaming-detail"><h3>Streaming</h3><p>${escapeHtml(providerText)}</p>${availability.link ? `<a href="${escapeAttr(availability.link)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}</section>
-    <details class="detail-section discover-seasons-details" data-tv-watch-picker>
+    <details class="detail-section discover-seasons-details" data-tv-watch-picker open>
       <summary class="discover-seasons-summary">
         <span>Seasons</span>
         <small>${seasons.length} season${seasons.length === 1 ? '' : 's'} · tap to browse</small>
@@ -13107,10 +13114,15 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
         <div class="season-list season-list-rows">${seasonRows || 'No seasons found.'}</div>
       </div>
     </details>
-    <section class="detail-section">
-      <h3>Season ${seasonNumber} episodes</h3>
-      <div class="episode-list">${episodeRows || 'No episodes found.'}</div>
-    </section>`;
+    <details class="detail-section discover-seasons-details discover-episodes-details"${requestedSeason !== null ? ' open' : ''}>
+      <summary class="discover-seasons-summary">
+        <span>Season ${seasonNumber} episodes</span>
+        <small>${(season.episodes || []).length} episode${(season.episodes || []).length === 1 ? '' : 's'} · tap to browse</small>
+      </summary>
+      <div class="discover-seasons-panel">
+        <div class="episode-list">${episodeRows || 'No episodes found.'}</div>
+      </div>
+    </details>`;
   await appendSocialFollowerContext(result, () => state.openDiscoverKey === key && Boolean(els.detailModal?.open));
 }
 
@@ -14520,15 +14532,6 @@ function itemLastTrackedDate(item) {
   return dates.sort().at(-1) || '';
 }
 
-// The footer date is deliberately sourced from the exact same date summary used
-// inside the opened Library item. This prevents the card footer and its date badge
-// from drifting apart as history is edited. Books intentionally have no footer date.
-function itemLastLoggedDate(item) {
-  if (!item || getSourceType(item) === 'book') return '';
-  const info = libraryAssociatedDateInfo(item);
-  return String(info?.rawDates?.[0] || '').slice(0,10);
-}
-
 function normalizeLibraryPrefs(value) {
   const keys = Array.isArray(value?.defaultTypeKeys)
     ? [...new Set(value.defaultTypeKeys.map(key => slugifyType(key)).filter(Boolean))]
@@ -14806,31 +14809,42 @@ function normalizeSearchText(value) {
 function libraryTextCardWidth(itemOrTitle) {
   const item = itemOrTitle && typeof itemOrTitle === 'object' ? itemOrTitle : null;
   const title = String(item?.title || itemOrTitle || 'Untitled').trim() || 'Untitled';
-  const notes = String(item?.notes || '').trim();
+  const notes = String(item?.notes || '').trim().replace(/\s+/g, ' ');
+  const mobile = window.matchMedia?.('(max-width: 760px)')?.matches;
   try {
     const canvas = libraryTextCardWidth.canvas || (libraryTextCardWidth.canvas = document.createElement('canvas'));
     const context = canvas.getContext('2d');
     if (context) {
       context.font = '700 14.4px "DM Sans", system-ui, sans-serif';
-      const titleWidth = context.measureText(title).width + 34;
+      const rawTitleWidth = context.measureText(title).width;
+
+      if (mobile) {
+        const compactTitleWidth = rawTitleWidth + 34;
+        return Math.max(132, Math.min(320, Math.ceil(compactTitleWidth)));
+      }
+
+      // A long title should wrap rather than make the card enormous. Target two
+      // balanced title lines and cap the amount of width the title can demand.
+      const titleWidth = rawTitleWidth <= 250
+        ? rawTitleWidth + 34
+        : Math.min(390, (rawTitleWidth / 2) + 40);
+
       let noteWidth = 0;
       if (notes) {
         context.font = '500 11.5px "DM Sans", system-ui, sans-serif';
-        // Aim to fit the note in roughly three lines so the fixed-height text
-        // card can show the full note instead of truncating it.
-        noteWidth = context.measureText(notes.replace(/\s+/g, ' ')).width / 3 + 34;
+        const rawNoteWidth = context.measureText(notes).width;
+        // Notes, unlike titles, are allowed to drive desktop width. About six
+        // wrapped lines fits comfortably in the fixed-height Library card while
+        // keeping even fairly detailed notes fully visible.
+        noteWidth = (rawNoteWidth / 6) + 40;
       }
-      return Math.max(132, Math.min(680, Math.ceil(Math.max(titleWidth, noteWidth))));
+
+      return Math.max(150, Math.min(600, Math.ceil(Math.max(titleWidth, noteWidth))));
     }
   } catch {}
-  const fallback = Math.max(title.length * 8, notes.length * 2.2) + 34;
-  return Math.max(132, Math.min(680, Math.ceil(fallback)));
-}
-
-function librarySubcategoryBadgeStyle() {
-  // Subtypes are labels, not a second colour-coding system. Keep every subtype
-  // badge in the same Omni navy so colour remains reserved for other meaning.
-  return '--library-badge-bg:rgba(47,61,92,.92);--library-badge-color:#fff8ea;--library-badge-border:rgba(255,248,234,.12);';
+  const titleTarget = title.length > 32 ? Math.min(390, title.length * 4.1 + 38) : title.length * 8 + 34;
+  const noteTarget = notes ? notes.length * 1.15 + 40 : 0;
+  return Math.max(150, Math.min(600, Math.ceil(Math.max(titleTarget, noteTarget))));
 }
 
 function makeLibraryPoster(item) {
@@ -14859,9 +14873,8 @@ function makeLibraryPoster(item) {
     ? `<span class="library-recommended-badge" aria-label="Recommended" title="Recommended">♥</span>`
     : '';
   const subcategoryLabel = cleanTypeLabel(item.subcategory || '');
-  const subcategoryBadgeStyle = subcategoryLabel ? librarySubcategoryBadgeStyle(item, subcategoryLabel) : '';
   const subcategoryBadge = subcategoryLabel
-    ? `<span class="library-subcategory-badge" style="${escapeAttr(subcategoryBadgeStyle)}" title="${escapeAttr(subcategoryLabel)}">${escapeHtml(subcategoryLabel)}</span>`
+    ? `<span class="library-subcategory-badge" title="${escapeAttr(subcategoryLabel)}">${escapeHtml(subcategoryLabel)}</span>`
     : '';
   const dispositionState = libraryDnfState(item);
   const releaseDate = itemReleaseDate(item);
@@ -14893,12 +14906,13 @@ function makeLibraryPoster(item) {
   albumButton.setAttribute('aria-label', `Add ${item.title} to album`);
   albumButton.title = 'Add to collection';
   shell.append(poster, albumButton);
-  const loggedDate = itemLastLoggedDate(item);
-  const tracked = document.createElement('span');
-  tracked.className = `library-card-tracked-date${loggedDate ? '' : ' is-empty'}`;
-  tracked.textContent = loggedDate ? formatShortCalendarDate(loggedDate) : '';
-  if (!loggedDate) tracked.setAttribute('aria-hidden', 'true');
-  shell.appendChild(tracked);
+  const trackedDate = itemLastTrackedDate(item);
+  if (trackedDate) {
+    const tracked = document.createElement('span');
+    tracked.className = 'library-card-tracked-date';
+    tracked.textContent = `Tracked ${formatShortCalendarDate(trackedDate)}`;
+    shell.appendChild(tracked);
+  }
   return shell;
 }
 
@@ -16729,8 +16743,7 @@ function socialLibraryPosterMarkup(item, profileId = '') {
   // also guarded here so caught-up/paused/finished shows cannot keep stale progress.
   const progress = sourceType === 'tv' ? (item?.activelyWatching === true ? String(item?.progress || '') : '') : String(item?.progress || '');
   const recommendedBadge = item?.recommended ? '<span class="library-recommended-badge" aria-label="Recommended" title="Recommended">♥</span>' : '';
-  const subcategoryBadgeStyle = subcategory ? librarySubcategoryBadgeStyle(item, subcategory) : '';
-  const subcategoryBadge = subcategory ? `<span class="library-subcategory-badge" style="${escapeAttr(subcategoryBadgeStyle)}" title="${escapeAttr(subcategory)}">${escapeHtml(subcategory)}</span>` : '';
+  const subcategoryBadge = subcategory ? `<span class="library-subcategory-badge" title="${escapeAttr(subcategory)}">${escapeHtml(subcategory)}</span>` : '';
   // Match the user's own Library cards: state badges are reserved for exceptional
   // dispositions, not ordinary In progress / Up to date / Finished states.
   const dispositionBadge = ['paused','stopped','not-released'].includes(statusKey)

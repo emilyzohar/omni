@@ -5823,9 +5823,8 @@ body.auth-locked > main {
   white-space: nowrap;
   padding: 4px 7px;
   border-radius: 999px;
-  background: var(--library-badge-bg, rgba(21,36,58,.88));
-  color: var(--library-badge-color, #fff9ea);
-  border: 1px solid var(--library-badge-border, rgba(255,249,234,.12));
+  background: rgba(21,36,58,.88);
+  color: #fff9ea;
   box-shadow: 0 2px 7px rgba(0,0,0,.12);
   backdrop-filter: blur(5px);
   font: 800 .62rem/1 var(--sans);
@@ -11374,41 +11373,24 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
   background: linear-gradient(145deg, rgba(139,153,202,.18), rgba(247,231,196,.64));
 }
 
-/* The logged date lives outside the visual card. Every Library card keeps the
-   same overall footprint so mixed shelves stay aligned whether or not a date
-   is present. */
-.library-groups .library-poster-grid:not(.is-expanded) .library-card-shell,
-.library-groups .library-poster-grid.is-expanded .library-card-shell,
-.library-groups .library-poster-grid.is-expanded:has(.library-text-card-button) .library-card-shell {
-  height: calc(var(--library-row-height) + 22px) !important;
-  min-height: calc(var(--library-row-height) + 22px) !important;
-}
-.library-groups .library-card-shell > .library-poster-button {
-  height: var(--library-row-height) !important;
-}
-.library-groups .library-card-shell > .library-card-album-button {
-  bottom: 27px;
-}
-.library-groups .library-poster-grid.is-expanded {
-  grid-auto-rows: calc(var(--library-row-height) + 22px);
+/* Keep the shelf's existing row height: cards with a tracked date reserve a
+   very small strip beneath the poster rather than making the row taller. */
+.library-card-shell:has(> .library-card-tracked-date) > .library-poster-button {
+  height: calc(100% - 14px) !important;
 }
 .library-card-tracked-date {
   position: absolute;
   left: 2px;
   right: 2px;
-  top: auto;
   bottom: 0;
   z-index: 2;
   overflow: hidden;
-  color: rgba(21,36,58,.45);
+  color: rgba(21,36,58,.42);
   font: 500 .56rem/1.1 var(--sans);
   letter-spacing: .01em;
   text-overflow: ellipsis;
   white-space: nowrap;
   pointer-events: none;
-}
-.library-card-tracked-date.is-empty {
-  opacity: 0;
 }
 
 .class-history-section { margin-top: 18px; }
@@ -11520,77 +11502,100 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
 
 
 /* =========================================================
-   Uniform subtype badges + Library date footer v44
+   Mobile recent-history + detail controls fixes v46
    ========================================================= */
-.library-subcategory-badge {
-  background: rgba(47,61,92,.92) !important;
-  color: #fff8ea !important;
-  border-color: rgba(255,248,234,.12) !important;
+@media (max-width: 620px) {
+  /* Last 30 Days is its own compact grid. These selectors intentionally outrank
+     the normal mixed Library shelf :has() rules. */
+  .stats-recent-day-grid.library-poster-grid.is-expanded,
+  .stats-recent-day-grid.library-poster-grid.is-expanded:has(.library-text-card-button) {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    grid-auto-rows: auto !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+    width: 100% !important;
+  }
+  .stats-recent-day-grid.library-poster-grid.is-expanded .library-card-shell,
+  .stats-recent-day-grid.library-poster-grid.is-expanded .library-card-shell.is-text-card,
+  .stats-recent-day-grid.library-poster-grid.is-expanded:has(.library-text-card-button) .library-card-shell,
+  .stats-recent-day-grid.library-poster-grid.is-expanded:has(.library-text-card-button) .library-card-shell.is-text-card {
+    width: 100% !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    aspect-ratio: 2 / 3 !important;
+    flex: none !important;
+  }
+  .stats-recent-day-grid .library-card-shell > .library-poster-button,
+  .stats-recent-day-grid .library-card-shell > .library-poster-button.library-text-card-button {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    max-width: none !important;
+  }
+  .stats-recent-day-grid .library-card-tracked-date,
+  .stats-recent-day-grid .library-card-album-button {
+    display: none !important;
+  }
+  .stats-recent-day-grid .library-card-shell.is-text-card .library-text-card {
+    padding: 11px 10px 14px !important;
+  }
+  .stats-recent-days {
+    padding-right: 1px !important;
+  }
 }
 
-/* The visual card is always exactly poster height. The date is a separate,
-   reserved footer row beneath it for both artwork and text-only cards. */
-.library-groups .library-card-shell,
-.library-groups .library-card-shell.is-text-card {
-  display: grid !important;
-  grid-template-rows: var(--library-row-height) 18px !important;
-  align-content: start !important;
-  height: calc(var(--library-row-height) + 18px) !important;
-  min-height: calc(var(--library-row-height) + 18px) !important;
-}
-.library-groups .library-card-shell > .library-poster-button,
-.library-groups .library-card-shell.is-text-card > .library-poster-button.library-text-card-button {
-  grid-row: 1 !important;
-  width: 100% !important;
-  height: var(--library-row-height) !important;
-  min-height: var(--library-row-height) !important;
-  max-height: var(--library-row-height) !important;
-  align-self: stretch !important;
-  overflow: hidden !important;
-}
-.library-groups .library-card-shell.is-text-card .library-text-card {
-  height: 100% !important;
-  min-height: 0 !important;
-  max-height: 100% !important;
-  overflow: hidden !important;
-}
-.library-groups .library-card-shell.is-text-card .library-text-card-notes {
-  overflow: hidden !important;
-}
-.library-groups .library-card-shell > .library-card-album-button {
-  bottom: 23px !important;
-}
-.library-groups .library-card-tracked-date {
-  position: static !important;
-  grid-row: 2 !important;
-  display: block !important;
-  align-self: end !important;
-  width: 100% !important;
-  min-height: 14px !important;
-  padding: 4px 2px 0 !important;
-  margin: 0 !important;
-  overflow: hidden !important;
-  color: rgba(21,36,58,.45) !important;
-  font: 500 .56rem/1.1 var(--sans) !important;
-  letter-spacing: .01em !important;
-  text-overflow: ellipsis !important;
-  white-space: nowrap !important;
-  pointer-events: none !important;
-}
-.library-groups .library-card-tracked-date.is-empty {
-  visibility: hidden !important;
-  opacity: 0 !important;
-}
-.library-groups .library-poster-grid.is-expanded {
-  grid-auto-rows: calc(var(--library-row-height) + 18px) !important;
-}
-.library-groups .library-poster-grid:not(.is-expanded) {
-  align-items: flex-start !important;
-  padding-bottom: 10px !important;
+@media (max-width: 760px) {
+  /* Give the stars/Clear a full row. Edit gets its own row beneath it, so the
+     two actions can never overlap on narrow phones. */
+  .library-personal-meta-row {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    grid-template-rows: auto auto !important;
+  }
+  .library-personal-meta-row .library-detail-rating-picker {
+    grid-column: 1 / -1 !important;
+    grid-row: 1 !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    flex-wrap: nowrap !important;
+  }
+  .library-personal-meta-row .library-detail-rating-picker .clear-rating {
+    margin-left: auto !important;
+    flex: 0 0 auto !important;
+  }
+  .library-personal-meta-row .library-personal-edit {
+    grid-column: 2 !important;
+    grid-row: 2 !important;
+    justify-self: end !important;
+    margin-top: 2px !important;
+  }
 }
 
-/* The Last 30 days modal already supplies date headings, so it never gets card
-   footer dates even though it reuses Library cards. */
-.stats-recent-day-grid .library-card-tracked-date {
-  display: none !important;
+
+/* =========================================================
+   Recommendation details + balanced desktop text cards v47
+   ========================================================= */
+@media (min-width: 761px) {
+  .library-poster-grid:not(.is-expanded) .library-card-shell.is-text-card,
+  .library-poster-grid.is-expanded:has(.library-text-card-button) .library-card-shell.is-text-card {
+    flex-basis: var(--library-text-card-width, var(--library-poster-width)) !important;
+    width: var(--library-text-card-width, var(--library-poster-width)) !important;
+    max-width: 600px !important;
+  }
+  .library-card-shell.is-text-card .library-text-card-title {
+    text-wrap: balance;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+    hyphens: none;
+  }
+  .library-card-shell.is-text-card .library-text-card-notes {
+    display: block !important;
+    -webkit-line-clamp: unset !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    white-space: normal !important;
+    text-wrap: pretty;
+  }
 }
