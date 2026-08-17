@@ -1179,7 +1179,7 @@ export const TrackerAPI = (() => {
       providerId: id,
       title: title || 'Untitled board game',
       subtitle: year || 'Board Game',
-      image: '',
+      image: xmlValue(item, 'thumbnail') || '',
       description: '',
       genres: [],
       releaseDate: /^\d{4}$/.test(year) ? `${year}-01-01` : '',
@@ -1230,6 +1230,26 @@ export const TrackerAPI = (() => {
     return item ? mapBGGThing(item) : null;
   }
 
+  async function discoverVideoGames(settings, options = {}) {
+    const mode = ['new','popular','for-you'].includes(String(options.mode || '')) ? String(options.mode) : 'for-you';
+    const page = Math.max(1, Number(options.page || 1));
+    const limit = Math.max(1, Math.min(30, Number(options.limit || 24)));
+    const offset = Math.max(0, (page - 1) * limit);
+    const data = await gameCatalogueProxy(settings, { provider: 'igdb', action: 'discover', mode, limit, offset });
+    return (data.results || []).map(mapIGDBGame).filter(result => result.providerId);
+  }
+
+  async function discoverBoardGames(settings, options = {}) {
+    const mode = ['new','popular','for-you'].includes(String(options.mode || '')) ? String(options.mode) : 'for-you';
+    const page = Math.max(1, Number(options.page || 1));
+    const limit = Math.max(1, Math.min(40, Number(options.limit || 24)));
+    const data = await gameCatalogueProxy(settings, { provider: 'bgg', action: 'hot', mode });
+    const doc = parseXml(data.xml || '');
+    const rows = [...doc.querySelectorAll('items > item')].map(mapBGGSearchItem).filter(result => result.providerId);
+    const start = (page - 1) * limit;
+    return rows.slice(start, start + limit);
+  }
+
   async function searchCatalogue(query, type, settings, options = {}) {
     if (!query.trim()) return [];
     if (type === 'tv' || type === 'movie') return searchTMDB(query, type, settings);
@@ -1263,6 +1283,8 @@ export const TrackerAPI = (() => {
     getBookDetails,
     searchVideoGames,
     getVideoGameDetails,
+    discoverVideoGames,
+    discoverBoardGames,
     searchBoardGames,
     getBoardGameDetails,
     searchMusic,

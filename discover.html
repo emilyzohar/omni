@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-add-features-date-cleanup-55" />
+  <link rel="stylesheet" href="style.css?v=omni-sticker-shapes-63" />
 </head>
 <body class="discover-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -82,7 +82,7 @@
         <form id="discoverSearchForm" class="discover-search-form" role="search">
           <label class="discover-search-field">
             <span class="sr-only">Search Discover</span>
-            <input id="discoverSearchInput" type="search" autocomplete="off" placeholder="Search TV, movies, books, music, concerts, restaurants, or live events…" />
+            <input id="discoverSearchInput" type="search" autocomplete="off" placeholder="Search TV, movies, books, games, music, concerts, restaurants, or live events…" />
           </label>
           <button class="primary-button discover-search-button" type="submit">Search</button>
           <button id="clearDiscoverSearch" class="quiet-button discover-search-clear" type="button" hidden>Clear</button>
@@ -104,6 +104,7 @@
                 <label><input type="checkbox" value="tv" checked /> <span>TV</span></label>
                 <label><input type="checkbox" value="movie" checked /> <span>Movies</span></label>
                 <label><input type="checkbox" value="book" /> <span>Books</span></label>
+                <label><input type="checkbox" value="game" /> <span>Games</span></label>
                 <label><input type="checkbox" value="music" /> <span>Albums</span></label>
                 <label><input type="checkbox" value="artist" /> <span>Artists</span></label>
                 <label><input type="checkbox" value="song" /> <span>Songs</span></label>
@@ -266,20 +267,7 @@
       <input id="providerImage" type="hidden" />
       <input id="providerSubtitle" type="hidden" />
 
-      <div class="add-intent-grid">
-        <label class="field">
-          <span>I…</span>
-          <select id="itemActionChoice" aria-label="What did you do?">
-            <option value="watched">Watched</option>
-            <option value="read">Read</option>
-            <option value="played">Played</option>
-            <option value="went">Went to</option>
-            <option value="listened">Listened to</option>
-            <option value="ate">Ate</option>
-            <option value="made">Made</option>
-            <option value="completed" selected>Completed</option>
-          </select>
-        </label>
+      <div class="add-intent-grid add-type-only">
         <label class="field">
           <span>Type</span>
           <select id="itemKindChoice" aria-label="Type"></select>
@@ -329,14 +317,14 @@
       </label>
 
       <details id="itemFeaturesDisclosure" class="compact-add-option item-features-disclosure">
-        <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Add features</span><small id="itemFeaturesSummary">None</small></summary>
+        <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Extras</span><small id="itemFeaturesSummary">None</small></summary>
         <div class="compact-add-body item-feature-grid">
           <div id="itemFindSourceDisclosure" class="item-feature-source">
             <label class="field compact-field">
-              <span>Find / link with</span>
-              <select id="itemFindSource" aria-label="Find or link with a service">
-                <option value="auto">Automatic for this type</option>
-                <option value="manual">No linked source</option>
+              <span>Search with</span>
+              <select id="itemFindSource" aria-label="Search with a service">
+                <option value="auto">Automatic</option>
+                <option value="manual">None</option>
                 <option value="youtube-videos">YouTube</option>
                 <option value="google-places">Google Maps / Places</option>
                 <option value="ticketmaster-events">Live events · Ticketmaster</option>
@@ -353,12 +341,12 @@
             </label>
             <small id="itemFindSourceSummary" class="item-feature-inline-summary">Automatic</small>
           </div>
-          <label class="checkbox-field compact-feature-toggle"><input id="itemUseRepeatLog" type="checkbox" /><span>Class / repeatable sessions</span></label>
-          <label class="checkbox-field compact-feature-toggle"><input id="itemUseReminder" type="checkbox" /><span>Reminder / recurrence</span></label>
-          <label class="checkbox-field compact-feature-toggle"><input id="itemUseDateRange" type="checkbox" /><span>Date range / multiple days</span></label>
-          <label class="checkbox-field compact-feature-toggle"><input id="itemUsePlaylist" type="checkbox" /><span>YouTube playlist progress</span></label>
-          <label class="field compact-field"><span>Progress tracking</span><select id="itemProgressMode"><option value="auto">Automatic</option><option value="none">None</option><option value="tv">Episodes</option><option value="book">Pages</option></select></label>
-          <p class="compact-feature-help">Features are independent of Type. For example, a Workout can use Class-style sessions and YouTube, or an Event can use a reminder and Google Maps.</p>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUseRepeatLog" type="checkbox" /><span>Repeat logs</span></label>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUseReminder" type="checkbox" /><span>Reminder</span></label>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUseDateRange" type="checkbox" /><span>Date range</span></label>
+          <label class="checkbox-field compact-feature-toggle"><input id="itemUsePlaylist" type="checkbox" /><span>Playlist</span></label>
+          <label class="field compact-field"><span>Progress</span><select id="itemProgressMode"><option value="auto">Automatic</option><option value="none">Off</option><option value="tv">Episodes</option><option value="book">Pages</option></select></label>
+          
         </div>
       </details>
 
@@ -783,6 +771,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-add-features-date-cleanup-55"></script>
+  <script type="module" src="app.js?v=omni-sticker-shapes-63"></script>
 </body>
 </html>

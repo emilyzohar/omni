@@ -1,4 +1,4 @@
-import { TrackerAPI } from './api.js?v=omni-library-stats-30';
+import { TrackerAPI } from './api.js?v=omni-games-discover-31';
 import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
@@ -58,6 +58,8 @@ const SOURCE_ITEM_LABELS = {
 
 const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'game', 'video-game', 'board-game', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class', 'food', 'restaurant', 'recipe', 'shopping', 'other']);
 const STICKER_COLORS = ['rust', 'burgundy', 'red', 'coral', 'orange', 'yellow', 'cream', 'sand', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'slate', 'teal', 'green', 'forest', 'mint', 'olive', 'stone', 'brown', 'charcoal', 'black', 'white'];
+const STICKER_SHAPES = ['square', 'circle', 'triangle', 'diamond', 'hexagon', 'pentagon', 'oval', 'star', 'heart'];
+const STICKER_SYMBOL_SHAPES = new Set(['star', 'heart']);
 const CALENDAR_THEMES = [
   { id: 'blue', label: 'Dusty blue' },
   { id: 'burgundy', label: 'Burgundy' },
@@ -106,9 +108,9 @@ const DEFAULT_DISCOVER_PREFS = {
   eventAutoLikedArtistCalendar: true,
   upcomingHorizonDays: 30
 };
-const DISCOVER_CONTENT_TYPES = ['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'restaurant', 'event'];
+const DISCOVER_CONTENT_TYPES = ['tv', 'movie', 'book', 'game', 'music', 'artist', 'song', 'concert', 'restaurant', 'event'];
 const DISCOVER_CONTENT_TYPE_LABELS = {
-  tv: 'TV', movie: 'Movies', book: 'Books', music: 'Albums', artist: 'Artists', song: 'Songs',
+  tv: 'TV', movie: 'Movies', book: 'Books', game: 'Games', music: 'Albums', artist: 'Artists', song: 'Songs',
   concert: 'Concerts', restaurant: 'Restaurants', event: 'Live Events'
 };
 function normalizedDiscoverContentTypes(prefs = state?.discoverPrefs || DEFAULT_DISCOVER_PREFS) {
@@ -122,6 +124,23 @@ function normalizedDiscoverContentTypes(prefs = state?.discoverPrefs || DEFAULT_
 }
 function discoverTypeSelected(type) {
   return normalizedDiscoverContentTypes().includes(type);
+}
+
+function expandedDiscoverSourceTypes(types = normalizedDiscoverContentTypes()) {
+  const expanded = new Set();
+  for (const type of types || []) {
+    if (type === 'game') {
+      expanded.add('video-game');
+      expanded.add('board-game');
+    } else {
+      expanded.add(type);
+    }
+  }
+  return expanded;
+}
+
+function discoverSourceTypeIsSelected(sourceType, types = normalizedDiscoverContentTypes()) {
+  return expandedDiscoverSourceTypes(types).has(String(sourceType || ''));
 }
 function discoverSelectionLabel(types = normalizedDiscoverContentTypes()) {
   const selected = [...types];
@@ -5584,7 +5603,8 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
 
 function resetItemForm(defaultQueueStatus = 'library') {
   els.itemForm.reset();
-  els.itemForm.classList.remove('is-repeat-log-entry');
+  els.itemForm.classList.remove('is-repeat-log-entry', 'is-repeat-group-create');
+  resetRepeatSetupEditor();
   delete els.itemForm.dataset.sourceTypeHint;
   delete els.itemForm.dataset.repeatGroupId;
   els.editingId.value = '';
@@ -5843,6 +5863,124 @@ function syncItemFeatureSummary() {
   els.itemFeaturesSummary.textContent = bits.length ? bits.join(' · ') : 'None';
 }
 
+
+
+function repeatEntryRatingOptions(value = 0) {
+  const current = Math.max(0, Math.min(5, Number(value || 0)));
+  const options = ['<option value="0">No rating</option>'];
+  for (let rating = 0.5; rating <= 5; rating += 0.5) {
+    const clean = Number(rating.toFixed(1));
+    options.push(`<option value="${clean}"${clean === current ? ' selected' : ''}>★ ${clean}</option>`);
+  }
+  return options.join('');
+}
+
+function repeatDraftEntryElement(values = {}, index = 0) {
+  const row = document.createElement('article');
+  row.className = 'repeat-draft-entry';
+  row.dataset.repeatDraftEntry = '';
+  row.innerHTML = `
+    <div class="repeat-draft-entry-heading">
+      <strong>Entry ${index + 1}</strong>
+      ${index > 0 ? '<button class="quiet-button repeat-draft-remove" type="button" data-repeat-remove-entry>Remove</button>' : ''}
+    </div>
+    <div class="repeat-draft-entry-grid">
+      <label class="field compact-field repeat-draft-title"><span>Entry name <em>optional</em></span><input type="text" data-repeat-entry-title placeholder="e.g. Evening spin" value="${escapeAttr(values.title || '')}" /></label>
+      <label class="field compact-field"><span>Date</span><input type="date" data-repeat-entry-date value="${escapeAttr(values.date || '')}" required /></label>
+      <label class="field compact-field"><span>Rating <em>optional</em></span><select data-repeat-entry-rating>${repeatEntryRatingOptions(values.rating)}</select></label>
+      <label class="field compact-field repeat-draft-note"><span>Note <em>optional</em></span><textarea rows="2" data-repeat-entry-note placeholder="Anything about this entry">${escapeHtml(values.note || '')}</textarea></label>
+    </div>`;
+  row.querySelector('[data-repeat-remove-entry]')?.addEventListener('click', () => {
+    row.remove();
+    renumberRepeatDraftEntries();
+  });
+  return row;
+}
+
+function renumberRepeatDraftEntries() {
+  $$('#repeatSetupEntries [data-repeat-draft-entry]').forEach((row, index) => {
+    const heading = row.querySelector('.repeat-draft-entry-heading strong');
+    if (heading) heading.textContent = `Entry ${index + 1}`;
+  });
+}
+
+function addRepeatDraftEntry(values = {}) {
+  const list = $('#repeatSetupEntries');
+  if (!list) return;
+  const index = list.querySelectorAll('[data-repeat-draft-entry]').length;
+  list.appendChild(repeatDraftEntryElement({ date: index === 0 ? (values.date || todayString()) : (values.date || ''), ...values }, index));
+}
+
+function ensureRepeatSetupEditor() {
+  let block = $('#repeatSetupEditor');
+  if (block) return block;
+  if (!els.itemFeaturesDisclosure || !els.itemForm) return null;
+  block = document.createElement('section');
+  block.id = 'repeatSetupEditor';
+  block.className = 'repeat-setup-editor';
+  block.hidden = true;
+  block.innerHTML = `
+    <label class="field repeat-overall-title-field">
+      <span>Overall title</span>
+      <input id="repeatOverallTitle" type="text" autocomplete="off" placeholder="e.g. Spin class" />
+    </label>
+    <div class="repeat-entry-editor-heading">
+      <div><strong>Entries</strong><small>Log the first session now, or add several at once.</small></div>
+      <button class="secondary-button" type="button" data-repeat-add-entry>+ Add entry</button>
+    </div>
+    <div id="repeatSetupEntries" class="repeat-setup-entries"></div>`;
+  els.itemFeaturesDisclosure.insertAdjacentElement('afterend', block);
+  block.querySelector('[data-repeat-add-entry]')?.addEventListener('click', () => addRepeatDraftEntry());
+  addRepeatDraftEntry({ date: todayString() });
+  return block;
+}
+
+function resetRepeatSetupEditor() {
+  const block = ensureRepeatSetupEditor();
+  if (!block) return;
+  const overall = block.querySelector('#repeatOverallTitle');
+  const list = block.querySelector('#repeatSetupEntries');
+  if (overall) overall.value = '';
+  if (list) list.innerHTML = '';
+  addRepeatDraftEntry({ date: todayString() });
+}
+
+function collectRepeatDraftEntries() {
+  return $$('#repeatSetupEntries [data-repeat-draft-entry]').map(row => ({
+    title: String(row.querySelector('[data-repeat-entry-title]')?.value || '').trim(),
+    date: String(row.querySelector('[data-repeat-entry-date]')?.value || '').trim(),
+    rating: Math.max(0, Math.min(5, Number(row.querySelector('[data-repeat-entry-rating]')?.value || 0))),
+    note: String(row.querySelector('[data-repeat-entry-note]')?.value || '').trim()
+  }));
+}
+
+function isCreatingRepeatGroup() {
+  return Boolean(formUsesRepeatLog() && !els.editingId?.value && !els.itemForm?.dataset?.repeatGroupId);
+}
+
+function syncRepeatSetupEditor() {
+  const block = ensureRepeatSetupEditor();
+  if (!block || !els.itemForm) return;
+  const creating = isCreatingRepeatGroup();
+  block.hidden = !creating;
+  els.itemForm.classList.toggle('is-repeat-group-create', creating);
+  if (els.manualTitle) els.manualTitle.required = !creating && !Boolean(els.itemForm?.dataset?.repeatGroupId);
+  if (creating) {
+    const overall = $('#repeatOverallTitle');
+    if (overall && !overall.value.trim() && els.manualTitle?.value.trim()) overall.value = els.manualTitle.value.trim();
+  }
+}
+
+function setFormTitleValue(value = '') {
+  const clean = String(value || '');
+  if (isCreatingRepeatGroup()) {
+    ensureRepeatSetupEditor();
+    const overall = $('#repeatOverallTitle');
+    if (overall) overall.value = clean;
+  } else if (els.manualTitle) {
+    els.manualTitle.value = clean;
+  }
+}
 
 function setItemFormSourceType(sourceType, item = null) {
   if (!els.itemSourceType) return;
@@ -6111,6 +6249,7 @@ function updateItemFormForType() {
     els.playlistPreview.hidden = true;
   }
 
+  syncRepeatSetupEditor();
   updateReminderFormFields();
 
   const placeholders = { tv: 'Search TV', movie: 'Search movies', book: 'Search books', 'video-game': 'Search video games', 'board-game': 'Search board games', music: 'Search albums', artist: 'Search artists', song: 'Search songs', concert: 'Search concerts', event: 'Search events', restaurant: 'Search restaurants', place: 'Search places', youtube: 'Search YouTube' };
@@ -6283,10 +6422,10 @@ async function selectCatalogueResult(result) {
   // Selecting a restaurant should behave like selecting a movie: use the
   // catalogue result's actual display name as the prefilled tracker title.
   if (selectingRestaurant || selectingPlace) {
-    els.manualTitle.value = result.title || String(els.catalogueQuery?.value || '').trim();
+    setFormTitleValue(result.title || String(els.catalogueQuery?.value || '').trim());
     els.manualTitle.placeholder = 'Restaurant name';
   } else {
-    els.manualTitle.value = result.title || '';
+    setFormTitleValue(result.title || '');
   }
   els.provider.value = result.provider;
   els.providerId.value = result.providerId;
@@ -6566,7 +6705,7 @@ async function loadPlaylistPreview() {
     els.providerId.value = playlist.providerId;
     els.providerImage.value = playlist.image || '';
     els.providerSubtitle.value = playlist.subtitle || '';
-    els.manualTitle.value = playlist.title || '';
+    setFormTitleValue(playlist.title || '');
     showSelectedSource({ title: playlist.title, subtitle: `${playlist.items.length} videos · ${playlist.subtitle || ''}`, image: playlist.image }, true);
     showFormMessage('', false);
     cachePut(`playlist:${playlist.providerId}`, playlist);
@@ -6588,7 +6727,9 @@ async function saveItemFromForm(event) {
   const repeatLogFeature = formUsesRepeatLog();
   const repeatGroupId = String(els.itemForm?.dataset?.repeatGroupId || '');
   const repeatGroup = repeatGroupId ? findItem(repeatGroupId) : null;
-  let title = els.manualTitle.value.trim();
+  const creatingRepeatGroup = Boolean(repeatLogFeature && !repeatGroup && !editing);
+  const repeatDraftEntries = creatingRepeatGroup ? collectRepeatDraftEntries() : [];
+  let title = creatingRepeatGroup ? String($('#repeatOverallTitle')?.value || '').trim() : els.manualTitle.value.trim();
   if (!title && repeatGroup) title = repeatGroup.title || 'Log';
   let provider = els.provider.value;
   let providerId = els.providerId.value;
@@ -6676,8 +6817,18 @@ async function saveItemFromForm(event) {
   }
 
   if (!title) {
-    showFormMessage('Add a title.', true);
+    showFormMessage(creatingRepeatGroup ? 'Add an overall title.' : 'Add a title.', true);
     return;
+  }
+  if (creatingRepeatGroup) {
+    if (!repeatDraftEntries.length) {
+      showFormMessage('Add at least one entry.', true);
+      return;
+    }
+    if (repeatDraftEntries.some(entry => !entry.date)) {
+      showFormMessage('Choose a date for each entry.', true);
+      return;
+    }
   }
   if (!repeatGroup && sourceType === 'youtube' && (provider !== 'youtube' || !providerId)) {
     showFormMessage(els.itemUsePlaylist?.checked ? 'Load a playlist first.' : 'Choose a YouTube video first.', true);
@@ -6714,8 +6865,10 @@ async function saveItemFromForm(event) {
     showFormMessage('Choose a Find it result first, or switch Find it to Manual.', true);
     return;
   }
-  const repeatLogDate = repeatLogFeature ? (els.itemDate?.value || els.activityStartDate?.value || (reminderFeature ? els.reminderDueDate?.value : '') || '') : '';
-  if (repeatLogFeature && !repeatLogDate) {
+  const repeatLogDate = repeatLogFeature
+    ? (creatingRepeatGroup ? (repeatDraftEntries[0]?.date || '') : (els.itemDate?.value || els.activityStartDate?.value || (reminderFeature ? els.reminderDueDate?.value : '') || ''))
+    : '';
+  if (repeatLogFeature && !creatingRepeatGroup && !repeatLogDate) {
     showFormMessage('Choose a date for this log.', true);
     return;
   }
@@ -6783,11 +6936,11 @@ async function saveItemFromForm(event) {
     providerId,
     image,
     subtitle,
-    rating: Number(els.itemRating.value || 0),
+    rating: creatingRepeatGroup ? 0 : Number(els.itemRating.value || 0),
     actionCategory: selectedActionCategory,
-    notes: els.itemNote.value.trim(),
-    comment: String(els.itemComment?.value || '').trim(),
-    people,
+    notes: creatingRepeatGroup ? '' : els.itemNote.value.trim(),
+    comment: creatingRepeatGroup ? '' : String(els.itemComment?.value || '').trim(),
+    people: creatingRepeatGroup ? [] : people,
     recommended: Boolean(els.itemRecommended?.checked),
     genres: extractItemGenres(sourceType, state.selectedSource, editing),
     releaseDate: ['tv','movie','book','video-game','board-game','music','artist','song'].includes(sourceType)
@@ -6950,7 +7103,29 @@ async function saveItemFromForm(event) {
       if (preservedReminder && !item.reminder) group.reminder = preservedReminder;
     }
 
-    if (shouldCreateLog) {
+    if (creatingRepeatGroup) {
+      for (const draft of repeatDraftEntries) {
+        addHistoryRecord({
+          sourceItemId: group.id,
+          sourceType: getSourceType(group),
+          type: group.type,
+          typeLabel: getItemTypeLabel(group),
+          subcategory: group.subcategory || '',
+          date: draft.date || todayString(),
+          showOnCalendar: true,
+          kind: 'repeat-log',
+          title: draft.title || group.title || 'Log',
+          subtitle: group.subcategory || 'Log',
+          notes: draft.note || '',
+          comment: '',
+          people: [],
+          rating: Number(draft.rating || 0),
+          image: group.image || '',
+          provider: group.provider || 'manual',
+          providerId: group.providerId || ''
+        });
+      }
+    } else if (shouldCreateLog) {
       addHistoryRecord({
         sourceItemId: group.id,
         sourceType: getSourceType(group),
@@ -9322,7 +9497,7 @@ function getStickerConfig(type, entry = {}) {
   const key = stickerPreferenceKey(type, entry);
   const parentSaved = state.stickerPrefs?.[type] || {};
   const saved = key !== type ? (state.stickerPrefs?.[key] || parentSaved) : parentSaved;
-  const shape = ['square', 'circle', 'star', 'heart'].includes(saved.shape) ? saved.shape : defaults.shape;
+  const shape = STICKER_SHAPES.includes(saved.shape) ? saved.shape : defaults.shape;
   const color = STICKER_COLORS.includes(saved.color) ? saved.color : defaults.color;
   const label = cleanStickerLabel(saved.label !== undefined ? saved.label : defaults.label);
   return { ...defaults, shape, color, label };
@@ -9716,7 +9891,7 @@ function discoverResultMatchesGenre(result) {
     const resultKeywordIds = new Set((result._tmdbKeywordIds || []).map(String));
     return keywordIds.size ? [...keywordIds].some(id => resultKeywordIds.has(id)) : false;
   }
-  if (result.sourceType === 'event' || result.sourceType === 'concert' || result.sourceType === 'restaurant' || ['music','artist','song'].includes(result.sourceType)) {
+  if (result.sourceType === 'event' || result.sourceType === 'concert' || result.sourceType === 'restaurant' || ['music','artist','song','video-game','board-game'].includes(result.sourceType)) {
     // Live, food, and music have their own category/taste controls. The shared
     // Genre dropdown is built for TV, movies, and books; applying it here can
     // accidentally collapse an Events feed to only one or two cards.
@@ -9792,6 +9967,12 @@ async function runDiscoverSearch(forcedQuery = '') {
   try {
     const types = normalizedDiscoverContentTypes();
     const settled = await Promise.allSettled(types.map(type => {
+      if (type === 'game') {
+        return Promise.all([
+          TrackerAPI.searchCatalogue(query, 'video-game', state.settings, { maxResults: 20 }),
+          TrackerAPI.searchCatalogue(query, 'board-game', state.settings, { maxResults: 20 })
+        ]).then(groups => groups.flat());
+      }
       if (type === 'concert') return TrackerAPI.searchCatalogue(query, 'concert', state.settings, {
         city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
         countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA'
@@ -9812,9 +9993,10 @@ async function runDiscoverSearch(forcedQuery = '') {
     for (let index = 0; index < settled.length; index += 1) {
       const entry = settled[index];
       if (entry.status !== 'fulfilled') continue;
-      const sourceType = types[index];
-      const availableResults = filterAlreadyKnown(entry.value || [], sourceType);
-      for (const result of availableResults) {
+      const selectedType = types[index];
+      for (const result of entry.value || []) {
+        const sourceType = result.sourceType || selectedType;
+        if (!filterAlreadyKnown([result], sourceType).length) continue;
         const normalized = { ...result, sourceType, categories: result.raw?.volumeInfo?.categories || result.categories || [] };
         if (state.discoverPrefs.englishTVOnly === true && sourceType === 'tv' && String(normalized.raw?.original_language || '').toLowerCase() !== 'en') continue;
         if (!(await discoverSearchResultMatchesGenre(normalized))) continue;
@@ -10317,7 +10499,7 @@ async function loadMoreDiscoverFeed() {
   try {
     const candidates = await collectDiscoverFeedCandidates(batchNumber);
     const requestedContentTypes = normalizedDiscoverContentTypes();
-    const selectedContentTypes = new Set(requestedContentTypes);
+    const selectedContentTypes = expandedDiscoverSourceTypes(requestedContentTypes);
     musicDiscoverDebug('feed candidates collected', {
       mode: state.discoverMode,
       batchNumber,
@@ -10451,6 +10633,7 @@ function asLiveDiscoverCandidate(result, source, boost = 0, exploration = false)
 async function collectDiscoverFeedCandidates(batchNumber) {
   const selectedTypes = normalizedDiscoverContentTypes();
   const selected = new Set(selectedTypes);
+  const selectedSources = expandedDiscoverSourceTypes(selectedTypes);
   const musicOnly = selectedTypes.length > 0 && selectedTypes.every(type => ['music', 'artist', 'song'].includes(type));
 
   // When every selected category is music-related, bypass unrelated catalogue
@@ -10473,6 +10656,10 @@ async function collectDiscoverFeedCandidates(batchNumber) {
     return collectRestaurantDiscoverCandidates(batchNumber, state.discoverMode);
   }
 
+  if (selectedTypes.length === 1 && selected.has('game')) {
+    return collectGameDiscoverCandidates(batchNumber, state.discoverMode);
+  }
+
   const liveOnly = selectedTypes.length > 0 && selectedTypes.every(type => ['concert','event'].includes(type));
   if (liveOnly) {
     return collectLiveDiscoverCandidates(batchNumber, state.discoverMode);
@@ -10483,7 +10670,11 @@ async function collectDiscoverFeedCandidates(batchNumber) {
   else if (state.discoverMode === 'popular') candidates = await collectPopularDiscoverCandidates(batchNumber);
   else candidates = await collectForYouDiscoverCandidates(batchNumber);
 
-  return dedupeDiscoverCandidatesByBoost(candidates.filter(result => selected.has(result.sourceType)));
+  if (selected.has('game')) {
+    try { candidates.push(...await collectGameDiscoverCandidates(batchNumber, state.discoverMode)); } catch (error) { console.warn('[Discover][Games] collector failed', error?.message || error); }
+  }
+
+  return dedupeDiscoverCandidatesByBoost(candidates.filter(result => selectedSources.has(result.sourceType)));
 }
 
 function musicRecommendationSeedScore(item) {
@@ -11233,6 +11424,41 @@ async function collectPopularDiscoverCandidates(batchNumber) {
   return dedupeDiscoverCandidatesByBoost(candidates);
 }
 
+async function collectGameDiscoverCandidates(batchNumber, mode = 'for-you') {
+  if (!state.settings.gameCatalogueProxyUrl) return [];
+  const page = Math.max(1, Number(batchNumber || 1));
+  const tasks = [
+    TrackerAPI.discoverVideoGames(state.settings, { mode, page, limit: 28 }),
+    TrackerAPI.discoverBoardGames(state.settings, { mode, page, limit: 24 })
+  ];
+  const settled = await Promise.allSettled(tasks);
+  const candidates = [];
+  const add = (results, sourceType, boost) => {
+    for (const result of filterAlreadyKnown(results || [], sourceType)) {
+      candidates.push({
+        ...result,
+        sourceType,
+        _discoverSource: mode === 'new' ? 'new-games' : mode === 'popular' ? 'popular-games' : 'games',
+        _discoverBoost: boost,
+        _discoverExploration: mode === 'for-you'
+      });
+    }
+  };
+  if (settled[0].status === 'fulfilled') add(settled[0].value, 'video-game', mode === 'popular' ? 7 : mode === 'new' ? 5 : 3);
+  if (settled[1].status === 'fulfilled') add(settled[1].value, 'board-game', mode === 'popular' ? 7 : mode === 'new' ? 4 : 3);
+
+  if (mode === 'new') {
+    const today = todayString();
+    const oldest = addDaysToDateString(today, -365);
+    const newest = addDaysToDateString(today, normalizedUpcomingHorizonDays());
+    return dedupeDiscoverCandidatesByBoost(candidates).filter(result => {
+      const date = discoverNewDate(result);
+      return /^\d{4}-\d{2}-\d{2}$/.test(date) && date >= oldest && date <= newest;
+    });
+  }
+  return dedupeDiscoverCandidatesByBoost(candidates);
+}
+
 async function collectRestaurantDiscoverCandidates(batchNumber, mode = 'for-you') {
   if (!state.settings.googlePlacesKey) return [];
   const saved = state.items.filter(item => getSourceType(item) === 'restaurant');
@@ -11573,13 +11799,15 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
   const tasteProfiles = mode === 'for-you' ? {
     tv: discoverTasteProfile('tv'),
     movie: discoverTasteProfile('movie'),
-    book: discoverTasteProfile('book')
+    book: discoverTasteProfile('book'),
+    'video-game': discoverTasteProfile('video-game'),
+    'board-game': discoverTasteProfile('board-game')
   } : {};
   const prelim = (results || []).map(result => {
     let score = Number(result._discoverBoost || 0);
     const followerLoggedCount = socialFollowerLoggedCount(result);
     if (followerLoggedCount) score += Math.min(3.2, followerLoggedCount * 1.15);
-    const rating = Number(result.rating || 0);
+    const rating = Number(result.rating || result.catalogueRating || 0);
     if (rating) score += Math.min(3, rating / 3.5);
 
     if (mode === 'for-you' && result.sourceType === 'book' && authorSet.size) {
@@ -11679,6 +11907,7 @@ function discoverContentFamily(sourceType) {
   if (['music','artist','song'].includes(sourceType)) return 'music';
   if (['concert','event'].includes(sourceType)) return 'live';
   if (sourceType === 'restaurant') return 'food';
+  if (['video-game','board-game'].includes(sourceType)) return 'games';
   return sourceType || 'other';
 }
 
@@ -11805,6 +12034,7 @@ function discoverNewDate(result) {
   if (result.sourceType === 'tv') return result.newReleaseDate || result.nextEpisodeDate || result.latestEpisodeDate || result._discoverLatestDate || result.raw?.first_air_date || '';
   if (result.sourceType === 'movie') return result.raw?.release_date || result.releaseDate || '';
   if (result.sourceType === 'music' || result.sourceType === 'song') return result.releaseDate || String(result.raw?.releaseDate || '').slice(0,10);
+  if (result.sourceType === 'video-game' || result.sourceType === 'board-game') return normalizedReleaseDate(result.releaseDate || '');
   return '';
 }
 
@@ -12427,7 +12657,8 @@ function discoverCardMarkup(result, key, fallbackType) {
     : type === 'book'
       ? String(result.publishedDate || '').slice(0, 4)
       : String(result.subtitle || '').slice(0, 4);
-  const rating = result.rating ? `★ ${Number(result.rating).toFixed(1)}` : '';
+  const catalogueRating = Number(result.catalogueRating || result.rating || 0);
+  const rating = catalogueRating ? `★ ${catalogueRating > 10 ? (catalogueRating / 10).toFixed(1) : catalogueRating.toFixed(1)}` : '';
   const providers = (result.streamingProviderNames || result.preferredProviderNames || []).slice(0, 2);
   const streaming = providers.length ? providers.join(' + ') : (['tv','movie'].includes(type) ? 'Streaming varies' : '');
   const meta = type === 'concert' || type === 'event'
@@ -12450,7 +12681,7 @@ function discoverCardMarkup(result, key, fallbackType) {
   const completeAction = ['tv','movie','book'].includes(type)
     ? `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo watched / read' : 'Mark watched / read'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>`
     : '';
-  const queueAction = ['tv','movie','book'].includes(type)
+  const queueAction = ['tv','movie','book','video-game','board-game'].includes(type)
     ? `<button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>`
     : '';
   const libraryAction = libraryOnly && type !== 'restaurant'
@@ -12931,14 +13162,15 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
   const sourceType = result.sourceType;
   const isMusicFamily = ['music', 'artist', 'song', 'concert'].includes(sourceType);
   const isFoodFamily = ['food', 'restaurant', 'recipe'].includes(sourceType);
+  const isGameFamily = ['video-game', 'board-game'].includes(sourceType);
   const discoverMusicSubcategory = sourceType === 'music' ? 'Album' : musicSubcategoryForSourceType(sourceType);
   const discoverFoodSubcategory = foodSubcategoryForSourceType(sourceType);
   item = {
     id: makeId(),
     sourceType,
-    type: isMusicFamily ? 'music' : isFoodFamily ? 'food' : sourceType,
-    typeLabel: isMusicFamily ? 'Music' : isFoodFamily ? 'Food' : (SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType)),
-    subcategory: isMusicFamily ? discoverMusicSubcategory : discoverFoodSubcategory,
+    type: isMusicFamily ? 'music' : isFoodFamily ? 'food' : isGameFamily ? 'game' : sourceType,
+    typeLabel: isMusicFamily ? 'Music' : isFoodFamily ? 'Food' : isGameFamily ? 'Games' : (SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType)),
+    subcategory: isMusicFamily ? discoverMusicSubcategory : isFoodFamily ? discoverFoodSubcategory : isGameFamily ? (sourceType === 'board-game' ? 'Board Game' : 'Video Game') : '',
     title: result.title || 'Untitled',
     provider: result.provider || (sourceType === 'book' ? 'googleBooks' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'restaurant' ? 'googlePlaces' : sourceType === 'concert' ? 'ticketmaster' : sourceType === 'event' ? 'ticketmaster' : 'tmdb'),
     providerId: String(result.providerId || ''),
@@ -12966,6 +13198,20 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
 
   if (sourceType === 'tv') item.progress = { nextSeason: 1, nextEpisode: 1 };
   if (sourceType === 'book') item.progress = { currentPage: 0, totalPages: Number(result.pageCount || 0), readingPeriods: [] };
+  if (isGameFamily) {
+    item.gameMeta = {
+      kind: sourceType,
+      description: result.description || '',
+      platforms: result.platforms || [],
+      designers: result.designers || [],
+      mechanics: result.mechanics || [],
+      minPlayers: Number(result.minPlayers || 0),
+      maxPlayers: Number(result.maxPlayers || 0),
+      playTime: Number(result.playTime || 0),
+      catalogueRating: Number(result.catalogueRating || 0),
+      catalogueUrl: result.catalogueUrl || ''
+    };
+  }
   if (sourceType === 'event' || sourceType === 'concert') {
     item.eventMeta = {
       eventDate: result.eventDate || '', eventTime: result.eventTime || '', startDateTime: result.startDateTime || '', timezone: result.timezone || '',
@@ -13302,6 +13548,7 @@ async function openDiscoverDetail(key) {
     if (result.sourceType === 'tv') await renderDiscoverTVDetail(key);
     else if (result.sourceType === 'movie') await renderDiscoverMovieDetail(key);
     else if (result.sourceType === 'book') await renderDiscoverBookDetail(key);
+    else if (['video-game','board-game'].includes(result.sourceType)) await renderDiscoverGameDetail(key);
     else if (result.sourceType === 'music') await renderDiscoverAlbumDetail(key);
     else if (result.sourceType === 'artist') await renderDiscoverArtistDetail(key);
     else if (result.sourceType === 'song') await renderDiscoverSongDetail(key);
@@ -13430,7 +13677,7 @@ function saveDiscoverTVPersonalMetadata(key) {
 }
 
 function discoverQueueButtonsMarkup(result, key) {
-  if (!result || !['tv','movie','book'].includes(result.sourceType)) return '';
+  if (!result || !['tv','movie','book','video-game','board-game'].includes(result.sourceType)) return '';
   const item = findDiscoverItem(result);
   const current = item ? getQueueStatus(item) : 'library';
   return `<div class="queue-toggle-buttons" aria-label="Queue placement">
@@ -13848,6 +14095,61 @@ async function renderDiscoverEventDetail(key) {
   `;
 }
 
+async function renderDiscoverGameDetail(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const sourceType = result.sourceType;
+  let details = result;
+  try {
+    details = sourceType === 'video-game'
+      ? await getCached(`discover:game:igdb:${result.providerId}`, () => TrackerAPI.getVideoGameDetails(result.providerId, state.settings))
+      : await getCached(`discover:game:bgg:${result.providerId}`, () => TrackerAPI.getBoardGameDetails(result.providerId, state.settings));
+  } catch {}
+  details ||= result;
+  Object.assign(result, {
+    ...details,
+    sourceType,
+    provider: result.provider || details.provider,
+    providerId: result.providerId || details.providerId
+  });
+  const existing = findDiscoverItem(result);
+  if (existing) {
+    existing.genres = details.genres?.length ? [...details.genres] : (existing.genres || []);
+    existing.releaseDate = details.releaseDate || existing.releaseDate || '';
+    existing.image = details.image || existing.image || '';
+    existing.gameMeta = {
+      ...(existing.gameMeta || {}),
+      kind: sourceType,
+      description: details.description || existing.gameMeta?.description || '',
+      platforms: details.platforms || existing.gameMeta?.platforms || [],
+      designers: details.designers || existing.gameMeta?.designers || [],
+      mechanics: details.mechanics || existing.gameMeta?.mechanics || [],
+      minPlayers: Number(details.minPlayers || existing.gameMeta?.minPlayers || 0),
+      maxPlayers: Number(details.maxPlayers || existing.gameMeta?.maxPlayers || 0),
+      playTime: Number(details.playTime || existing.gameMeta?.playTime || 0),
+      catalogueRating: Number(details.catalogueRating || existing.gameMeta?.catalogueRating || 0),
+      catalogueUrl: details.catalogueUrl || existing.gameMeta?.catalogueUrl || ''
+    };
+    saveItems();
+  }
+  const rating = Number(details.catalogueRating || 0);
+  const ratingText = rating ? `★ ${rating > 10 ? (rating / 10).toFixed(1) : rating.toFixed(1)}` : '';
+  const gameMeta = sourceType === 'video-game'
+    ? [details.releaseDate?.slice(0,4), ...(details.platforms || []).slice(0,3), ratingText].filter(Boolean).join(' · ')
+    : [details.releaseDate?.slice(0,4), details.minPlayers && details.maxPlayers ? `${details.minPlayers}${details.maxPlayers !== details.minPlayers ? `–${details.maxPlayers}` : ''} players` : '', details.playTime ? `${details.playTime} min` : '', ratingText].filter(Boolean).join(' · ');
+  const completed = isDiscoverCompleted(result);
+  const externalUrl = details.catalogueUrl || (sourceType === 'board-game' ? `https://boardgamegeek.com/boardgame/${encodeURIComponent(result.providerId)}` : '');
+  els.detailBody.innerHTML = `
+    ${detailHero({ type: sourceType === 'video-game' ? 'VIDEO GAME' : 'BOARD GAME', title:details.title || result.title, image:details.image || result.image || '', subtitle:gameMeta || details.subtitle || result.subtitle || '', overview:details.description || result.description || '' })}
+    <div class="discover-detail-actions">
+      ${discoverQueueButtonsMarkup(result, key)}
+      <button class="secondary-button${completed ? ' is-complete' : ''}" type="button" data-discover-detail-complete="${escapeAttr(key)}">${completed ? '↶ Mark not played' : '✓ Mark played'}</button>
+    </div>
+    ${details.genres?.length ? `<section class="detail-section"><h3>${sourceType === 'video-game' ? 'Genres' : 'Categories'}</h3><p>${escapeHtml(details.genres.join(' · '))}</p></section>` : ''}
+    ${sourceType === 'board-game' && details.mechanics?.length ? `<section class="detail-section"><h3>Mechanics</h3><p>${escapeHtml(details.mechanics.slice(0,10).join(' · '))}</p></section>` : ''}
+    ${externalUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(externalUrl)}" target="_blank" rel="noopener">Open on ${sourceType === 'video-game' ? 'IGDB' : 'BoardGameGeek'} ↗</a></section>` : ''}`;
+}
+
 async function renderDiscoverBookDetail(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
@@ -14004,6 +14306,11 @@ function renderStickerSettingsRows() {
           <select data-sticker-field="shape">
             <option value="square" ${config.shape === 'square' ? 'selected' : ''}>Square</option>
             <option value="circle" ${config.shape === 'circle' ? 'selected' : ''}>Circle</option>
+            <option value="triangle" ${config.shape === 'triangle' ? 'selected' : ''}>Triangle</option>
+            <option value="diamond" ${config.shape === 'diamond' ? 'selected' : ''}>Diamond</option>
+            <option value="hexagon" ${config.shape === 'hexagon' ? 'selected' : ''}>Hexagon</option>
+            <option value="pentagon" ${config.shape === 'pentagon' ? 'selected' : ''}>Pentagon</option>
+            <option value="oval" ${config.shape === 'oval' ? 'selected' : ''}>Oval</option>
             <option value="star" ${config.shape === 'star' ? 'selected' : ''}>Star</option>
             <option value="heart" ${config.shape === 'heart' ? 'selected' : ''}>Heart</option>
           </select>
@@ -14016,7 +14323,7 @@ function renderStickerSettingsRows() {
         </label>
         <label class="sticker-setting-field sticker-setting-text-field sticker-setting-field-wide">
           <span class="sticker-setting-mobile-label">Sticker text</span>
-          <input data-sticker-field="label" type="text" maxlength="3" value="${escapeAttr(['star','heart'].includes(config.shape) ? '' : config.label)}" placeholder="Optional, up to 3 characters" ${['star','heart'].includes(config.shape) ? 'disabled' : ''} />
+          <input data-sticker-field="label" type="text" maxlength="3" value="${escapeAttr(STICKER_SYMBOL_SHAPES.has(config.shape) ? '' : config.label)}" placeholder="Optional, up to 3 characters" ${STICKER_SYMBOL_SHAPES.has(config.shape) ? 'disabled' : ''} />
         </label>
       </div>`;
     els.stickerSettingsRows.appendChild(row);
@@ -14029,8 +14336,8 @@ function previewStickerSettings(event) {
   const shape = row.querySelector('[data-sticker-field="shape"]')?.value || 'square';
   const color = row.querySelector('[data-sticker-field="color"]')?.value || 'cream';
   const labelInput = row.querySelector('[data-sticker-field="label"]');
-  if (labelInput) labelInput.disabled = ['star','heart'].includes(shape);
-  const label = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(labelInput?.value ?? '');
+  if (labelInput) labelInput.disabled = STICKER_SYMBOL_SHAPES.has(shape);
+  const label = STICKER_SYMBOL_SHAPES.has(shape) ? '' : cleanStickerLabel(labelInput?.value ?? '');
   const sampleEntry = { type: row.dataset.stickerType, subcategory: row.dataset.stickerSubcategory || '' };
   const defaults = getDefaultStickerConfig(row.dataset.stickerType, sampleEntry);
   const preview = row.querySelector('.sticker-setting-preview');
@@ -14048,7 +14355,7 @@ function saveStickerSettings(event) {
     const key = row.dataset.stickerKey || row.dataset.stickerType;
     const shape = row.querySelector('[data-sticker-field="shape"]')?.value || 'square';
     const color = row.querySelector('[data-sticker-field="color"]')?.value || 'cream';
-    const label = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(row.querySelector('[data-sticker-field="label"]')?.value ?? '');
+    const label = STICKER_SYMBOL_SHAPES.has(shape) ? '' : cleanStickerLabel(row.querySelector('[data-sticker-field="label"]')?.value ?? '');
     const existing = next[key] || {};
     const calendarInput = row.querySelector('[data-sticker-field="calendar-label"]');
     const calendarLabel = calendarInput ? cleanTypeLabel(calendarInput.value) : existing.calendarLabel;
