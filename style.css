@@ -10504,3 +10504,28 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
 @media (max-width:390px) {
   .add-intent-grid { grid-template-columns:1fr; }
 }
+
+
+/* Typography polish v24: soften heavy display face; keep secondary labels quiet. */
+:where(.upnext-section, .library-section, .discover-section, .social-section, .modal, .detail-body, .album-section, .stats-section) h1,
+:where(.upnext-section, .library-section, .discover-section, .social-section, .modal, .detail-body, .album-section, .stats-section) h2,
+:where(.upnext-section, .library-section, .discover-section, .social-section, .modal, .detail-body, .album-section, .stats-section) h3 {
+  opacity: .82;
+}
+.track-section h1,
+.track-section h2,
+.track-section h3,
+.hero h1,
+.hero h2,
+.hero h3 { opacity: 1; }
+.eyebrow,
+.modal-eyebrow,
+.social-panel-heading h3,
+.detail-section-heading h3,
+.field-label {
+  font-weight: 400;
+}
+.section-title-row .eyebrow,
+.library-heading .eyebrow,
+.discover-heading .eyebrow,
+.social-heading .eyebrow { font-weight: 400; }

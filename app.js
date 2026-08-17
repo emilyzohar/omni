@@ -1,4 +1,4 @@
-import { TrackerAPI } from './api.js?v=omni-low-cognitive-add-24';
+import { TrackerAPI } from './api.js?v=omni-library-add-polish-25';
 import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
@@ -4134,10 +4134,14 @@ const ADD_ACTION_KIND_OPTIONS = Object.freeze({
     { value: 'song', label: 'Song', parent: 'music', subtype: 'song' },
     { value: 'recipe', label: 'Recipe', parent: 'food', subtype: 'recipe' },
     { value: 'food', label: 'Food', parent: 'food', subtype: 'manual' },
-    { value: 'reminder', label: 'Reminder', parent: 'reminder' },
-    { value: 'new-type', label: 'New type…', parent: 'other' }
+    { value: 'reminder', label: 'Reminder', parent: 'reminder' }
   ]
 });
+
+const UNIVERSAL_ADD_KIND_OPTIONS = Object.freeze([
+  { value: 'other-item', label: 'Other', parent: 'other', generic: true },
+  { value: 'new-type', label: 'Create new…', parent: 'other', createNew: true }
+]);
 
 function addKindUsageValue(option) {
   if (!option) return '';
@@ -4161,6 +4165,7 @@ function addActionForKind(kind) {
   for (const [action, options] of Object.entries(ADD_ACTION_KIND_OPTIONS)) {
     if (options.some(option => option.value === kind)) return action;
   }
+  if (UNIVERSAL_ADD_KIND_OPTIONS.some(option => option.value === kind)) return 'other';
   if (String(kind || '').startsWith('custom:')) return 'other';
   return 'other';
 }
@@ -4174,7 +4179,10 @@ function kindForCurrentForm(item = null) {
   if (parent === 'food' && subtype === 'recipe') return 'recipe';
   if (parent === 'music' && ['artist','song','concert'].includes(subtype)) return subtype;
   if (parent === 'music' && subtype === 'album') return 'music';
-  if (parent === 'other') return 'new-type';
+  if (parent === 'other') {
+    if (els.itemKindChoice?.value === 'other-item') return 'other-item';
+    return 'new-type';
+  }
   return parent;
 }
 
@@ -4183,17 +4191,20 @@ function refreshItemKindChoices(preferredKind = '', actionOverride = '') {
   const action = actionOverride || els.itemActionChoice.value || 'watched';
   const base = [...(ADD_ACTION_KIND_OPTIONS[action] || ADD_ACTION_KIND_OPTIONS.other)];
   const custom = action === 'other' ? customAddKindOptions() : [];
-  const options = action === 'other'
+  const actionOptions = action === 'other'
     ? [...custom.filter(option => typeUsageCount(addKindUsageValue(option)) > 0), ...base, ...custom.filter(option => typeUsageCount(addKindUsageValue(option)) <= 0)]
     : base;
-  const current = preferredKind || els.itemKindChoice.value || options[0]?.value || '';
-  els.itemKindChoice.innerHTML = options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
-  els.itemKindChoice.value = options.some(option => option.value === current) ? current : (options[0]?.value || '');
+  const options = [...actionOptions, ...UNIVERSAL_ADD_KIND_OPTIONS];
+  const seen = new Set();
+  const uniqueOptions = options.filter(option => option?.value && !seen.has(option.value) && seen.add(option.value));
+  const current = preferredKind || els.itemKindChoice.value || uniqueOptions[0]?.value || '';
+  els.itemKindChoice.innerHTML = uniqueOptions.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
+  els.itemKindChoice.value = uniqueOptions.some(option => option.value === current) ? current : (uniqueOptions[0]?.value || '');
 }
 
 function setUnderlyingFormTypeForKind(kind) {
   if (!els.itemSourceType) return;
-  const all = Object.values(ADD_ACTION_KIND_OPTIONS).flat();
+  const all = [...Object.values(ADD_ACTION_KIND_OPTIONS).flat(), ...UNIVERSAL_ADD_KIND_OPTIONS];
   const option = String(kind || '').startsWith('custom:')
     ? { value: kind, parent: kind }
     : all.find(entry => entry.value === kind) || { value: 'new-type', parent: 'other' };
@@ -4213,7 +4224,8 @@ function applyItemKindChoice(clearSource = false) {
 function syncAddActionControls(item = null) {
   if (!els.itemActionChoice || !els.itemKindChoice) return;
   const kind = kindForCurrentForm(item);
-  const action = addActionForKind(kind);
+  const storedAction = String(item?.actionCategory || '');
+  const action = ['watched','read','went','completed','other'].includes(storedAction) ? storedAction : addActionForKind(kind);
   els.itemActionChoice.value = action;
   refreshItemKindChoices(kind, action);
 }
@@ -4764,7 +4776,8 @@ function updateItemFormForType() {
   if (els.itemPeopleBlock) els.itemPeopleBlock.hidden = bookDisplay;
   if (els.itemPeopleSuggestions && bookDisplay) els.itemPeopleSuggestions.hidden = true;
   else if (els.itemPeopleSuggestions && els.itemModal?.open) refreshItemPeopleSuggestions().catch(() => {});
-  const showDisplayType = parentType === 'reminder' || (parentType === 'other' && !savedType);
+  const creatingNewType = parentType === 'other' && !savedType && els.itemKindChoice?.value === 'new-type';
+  const showDisplayType = parentType === 'reminder' || creatingNewType;
   els.displayTypeBlock.hidden = !showDisplayType;
   els.manualTitleBlock.hidden = false;
   const progressMode = effectiveItemProgressMode(sourceType);
@@ -4816,9 +4829,11 @@ function updateItemFormForType() {
     if (els.displayTypeHint) els.displayTypeHint.textContent = '';
     if (!els.editingId.value || !els.itemDisplayType.value.trim()) els.itemDisplayType.value = 'Chores';
     if (els.itemQueueStatus) els.itemQueueStatus.value = 'upnext';
-  } else if (parentType === 'other' && !savedType) {
+  } else if (parentType === 'other' && !savedType && creatingNewType) {
     els.displayTypeLabel.textContent = 'New type name';
     if (els.displayTypeHint) els.displayTypeHint.textContent = '';
+    if (!els.editingId.value) els.itemDisplayType.value = '';
+  } else if (parentType === 'other' && !savedType) {
     if (!els.editingId.value) els.itemDisplayType.value = '';
   }
 
@@ -5317,13 +5332,19 @@ async function saveItemFromForm(event) {
     type = displayTypeSlug(typeLabel, 'other');
     registerCustomType(type, typeLabel);
   } else if (displayParent === 'other') {
-    typeLabel = cleanTypeLabel(els.itemDisplayType.value);
-    if (!typeLabel) {
-      showFormMessage('Name the type.', true);
-      return;
+    const genericOther = els.itemKindChoice?.value === 'other-item';
+    if (genericOther) {
+      type = 'other';
+      typeLabel = 'Other';
+    } else {
+      typeLabel = cleanTypeLabel(els.itemDisplayType.value);
+      if (!typeLabel) {
+        showFormMessage('Name the type.', true);
+        return;
+      }
+      type = displayTypeSlug(typeLabel, 'other');
+      registerCustomType(type, typeLabel);
     }
-    type = displayTypeSlug(typeLabel, 'other');
-    registerCustomType(type, typeLabel);
   }
 
   const selectedSource = state.selectedSource;
@@ -5461,6 +5482,7 @@ async function saveItemFromForm(event) {
     image,
     subtitle,
     rating: Number(els.itemRating.value || 0),
+    actionCategory: ['watched','read','went','completed','other'].includes(els.itemActionChoice?.value) ? els.itemActionChoice.value : (editing?.actionCategory || addActionForKind(kindForCurrentForm(editing))),
     notes: els.itemNote.value.trim(),
     comment: String(els.itemComment?.value || '').trim(),
     people,
