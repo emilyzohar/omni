@@ -224,7 +224,7 @@ h3 { margin-bottom: 0; font-size: 1.65rem; }
   color: var(--track-fg);
   padding: 65px 0 78px;
 }
-.track-section[data-calendar-theme="blue"] { --track-bg:#5b6da2; }
+.track-section[data-calendar-theme="blue"] { --track-bg:var(--blue); }
 .track-section[data-calendar-theme="burgundy"] { --track-bg:#742b3e; }
 .track-section[data-calendar-theme="slate"] { --track-bg:#586a7d; }
 .track-section[data-calendar-theme="charcoal"] { --track-bg:#454c55; }
@@ -4931,6 +4931,13 @@ body.auth-locked > main {
     filter: drop-shadow(0 2px 3px rgba(21,36,58,.16));
   }
 
+  @media (hover: hover) and (pointer: fine) {
+    .week-sticker-cluster:hover .week-sticker-pile-item .sticker {
+      transform: translate(-2px, -4px) rotate(-7deg);
+      filter: brightness(1.04) drop-shadow(0 2px 3px rgba(21,36,58,.16));
+    }
+  }
+
   .upnext-list.tbr-thumbnail-grid {
     display: grid !important;
     grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
@@ -8296,7 +8303,8 @@ dialog.modal:not([open]) {
   filter: drop-shadow(0 1px 2px rgba(21,36,58,.18));
 }
 .month-sticker-group-button:hover .month-sticker-pile-item .sticker {
-  transform: none;
+  transform: translate(-2px, -4px) rotate(-7deg);
+  filter: brightness(1.04) drop-shadow(0 1px 2px rgba(21,36,58,.18));
 }
 
 .calendar-row-settings-form {
@@ -8583,16 +8591,8 @@ dialog.modal:not([open]) {
 }
 
 
-/* Track themes + contrast-safe sticker edges */
-.track-section .sticker-square[class*="sticker-palette-"],
-.track-section .sticker-circle[class*="sticker-palette-"] {
-  border: 1px solid rgba(255,255,255,.46);
-  box-shadow: 0 0 0 1px rgba(21,36,58,.18), 1px 2px 0 rgba(21,36,58,.24);
-}
-.track-section .sticker-star[class*="sticker-palette-"],
-.track-section .sticker-heart[class*="sticker-palette-"] {
-  text-shadow: 0 0 1px rgba(255,255,255,.92), 0 1px 2px rgba(21,36,58,.58);
-}
+/* Track themes. Sticker shapes keep their original border-free treatment;
+   palette/theme choices only change colors. */
 
 .calendar-theme-setting {
   display: grid;
@@ -8623,7 +8623,7 @@ dialog.modal:not([open]) {
 }
 .calendar-theme-swatch.is-selected { border-color:rgba(114,0,20,.42); box-shadow:0 0 0 2px rgba(114,0,20,.07); }
 .calendar-theme-dot { width:20px; height:20px; border-radius:50%; box-shadow:inset 0 0 0 1px rgba(255,255,255,.48),0 0 0 1px rgba(21,36,58,.12); }
-.calendar-theme-swatch[data-calendar-theme="blue"] .calendar-theme-dot { background:#5b6da2; }
+.calendar-theme-swatch[data-calendar-theme="blue"] .calendar-theme-dot { background:var(--blue); }
 .calendar-theme-swatch[data-calendar-theme="burgundy"] .calendar-theme-dot { background:#742b3e; }
 .calendar-theme-swatch[data-calendar-theme="slate"] .calendar-theme-dot { background:#586a7d; }
 .calendar-theme-swatch[data-calendar-theme="charcoal"] .calendar-theme-dot { background:#454c55; }
@@ -8678,52 +8678,9 @@ dialog.modal:not([open]) {
   .artist-favorite-hint { display:none; }
 }
 
-.sticker-settings-modal[data-calendar-theme="blue"] .sticker-setting-preview { background:#5b6da2; }
+.sticker-settings-modal[data-calendar-theme="blue"] .sticker-setting-preview { background:var(--blue); }
 .sticker-settings-modal[data-calendar-theme="burgundy"] .sticker-setting-preview { background:#742b3e; }
 .sticker-settings-modal[data-calendar-theme="slate"] .sticker-setting-preview { background:#586a7d; }
 .sticker-settings-modal[data-calendar-theme="charcoal"] .sticker-setting-preview { background:#454c55; }
 .sticker-settings-modal[data-calendar-theme="forest"] .sticker-setting-preview { background:#566d5c; }
 .sticker-settings-modal[data-calendar-theme="espresso"] .sticker-setting-preview { background:#665149; }
-.sticker-settings-modal .sticker-setting-preview .sticker-square[class*="sticker-palette-"],
-.sticker-settings-modal .sticker-setting-preview .sticker-circle[class*="sticker-palette-"] {
-  border:1px solid rgba(255,255,255,.48);
-  box-shadow:0 0 0 1px rgba(21,36,58,.22),1px 2px 0 rgba(21,36,58,.25);
-}
-.sticker-settings-modal .sticker-setting-preview .sticker-star[class*="sticker-palette-"],
-.sticker-settings-modal .sticker-setting-preview .sticker-heart[class*="sticker-palette-"] {
-  text-shadow:0 0 1px rgba(255,255,255,.95),0 1px 2px rgba(21,36,58,.62);
-}
-
-/* Sticker piles keep their scattered layout and jitter slightly on hover. */
-@keyframes month-sticker-pile-jitter {
-  0%, 100% { transform: translate(calc(-50% + var(--month-pile-x, 0px)), calc(-50% + var(--month-pile-y, 0px))) rotate(var(--month-pile-rotate, 0deg)); }
-  25% { transform: translate(calc(-50% + var(--month-pile-x, 0px) - 1px), calc(-50% + var(--month-pile-y, 0px) + 1px)) rotate(calc(var(--month-pile-rotate, 0deg) - 2deg)); }
-  50% { transform: translate(calc(-50% + var(--month-pile-x, 0px) + 1px), calc(-50% + var(--month-pile-y, 0px) - 1px)) rotate(calc(var(--month-pile-rotate, 0deg) + 2deg)); }
-  75% { transform: translate(calc(-50% + var(--month-pile-x, 0px) - .5px), calc(-50% + var(--month-pile-y, 0px) - .5px)) rotate(calc(var(--month-pile-rotate, 0deg) - 1deg)); }
-}
-
-@keyframes week-sticker-pile-jitter {
-  0%, 100% { transform: translate(0, 0) rotate(var(--pile-rotate, 0deg)); }
-  25% { transform: translate(-1px, 1px) rotate(calc(var(--pile-rotate, 0deg) - 2deg)); }
-  50% { transform: translate(1px, -1px) rotate(calc(var(--pile-rotate, 0deg) + 2deg)); }
-  75% { transform: translate(-.5px, -.5px) rotate(calc(var(--pile-rotate, 0deg) - 1deg)); }
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .month-sticker-group-button:hover .month-sticker-pile-item {
-    animation: month-sticker-pile-jitter .32s steps(2, jump-none) infinite;
-  }
-  .week-sticker-cluster:hover .week-sticker-pile-item {
-    animation: week-sticker-pile-jitter .32s steps(2, jump-none) infinite;
-  }
-  .month-sticker-group-button:hover .month-sticker-pile-item:nth-child(2n),
-  .week-sticker-cluster:hover .week-sticker-pile-item:nth-child(2n) { animation-delay: -.11s; }
-  .month-sticker-group-button:hover .month-sticker-pile-item:nth-child(3n),
-  .week-sticker-cluster:hover .week-sticker-pile-item:nth-child(3n) { animation-delay: -.21s; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .month-sticker-group-button:hover .month-sticker-pile-item,
-  .week-sticker-cluster:hover .week-sticker-pile-item { animation: none !important; }
-}
-
