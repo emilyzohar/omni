@@ -11342,3 +11342,160 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
   }
   .stats-recent-day-heading h3 { font-size: 1.2rem; }
 }
+
+
+/* =========================================================
+   Class history, attachment covers, loading tips + Library recency v43
+   ========================================================= */
+.loading-with-tip {
+  display: grid;
+  gap: 8px;
+  width: min(520px, 100%);
+}
+.loading-with-tip .loading-detail {
+  margin: 0;
+}
+.loading-tip {
+  margin: 0;
+  color: rgba(21,36,58,.58);
+  font-size: .76rem;
+  line-height: 1.4;
+}
+.loading-tip strong {
+  margin-right: 4px;
+  color: rgba(21,36,58,.74);
+  font-size: .66rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.library-poster-image.is-attachment-cover-loading {
+  background: linear-gradient(145deg, rgba(139,153,202,.18), rgba(247,231,196,.64));
+}
+
+/* Keep the shelf's existing row height: cards with a tracked date reserve a
+   very small strip beneath the poster rather than making the row taller. */
+.library-card-shell:has(> .library-card-tracked-date) > .library-poster-button {
+  height: calc(100% - 14px) !important;
+}
+.library-card-tracked-date {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 0;
+  z-index: 2;
+  overflow: hidden;
+  color: rgba(21,36,58,.42);
+  font: 500 .56rem/1.1 var(--sans);
+  letter-spacing: .01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.class-history-section { margin-top: 18px; }
+.class-history-section .detail-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.class-history-section .detail-section-heading h3 { margin: 0; }
+.class-history-list {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+.class-history-row {
+  display: grid;
+  grid-template-columns: minmax(82px,.7fr) minmax(0,2fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 11px 2px;
+  border-bottom: 1px solid var(--line);
+}
+.class-history-date {
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 600;
+}
+.class-history-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.class-history-copy strong {
+  overflow: hidden;
+  font-size: .9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.class-history-copy span {
+  color: var(--muted);
+  font-size: .72rem;
+  line-height: 1.35;
+}
+.class-history-rating {
+  min-width: 42px;
+  color: #8c6c12;
+  font-size: .76rem;
+  font-weight: 700;
+  text-align: right;
+}
+.library-class-meta-count {
+  color: var(--muted);
+  font-size: .78rem;
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  /* Rating controls and Edit get separate layout columns so Clear cannot sit
+     underneath Edit or share the same tap target. */
+  .library-personal-meta-row {
+    display: grid !important;
+    grid-template-columns: minmax(0,1fr) auto;
+    align-items: center;
+    gap: 6px 10px !important;
+  }
+  .library-personal-meta-row .library-detail-rating-picker {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    flex-wrap: nowrap !important;
+  }
+  .library-personal-meta-row .library-detail-rating-picker .clear-rating {
+    margin-left: 4px !important;
+  }
+  .library-personal-edit {
+    position: static !important;
+    justify-self: end;
+    align-self: center;
+  }
+  .class-history-row {
+    grid-template-columns: 72px minmax(0,1fr) auto;
+    gap: 8px;
+    padding-block: 10px;
+  }
+  .class-history-copy strong { font-size: .84rem; }
+  .class-history-date,
+  .class-history-rating { font-size: .66rem; }
+  .library-card-tracked-date { font-size: .52rem; }
+}
+
+@media (max-width: 390px) {
+  .library-personal-meta-row .library-detail-rating-picker button:not(.clear-rating) {
+    padding-inline: 0 !important;
+    font-size: 1.5rem !important;
+  }
+  .library-personal-meta-row .library-detail-rating-picker .rating-heart-button {
+    width: 32px !important;
+    height: 32px !important;
+    flex-basis: 32px !important;
+    margin-left: 3px !important;
+  }
+  .library-personal-meta-row .library-detail-rating-picker .clear-rating {
+    margin-left: 2px !important;
+    font-size: .72rem !important;
+  }
+}

@@ -32,6 +32,7 @@ const TYPE_LABELS = {
   food: 'Food',
   event: 'Events',
   activity: 'Activities',
+  class: 'Classes',
   workout: 'Workouts',
   shopping: 'Shopping',
   other: 'Other'
@@ -47,6 +48,7 @@ const SOURCE_ITEM_LABELS = {
   concert: 'Concert',
   event: 'Event',
   activity: 'Activity',
+  class: 'Class',
   food: 'Food',
   restaurant: 'Restaurant',
   place: 'Place',
@@ -54,7 +56,7 @@ const SOURCE_ITEM_LABELS = {
   recipe: 'Recipe'
 };
 
-const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'food', 'restaurant', 'recipe', 'shopping', 'other']);
+const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class', 'food', 'restaurant', 'recipe', 'shopping', 'other']);
 const STICKER_COLORS = ['rust', 'burgundy', 'red', 'coral', 'orange', 'yellow', 'cream', 'sand', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'slate', 'teal', 'green', 'forest', 'mint', 'olive', 'stone', 'brown', 'charcoal', 'black', 'white'];
 const CALENDAR_THEMES = [
   { id: 'blue', label: 'Dusty blue' },
@@ -145,6 +147,7 @@ let cloudSyncBusy = false;
 let cloudSyncQueued = false;
 let lastCloudUpdatedAt = '';
 let discoverFeedObserver = null;
+const attachmentCoverObjectUrls = new Map();
 
 
 const state = {
@@ -1219,6 +1222,10 @@ function mergeLibraryItemRecords(primary, duplicate) {
     ...(primary.attachments || []),
     ...(duplicate.attachments || []).filter(file => !(primary.attachments || []).some(saved => saved.id === file.id))
   ];
+  if (!primary.image && !primary.coverAttachmentId) {
+    const preferredCover = [primary, duplicate].map(candidate => candidate.coverAttachmentId).find(id => id && primary.attachments.some(file => file.id === id && String(file.mime || '').startsWith('image/')));
+    primary.coverAttachmentId = preferredCover || primary.attachments.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
+  }
   primary.links = [
     ...(primary.links || []),
     ...(duplicate.links || []).filter(link => !(primary.links || []).some(saved => saved.url === link.url))
@@ -1882,6 +1889,21 @@ function bindEvents() {
         renderAll();
         if (els.detailModal?.open) await openDetails(item.id);
       }
+      return;
+    }
+
+    const addClassLog = event.target.closest('[data-add-class-log]');
+    if (addClassLog) {
+      els.detailModal.close();
+      openItemModal('', 'library');
+      if (els.itemActionChoice) els.itemActionChoice.value = 'completed';
+      refreshItemKindChoices('class', 'completed');
+      setUnderlyingFormTypeForKind('class');
+      if (els.itemKindChoice) els.itemKindChoice.value = 'class';
+      if (els.itemSourceType) els.itemSourceType.value = 'class';
+      if (els.itemFindSource) els.itemFindSource.value = 'manual';
+      if (els.itemDate) els.itemDate.value = todayString();
+      updateItemFormForType();
       return;
     }
 
@@ -2926,7 +2948,7 @@ async function openLibraryMap(groupKey = '', groupLabel = '', subcategory = '') 
       legend.innerHTML = [...typeColors.entries()].map(([label,color]) => `<span class="library-map-legend-item"><i style="--library-pin-color:${color}"></i>${escapeHtml(label)}</span>`).join('');
     } else { legend.hidden = true; legend.innerHTML = ''; }
   }
-  canvas.innerHTML='<p class="loading-detail">Loading map…</p>'; list.innerHTML=''; showDialogAtTop(modal);
+  canvas.innerHTML=loadingMarkup('Loading map…'); list.innerHTML=''; showDialogAtTop(modal);
   const details = [];
   for (const item of items) {
     let live = item.placeMeta || null;
@@ -3216,7 +3238,7 @@ async function renderQueueCalendar() {
     tab.setAttribute('aria-selected', String(active));
   });
 
-  els.upNextList.innerHTML = '<p class="queue-calendar-loading">Loading upcoming dates…</p>';
+  els.upNextList.innerHTML = loadingMarkup('Loading upcoming dates…');
   els.upNextEmpty.hidden = true;
   const entries = await buildQueueCalendarEntries();
   refreshQueueTypeFilter(entries.map(entry => entry.item));
@@ -5044,7 +5066,7 @@ async function toggleSpecificYouTubeVideo(item, videoId) {
 // ---------------------------
 const BASE_ITEM_TYPE_OPTIONS = [
   ['tv','TV'], ['movie','Movie'], ['book','Book'], ['music','Music'], ['food','Food'],
-  ['event','Event'], ['activity','Activity'], ['shopping','Shopping'], ['youtube','YouTube'], ['workout','Workouts'], ['reminder','Reminder'], ['other','New type']
+  ['event','Event'], ['activity','Activity'], ['class','Class'], ['shopping','Shopping'], ['youtube','YouTube'], ['workout','Workouts'], ['reminder','Reminder'], ['other','New type']
 ];
 
 function itemTypeOptionUsageKey(value) {
@@ -5070,10 +5092,11 @@ const ADD_ACTION_KIND_OPTIONS = Object.freeze({
     { value: 'shopping', label: 'Shopping / store', parent: 'shopping' }
   ],
   completed: [
-    { value: 'workout', label: 'Workout', parent: 'workout' }
+    { value: 'workout', label: 'Workout', parent: 'workout' },
+    { value: 'activity', label: 'Activity', parent: 'activity' },
+    { value: 'class', label: 'Class', parent: 'class' }
   ],
   other: [
-    { value: 'activity', label: 'Activity', parent: 'activity' },
     { value: 'event', label: 'Event', parent: 'event' },
     { value: 'concert', label: 'Concert', parent: 'music', subtype: 'concert' },
     { value: 'music', label: 'Music album', parent: 'music', subtype: 'album' },
@@ -5777,10 +5800,11 @@ function updateItemFormForType() {
   const isYouTube = sourceType === 'youtube';
   const isReminder = sourceType === 'reminder';
   const isActivity = sourceType === 'activity';
+  const isClass = sourceType === 'class';
   const isManual = sourceType === 'other' || Boolean(savedType);
   const isFoodManual = sourceType === 'food' || sourceType === 'recipe';
 
-  els.catalogueSearchBlock.hidden = false;
+  els.catalogueSearchBlock.hidden = isClass;
   if (els.catalogueQuery) els.catalogueQuery.disabled = !isCatalogue;
   if (els.catalogueSearchButton) els.catalogueSearchButton.disabled = !isCatalogue;
   els.workoutBlock.hidden = !Boolean(els.itemUsePlaylist?.checked);
@@ -5808,7 +5832,7 @@ function updateItemFormForType() {
   if (isActivity && !els.editingId.value && els.activityStartDate && !els.activityStartDate.value) {
     els.activityStartDate.value = todayString();
   }
-  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || isActivity || ['music','artist','song','concert','food','recipe'].includes(sourceType);
+  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || isActivity || isClass || ['music','artist','song','concert','food','recipe'].includes(sourceType);
   refreshItemBuddyWatchOptions().catch(() => {});
   if (isActivity && els.itemQueueStatus) els.itemQueueStatus.value = 'library';
 
@@ -5855,7 +5879,7 @@ function updateItemFormForType() {
   if (!els.editingId.value) {
     state.selectedSource = null;
     state.loadedPlaylist = null;
-    const manualProvider = isManual || isFoodManual || musicManual || isActivity || sourceType === 'concert';
+    const manualProvider = isManual || isFoodManual || musicManual || isActivity || isClass || sourceType === 'concert';
     els.provider.value = isYouTube ? 'youtube' : isReminder ? 'reminder' : manualProvider ? 'manual' : '';
     els.providerId.value = '';
     els.providerImage.value = '';
@@ -5879,7 +5903,9 @@ function updateItemFormForType() {
         ? 'Name this restaurant in your tracker'
         : sourceType === 'activity'
           ? 'What did you do?'
-          : 'Title';
+          : sourceType === 'class'
+            ? 'Class title (e.g. Spin, Pottery)'
+            : 'Title';
   }
   if (els.itemNote) {
     els.itemNote.placeholder = sourceType === 'restaurant'
@@ -6077,8 +6103,8 @@ async function prepareTVWatchSetup(providerId, itemId = '') {
   state.tvDraftBulkBaseline = null;
   state.tvDraftLocked = new Set();
   state.tvDraftSeasons = [];
-  if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = 'Loading seasons and episodes…';
-  els.tvWatchSetupList.innerHTML = '<p class="tv-watch-loading">Loading episode history…</p>';
+  if (els.tvWatchSetupStatus) els.tvWatchSetupStatus.textContent = `Loading seasons and episodes… · Tip: ${loadingTipText()}`;
+  els.tvWatchSetupList.innerHTML = loadingMarkup('Loading episode history…');
 
   const details = await getCached(`tv:${providerId}`, () => TrackerAPI.getTVDetails(providerId, state.settings));
   const seasonInfos = (details.seasons || [])
@@ -6372,7 +6398,7 @@ async function saveItemFromForm(event) {
     providerId = '';
     image = '';
     subtitle = '';
-  } else if (sourceType === 'activity' || sourceType === 'food' || sourceType === 'recipe' || sourceType === 'other') {
+  } else if (sourceType === 'activity' || sourceType === 'class' || sourceType === 'food' || sourceType === 'recipe' || sourceType === 'other') {
     provider = selectedSource?.provider || editing?.provider || 'manual';
     providerId = selectedSource?.providerId || editing?.providerId || '';
     image = selectedSource?.image || editing?.image || image || '';
@@ -6434,6 +6460,10 @@ async function saveItemFromForm(event) {
   const requiresCatalogueSelection = !manualLookup && ['tv','book','movie','artist','song','event','restaurant','place','youtube'].includes(sourceType);
   if ((requiresCatalogueSelection && !providerId) || !validProvider) {
     showFormMessage('Choose a Find it result first, or switch Find it to Manual.', true);
+    return;
+  }
+  if (sourceType === 'class' && !els.itemDate?.value) {
+    showFormMessage('Choose the date for this class.', true);
     return;
   }
   if (sourceType === 'reminder' && !els.reminderDueDate?.value) {
@@ -6511,10 +6541,13 @@ async function saveItemFromForm(event) {
       ? (normalizedReleaseDate(els.itemReleaseDate?.value) || normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)))
       : normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)),
     attachments: attachmentFiles,
+    coverAttachmentId: image ? '' : ((editing?.coverAttachmentId && attachmentFiles.some(file => file.id === editing.coverAttachmentId) && String(attachmentFiles.find(file => file.id === editing.coverAttachmentId)?.mime || '').startsWith('image/'))
+      ? editing.coverAttachmentId
+      : (attachmentFiles.find(file => String(file.mime || '').startsWith('image/'))?.id || '')),
     links: state.attachmentDraft.links.map(link => ({ ...link })),
     date: sourceType === 'reminder' ? '' : (sourceType === 'activity' || els.itemUseDateRange?.checked) ? (els.activityStartDate?.value || '') : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
-    queueStatus: sourceType === 'reminder' ? 'upnext' : sourceType === 'activity' ? 'library' : (sourceType === 'restaurant' ? (els.itemQueueStatus.value === 'tbr' ? 'tbr' : 'library') : (['music','artist','song','concert','food','recipe'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'))),
-    active: sourceType === 'reminder' || (sourceType !== 'activity' && !['restaurant','place'].includes(sourceType) && !['music','artist','song','concert','food','recipe'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
+    queueStatus: sourceType === 'reminder' ? 'upnext' : ['activity','class'].includes(sourceType) ? 'library' : (sourceType === 'restaurant' ? (els.itemQueueStatus.value === 'tbr' ? 'tbr' : 'library') : (['music','artist','song','concert','food','recipe'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'))),
+    active: sourceType === 'reminder' || (!['activity','class'].includes(sourceType) && !['restaurant','place'].includes(sourceType) && !['music','artist','song','concert','food','recipe'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
     featureConfig: {
       findSource: requestedFindSource,
       progressMode: effectiveItemProgressMode(sourceType),
@@ -6643,6 +6676,9 @@ async function saveItemFromForm(event) {
       ...(existingRestaurant.attachments || []),
       ...attachmentFiles.filter(file => !(existingRestaurant.attachments || []).some(saved => saved.id === file.id))
     ];
+    if (!existingRestaurant.image && !existingRestaurant.coverAttachmentId) {
+      existingRestaurant.coverAttachmentId = attachmentFiles.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
+    }
     existingRestaurant.links = [
       ...(existingRestaurant.links || []),
       ...state.attachmentDraft.links.filter(link => !(existingRestaurant.links || []).some(saved => saved.url === link.url))
@@ -6678,6 +6714,57 @@ async function saveItemFromForm(event) {
     }
 
     saveItems();
+    await deleteRemovedDraftAttachments();
+    els.itemModal.close();
+    renderAll();
+    return;
+  }
+
+  if (sourceType === 'class' && !editing) {
+    const existingClassGroup = state.items.find(existing => getSourceType(existing) === 'class' && existing.groupedClass !== false) || null;
+    const classDate = els.itemDate?.value || todayString();
+    const classRating = Number(els.itemRating?.value || 0);
+    const classNotes = els.itemNote?.value.trim() || '';
+    const classComment = String(els.itemComment?.value || '').trim();
+    const classPeople = parseItemPeople(els.itemPeople?.value || '');
+
+    const group = existingClassGroup || {
+      id: makeId(), sourceType: 'class', type: 'class', typeLabel: 'Classes', subcategory: '',
+      title: 'Classes', provider: 'manual', providerId: '', image: '', subtitle: '', rating: 0,
+      actionCategory: 'completed', notes: '', comment: '', people: [], recommended: false, genres: [],
+      releaseDate: '', attachments: [], coverAttachmentId: '', links: [], date: '', queueStatus: 'library', active: false,
+      featureConfig: { findSource: 'manual', progressMode: 'none', dateRange: false, youtubePlaylist: false },
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), completedAt: '', progress: {}, groupedClass: true
+    };
+
+    group.attachments = [
+      ...(group.attachments || []),
+      ...attachmentFiles.filter(file => !(group.attachments || []).some(saved => saved.id === file.id))
+    ];
+    group.links = [
+      ...(group.links || []),
+      ...state.attachmentDraft.links.filter(link => !(group.links || []).some(saved => saved.url === link.url))
+    ];
+    if (!group.image && !group.coverAttachmentId) {
+      group.coverAttachmentId = attachmentFiles.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
+    }
+    group.updatedAt = new Date().toISOString();
+    setItemQueueStatus(group, 'library');
+    if (!existingClassGroup) state.items.push(group);
+
+    addHistoryRecord({
+      sourceItemId: group.id, sourceType: 'class', type: 'class', typeLabel: 'Classes', subcategory: 'Class',
+      date: classDate, showOnCalendar: true, kind: 'class-attended', title, subtitle: 'Class', notes: classNotes,
+      comment: classComment, people: classPeople, rating: classRating, image: '', provider: 'manual', providerId: ''
+    });
+
+    const classRatings = state.history
+      .filter(entry => entry.sourceItemId === group.id && entry.kind === 'class-attended' && Number(entry.rating || 0) > 0)
+      .map(entry => Number(entry.rating));
+    group.rating = classRatings.length ? Math.round((classRatings.reduce((sum, value) => sum + value, 0) / classRatings.length) * 2) / 2 : 0;
+    recordTypeUse(group);
+    saveItems();
+    saveHistory();
     await deleteRemovedDraftAttachments();
     els.itemModal.close();
     renderAll();
@@ -6867,6 +6954,68 @@ function showFormMessage(message, error = false) {
   els.formMessage.style.color = error ? '#9b2d1a' : '#646b75';
 }
 
+function attachmentCoverIdForItem(item) {
+  if (!item || String(item.image || '').trim()) return '';
+  const attachments = Array.isArray(item.attachments) ? item.attachments : [];
+  const preferredId = String(item.coverAttachmentId || '');
+  const preferred = attachments.find(file => file.id === preferredId && String(file.mime || '').startsWith('image/'));
+  return preferred?.id || attachments.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
+}
+
+function displayImageForItem(item) {
+  const direct = String(item?.image || '').trim();
+  if (direct) return direct;
+  const id = attachmentCoverIdForItem(item);
+  return id ? (attachmentCoverObjectUrls.get(id) || '') : '';
+}
+
+async function ensureAttachmentCoverUrl(item) {
+  const id = attachmentCoverIdForItem(item);
+  if (!id) return '';
+  if (attachmentCoverObjectUrls.has(id)) return attachmentCoverObjectUrls.get(id);
+  const record = await getAttachmentBlob(id);
+  if (!record?.blob) return '';
+  const url = URL.createObjectURL(record.blob);
+  attachmentCoverObjectUrls.set(id, url);
+  return url;
+}
+
+function hydrateAttachmentCoverImages(root = document) {
+  root?.querySelectorAll?.('img[data-cover-attachment-id]:not([data-cover-ready])').forEach(img => {
+    const id = img.dataset.coverAttachmentId || '';
+    const item = findItem(img.closest?.('[data-library-item-id]')?.dataset?.libraryItemId || '');
+    const ready = id && attachmentCoverObjectUrls.get(id);
+    if (ready) { img.src = ready; img.dataset.coverReady = 'true'; return; }
+    if (!item) return;
+    ensureAttachmentCoverUrl(item).then(url => {
+      if (!url || !img.isConnected) return;
+      img.src = url;
+      img.dataset.coverReady = 'true';
+    }).catch(() => {});
+  });
+}
+
+const LOADING_TIPS = [
+  () => {
+    const city = state.discoverPrefs?.eventCity || state.settings?.homeCity || 'your city';
+    return `Add artists to your Library and their upcoming concerts in ${city} can appear in your Calendar.`;
+  },
+  () => 'Use Collections to group items from different types into one shelf.',
+  () => 'A half-star works too: tap the left half of a star to save a .5 rating.',
+  () => 'Add a date when you log something and Omni can use it for Calendar and Recent sorting.',
+  () => 'For TV, logging an episode can spot friends watching the same show and offer a Buddy Watch.'
+];
+
+function loadingTipText() {
+  const tips = LOADING_TIPS.map(tip => typeof tip === 'function' ? tip() : String(tip));
+  const index = Math.abs(Math.floor(Date.now() / 5000)) % tips.length;
+  return tips[index] || '';
+}
+
+function loadingMarkup(label = 'Loading…') {
+  return `<div class=\"loading-with-tip\"><p class=\"loading-detail\">${escapeHtml(label)}</p><p class=\"loading-tip\"><strong>Tip</strong> ${escapeHtml(loadingTipText())}</p></div>`;
+}
+
 // ---------------------------
 // DETAILS
 // ---------------------------
@@ -6874,10 +7023,11 @@ async function openDetails(id) {
   const item = findItem(id);
   if (!item) return;
   state.openDetailId = id;
-  els.detailBody.innerHTML = '<p class="loading-detail">Loading details…</p>';
+  els.detailBody.innerHTML = loadingMarkup('Loading details…');
   showDialogAtTop(els.detailModal);
 
   try {
+    await ensureAttachmentCoverUrl(item).catch(() => '');
     const sourceType = getSourceType(item);
     if (sourceType === 'tv') await renderTVDetails(item);
     else if (sourceType === 'youtube') { if (isYouTubePlaylistItem(item)) await renderWorkoutDetails(item); else await renderStandaloneYouTubeDetails(item); }
@@ -6891,6 +7041,7 @@ async function openDetails(id) {
     else if (sourceType === 'restaurant') await renderRestaurantDetails(item);
     else if (sourceType === 'place') await renderPlaceDetails(item);
     else if (sourceType === 'activity') renderActivityDetails(item);
+    else if (sourceType === 'class') renderClassDetails(item);
     else renderManualDetails(item);
     appendFlexibleFeatureProgress(item);
     appendLibraryReleaseDateSummary(item);
@@ -6974,7 +7125,7 @@ async function renderTVDetails(item) {
 }
 
 async function renderTVSeasonDetail(item, seasonNumber) {
-  els.detailBody.innerHTML = '<p class="loading-detail">Loading season…</p>';
+  els.detailBody.innerHTML = loadingMarkup('Loading season…');
   try {
     const [series, season] = await Promise.all([
       getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings)),
@@ -7020,7 +7171,7 @@ async function renderTVSeasonDetail(item, seasonNumber) {
 }
 
 async function renderTVEpisodeDetail(item, seasonNumber, episodeNumber) {
-  els.detailBody.innerHTML = '<p class="loading-detail">Loading episode…</p>';
+  els.detailBody.innerHTML = loadingMarkup('Loading episode…');
   try {
     const [series, episode] = await Promise.all([
       getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings)),
@@ -7076,7 +7227,7 @@ async function renderWorkoutDetails(item) {
 }
 
 async function renderYouTubeVideoDetail(item, videoId) {
-  els.detailBody.innerHTML = '<p class="loading-detail">Loading video…</p>';
+  els.detailBody.innerHTML = loadingMarkup('Loading video…');
   try {
     const [playlist, video] = await Promise.all([
       getPlaylistCached(item.providerId),
@@ -7374,9 +7525,29 @@ function renderActivityDetails(item) {
     ? (endDate && endDate !== startDate ? `${formatLongDate(startDate)} – ${formatLongDate(endDate)}` : formatLongDate(startDate))
     : '';
   els.detailBody.innerHTML = `
-    ${libraryDetailHero({ type:'ACTIVITY', title:item.title, image:item.image || '', subtitle:[dateText, item.subcategory || ''].filter(Boolean).join(' · '), overview:'' })}
+    ${libraryDetailHero({ type:'ACTIVITY', title:item.title, image:displayImageForItem(item), subtitle:[dateText, item.subcategory || ''].filter(Boolean).join(' · '), overview:'' })}
     ${detailEditButton(item)}
   `;
+}
+
+function classHistoryEntries(item) {
+  return state.history
+    .filter(entry => entry.sourceItemId === item.id && entry.kind === 'class-attended')
+    .sort((a, b) => String(b.date || b.createdAt || '').localeCompare(String(a.date || a.createdAt || '')));
+}
+
+function renderClassDetails(item) {
+  const entries = classHistoryEntries(item);
+  const rows = entries.length
+    ? entries.map(entry => `<article class=\"class-history-row\">
+        <div class=\"class-history-date\">${escapeHtml(entry.date ? formatShortCalendarDate(entry.date) : 'Undated')}</div>
+        <div class=\"class-history-copy\"><strong>${escapeHtml(entry.title || 'Class')}</strong>${entry.notes ? `<span>${escapeHtml(entry.notes)}</span>` : ''}</div>
+        <div class=\"class-history-rating\">${Number(entry.rating || 0) ? `★ ${escapeHtml(formatPersonalRating(entry.rating))}` : ''}</div>
+      </article>`).join('')
+    : '<p class=\"detail-meta\">No classes logged yet.</p>';
+  els.detailBody.innerHTML = `
+    ${libraryDetailHero({ type:'CLASSES', title:'Classes', image:displayImageForItem(item), subtitle:`${entries.length} ${entries.length === 1 ? 'class' : 'classes'} logged`, overview:'' })}
+    <section class=\"detail-section class-history-section\"><div class=\"detail-section-heading\"><h3>Class history</h3><button class=\"secondary-button\" type=\"button\" data-add-class-log>+ Add class</button></div><div class=\"class-history-list\">${rows}</div></section>`;
 }
 
 function libraryRecommendationIdentity(result) {
@@ -7466,7 +7637,7 @@ async function appendLibrarySimilarRecommendations(item) {
 }
 
 function renderManualDetails(item) {
-  els.detailBody.innerHTML = `${basicDetailHero(item)}${detailEditButton(item)}`;
+  els.detailBody.innerHTML = `${basicDetailHero({ ...item, image: displayImageForItem(item) })}${detailEditButton(item)}`;
 }
 
 function detailHero({ type, title, image, subtitle, overview, collapseOverview = false, availabilityLink = '' }) {
@@ -7652,6 +7823,10 @@ function formatPersonalRating(value) {
 }
 
 function libraryPersonalMetadataMarkup(item) {
+  if (getSourceType(item) === 'class') {
+    const count = classHistoryEntries(item).length;
+    return `<div class="library-personal-meta library-class-meta" data-library-personal-meta="${escapeAttr(item.id)}"><div class="library-personal-meta-row"><span class="library-class-meta-count">${count} ${count === 1 ? 'class' : 'classes'} logged</span><button class="secondary-button library-personal-edit" type="button" data-add-class-log>+ Add class</button></div></div>`;
+  }
   const rating = Math.max(0, Math.min(5, Number(item.rating || 0)));
   const calendarFootnote = libraryCalendarToggleButton(item);
   return `<div class="library-personal-meta" data-library-personal-meta="${escapeAttr(item.id)}" data-pending-rating="${rating}">
@@ -9346,10 +9521,10 @@ async function renderDiscoverCalendar(force = false) {
   }
   if (els.discoverStatus) {
     els.discoverStatus.hidden = false;
-    els.discoverStatus.textContent = 'Loading upcoming concerts and releases…';
+    els.discoverStatus.textContent = `Loading upcoming concerts and releases… · Tip: ${loadingTipText()}`;
   }
   if (els.discoverCalendarMessage) els.discoverCalendarMessage.textContent = '';
-  els.discoverCalendarGrid.innerHTML = '<div class="discover-calendar-loading">Loading calendar…</div>';
+  els.discoverCalendarGrid.innerHTML = loadingMarkup('Loading calendar…');
 
   try {
     const entries = await collectDiscoverCalendarEntries();
@@ -9604,7 +9779,7 @@ async function handleDiscoverCalendarClick(event) {
   if (season && episode) {
     state.openDiscoverKey = key;
     showDialogAtTop(els.detailModal);
-    els.detailBody.innerHTML = '<p class="loading-detail">Loading episode…</p>';
+    els.detailBody.innerHTML = loadingMarkup('Loading episode…');
     try {
       await renderDiscoverTVEpisodeDetail(key, season, episode);
     } catch (error) {
@@ -9617,7 +9792,7 @@ async function handleDiscoverCalendarClick(event) {
 
 async function renderLegacyDiscover(force = false) {
   els.discoverStatus.hidden = false;
-  els.discoverStatus.textContent = 'Loading recommendations…';
+  els.discoverStatus.textContent = `Loading recommendations… · Tip: ${loadingTipText()}`;
   if (force) {
     for (const key of Object.keys(state.cache)) {
       if (key.startsWith('discover:')) delete state.cache[key];
@@ -10814,7 +10989,7 @@ async function collectForYouDiscoverCandidates(batchNumber) {
 }
 
 function discoverLoadingLabel() {
-  return 'Loading…';
+  return `Loading… · Tip: ${loadingTipText()}`;
 }
 
 function discoverEndlessLabel() {
@@ -12682,7 +12857,7 @@ async function openDiscoverDetail(key) {
   if (!result) return;
   state.openDiscoverKey = key;
   if (!els.detailModal.open) showDialogAtTop(els.detailModal);
-  els.detailBody.innerHTML = '<p class="loading-detail">Loading details…</p>';
+  els.detailBody.innerHTML = loadingMarkup('Loading details…');
   try {
     if (result.sourceType === 'tv') await renderDiscoverTVDetail(key);
     else if (result.sourceType === 'movie') await renderDiscoverMovieDetail(key);
@@ -14619,7 +14794,10 @@ function makeLibraryPoster(item) {
   poster.setAttribute('aria-label', `Open ${item.title}`);
   poster.title = [item.title, item.rating ? `${item.rating}/5` : '', item.genres?.[0] || ''].filter(Boolean).join(' · ');
   const personalRating = Math.max(0, Math.min(5, Number(item.rating || 0)));
-  const hasThumbnail = Boolean(String(item.image || '').trim());
+  const directImage = String(item.image || '').trim();
+  const coverAttachmentId = directImage ? '' : attachmentCoverIdForItem(item);
+  const cachedCover = coverAttachmentId ? (attachmentCoverObjectUrls.get(coverAttachmentId) || '') : '';
+  const hasThumbnail = Boolean(directImage || coverAttachmentId);
   if (!hasThumbnail) {
     poster.classList.add('library-text-card-button');
     const textCardWidth = libraryTextCardWidth(item);
@@ -14643,7 +14821,7 @@ function makeLibraryPoster(item) {
     ? `<span class="library-disposition-badge ${escapeAttr(dispositionState)}">${dispositionState === 'paused' ? 'Paused' : 'Stopped'}</span>`
     : releaseBadge;
   poster.innerHTML = hasThumbnail
-    ? `<img class="library-poster-image" src="${escapeAttr(item.image)}" alt="${escapeAttr(item.title)}" loading="lazy" />
+    ? `<img class="library-poster-image${coverAttachmentId && !cachedCover ? ' is-attachment-cover-loading' : ''}" ${directImage || cachedCover ? `src="${escapeAttr(directImage || cachedCover)}"` : ''} ${coverAttachmentId ? `data-cover-attachment-id="${escapeAttr(coverAttachmentId)}"` : ''} alt="${escapeAttr(item.title)}" loading="lazy" />
        ${recommendedBadge}
        ${subcategoryBadge}
        ${dispositionBadge}
@@ -14664,6 +14842,13 @@ function makeLibraryPoster(item) {
   albumButton.setAttribute('aria-label', `Add ${item.title} to album`);
   albumButton.title = 'Add to collection';
   shell.append(poster, albumButton);
+  const trackedDate = itemLastTrackedDate(item);
+  if (trackedDate) {
+    const tracked = document.createElement('span');
+    tracked.className = 'library-card-tracked-date';
+    tracked.textContent = `${formatShortCalendarDate(trackedDate)}`;
+    shell.appendChild(tracked);
+  }
   return shell;
 }
 
@@ -14678,7 +14863,7 @@ function renderLibrary() {
     .filter(item => !(item.calendarQueueOnly === true && item.calendarTracked !== true))
     .filter(item => state.libraryView !== 'recommended' || item.recommended)
     .filter(item => visibleTypes.has(libraryTypeGroupKey(item)))
-    .filter(item => !libraryQuery || normalizeSearchText([item.title, item.subtitle, item.notes, item.subcategory, getItemTypeLabel(item), item.artistName, ...getItemPeople(item)].filter(Boolean).join(' ')).includes(libraryQuery));
+    .filter(item => !libraryQuery || normalizeSearchText([item.title, item.subtitle, item.notes, item.subcategory, getItemTypeLabel(item), item.artistName, ...getItemPeople(item), ...(getSourceType(item) === 'class' ? classHistoryEntries(item).flatMap(entry => [entry.title, entry.notes, entry.date]) : [])].filter(Boolean).join(' ')).includes(libraryQuery));
 
   // For Recent, dated/calendar-associated items always come first in descending
   // date order. Undated items are deliberately shuffled at the end instead of
@@ -14697,7 +14882,7 @@ function renderLibrary() {
           return Number(undatedRecentOrder.get(a.id) || 0) - Number(undatedRecentOrder.get(b.id) || 0);
         };
 
-  const preferredLabels = ['TV','Movie','Book','Music','Food','Activity','Event','Workout','Other'];
+  const preferredLabels = ['TV','Movie','Book','Music','Food','Activity','Classes','Event','Workout','Other'];
   const preferredOrder = preferredLabels.map(label => slugifyType(label));
   const grouped = new Map();
   for (const item of filtered) {
@@ -14901,6 +15086,7 @@ function renderLibrary() {
     }
     els.libraryGroups.appendChild(section);
   }
+  hydrateAttachmentCoverImages(els.libraryGroups);
 }
 
 function handleLibraryClick(event) {
@@ -14965,7 +15151,7 @@ function getSourceType(item) {
   if (item.sourceType) return item.sourceType;
   if (item.provider === 'youtube' || item.type === 'workout') return 'youtube';
   if (item.provider === 'ticketmaster') return 'event';
-  if (['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity'].includes(item.type)) return item.type;
+  if (['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class'].includes(item.type)) return item.type;
   return 'other';
 }
 
