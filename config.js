@@ -62,6 +62,12 @@ export const API_CONFIG = {
   movieGluAuthorization: import.meta.env.EXPO_PUBLIC_MOVIEGLU_AUTHORIZATION || import.meta.env.VITE_MOVIEGLU_AUTHORIZATION || '',
   movieGluTerritory: import.meta.env.EXPO_PUBLIC_MOVIEGLU_TERRITORY || import.meta.env.VITE_MOVIEGLU_TERRITORY || 'CA',
   // IGDB and BoardGameGeek credentials stay server-side. This is only the public
-  // URL of the catalogue proxy (for example a Supabase Edge Function).
-  gameCatalogueProxyUrl: import.meta.env.EXPO_PUBLIC_GAME_CATALOGUE_PROXY_URL || import.meta.env.VITE_GAME_CATALOGUE_PROXY_URL || ''
+  // URL of the catalogue proxy. Prefer an explicit override, but normally derive
+  // it from Omni's existing Supabase URL so Games needs no extra frontend secret.
+  gameCatalogueProxyUrl: import.meta.env.EXPO_PUBLIC_GAME_CATALOGUE_PROXY_URL
+    || import.meta.env.VITE_GAME_CATALOGUE_PROXY_URL
+    || (() => {
+      const supabaseUrl = import.meta.env.EXPO_PUBLIC_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL || '';
+      return supabaseUrl ? `${String(supabaseUrl).replace(/\/$/, '')}/functions/v1/game-catalogue` : '';
+    })()
 };

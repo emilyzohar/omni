@@ -11500,316 +11500,146 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
   }
 }
 
-/* =========================================================
-   Add form: compact type / find / date / status controls v71
-   ========================================================= */
-.item-modal .add-type-subtype-grid,
-.item-modal .add-find-title-grid,
-.item-modal .rating-date-grid {
+/* Add/Edit form refinement: integrated Find source, date actions, explicit status labels */
+.add-find-title-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.05fr) minmax(260px, .95fr);
   gap: 16px;
   align-items: end;
 }
-.item-modal .add-type-subtype-grid > *,
-.item-modal .add-find-title-grid > *,
-.item-modal .rating-date-grid > * { min-width: 0; }
-
-.item-modal .subtype-inline-field { margin: 0; }
-.item-modal .subtype-inline-field.has-value > span { color: var(--ink); }
-
-.item-modal .add-find-title-grid {
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr);
-}
-.item-modal .find-it-block { align-self: end; }
-.item-modal .find-it-heading-row {
+.find-it-heading-row {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
-  min-height: 28px;
+  gap: 8px;
 }
-.item-modal .find-source-inline {
-  display: block;
-  margin-left: auto;
+.find-it-search-row {
+  display: grid !important;
+  grid-template-columns: minmax(108px, 150px) minmax(0, 1fr) auto;
+  gap: 0 !important;
+  align-items: stretch;
+}
+.find-source-in-input { min-width: 0; }
+.find-source-in-input select {
+  width: 100%;
+  height: 100%;
+  min-height: 46px;
+  padding: 0 30px 0 12px;
+  border: 1px solid rgba(21,36,58,.18);
+  border-right: 0;
+  border-radius: 14px 0 0 14px;
+  background: rgba(21,36,58,.055);
+  color: var(--ink);
+  font-weight: 650;
+}
+.find-it-search-row > input {
   min-width: 0;
+  border-radius: 0 !important;
 }
-.item-modal .find-source-inline select {
-  width: auto;
-  max-width: 190px;
-  min-height: 30px;
-  padding: 4px 28px 4px 9px;
+.find-it-search-row > .secondary-button {
+  margin-left: 8px;
+}
+
+.rating-date-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, .95fr);
+  gap: 18px;
+  align-items: start;
+}
+.date-side-stack { min-width: 0; }
+.date-behavior-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 7px;
+  align-items: center;
+}
+.date-behavior-row .mini-toggle,
+.date-behavior-row .mini-option-menu > summary {
+  min-height: 36px;
   border: 1px solid rgba(21,36,58,.16);
   border-radius: 999px;
-  background: rgba(255,255,255,.46);
+  background: rgba(255,255,255,.48);
+  padding: 7px 11px;
   color: var(--ink);
   font-size: .76rem;
-  font-weight: 600;
+  font-weight: 650;
 }
-.item-modal .add-find-title-grid .search-row { grid-template-columns: minmax(0,1fr) auto; }
-
-.item-modal .rating-date-grid {
-  grid-template-columns: minmax(0, 1.35fr) minmax(220px, .65fr);
-  align-items: end;
-}
-.item-modal .rating-date-grid .rating-fieldset,
-.item-modal .rating-date-grid .date-control-stack { margin: 0; min-width: 0; }
-.item-modal .date-control-stack { display: grid; }
-.item-modal .date-control-stack .field { margin: 0; }
-.item-modal .item-comment-field { margin-top: 0; }
-
-.item-modal .date-behavior-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: -2px;
-}
-.item-modal .mode-toggle,
-.item-modal .mini-option-menu > summary {
-  min-height: 38px;
+.date-behavior-row .mini-toggle {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 7px 13px;
-  border: 1px solid rgba(21,36,58,.18);
-  border-radius: 999px;
-  background: rgba(255,255,255,.42);
+  gap: 6px;
   cursor: pointer;
-  font-size: .8rem;
-  font-weight: 650;
-  line-height: 1;
+}
+.date-behavior-row .mini-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+.date-behavior-row .mini-option-menu { position: relative; }
+.date-behavior-row .mini-option-menu > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
   list-style: none;
 }
-.item-modal .mode-toggle input { margin: 0; }
-.item-modal .mode-toggle.is-selected,
-.item-modal .mini-option-menu.has-value > summary {
-  background: rgba(21,36,58,.08);
-  border-color: rgba(21,36,58,.3);
-}
-.item-modal .mini-option-menu { position: relative; }
-.item-modal .mini-option-menu > summary::-webkit-details-marker { display: none; }
-.item-modal .mini-option-menu > summary small {
+.date-behavior-row .mini-option-menu > summary::-webkit-details-marker { display: none; }
+.date-behavior-row .mini-option-menu > summary small {
   color: var(--muted);
   font-size: .68rem;
-  font-weight: 600;
+  font-weight: 500;
 }
-.item-modal .repeat-menu-panel {
+.date-behavior-row .repeat-menu-panel {
   position: absolute;
-  z-index: 30;
+  right: 0;
   top: calc(100% + 7px);
-  left: 0;
-  width: min(330px, calc(100vw - 42px));
-  display: grid;
-  gap: 10px;
+  z-index: 25;
+  width: min(320px, 82vw);
   padding: 12px;
-  border: 1px solid rgba(21,36,58,.14);
+  border: 1px solid rgba(21,36,58,.16);
   border-radius: 14px;
   background: var(--paper);
-  box-shadow: 0 12px 30px rgba(27,31,24,.16);
-}
-.item-modal .repeat-menu-panel .field { margin: 0; }
-.item-modal .repeat-menu-panel .reminder-custom-fields { margin: 0; }
-
-.item-modal .log-entry-fields {
-  display: grid;
-  gap: 5px;
-  padding: 10px 12px;
-  border: 1px solid rgba(21,36,58,.1);
-  border-radius: 12px;
-  background: rgba(255,255,255,.28);
-}
-.item-modal .log-entry-fields[hidden] { display: none !important; }
-.item-modal .log-entry-fields > small {
-  color: var(--muted);
-  font-size: .72rem;
-  line-height: 1.35;
+  box-shadow: 0 10px 30px rgba(27,31,24,.16);
 }
 
-.item-modal .progress-status-field {
-  display: grid;
-  gap: 7px;
-}
-.item-modal .item-status-picker {
+.status-choice-row {
   display: flex;
-  align-items: center;
-  gap: 9px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
-.item-modal .status-symbol-button {
-  width: 43px;
-  height: 43px;
-  display: grid;
-  place-items: center;
+.status-choice-button {
+  min-height: 40px;
   border: 1px solid rgba(21,36,58,.18);
-  border-radius: 50%;
-  background: rgba(255,255,255,.46);
+  border-radius: 999px;
+  background: rgba(255,255,255,.5);
+  padding: 8px 15px;
   color: var(--ink);
   cursor: pointer;
-  font-size: 1.45rem;
-  font-weight: 500;
-  line-height: 1;
-  list-style: none;
+  font-weight: 650;
 }
-.item-modal .status-symbol-button.is-selected,
-.item-modal .status-plus-menu.is-selected > summary {
+.status-choice-button:hover { background: rgba(21,36,58,.07); }
+.status-choice-button.is-selected,
+.status-choice-button[aria-pressed="true"] {
   background: var(--ink);
   color: var(--paper);
   border-color: var(--ink);
 }
-.item-modal .status-plus-menu { position: relative; }
-.item-modal .status-plus-menu > summary::-webkit-details-marker { display: none; }
-.item-modal .status-plus-panel {
-  position: absolute;
-  z-index: 30;
-  left: 0;
-  bottom: calc(100% + 7px);
-  min-width: 132px;
-  display: grid;
-  gap: 4px;
-  padding: 6px;
-  border: 1px solid rgba(21,36,58,.14);
-  border-radius: 12px;
-  background: var(--paper);
-  box-shadow: 0 12px 30px rgba(27,31,24,.16);
-}
-.item-modal .status-plus-panel button {
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  padding: 9px 10px;
-  text-align: left;
-  cursor: pointer;
-  font-size: .82rem;
-  font-weight: 650;
-}
-.item-modal .status-plus-panel button:hover,
-.item-modal .status-plus-panel button.is-selected { background: rgba(21,36,58,.07); }
-.item-modal #itemStatusSummary {
-  font-size: .86rem;
-  font-weight: 600;
-  color: var(--muted);
-}
 
-@media (max-width: 620px) {
-  .item-modal .add-type-subtype-grid,
-  .item-modal .add-find-title-grid,
-  .item-modal .rating-date-grid { grid-template-columns: 1fr; gap: 11px; }
-  .item-modal .add-find-title-grid #catalogueSearchBlock { order: 1; }
-  .item-modal .add-find-title-grid #manualTitleBlock { order: 2; }
-  .item-modal .find-source-inline select { max-width: 155px; }
-  .item-modal .repeat-menu-panel { position: fixed; left: 18px; right: 18px; top: auto; bottom: 18px; width: auto; }
-}
-
-
-/* Artist pages: albums expand in place to reveal their tracks. */
-.artist-album-list {
-  display: grid;
-  gap: 8px;
-  margin-top: 8px;
-}
-.artist-album-card {
-  border: 1px solid rgba(21,36,58,.10);
-  border-radius: 15px;
-  background: rgba(255,255,255,.34);
-  overflow: hidden;
-  transition: background .16s ease, border-color .16s ease;
-}
-.artist-album-card.is-favorite { border-color: rgba(114,0,20,.20); }
-.artist-album-card.is-expanded { background: rgba(255,255,255,.52); }
-.artist-album-header {
-  display: grid;
-  grid-template-columns: minmax(0,1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-height: 62px;
-  padding: 6px 9px 6px 6px;
-}
-.artist-album-toggle {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: 18px 48px minmax(0,1fr);
-  align-items: center;
-  gap: 10px;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.artist-album-chevron {
-  display: inline-grid;
-  place-items: center;
-  font: 400 1.55rem/1 var(--serif);
-  transform: rotate(0deg);
-  transition: transform .16s ease;
-}
-.artist-album-toggle[aria-expanded="true"] .artist-album-chevron { transform: rotate(90deg); }
-.artist-album-art {
-  width: 48px;
-  height: 48px;
-  object-fit: cover;
-  border-radius: 9px;
-  background: rgba(21,36,58,.06);
-}
-.artist-album-art.is-placeholder {
-  display: grid;
-  place-items: center;
-  color: rgba(21,36,58,.35);
-  font-size: 1.15rem;
-}
-.artist-album-copy {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-}
-.artist-album-copy strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: .92rem;
-}
-.artist-album-copy small { color: var(--muted); font-size: .72rem; }
-.artist-album-tracks {
-  border-top: 1px solid rgba(21,36,58,.08);
-  padding: 4px 10px 8px 38px;
-}
-.artist-album-track-list { display: grid; }
-.artist-album-track {
-  display: grid;
-  grid-template-columns: 24px minmax(0,1fr) auto;
-  align-items: center;
-  gap: 8px;
-  min-height: 43px;
-  padding: 5px 0;
-  border-bottom: 1px solid rgba(21,36,58,.065);
-}
-.artist-album-track:last-child { border-bottom: 0; }
-.artist-album-track.is-favorite { background: linear-gradient(90deg,rgba(114,0,20,.04),transparent 55%); }
-.artist-album-track-number { color: var(--muted); font-size: .7rem; text-align: right; }
-.artist-album-track-copy {
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.artist-album-track-copy strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: .82rem;
-}
-.artist-album-track-copy small { flex: 0 0 auto; color: var(--muted); font-size: .66rem; }
-.artist-album-loading,
-.artist-album-empty { margin: 7px 0; color: var(--muted); font-size: .78rem; }
-
-@media (max-width:760px) {
-  .artist-album-header { grid-template-columns:minmax(0,1fr) auto; gap:6px; padding-right:7px; }
-  .artist-album-toggle { grid-template-columns:14px 42px minmax(0,1fr); gap:7px; }
-  .artist-album-art { width:42px; height:42px; border-radius:8px; }
-  .artist-album-tracks { padding-left:15px; padding-right:7px; }
-  .artist-album-track { grid-template-columns:20px minmax(0,1fr) auto; gap:6px; }
-  .artist-album-track-copy { display:grid; gap:1px; }
-  .artist-album-track-copy small { font-size:.62rem; }
+@media (max-width: 760px) {
+  .add-find-title-grid,
+  .rating-date-grid { grid-template-columns: 1fr; }
+  .find-it-search-row {
+    grid-template-columns: minmax(96px, 132px) minmax(0, 1fr) auto;
+  }
+  .find-source-in-input select {
+    padding-left: 9px;
+    padding-right: 24px;
+    font-size: .78rem;
+  }
+  .find-it-search-row > .secondary-button {
+    margin-left: 6px;
+    padding-inline: 12px;
+  }
+  .date-behavior-row { margin-top: 6px; }
 }

@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-game-api-restore-78';
-import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
+import { TrackerAPI } from './api.js?v=omni-add-controls-78';
+import { API_CONFIG } from './config.js?v=omni-add-controls-78';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -25,23 +25,23 @@ const CACHE_TTL = 60 * 60 * 1000;
 const mobileCalendarQuery = window.matchMedia('(max-width: 760px)');
 
 const TYPE_LABELS = {
-  workout: 'Workouts',
-  movie: 'Movies',
   tv: 'TV',
   book: 'Books',
+  movie: 'Movies',
   music: 'Music',
   food: 'Food',
-  game: 'Games',
-  event: 'Events'
+  event: 'Events',
+  activity: 'Activities',
+  class: 'Classes',
+  workout: 'Workouts',
+  shopping: 'Shopping',
+  other: 'Other'
 };
 
 const SOURCE_ITEM_LABELS = {
   tv: 'TV',
   movie: 'Movie',
   book: 'Book',
-  'video-game': 'Video Game',
-  'board-game': 'Board Game',
-  game: 'Game',
   music: 'Music',
   artist: 'Artist',
   song: 'Song',
@@ -53,15 +53,10 @@ const SOURCE_ITEM_LABELS = {
   restaurant: 'Restaurant',
   place: 'Place',
   shopping: 'Shopping',
-  recipe: 'Recipe',
-  youtube: 'YouTube',
-  workout: 'Workout',
-  reminder: 'Reminder'
+  recipe: 'Recipe'
 };
 
-const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'game', 'video-game', 'board-game', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class', 'food', 'restaurant', 'place', 'recipe', 'shopping', 'youtube', 'workout', 'reminder', 'other']);
-
-const STICKER_SHAPES = ['square', 'circle', 'star', 'heart', 'triangle', 'diamond', 'hexagon', 'pentagon', 'oval'];
+const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class', 'food', 'restaurant', 'recipe', 'shopping', 'other']);
 const STICKER_COLORS = ['rust', 'burgundy', 'red', 'coral', 'orange', 'yellow', 'cream', 'sand', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'slate', 'teal', 'green', 'forest', 'mint', 'olive', 'stone', 'brown', 'charcoal', 'black', 'white'];
 const CALENDAR_THEMES = [
   { id: 'blue', label: 'Dusty blue' },
@@ -111,9 +106,9 @@ const DEFAULT_DISCOVER_PREFS = {
   eventAutoLikedArtistCalendar: true,
   upcomingHorizonDays: 30
 };
-const DISCOVER_CONTENT_TYPES = ['tv', 'movie', 'book', 'artist', 'game', 'concert', 'restaurant', 'event'];
+const DISCOVER_CONTENT_TYPES = ['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'restaurant', 'event'];
 const DISCOVER_CONTENT_TYPE_LABELS = {
-  tv: 'TV', movie: 'Movies', book: 'Books', artist: 'Music', game: 'Games',
+  tv: 'TV', movie: 'Movies', book: 'Books', music: 'Albums', artist: 'Artists', song: 'Songs',
   concert: 'Concerts', restaurant: 'Restaurants', event: 'Live Events'
 };
 function normalizedDiscoverContentTypes(prefs = state?.discoverPrefs || DEFAULT_DISCOVER_PREFS) {
@@ -122,10 +117,7 @@ function normalizedDiscoverContentTypes(prefs = state?.discoverPrefs || DEFAULT_
     const legacy = String(prefs?.contentType || '').trim();
     values = legacy && legacy !== 'all' ? [legacy] : ['tv', 'movie'];
   }
-  // Albums and songs now live inside Artist cards. Migrate old Music/Song
-  // Discover preferences to the single Artist category.
-  values = values.map(value => ['music','song'].includes(String(value || '').trim()) ? 'artist' : String(value || '').trim());
-  const valid = [...new Set(values.filter(value => DISCOVER_CONTENT_TYPES.includes(value)))];
+  const valid = [...new Set(values.map(value => String(value || '').trim()).filter(value => DISCOVER_CONTENT_TYPES.includes(value)))];
   return valid.length ? valid : ['tv', 'movie'];
 }
 function discoverTypeSelected(type) {
@@ -146,12 +138,7 @@ function syncDiscoverTypeFilterUI() {
   if (els.discoverTypeFilterSummary) els.discoverTypeFilterSummary.textContent = discoverSelectionLabel([...selected]);
 }
 
-const CORE_LOG_TYPE_OPTIONS = Object.freeze([
-  ['workout','Workouts'], ['movie','Movies'], ['tv','TV'], ['book','Books'],
-  ['music','Music'], ['food','Food'], ['game','Games'], ['event','Events']
-]);
-const CORE_LOG_TYPE_KEYS = new Set(CORE_LOG_TYPE_OPTIONS.map(([key]) => key));
-const DEFAULT_LIBRARY_PREFS = { defaultTypeKeys: null, addTypeKeys: null };
+const DEFAULT_LIBRARY_PREFS = { defaultTypeKeys: null };
 let currentUser = null;
 let appStarted = false;
 let localOnlyMode = false;
@@ -410,16 +397,10 @@ const els = {
   itemFindSource: $('#itemFindSource'),
   itemFindSourceDisclosure: $('#itemFindSourceDisclosure'),
   itemFindSourceSummary: $('#itemFindSourceSummary'),
-  itemFindSettingsDisclosure: $('#itemFindSettingsDisclosure'),
   itemFeaturesDisclosure: $('#itemFeaturesDisclosure'),
   itemFeaturesSummary: $('#itemFeaturesSummary'),
   itemProgressMode: $('#itemProgressMode'),
   itemUseDateRange: $('#itemUseDateRange'),
-  itemUseRepeatLog: $('#itemUseRepeatLog'),
-  itemRepeatDisclosure: $('#itemRepeatDisclosure'),
-  itemRepeatSummary: $('#itemRepeatSummary'),
-  itemLogEntryFields: $('#itemLogEntryFields'),
-  itemLogEntryTitle: $('#itemLogEntryTitle'),
   itemUsePlaylist: $('#itemUsePlaylist'),
   catalogueQuery: $('#catalogueQuery'),
   catalogueSearchButton: $('#catalogueSearchButton'),
@@ -428,6 +409,7 @@ const els = {
   workoutBlock: $('#workoutBlock'),
   reminderBlock: $('#reminderBlock'),
   reminderFrequency: $('#reminderFrequency'),
+  itemRepeatSummary: $('#itemRepeatSummary'),
   reminderDateField: $('#reminderDateField'),
   reminderDateLabel: $('#reminderDateLabel'),
   reminderDueDate: $('#reminderDueDate'),
@@ -491,8 +473,6 @@ const els = {
   itemRecommendHeart: $('#itemRecommendHeart'),
   queueStatusField: $('#queueStatusField'),
   itemStatusPicker: $('#itemStatusPicker'),
-  itemStatusSummary: $('#itemStatusSummary'),
-  itemQueueChoice: $('#itemQueueChoice'),
   itemQueueStatus: $('#itemQueueStatus'),
   editingId: $('#editingId'),
   provider: $('#provider'),
@@ -765,35 +745,11 @@ function ensureOnboardingColorModal() {
     render();
   });
   modal.querySelector('[data-onboarding-colour-continue]').addEventListener('click', () => {
-    modal.close();
-    requestAnimationFrame(() => showDialogAtTop(ensureOnboardingLogTypesModal()));
-  });
-  modal.querySelector('[data-onboarding-skip]').addEventListener('click', () => finishOnboarding());
-  modal.addEventListener('cancel', event => event.preventDefault());
-  render();
-  return modal;
-}
-
-function ensureOnboardingLogTypesModal() {
-  let modal = $('#onboardingLogTypesModal');
-  if (modal) return modal;
-  modal = document.createElement('dialog');
-  modal.id = 'onboardingLogTypesModal';
-  modal.className = 'modal small-modal onboarding-log-types-modal';
-  modal.innerHTML = `<div class="modal-heading"><p class="modal-eyebrow">SET UP ADD</p><h2>What do you want to log?</h2><p class="field-hint">Pick only what you use. This keeps Add simple. You can change it later in Profile settings.</p></div><div id="onboardingLogTypeChoices" class="onboarding-log-type-choices"></div><div class="modal-actions"><button class="quiet-button" type="button" data-onboarding-log-all>Choose all</button><div class="actions-right"><button class="primary-button" type="button" data-onboarding-log-continue>Continue</button></div></div>`;
-  document.body.appendChild(modal);
-  const host = modal.querySelector('#onboardingLogTypeChoices');
-  const render = () => { host.innerHTML = loggingTypeChoicesMarkup(loggingAddTypeKeys()); };
-  modal.querySelector('[data-onboarding-log-all]')?.addEventListener('click', () => {
-    host.querySelectorAll('input[type="checkbox"]').forEach(input => { input.checked = true; });
-  });
-  modal.querySelector('[data-onboarding-log-continue]')?.addEventListener('click', () => {
-    const keys = [...host.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value);
-    saveLoggingAddTypeKeys(keys);
     setOnboardingStep(1);
     modal.close();
     showOnboardingGuideStep();
   });
+  modal.querySelector('[data-onboarding-skip]').addEventListener('click', () => finishOnboarding());
   modal.addEventListener('cancel', event => event.preventDefault());
   render();
   return modal;
@@ -915,12 +871,12 @@ function showOnboardingGuideStep(user = currentUser) {
         2: {
           selector: '.add-intent-grid',
           title: 'Pick the type',
-          body: 'Choose a Type. Add only shows the Types you picked during setup.'
+          body: 'Choose what you did, then choose what it was.'
         },
         3: {
           selector: '#catalogueSearchBlock',
           title: 'Search',
-          body: 'Type a title yourself, or use Find it. The gear changes what Find it searches.'
+          body: 'Search for the item and pick the matching result. Open Search source only if you need a different lookup.'
         },
         4: {
           selector: '.rating-fieldset',
@@ -939,8 +895,8 @@ function showOnboardingGuideStep(user = currentUser) {
         },
         7: {
           selector: '#queueStatusField',
-          title: 'Set progress',
-          body: 'Completed goes to Library, In progress goes to Up Next, and Not started goes to TBR.'
+          title: 'Choose where it goes',
+          body: 'Library only saves it. Up Next puts it in your active queue. TBR saves it for later.'
         }
       };
       const config = steps[step];
@@ -1527,8 +1483,6 @@ function bindEvents() {
   els.openStreakSettings?.addEventListener('click', openStreakSettings);
   els.streakSettingsForm?.addEventListener('submit', saveStreakSettings);
   els.streakSettingsRows?.addEventListener('change', previewStreakSettings);
-  els.streakSettingsRows?.addEventListener('input', previewStreakSettings);
-  els.streakSettingsRows?.addEventListener('click', handleStreakSettingsClick);
   els.resetStreakSettings?.addEventListener('click', resetStreakSettings);
   els.calendarRowSettingsForm?.addEventListener('submit', saveCalendarRowSettings);
   els.resetCalendarRowSettings?.addEventListener('click', resetCalendarRowSettings);
@@ -1556,13 +1510,16 @@ function bindEvents() {
     clearSourceSelectionForTypeChange();
     syncItemFindSourceSummary();
     updateItemFormForType();
-    syncFindItInputUI();
+  });
+  els.itemStatusPicker?.addEventListener('click', event => {
+    const button = event.target.closest('[data-item-status]');
+    if (!button || !els.itemQueueStatus) return;
+    els.itemQueueStatus.value = button.dataset.itemStatus || 'library';
+    syncItemStatusPicker();
   });
   els.itemProgressMode?.addEventListener('change', updateItemFormForType);
   els.itemUseDateRange?.addEventListener('change', updateItemFormForType);
-  els.itemUseRepeatLog?.addEventListener('change', () => { updateItemFormForType(); syncLogEntryFields(); });
   els.itemUsePlaylist?.addEventListener('change', updateItemFormForType);
-  els.catalogueQuery?.addEventListener('focus', promptForCustomFindSource);
   els.catalogueSearchButton?.addEventListener('click', searchCatalogue);
   els.catalogueQuery?.addEventListener('keydown', event => {
     if (event.key === 'Enter') {
@@ -1573,15 +1530,6 @@ function bindEvents() {
   els.playlistLoadButton?.addEventListener('click', loadPlaylistPreview);
   els.reminderFrequency?.addEventListener('change', updateReminderFormFields);
   els.reminderIntervalUnit?.addEventListener('change', updateReminderFormFields);
-  els.reminderWeekday?.addEventListener('change', updateReminderFormFields);
-  els.itemDate?.addEventListener('change', () => { if (els.reminderDueDate) els.reminderDueDate.value = els.itemDate.value || todayString(); });
-  els.itemStatusPicker?.addEventListener('click', event => {
-    const button = event.target.closest('[data-item-status]');
-    if (!button || !els.itemQueueStatus) return;
-    els.itemQueueStatus.value = button.dataset.itemStatus;
-    if (els.itemQueueChoice) els.itemQueueChoice.open = false;
-    syncItemStatusPicker();
-  });
   els.tvWatchSetupList?.addEventListener('change', handleTVDraftEpisodeToggle);
   els.tvWatchSetupList?.addEventListener('click', handleTVDraftSeasonAction);
   els.tvMarkAllWatched?.addEventListener('click', toggleAllTVDraftEpisodes);
@@ -1804,13 +1752,6 @@ function bindEvents() {
       return;
     }
 
-    const artistAlbumToggle = event.target.closest('[data-artist-album-toggle]');
-    if (artistAlbumToggle) {
-      event.preventDefault();
-      await expandArtistAlbum(artistAlbumToggle);
-      return;
-    }
-
     const artistFavorite = event.target.closest('[data-artist-favorite]');
     if (artistFavorite) {
       const item = findItem(artistFavorite.dataset.artistItemId || state.openDetailId);
@@ -1819,10 +1760,7 @@ function bindEvents() {
           const payload = JSON.parse(decodeURIComponent(artistFavorite.dataset.artistFavorite || ''));
           toggleArtistFavorite(item, payload);
           saveItems();
-          const selected = artistFavoriteIsSaved(item, payload.kind === 'song' ? 'songs' : 'albums', payload.id);
-          artistFavorite.classList.toggle('is-favorite', selected);
-          artistFavorite.setAttribute('aria-label', `${selected ? 'Remove from' : 'Add to'} favorite ${payload.kind === 'song' ? 'songs' : 'albums'}`);
-          artistFavorite.closest('.artist-album-card, .artist-album-track, .artist-catalog-row')?.classList.toggle('is-favorite', selected);
+          await openDetails(item.id);
         } catch (error) {
           console.warn('[Artist favorites] Could not update favorite', error);
         }
@@ -1959,26 +1897,6 @@ function bindEvents() {
         renderAll();
         if (els.detailModal?.open) await openDetails(item.id);
       }
-      return;
-    }
-
-    const addRepeatLog = event.target.closest('[data-add-repeat-log]');
-    if (addRepeatLog) {
-      const item = findItem(addRepeatLog.dataset.addRepeatLog || state.openDetailId);
-      if (item) openRepeatLogModal(item);
-      return;
-    }
-
-    const editRepeatLog = event.target.closest('[data-edit-repeat-log]');
-    if (editRepeatLog) {
-      els.detailModal?.close();
-      openHistoryEdit(editRepeatLog.dataset.editRepeatLog);
-      return;
-    }
-
-    const deleteRepeatLog = event.target.closest('[data-delete-repeat-log]');
-    if (deleteRepeatLog) {
-      deleteRepeatLogEntry(deleteRepeatLog.dataset.deleteRepeatLog, deleteRepeatLog.dataset.repeatItemId || state.openDetailId);
       return;
     }
 
@@ -2516,17 +2434,17 @@ function ensureAlbumDetailModal() {
   document.body.appendChild(modal);
   modal.querySelector('[data-close="albumDetailModal"]')?.addEventListener('click', () => modal.close());
   modal.addEventListener('click', event => {
-    const itemButton = event.target.closest('[data-album-open-item], [data-details-id]');
-    if (itemButton) {
-      const itemId = itemButton.dataset.albumOpenItem || itemButton.dataset.detailsId;
-      modal.close();
-      openDetails(itemId);
-      return;
-    }
+    const itemButton = event.target.closest('[data-album-open-item]');
+    if (itemButton) { modal.close(); openDetails(itemButton.dataset.albumOpenItem); return; }
     const edit = event.target.closest('[data-album-edit]');
     if (edit) { modal.close(); openAlbumEditor(edit.dataset.albumEdit); }
   });
   return modal;
+}
+
+function appleMusicSearchUrl(item) {
+  const term = [item.title, item.artistName || item.subtitle || ''].filter(Boolean).join(' ');
+  return `https://music.apple.com/ca/search?term=${encodeURIComponent(term)}`;
 }
 
 function openAlbumDetail(id) {
@@ -2534,35 +2452,8 @@ function openAlbumDetail(id) {
   if (!album) return;
   const modal = ensureAlbumDetailModal();
   const items = (album.itemIds || []).map(findItem).filter(Boolean);
-  const groups = new Map();
-  for (const item of items) {
-    const key = libraryTypeGroupKey(item);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(item);
-  }
-  const sortedGroups = [...groups.entries()]
-    .map(([key, groupItems]) => ({ key, items: groupItems, label: libraryTypeGroupLabel(groupItems, key) }))
-    .sort((a,b) => a.label.localeCompare(b.label));
-
-  const body = $('#albumDetailBody');
-  body.innerHTML = `<div class="collection-library-heading"><div><h2>${escapeHtml(album.title)}</h2>${album.description ? `<p class="collection-library-note">${escapeHtml(album.description)}</p>` : ''}</div><button class="secondary-button" type="button" data-album-edit="${escapeAttr(album.id)}">Edit</button></div><div class="collection-library-groups"></div>`;
-  const host = body.querySelector('.collection-library-groups');
-  if (!items.length) {
-    host.innerHTML = '<p class="empty-state">Empty collection.</p>';
-  } else {
-    for (const group of sortedGroups) {
-      const section = document.createElement('section');
-      section.className = 'collection-library-group';
-      section.innerHTML = `<div class="collection-library-group-heading"><h3>${escapeHtml(group.label)}</h3><span>${group.items.length}</span></div><div class="library-poster-grid is-expanded collection-library-grid"></div>`;
-      const grid = section.querySelector('.collection-library-grid');
-      group.items.forEach(item => {
-        const card = makeLibraryPoster(item);
-        card.querySelector('.library-card-album-button')?.remove();
-        grid.appendChild(card);
-      });
-      host.appendChild(section);
-    }
-  }
+  const allSongs = items.length > 0 && items.every(item => getSourceType(item) === 'song');
+  $('#albumDetailBody').innerHTML = `<div class="modal-heading"><h2>${escapeHtml(album.title)}</h2>${album.description ? `<p>${escapeHtml(album.description)}</p>` : ''}</div><div class="album-detail-actions"><button class="secondary-button" type="button" data-album-edit="${escapeAttr(album.id)}">Edit</button></div><div class="album-detail-items">${items.map(item => `<article class="album-detail-item"><button type="button" data-album-open-item="${escapeAttr(item.id)}">${item.image ? `<img src="${escapeAttr(item.image)}" alt=""/>` : '<span class="album-choice-placeholder"></span>'}<span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(getItemTypeLabel(item))}</small></span></button>${getSourceType(item) === 'song' ? `<a href="${escapeAttr(appleMusicSearchUrl(item))}" target="_blank" rel="noopener">Apple Music ↗</a>` : ''}</article>`).join('') || '<p class="empty-state">Empty collection.</p>'}</div>${allSongs ? '<p class="album-apple-note">This song collection can become one Apple Music playlist after Apple Music is connected. Until then, songs open individually.</p>' : ''}`;
   showDialogAtTop(modal);
 }
 
@@ -2579,108 +2470,17 @@ function watchedTitleHasConsumption(item) {
   return false;
 }
 
-const STATS_GENRE_COLORS = Object.freeze({
-  Action: '#B95032',
-  Adventure: '#355F7C',
-  Animation: '#C97891',
-  Comedy: '#EFD98B',
-  Crime: '#65151B',
-  Documentary: '#61795D',
-  Drama: '#907bb9',
-  Family: '#99AA65',
-  Fantasy: '#79558F',
-  History: '#8F6246',
-  Horror: '#17151D',
-  Mystery: '#4D4566',
-  Romance: '#f77390',
-  'Science Fiction': '#2F6870',
-  Thriller: '#405463',
-  War: '#6d7480',
-  Western: '#9c7450',
-  'TV Movie': '#8fa8bc',
-  Politics: '#9a4353',
-  Reality: '#F786AA',
-  Other: '#aaa9a9'
-});
-const STATS_RECOGNIZED_GENRES = new Set(Object.keys(STATS_GENRE_COLORS).filter(label => label !== 'Other'));
-
-function canonicalStatsGenreLabels(value) {
-  const label = cleanTypeLabel(typeof value === 'string' ? value : value?.name || '');
-  if (!label) return [];
-  const key = label.toLowerCase().replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
-  if (['sci-fi & fantasy', 'science fiction & fantasy', 'sci fi & fantasy'].includes(key)) return ['Science Fiction', 'Fantasy'];
-  if (['sci-fi', 'sci fi', 'science-fiction', 'science fiction'].includes(key)) return ['Science Fiction'];
-  if (key === 'action & adventure') return ['Action', 'Adventure'];
-  if (key === 'kids') return ['Family'];
-  if (key === 'war & politics') return ['War', 'Politics'];
-  if (['reality tv', 'reality television', 'reality'].includes(key)) return ['Reality'];
-  for (const recognized of STATS_RECOGNIZED_GENRES) {
-    if (recognized.toLowerCase() === key) return [recognized];
-  }
-  return [label];
-}
-
-function statsItemGenreLabels(item) {
-  return [...new Set((item?.genres || []).flatMap(canonicalStatsGenreLabels).filter(Boolean))];
-}
-
 function watchedGenreCounts() {
   const counts = new Map();
   for (const item of state.items) {
     if (!watchedTitleHasConsumption(item)) continue;
-    const labels = statsItemGenreLabels(item);
-    const recognized = labels.filter(label => STATS_RECOGNIZED_GENRES.has(label));
-    // "Other" is exclusive: a title with a real visible genre never also
-    // inflates Other just because TMDB supplied Soap/News/Talk metadata.
-    const counted = recognized.length ? recognized : (labels.length ? ['Other'] : []);
-    for (const label of counted) counts.set(label, (counts.get(label) || 0) + 1);
+    for (const genre of item.genres || []) {
+      const label = cleanTypeLabel(typeof genre === 'string' ? genre : genre?.name || '');
+      if (!label) continue;
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
   }
-  const rows = [...counts.entries()]
-    .filter(([label]) => label !== 'Other')
-    .sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  if (counts.get('Other')) rows.push(['Other', counts.get('Other')]);
-  return rows;
-}
-
-async function enrichWatchedTVStatsGenres() {
-  if (!state.settings.tmdbToken || !TrackerAPI.getTVDetails) return false;
-  const items = state.items.filter(item => getSourceType(item) === 'tv' && item.providerId && watchedTitleHasConsumption(item));
-  if (!items.length) return false;
-  let changed = false;
-  const horrorTerms = ['horror', 'supernatural horror', 'psychological horror', 'slasher', 'zombie'];
-  const thrillerTerms = ['thriller', 'suspense', 'psychological thriller', 'crime thriller'];
-  const hasKeyword = (names, terms) => terms.some(term => names.some(name => name === term || name.includes(term)));
-
-  await Promise.allSettled(items.map(async item => {
-    const before = [...new Set((item.genres || []).map(value => cleanTypeLabel(typeof value === 'string' ? value : value?.name || '')).filter(Boolean))];
-    const merged = new Set(before);
-
-    const rawIds = item.raw?.genre_ids || [];
-    rawIds.map(id => TMDB_TV_GENRES[Number(id)]).filter(Boolean).forEach(label => merged.add(label));
-
-    try {
-      const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
-      (details?.genres || []).map(genre => genre?.name).filter(Boolean).forEach(label => merged.add(cleanTypeLabel(label)));
-    } catch {}
-
-    if (TrackerAPI.getTMDBItemKeywords) {
-      try {
-        const keywords = await getCached(`tv:keywords:${item.providerId}`, () => TrackerAPI.getTMDBItemKeywords('tv', item.providerId, state.settings));
-        const names = (keywords || []).map(keyword => String(keyword?.name || '').toLowerCase().trim()).filter(Boolean);
-        if (hasKeyword(names, horrorTerms)) merged.add('Horror');
-        if (hasKeyword(names, thrillerTerms)) merged.add('Thriller');
-      } catch {}
-    }
-
-    const next = [...merged].filter(Boolean);
-    if (next.length !== before.length || next.some(label => !before.includes(label))) {
-      item.genres = next;
-      changed = true;
-    }
-  }));
-
-  if (changed) saveItems();
-  return changed;
+  return [...counts.entries()].sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
 function iso8601DurationMinutes(value) {
@@ -2787,15 +2587,12 @@ async function estimatedWatchMinutes() {
 }
 
 function statsGenreItems(labels = []) {
-  const wanted = new Set((labels || []).map(value => cleanTypeLabel(value)).filter(Boolean));
+  const wanted = new Set((labels || []).map(value => cleanTypeLabel(value).toLowerCase()).filter(Boolean));
   if (!wanted.size) return [];
-  return state.items.filter(item => {
-    if (!watchedTitleHasConsumption(item)) return false;
-    const itemLabels = statsItemGenreLabels(item);
-    const recognized = itemLabels.filter(label => STATS_RECOGNIZED_GENRES.has(label));
-    if (wanted.has('Other') && !recognized.length && itemLabels.length) return true;
-    return recognized.some(label => wanted.has(label));
-  });
+  return state.items.filter(item => watchedTitleHasConsumption(item) && (item.genres || []).some(genre => {
+    const label = cleanTypeLabel(typeof genre === 'string' ? genre : genre?.name || '').toLowerCase();
+    return wanted.has(label);
+  }));
 }
 
 function statsPiePath(cx, cy, radius, startAngle, endAngle) {
@@ -2817,9 +2614,34 @@ function renderGenrePie(genres = []) {
     els.statsGenres.innerHTML = '<p class="empty-state">No watched genres yet.</p>';
     return;
   }
-  const visible = genres.map(([label,count]) => ({ label, count, labels:[label] }));
+  const visible = genres.slice(0, 9).map(([label,count]) => ({ label, count, labels:[label] }));
+  const overflow = genres.slice(9);
+  if (overflow.length) visible.push({ label:'Other', count:overflow.reduce((sum,entry) => sum + entry[1],0), labels:overflow.map(entry => entry[0]) });
   const total = visible.reduce((sum,entry) => sum + entry.count,0) || 1;
-  const genreColor = label => STATS_GENRE_COLORS[label] || STATS_GENRE_COLORS.Other;
+  const genreColors = {
+      Romance: '#f77390',
+  Crime: '#65151B',
+  Horror: '#17151D',
+  Comedy: '#EFD98B',
+  Drama: '#907bb9',
+  Thriller: '#405463',
+  Mystery: '#4D4566',
+  Action: '#B95032',
+  Adventure: '#355F7C',
+  Fantasy: '#79558F',
+  'Science Fiction': '#2F6870',
+  Documentary: '#61795D',
+  Animation: '#C97891',
+  Family: '#99AA65',
+  History: '#8F6246',
+  'Other': '#aaa9a9' 
+};
+  const genreAliases = {
+    'Sci-Fi & Fantasy': 'Science Fiction',
+    'Action & Adventure': 'Action',
+    Kids: 'Family'
+  };
+  const genreColor = label => genreColors[genreAliases[label] || label] || genreColors.Other;
   let angle = -Math.PI / 2;
   const paths = visible.map(entry => {
     const next = angle + (entry.count / total) * Math.PI * 2;
@@ -3056,7 +2878,7 @@ async function renderStats() {
       .map(group => `<button class="stat-type-row" type="button" data-stats-type-key="${escapeAttr(group.key)}" data-stats-label="${escapeAttr(group.label)}"><span>${escapeHtml(group.label)}</span><strong>${group.items.length}</strong></button>`).join('');
   }
   renderGenrePie(genres);
-  const [minutes] = await Promise.all([estimatedWatchMinutes(), enrichWatchedTVStatsGenres()]);
+  const minutes = await estimatedWatchMinutes();
   if (els.statsSummary?.dataset.renderToken !== requestToken) return;
   const hours = formatWatchHours(minutes);
   const cards = [...els.statsSummary.querySelectorAll('.stat-card')];
@@ -3229,7 +3051,7 @@ async function renderUpNext(options = {}) {
   const today = todayString();
   const availableItems = state.items.filter(item => {
     if (getQueueStatus(item) !== view) return false;
-    if (view === 'upnext' && hasReminderSchedule(item)) {
+    if (view === 'upnext' && getSourceType(item) === 'reminder') {
       const dueDate = getNextReminderDueDate(item);
       return !dueDate || dueDate <= today;
     }
@@ -3293,14 +3115,13 @@ async function renderUpNext(options = {}) {
         button.dataset.id = item.id;
         button.setAttribute('aria-label', `Open ${item.title}`);
         button.title = item.title;
-        const pausedBadge = libraryDnfState(item) === 'paused' ? '<span class="tbr-paused-badge">Paused</span>' : '';
         if (getSourceType(item) === 'restaurant') {
           button.classList.add('tbr-text-button');
-          button.innerHTML = `<span class="tbr-text-title">${escapeHtml(item.title || 'Restaurant')}</span><span class="tbr-text-meta">Restaurant</span>${pausedBadge}`;
+          button.innerHTML = `<span class="tbr-text-title">${escapeHtml(item.title || 'Restaurant')}</span><span class="tbr-text-meta">Restaurant</span>`;
         } else {
-          button.innerHTML = (item.image
+          button.innerHTML = item.image
             ? `<img class="tbr-thumbnail-image" src="${escapeAttr(item.image)}" alt="" loading="lazy" />`
-            : `<span class="tbr-thumbnail-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`) + pausedBadge;
+            : `<span class="tbr-thumbnail-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`;
         }
         grid.appendChild(button);
       }
@@ -3673,7 +3494,7 @@ async function buildQueueCalendarEntries() {
 
   for (const item of state.items) {
     const sourceType = getSourceType(item);
-    if (hasReminderSchedule(item)) {
+    if (sourceType === 'reminder') {
       let due = getNextReminderDueDate(item);
       if (!due || due < today) continue;
       const frequency = reminderFrequency(item);
@@ -3816,17 +3637,16 @@ function queueCardMarkup(item, info) {
     : `<div class="upnext-art placeholder">${escapeHtml(getItemTypeLabel(item)?.[0] || '•')}</div>`;
   const sourceType = getSourceType(item);
   const isTBR = Boolean(info.tbr);
-  const pausedBadge = isTBR && libraryDnfState(item) === 'paused' ? '<span class="tbr-paused-badge queue-card-paused-badge">Paused</span>' : '';
 
   let action = '';
   if (isTBR) {
     action = `<button class="check-button start-button" type="button" data-action="start" data-id="${item.id}" aria-label="Up Next" title="Up Next">→</button>`;
-  } else if (hasReminderSchedule(item)) {
+  } else if (sourceType === 'book') {
+    action = `<button class="check-button book-check" type="button" data-action="complete" data-id="${item.id}" aria-label="Update pages & dates" title="Update pages & dates">↗</button>`;
+  } else if (sourceType === 'reminder') {
     const due = info.dueDate || getNextReminderDueDate(item);
     const canComplete = !due || due <= todayString();
     action = `<button class="check-button reminder-check" type="button" data-action="complete" data-id="${item.id}" aria-label="Mark reminder complete" title="${canComplete ? 'Mark complete' : `Due ${escapeAttr(formatLongDate(due))}`}" ${canComplete ? '' : 'disabled'}>✓</button>`;
-  } else if (sourceType === 'book') {
-    action = `<button class="check-button book-check" type="button" data-action="complete" data-id="${item.id}" aria-label="Update pages & dates" title="Update pages & dates">↗</button>`;
   } else {
     const label = sourceType === 'tv' ? 'Mark episode watched' : sourceType === 'youtube' ? `Mark ${getItemTypeLabel(item).toLowerCase()} complete` : 'Mark completed';
     action = `<button class="check-button" type="button" data-action="complete" data-id="${item.id}" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}">✓</button>`;
@@ -3839,7 +3659,6 @@ function queueCardMarkup(item, info) {
         <p class="upnext-title">${escapeHtml(info.title || item.title)}</p>
         <p class="upnext-meta">${escapeHtml(info.meta || progressFallback(item))}</p>
         <p class="upnext-category">${escapeHtml([getItemTypeLabel(item), isTBR ? 'TBR' : '', info.streaming || ''].filter(Boolean).join(' · '))}</p>
-        ${pausedBadge}
         ${!isTBR ? buddyQueueMarkup(item) : ''}
         ${info.error ? `<div class="queue-error">${escapeHtml(info.error)}</div>` : ''}
       </div>
@@ -3885,11 +3704,10 @@ function streamingDetailMarkup(availability) {
 
 function tbrMeta(item) {
   const sourceType = getSourceType(item);
-  const paused = libraryDnfState(item) === 'paused';
-  if (sourceType === 'tv') return [item.subtitle, paused ? 'Paused' : 'Not started'].filter(Boolean).join(' · ');
-  if (sourceType === 'book') return [item.subtitle, paused ? 'Paused' : 'To be read'].filter(Boolean).join(' · ');
+  if (sourceType === 'tv') return [item.subtitle, 'Not started'].filter(Boolean).join(' · ');
+  if (sourceType === 'book') return [item.subtitle, 'To be read'].filter(Boolean).join(' · ');
   if (sourceType === 'youtube') return isYouTubePlaylistItem(item) ? [item.subtitle, 'Playlist'].filter(Boolean).join(' · ') : (item.subtitle || 'YouTube');
-  if (hasReminderSchedule(item)) return reminderScheduleLabel(item);
+  if (sourceType === 'reminder') return reminderScheduleLabel(item);
   if (['event', 'concert'].includes(sourceType)) return eventQueueMeta(item);
   return item.subtitle || 'Saved for later';
 }
@@ -3957,7 +3775,7 @@ async function getUpNextInfo(item) {
     };
   }
 
-  if (hasReminderSchedule(item)) {
+  if (getSourceType(item) === 'reminder') {
     const dueDate = getNextReminderDueDate(item);
     return {
       title: item.title,
@@ -4032,30 +3850,26 @@ async function handleUpNextClick(event) {
   }
 
   if (button.dataset.action === 'complete') {
-    if (getSourceType(item) === 'book' && !hasReminderSchedule(item)) {
+    if (getSourceType(item) === 'book') {
       openBookProgress(item);
       return;
     }
     button.disabled = true;
     try {
       let completed = null;
-      if (hasReminderSchedule(item)) completed = reminderCompletionRecord(item);
-      else if (getSourceType(item) === 'tv') completed = await advanceTV(item);
+      if (getSourceType(item) === 'tv') completed = await advanceTV(item);
       else if (getSourceType(item) === 'youtube') completed = isYouTubePlaylistItem(item) ? await advanceWorkout(item) : genericCompletionRecord(item, true);
+      else if (getSourceType(item) === 'reminder') completed = reminderCompletionRecord(item);
       else completed = genericCompletionRecord(item, true);
       if (completed) addHistoryRecord(completed);
-      if (!hasReminderSchedule(item) && (!['tv','youtube','reminder'].includes(getSourceType(item)) || (getSourceType(item) === 'youtube' && !isYouTubePlaylistItem(item)))) {
+      if (!['tv','youtube','reminder'].includes(getSourceType(item)) || (getSourceType(item) === 'youtube' && !isYouTubePlaylistItem(item))) {
         item.completedAt = todayString();
         setItemQueueStatus(item, 'library');
       }
-      if (hasReminderSchedule(item)) {
+      if (getSourceType(item) === 'reminder') {
         item.lastCompletedAt = new Date().toISOString();
-        if (isOneTimeReminder(item) && getSourceType(item) === 'reminder') {
+        if (isOneTimeReminder(item)) {
           state.items = state.items.filter(existing => existing.id !== item.id);
-        } else if (isOneTimeReminder(item)) {
-          delete item.reminder;
-          item.completedAt = todayString();
-          setItemQueueStatus(item, 'library');
         } else {
           setItemQueueStatus(item, 'upnext');
         }
@@ -4073,7 +3887,7 @@ async function handleUpNextClick(event) {
 }
 
 function queueSortKey(item, view = 'upnext') {
-  if (view === 'upnext' && hasReminderSchedule(item)) return `0:${getNextReminderDueDate(item) || '9999-12-31'}:${item.createdAt || ''}`;
+  if (view === 'upnext' && getSourceType(item) === 'reminder') return `0:${getNextReminderDueDate(item) || '9999-12-31'}:${item.createdAt || ''}`;
   if (['event', 'concert'].includes(getSourceType(item))) return `0:${item.date || item.eventMeta?.eventDate || '9999-12-31'}:${item.createdAt || ''}`;
   return `1:${item.createdAt || ''}`;
 }
@@ -4118,10 +3932,6 @@ function reminderCompletionRecord(item) {
   };
 }
 
-function hasReminderSchedule(item) {
-  return Boolean(item?.reminder && ['none','daily','weekly','biweekly','monthly','custom'].includes(item.reminder.frequency));
-}
-
 function reminderFrequency(item) {
   const value = item?.reminder?.frequency;
   if (['none', 'daily', 'weekly', 'biweekly', 'monthly', 'custom'].includes(value)) return value;
@@ -4141,7 +3951,7 @@ function reminderRecurrence(item) {
 }
 
 function isOneTimeReminder(item) {
-  return hasReminderSchedule(item) && reminderFrequency(item) === 'none';
+  return getSourceType(item) === 'reminder' && reminderFrequency(item) === 'none';
 }
 
 function getReminderScheduleStart(item) {
@@ -4149,7 +3959,7 @@ function getReminderScheduleStart(item) {
 }
 
 function getNextReminderDueDate(item) {
-  if (!hasReminderSchedule(item)) return '';
+  if (getSourceType(item) !== 'reminder') return '';
   const frequency = reminderFrequency(item);
   const scheduleStart = getReminderScheduleStart(item);
 
@@ -4249,20 +4059,6 @@ function formatLongDate(dateString) {
   return new Intl.DateTimeFormat('en-CA', { weekday: 'short', month: 'short', day: 'numeric' }).format(parseLocalDateString(dateString));
 }
 
-function moveProgressedTbrItemToUpNext(item) {
-  if (!item || item.completedAt || getQueueStatus(item) !== 'tbr') return false;
-  const sourceType = getSourceType(item);
-  if (sourceType === 'tv') {
-    item.watchDisposition = 'following';
-  } else if (sourceType === 'book') {
-    if (item.bookDisposition === 'paused') item.bookDisposition = '';
-  } else if (sourceType === 'movie' && item.mediaDisposition === 'paused') {
-    item.mediaDisposition = '';
-  }
-  setItemQueueStatus(item, 'upnext');
-  return true;
-}
-
 function genericCompletionRecord(item, showOnCalendar = true) {
   return {
     sourceItemId: item.id,
@@ -4294,7 +4090,6 @@ async function advanceTV(item) {
   if (next) {
     item.progress = { ...item.progress, nextSeason: next.seasonNumber, nextEpisode: next.episodeNumber };
     item.completedAt = '';
-    moveProgressedTbrItemToUpNext(item);
   } else {
     setItemQueueStatus(item, 'library');
     item.completedAt = todayString();
@@ -4372,7 +4167,6 @@ async function recalculateTVProgress(item) {
   if (next) {
     item.progress = { ...item.progress, nextSeason: next.seasonNumber, nextEpisode: next.episodeNumber };
     item.completedAt = '';
-    if (tvHasProgress(item)) moveProgressedTbrItemToUpNext(item);
   } else {
     item.completedAt = item.completedAt || todayString();
   }
@@ -4447,9 +4241,7 @@ async function reconcileSingleTVItem(item, prefetchedDetails = null) {
     item.completedAt = '';
   }
 
-  if (disposition === 'paused') {
-    setItemQueueStatus(item, 'tbr');
-  } else if (disposition === 'stopped') {
+  if (['paused', 'stopped'].includes(disposition)) {
     setItemQueueStatus(item, 'library');
   } else if (disposition === 'watch-later') {
     setItemQueueStatus(item, 'tbr');
@@ -4708,7 +4500,7 @@ async function toggleSpecificTVEpisode(item, seasonNumber, episodeNumber) {
     // A single episode checked from the normal show detail is something watched now,
     // so it is eligible for today's calendar. Whole-season/import actions are not.
     addHistoryRecord(tvHistoryRecord(item, episode, seasonNumber, episodeNumber));
-    if (getQueueStatus(item) === 'tbr' && getTVWatchDisposition(item) !== 'stopped') item.watchDisposition = 'following';
+    if (getTVWatchDisposition(item) === 'watch-later') item.watchDisposition = 'following';
     await recalculateTVProgress(item);
   }
 
@@ -5102,7 +4894,6 @@ async function moveItemToQueue(item, status) {
     else if (sourceType === 'music') await renderMusicDetails(item);
     else if (sourceType === 'artist') await renderArtistDetails(item);
     else if (sourceType === 'song') await renderSongDetails(item);
-    else if (['video-game','board-game'].includes(sourceType)) await renderGameDetails(item);
     else if (sourceType === 'reminder') renderReminderDetails(item);
     else if (['event', 'concert'].includes(sourceType)) await renderEventDetails(item);
     else if (sourceType === 'restaurant') await renderRestaurantDetails(item);
@@ -5203,8 +4994,6 @@ async function advanceWorkout(item) {
   if (nextIndex >= playlist.items.length) {
     setItemQueueStatus(item, 'library');
     item.completedAt = todayString();
-  } else {
-    moveProgressedTbrItemToUpNext(item);
   }
   return completed;
 }
@@ -5284,9 +5073,8 @@ async function toggleSpecificYouTubeVideo(item, videoId) {
 // ADD / EDIT
 // ---------------------------
 const BASE_ITEM_TYPE_OPTIONS = [
-  ['workout','Workouts'], ['movie','Movies'], ['tv','TV'], ['book','Books'], ['music','Music'],
-  ['food','Food'], ['game','Games'], ['event','Events'], ['activity','Activity'], ['class','Class'],
-  ['shopping','Shopping'], ['youtube','YouTube'], ['reminder','Reminder'], ['other','Create new…']
+  ['tv','TV'], ['movie','Movie'], ['book','Book'], ['music','Music'], ['food','Food'],
+  ['event','Event'], ['activity','Activity'], ['class','Class'], ['shopping','Shopping'], ['youtube','YouTube'], ['workout','Workouts'], ['reminder','Reminder'], ['other','New type']
 ];
 
 function itemTypeOptionUsageKey(value) {
@@ -5412,7 +5200,6 @@ function kindForCurrentForm(item = null) {
   const subtype = els.itemSubtype?.value || formSubtypeForItem(getSourceType(item), item);
   if (parent === 'food' && subtype === 'restaurant') return 'restaurant';
   if (parent === 'food' && subtype === 'recipe') return 'recipe';
-  if (parent === 'game') return 'game';
   if (parent === 'music' && ['artist','song','concert'].includes(subtype)) return subtype;
   if (parent === 'music' && subtype === 'album') return 'music';
   if (parent === 'other') {
@@ -5422,59 +5209,34 @@ function kindForCurrentForm(item = null) {
   return parent;
 }
 
-function loggingAddTypeKeys() {
-  const prefs = normalizeLibraryPrefs(state.libraryPrefs);
-  // null = the user has never chosen, so show all defaults. An explicit empty
-  // array is meaningful: the user may want Add to contain only custom Types.
-  if (!Array.isArray(prefs.addTypeKeys)) return CORE_LOG_TYPE_OPTIONS.map(([key]) => key);
-  return [...new Set(prefs.addTypeKeys.filter(key => CORE_LOG_TYPE_KEYS.has(key)))];
-}
-
-function saveLoggingAddTypeKeys(keys = []) {
-  const clean = [...new Set((keys || []).filter(key => CORE_LOG_TYPE_KEYS.has(key)))];
-  state.libraryPrefs = { ...normalizeLibraryPrefs(state.libraryPrefs), addTypeKeys: clean };
-  safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
-  refreshItemKindChoices();
-  scheduleCloudSync();
-}
-
-function loggingTypeChoicesMarkup(selectedKeys = loggingAddTypeKeys()) {
-  const selected = new Set(selectedKeys);
-  return CORE_LOG_TYPE_OPTIONS.map(([key,label]) => `<label class="social-type-choice log-type-choice"><input type="checkbox" value="${escapeAttr(key)}" ${selected.has(key) ? 'checked' : ''} /><span>${escapeHtml(label)}</span></label>`).join('');
-}
-
 function refreshItemKindChoices(preferredKind = '', actionOverride = '') {
-  if (!els.itemKindChoice) return;
-  const selected = new Set(loggingAddTypeKeys());
-  const core = CORE_LOG_TYPE_OPTIONS.filter(([key]) => selected.has(key)).map(([value,label]) => ({ value, label, parent: value }));
-  const custom = (state.customTypes || []).map(entry => ({ value: `custom:${entry.type}`, label: entry.label || getTypeLabel(entry.type), parent: `custom:${entry.type}`, custom: true }));
-  const options = [...core, ...custom.sort((a,b) => a.label.localeCompare(b.label)), { value:'new-type', label:'Create your own…', parent:'other', createNew:true }];
-  const current = preferredKind || els.itemKindChoice.value || preferredAddKindFromUsage().kind || core[0]?.value || 'movie';
-  // Preserve a legacy/editing kind even if it is not part of the simplified new-item menu.
-  if (current && !options.some(option => option.value === current)) {
-    const legacy = BASE_ITEM_TYPE_OPTIONS.find(([value]) => value === current);
-    if (legacy) options.unshift({ value: current, label: legacy[1], parent: current, legacy: true });
-  }
-  els.itemKindChoice.innerHTML = options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
-  els.itemKindChoice.value = options.some(option => option.value === current) ? current : (options[0]?.value || 'movie');
+  if (!els.itemKindChoice || !els.itemActionChoice) return;
+  const action = actionOverride || els.itemActionChoice.value || 'watched';
+  const base = [...(ADD_ACTION_KIND_OPTIONS[action] || ADD_ACTION_KIND_OPTIONS.other)];
+  const custom = customAddKindOptions(action);
+  const actionOptions = [
+    ...custom.filter(option => typeUsageCount(addKindUsageValue(option)) > 0),
+    ...base,
+    ...custom.filter(option => typeUsageCount(addKindUsageValue(option)) <= 0)
+  ];
+  const options = [...actionOptions, ...UNIVERSAL_ADD_KIND_OPTIONS];
+  const seen = new Set();
+  const uniqueOptions = options.filter(option => option?.value && !seen.has(option.value) && seen.add(option.value));
+  const current = preferredKind || els.itemKindChoice.value || uniqueOptions[0]?.value || '';
+  els.itemKindChoice.innerHTML = uniqueOptions.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
+  els.itemKindChoice.value = uniqueOptions.some(option => option.value === current) ? current : (uniqueOptions[0]?.value || '');
 }
 
 function setUnderlyingFormTypeForKind(kind) {
   if (!els.itemSourceType) return;
-  const raw = String(kind || '');
-  let parent = raw;
-  let subtype = '';
-  if (raw.startsWith('custom:')) parent = raw;
-  else if (raw === 'new-type' || raw === 'other-item') parent = 'other';
-  else if (raw === 'restaurant' || raw === 'recipe') { parent = 'food'; subtype = raw; }
-  else if (['artist','song','concert'].includes(raw)) { parent = 'music'; subtype = raw; }
-  else if (!BASE_ITEM_TYPE_OPTIONS.some(([value]) => value === raw)) parent = 'other';
-  refreshItemTypeOptions(parent);
-  els.itemSourceType.value = parent;
+  const all = [...Object.values(ADD_ACTION_KIND_OPTIONS).flat(), ...UNIVERSAL_ADD_KIND_OPTIONS];
+  const option = String(kind || '').startsWith('custom:')
+    ? { value: kind, parent: kind }
+    : all.find(entry => entry.value === kind) || { value: 'new-type', parent: 'other' };
+  refreshItemTypeOptions(option.parent);
+  els.itemSourceType.value = option.parent;
   configureItemSubtype(true);
-  // New Music items are artist cards. Albums and songs live inside the artist.
-  if (parent === 'music') subtype = subtype || 'artist';
-  if (subtype && els.itemSubtype) els.itemSubtype.value = subtype;
+  if (option.subtype && els.itemSubtype) els.itemSubtype.value = option.subtype;
 }
 
 function applyItemKindChoice(clearSource = false) {
@@ -5485,23 +5247,22 @@ function applyItemKindChoice(clearSource = false) {
 }
 
 function syncAddActionControls(item = null) {
-  if (!els.itemKindChoice) return;
-  let kind = kindForCurrentForm(item);
-  if (item?.type && !isBuiltInType(item.type) && state.customTypes.some(entry => entry.type === item.type)) kind = `custom:${item.type}`;
-  else if (item?.type === 'game' || ['video-game','board-game'].includes(getSourceType(item))) kind = 'game';
-  else if (item?.type === 'music' || ['music','artist','song','concert'].includes(getSourceType(item))) kind = 'music';
-  else if (item?.type && CORE_LOG_TYPE_KEYS.has(item.type)) kind = item.type;
-  refreshItemKindChoices(kind);
-  if ([...els.itemKindChoice.options].some(option => option.value === kind)) els.itemKindChoice.value = kind;
+  if (!els.itemActionChoice || !els.itemKindChoice) return;
+  const kind = kindForCurrentForm(item);
+  const storedAction = String(item?.actionCategory || '');
+  const action = ['watched','read','went','completed','other'].includes(storedAction) ? storedAction : addActionForKind(kind);
+  els.itemActionChoice.value = action;
+  refreshItemKindChoices(kind, action);
 }
 
 function preferredAddKindFromUsage() {
-  const available = loggingAddTypeKeys();
-  const candidates = [
-    ...available.map(key => ({ kind:key, count:typeUsageCount(key) })),
-    ...(state.customTypes || []).map(entry => ({ kind:`custom:${entry.type}`, count:typeUsageCount(`custom:${entry.type}`) }))
-  ].sort((a,b) => b.count - a.count);
-  return { action:'other', kind:(candidates[0]?.count > 0 ? candidates[0].kind : (available[0] || 'movie')) };
+  const candidates = Object.entries(ADD_ACTION_KIND_OPTIONS).flatMap(([action, options]) => options.map(option => ({ action, option })));
+  for (const action of ADD_ACTION_CATEGORIES) {
+    for (const option of customAddKindOptions(action)) candidates.push({ action, option });
+  }
+  candidates.sort((a,b) => typeUsageCount(addKindUsageValue(b.option)) - typeUsageCount(addKindUsageValue(a.option)));
+  const best = candidates[0];
+  return best && typeUsageCount(addKindUsageValue(best.option)) > 0 ? { action: best.action, kind: best.option.value } : { action: 'watched', kind: 'movie' };
 }
 
 function selectedSavedTypeEntry() {
@@ -5613,10 +5374,6 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     if (els.itemFindSource) els.itemFindSource.value = item.featureConfig?.findSource || (sourceType === 'place' ? 'google-places' : 'auto');
     if (els.itemProgressMode) els.itemProgressMode.value = item.featureConfig?.progressMode || 'auto';
     if (els.itemUseDateRange) els.itemUseDateRange.checked = Boolean(item.featureConfig?.dateRange || (item.activityMeta && sourceType !== 'activity'));
-    if (els.itemUseRepeatLog) {
-      els.itemUseRepeatLog.checked = Boolean(item.featureConfig?.repeatableLog);
-      els.itemUseRepeatLog.disabled = Boolean(item.featureConfig?.repeatableLog && repeatLogHistoryEntries(item).length);
-    }
     if (els.itemUsePlaylist) els.itemUsePlaylist.checked = Boolean(item.featureConfig?.youtubePlaylist || (sourceType === 'youtube' && (item.type === 'workout' || item.playlistItems)));
     if (['youtube', 'reminder', 'other', 'place'].includes(sourceType) || selectedSavedTypeEntry()) els.itemDisplayType.value = getItemTypeLabel(item);
     els.provider.value = item.provider || 'manual';
@@ -5638,15 +5395,8 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     if (els.itemRecommended) els.itemRecommended.checked = Boolean(item.recommended);
     syncItemRecommendHeart();
     els.itemQueueStatus.value = getQueueStatus(item);
+    syncItemStatusPicker();
     setRating(Number(item.rating || 0));
-    if (itemHasRepeatLog(item)) {
-      // Editing the aggregate card must not overwrite any individual log.
-      setRating(0);
-      if (els.itemDate) els.itemDate.value = '';
-      if (els.itemNote) els.itemNote.value = '';
-      if (els.itemComment) els.itemComment.value = '';
-      if (els.itemPeople) els.itemPeople.value = '';
-    }
 
     const itemProgressMode = item.featureConfig?.progressMode || (sourceType === 'tv' ? 'tv' : sourceType === 'book' ? 'book' : 'none');
     if (itemProgressMode === 'tv') {
@@ -5665,7 +5415,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
       els.playlistInput.value = item.providerId || '';
       state.loadedPlaylist = null;
       showSelectedSource({ title: item.title, subtitle: item.subtitle, image: item.image }, true);
-    } else if (sourceType === 'reminder' || item.reminder) {
+    } else if (sourceType === 'reminder') {
       if (els.reminderFrequency) els.reminderFrequency.value = reminderFrequency(item);
       if (els.reminderDueDate) els.reminderDueDate.value = (reminderFrequency(item) === 'weekly' && !item.reminder?.intervalUnit && Number.isInteger(Number(item.reminder?.weekday))) ? (getNextReminderDueDate(item) || todayString()) : (item.reminder?.dueDate || item.reminder?.scheduleStart || getNextReminderDueDate(item) || todayString());
       if (els.reminderInterval) els.reminderInterval.value = String(Math.max(1, Number(item.reminder?.interval || 2)));
@@ -5712,15 +5462,12 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.itemSubcategoryDisclosure) els.itemSubcategoryDisclosure.open = false;
   if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.open = false;
   if (els.itemAttachmentsDisclosure) els.itemAttachmentsDisclosure.open = false;
-  if (els.itemFindSettingsDisclosure) els.itemFindSettingsDisclosure.open = false;
+  if (els.itemFindSourceDisclosure) els.itemFindSourceDisclosure.open = false;
   if (els.itemNoteDisclosure) els.itemNoteDisclosure.open = false;
   if (els.itemBuddyWatchToggle) els.itemBuddyWatchToggle.checked = false;
   if (els.itemFindSource) els.itemFindSource.value = 'auto';
   if (els.itemProgressMode) els.itemProgressMode.value = 'auto';
   if (els.itemUseDateRange) els.itemUseDateRange.checked = false;
-  if (els.itemUseRepeatLog) { els.itemUseRepeatLog.checked = false; els.itemUseRepeatLog.disabled = false; }
-  if (els.itemLogEntryTitle) els.itemLogEntryTitle.value = '';
-  if (els.itemRepeatDisclosure) els.itemRepeatDisclosure.open = false;
   if (els.itemUsePlaylist) els.itemUsePlaylist.checked = false;
   if (els.itemFeaturesDisclosure) els.itemFeaturesDisclosure.open = false;
   if (els.itemBuddyWatchPerson) els.itemBuddyWatchPerson.innerHTML = '';
@@ -5730,6 +5477,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.itemPeople) els.itemPeople.value = '';
   if (els.itemComment) els.itemComment.value = '';
   els.itemQueueStatus.value = ['upnext','tbr','library'].includes(defaultQueueStatus) ? defaultQueueStatus : 'library';
+  syncItemStatusPicker();
   els.nextSeason.value = 1;
   els.nextEpisode.value = 1;
   els.bookCurrentPage.value = 0;
@@ -5778,7 +5526,11 @@ function resetItemForm(defaultQueueStatus = 'library') {
 
 const FORM_SUBTYPE_OPTIONS = {
   music: [
-    { value: 'artist', label: 'Artist' }
+    { value: 'manual', label: 'Manual' },
+    { value: 'album', label: 'Album' },
+    { value: 'artist', label: 'Artist' },
+    { value: 'song', label: 'Song' },
+    { value: 'concert', label: 'Concert' }
   ],
   food: [
     { value: 'manual', label: 'Manual' },
@@ -5801,8 +5553,8 @@ function configureItemSubtype(reset = false, sourceTypeHint = '', item = null) {
   if (!els.itemSubtypeBlock || !els.itemSubtype) return;
   const parent = formParentType();
   const options = FORM_SUBTYPE_OPTIONS[parent] || null;
-  // The visible free-form Subtype field owns the user's label. Keep this
-  // internal select only for backend behavior such as Artist vs Restaurant.
+  // The staged I… / What? controls own this choice now; keep the legacy subtype
+  // select as internal state only so the form never asks the same question twice.
   els.itemSubtypeBlock.hidden = true;
   if (!options) {
     els.itemSubtype.innerHTML = '';
@@ -5812,9 +5564,8 @@ function configureItemSubtype(reset = false, sourceTypeHint = '', item = null) {
   const previous = reset ? '' : els.itemSubtype.value;
   els.itemSubtype.innerHTML = options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
   const hinted = formSubtypeForItem(sourceTypeHint, item);
-  const fallback = options[0]?.value || '';
-  const preferred = (hinted && options.some(option => option.value === hinted)) ? hinted : (options.some(option => option.value === previous) ? previous : fallback);
-  els.itemSubtype.value = options.some(option => option.value === preferred) ? preferred : fallback;
+  const preferred = hinted || (options.some(option => option.value === previous) ? previous : 'manual');
+  els.itemSubtype.value = options.some(option => option.value === preferred) ? preferred : 'manual';
   if (els.itemSubtypeLabel) els.itemSubtypeLabel.textContent = parent === 'music' ? 'Music type' : 'Food type';
 }
 
@@ -5822,8 +5573,6 @@ const FIND_SOURCE_CONFIG = Object.freeze({
   'tmdb-tv': { sourceType: 'tv', label: 'TV' },
   'tmdb-movie': { sourceType: 'movie', label: 'Movies' },
   'google-books': { sourceType: 'book', label: 'Books' },
-  'igdb-games': { sourceType: 'video-game', label: 'Video games' },
-  'bgg-games': { sourceType: 'board-game', label: 'Board games' },
   'apple-albums': { sourceType: 'music', label: 'Albums' },
   'lastfm-artists': { sourceType: 'artist', label: 'Artists' },
   'apple-songs': { sourceType: 'song', label: 'Songs' },
@@ -5838,11 +5587,10 @@ function automaticFormSourceType() {
   const parent = formParentType();
   if (parent === 'shopping') return 'place';
   if (parent === 'workout') return 'workout';
-  if (parent === 'game') return 'video-game';
   if (parent === 'music') {
-    const subtype = els.itemSubtype?.value || 'artist';
+    const subtype = els.itemSubtype?.value || 'manual';
     if (['artist','song','concert'].includes(subtype)) return subtype;
-    return 'artist';
+    return 'music';
   }
   if (parent === 'food') {
     const subtype = els.itemSubtype?.value || 'manual';
@@ -5854,9 +5602,8 @@ function automaticFormSourceType() {
 
 function defaultFindSourceForType(sourceType = automaticFormSourceType()) {
   return ({
-    tv: 'tmdb-tv', movie: 'tmdb-movie', book: 'google-books', music: 'lastfm-artists',
+    tv: 'tmdb-tv', movie: 'tmdb-movie', book: 'google-books', music: 'apple-albums',
     artist: 'lastfm-artists', song: 'apple-songs', concert: 'ticketmaster-concerts',
-    'video-game': 'igdb-games', 'board-game': 'bgg-games', game: 'igdb-games',
     event: 'ticketmaster-events', restaurant: 'google-places', place: 'google-places', shopping: 'google-places', youtube: 'youtube-videos'
   })[sourceType] || 'manual';
 }
@@ -5888,9 +5635,23 @@ function effectiveItemProgressMode(sourceType = selectedFormSourceType()) {
 
 
 function syncItemFindSourceSummary() {
-  if (!els.itemFindSourceSummary || !els.itemFindSource) return;
+  if (!els.itemFindSource) return;
+  const automaticKey = els.itemFindSource.dataset.defaultSource || defaultFindSourceForType(automaticFormSourceType());
+  const automaticLabel = FIND_SOURCE_CONFIG[automaticKey]?.label || 'Manual';
+  const automaticOption = els.itemFindSource.querySelector('option[value="auto"]');
+  if (automaticOption) automaticOption.textContent = automaticLabel;
   const option = els.itemFindSource.options[els.itemFindSource.selectedIndex];
-  els.itemFindSourceSummary.textContent = els.itemFindSource.value === 'auto' ? 'Automatic' : (option?.textContent || 'Changed');
+  if (els.itemFindSourceSummary) els.itemFindSourceSummary.textContent = option?.textContent || automaticLabel;
+}
+
+function syncItemStatusPicker() {
+  if (!els.itemStatusPicker || !els.itemQueueStatus) return;
+  const current = els.itemQueueStatus.value || 'library';
+  els.itemStatusPicker.querySelectorAll('[data-item-status]').forEach(button => {
+    const selected = button.dataset.itemStatus === current;
+    button.classList.toggle('is-selected', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
 }
 
 function syncItemFeatureSummary() {
@@ -5915,7 +5676,6 @@ function setItemFormSourceType(sourceType, item = null) {
   } else if (item?.type && BASE_ITEM_TYPE_OPTIONS.some(([value]) => value === item.type)) {
     els.itemSourceType.value = item.type;
   } else if (['music','artist','song','concert'].includes(sourceType)) els.itemSourceType.value = 'music';
-  else if (['video-game','board-game'].includes(sourceType)) els.itemSourceType.value = 'game';
   else if (['food','restaurant','recipe'].includes(sourceType)) els.itemSourceType.value = 'food';
   else if (sourceType === 'place') els.itemSourceType.value = 'shopping';
   else if (BASE_ITEM_TYPE_OPTIONS.some(([value]) => value === sourceType)) els.itemSourceType.value = sourceType;
@@ -6068,8 +5828,7 @@ function updateItemFormForType() {
   const isManual = sourceType === 'other' || Boolean(savedType);
   const isFoodManual = sourceType === 'food' || sourceType === 'recipe';
 
-  syncFindItInputUI();
-  els.catalogueSearchBlock.hidden = false;
+  els.catalogueSearchBlock.hidden = isClass;
   if (els.catalogueQuery) els.catalogueQuery.disabled = !isCatalogue;
   if (els.catalogueSearchButton) els.catalogueSearchButton.disabled = !isCatalogue;
   els.workoutBlock.hidden = !Boolean(els.itemUsePlaylist?.checked);
@@ -6089,10 +5848,7 @@ function updateItemFormForType() {
   if (els.tvProgressFields && (progressMode !== 'tv' || sourceType !== 'tv')) els.tvProgressFields.hidden = true;
   syncFlexibleEpisodeProgressFields(sourceType, progressMode);
   els.bookProgressFields.hidden = progressMode !== 'book';
-  if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isActivity;
-  if (els.itemUseRepeatLog?.checked && !els.editingId.value && els.itemDate && !els.itemDate.value) els.itemDate.value = todayString();
-  const simpleDateField = $('#itemDateInputField');
-  if (simpleDateField) simpleDateField.hidden = Boolean(els.itemUseDateRange?.checked);
+  if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder || isActivity;
   if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = !['tv','movie','book','music','artist','song'].includes(sourceType);
   if (progressMode === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
     els.bookStartDate.value = todayString();
@@ -6100,10 +5856,16 @@ function updateItemFormForType() {
   if (isActivity && !els.editingId.value && els.activityStartDate && !els.activityStartDate.value) {
     els.activityStartDate.value = todayString();
   }
-  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || isActivity || isClass;
+  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || isActivity || isClass || ['music','artist','song','concert','food','recipe'].includes(sourceType);
   refreshItemBuddyWatchOptions().catch(() => {});
   if (isActivity && els.itemQueueStatus) els.itemQueueStatus.value = 'library';
 
+  const upNextOption = els.itemQueueStatus?.querySelector('option[value="upnext"]');
+  if (upNextOption) {
+    upNextOption.hidden = sourceType === 'restaurant';
+    upNextOption.disabled = sourceType === 'restaurant';
+    if (sourceType === 'restaurant' && els.itemQueueStatus.value === 'upnext') els.itemQueueStatus.value = 'library';
+  }
 
   const fixedSubcategory = musicAlbum
     ? 'Album'
@@ -6138,26 +5900,26 @@ function updateItemFormForType() {
     if (!els.editingId.value) els.itemDisplayType.value = '';
   }
 
-  if (!els.editingId.value && !state.selectedSource && !state.loadedPlaylist) {
-    // Explicit Type changes/reset clear the selection. Lightweight edits such as
-    // Repeat or Multi-day must not throw away a Find it result.
+  if (!els.editingId.value) {
+    state.selectedSource = null;
+    state.loadedPlaylist = null;
     const manualProvider = isManual || isFoodManual || musicManual || isActivity || isClass || sourceType === 'concert';
-    if (!els.providerId.value) {
-      els.provider.value = isYouTube ? 'youtube' : isReminder ? 'reminder' : manualProvider ? 'manual' : '';
-      els.providerImage.value = '';
-      els.providerSubtitle.value = '';
-    }
+    els.provider.value = isYouTube ? 'youtube' : isReminder ? 'reminder' : manualProvider ? 'manual' : '';
+    els.providerId.value = '';
+    els.providerImage.value = '';
+    els.providerSubtitle.value = '';
+    els.searchResults.hidden = true;
+    els.selectedSource.hidden = true;
+    els.playlistPreview.hidden = true;
   }
 
   updateReminderFormFields();
-  syncLogEntryFields();
-  syncItemStatusPicker();
 
-  const placeholders = { tv: 'Search TV', movie: 'Search movies', book: 'Search books', artist: 'Search artists', concert: 'Search concerts', event: 'Search events', restaurant: 'Search restaurants', place: 'Search places', 'video-game': 'Search video games', 'board-game': 'Search board games', youtube: 'Paste YouTube URL' };
-  els.catalogueQuery.placeholder = isCatalogue ? (placeholders[sourceType] || 'Search') : 'Use title';
-  if (els.catalogueSearchButton) els.catalogueSearchButton.textContent = sourceType === 'youtube' ? 'Load' : 'Find';
+  const placeholders = { tv: 'Search TV', movie: 'Search movies', book: 'Search books', music: 'Search albums', artist: 'Search artists', song: 'Search songs', concert: 'Search concerts', event: 'Search events', restaurant: 'Search restaurants', place: 'Search places', youtube: 'Search YouTube' };
+  els.catalogueQuery.placeholder = isCatalogue ? (placeholders[sourceType] || 'Search') : 'Manual';
   syncItemFeatureSummary();
   syncItemFindSourceSummary();
+  syncItemStatusPicker();
 
   if (els.manualTitle) {
     els.manualTitle.placeholder = sourceType === 'recipe'
@@ -6168,9 +5930,7 @@ function updateItemFormForType() {
           ? 'What did you do?'
           : sourceType === 'class'
             ? 'Class title (e.g. Spin, Pottery)'
-            : sourceType === 'artist'
-              ? 'Artist name'
-              : 'Title';
+            : 'Title';
   }
   if (els.itemNote) {
     els.itemNote.placeholder = sourceType === 'restaurant'
@@ -6184,102 +5944,18 @@ function updateItemFormForType() {
   if (els.itemLinkLabel) els.itemLinkLabel.placeholder = sourceType === 'recipe' ? 'Recipe source (optional)' : 'Link label (optional)';
 }
 
-function syncLogEntryFields() {
-  const enabled = Boolean(els.itemUseRepeatLog?.checked);
-  if (els.itemLogEntryFields) els.itemLogEntryFields.hidden = !enabled;
-  els.itemUseRepeatLog?.closest('.mode-toggle')?.classList.toggle('is-selected', enabled);
-}
-
-function syncItemStatusPicker() {
-  if (!els.itemQueueStatus) return;
-  const status = ['library','upnext','tbr'].includes(els.itemQueueStatus.value) ? els.itemQueueStatus.value : 'library';
-  const labels = { library: 'Completed', upnext: 'Up Next', tbr: 'TBR' };
-  els.itemStatusPicker?.querySelectorAll('[data-item-status]').forEach(button => {
-    const selected = button.dataset.itemStatus === status;
-    button.classList.toggle('is-selected', selected);
-    button.setAttribute('aria-pressed', String(selected));
-  });
-  els.itemQueueChoice?.classList.toggle('is-selected', status !== 'library');
-  if (els.itemStatusSummary) els.itemStatusSummary.textContent = labels[status] || 'Completed';
-}
-
 function updateReminderFormFields() {
   if (!els.reminderFrequency) return;
   const frequency = els.reminderFrequency.value;
+  const repeatLabels = { none: 'Off', daily: 'Daily', weekly: 'Weekly', biweekly: 'Every 2 weeks', monthly: 'Monthly', custom: 'Custom' };
+  if (els.itemRepeatSummary) els.itemRepeatSummary.textContent = repeatLabels[frequency] || 'Off';
   const custom = frequency === 'custom';
-  const weekly = frequency === 'weekly';
-  if (els.reminderWeekdayField) els.reminderWeekdayField.hidden = !weekly;
-  if (els.reminderDateField) els.reminderDateField.hidden = true;
+  if (els.reminderWeekdayField) els.reminderWeekdayField.hidden = true;
+  if (els.reminderDateField) els.reminderDateField.hidden = false;
   if (els.reminderDateLabel) els.reminderDateLabel.textContent = frequency === 'none' ? 'Date' : 'Starts';
   if (els.reminderCustomFields) els.reminderCustomFields.hidden = !custom;
-  if (els.reminderDueDate) els.reminderDueDate.value = els.itemDate?.value || els.reminderDueDate.value || todayString();
+  if (els.reminderDueDate && !els.reminderDueDate.value) els.reminderDueDate.value = todayString();
   if (custom && els.reminderInterval && Number(els.reminderInterval.value || 0) < 1) els.reminderInterval.value = '1';
-  const labels = { none: 'Off', daily: 'Daily', weekly: 'Weekly', biweekly: 'Every 2 weeks', monthly: 'Monthly', custom: 'Custom' };
-  if (els.itemRepeatSummary) els.itemRepeatSummary.textContent = labels[frequency] || 'Off';
-  els.itemRepeatDisclosure?.classList.toggle('has-value', frequency !== 'none');
-  if (frequency !== 'none' && els.itemQueueStatus && !els.queueStatusField?.hidden && !els.editingId?.value) {
-    els.itemQueueStatus.value = 'upnext';
-    syncItemStatusPicker();
-  }
-}
-
-function syncFindItInputUI() {
-  if (!els.catalogueQuery || !els.catalogueSearchButton) return;
-  const requested = els.itemFindSource?.value || 'auto';
-  const sourceKey = requested === 'auto' ? defaultFindSourceForType(automaticFormSourceType()) : requested;
-  const customManual = (Boolean(selectedSavedTypeEntry()) || formParentType() === 'other') && sourceKey === 'manual';
-
-  if (sourceKey === 'youtube-videos') {
-    els.catalogueQuery.placeholder = 'Paste YouTube URL';
-    els.catalogueSearchButton.textContent = 'Load';
-    els.catalogueQuery.setAttribute('inputmode', 'url');
-    return;
-  }
-
-  els.catalogueQuery.removeAttribute('inputmode');
-  els.catalogueSearchButton.textContent = 'Find';
-  if (customManual) els.catalogueQuery.placeholder = 'Choose a search source above';
-  else if (sourceKey === 'google-places') els.catalogueQuery.placeholder = 'Search places';
-  else if (sourceKey === 'ticketmaster-events' || sourceKey === 'ticketmaster-concerts') els.catalogueQuery.placeholder = 'Search events';
-  else if (sourceKey === 'lastfm-artists') els.catalogueQuery.placeholder = 'Search artists';
-  else if (sourceKey === 'igdb-games' || sourceKey === 'bgg-games') els.catalogueQuery.placeholder = 'Search games';
-  else els.catalogueQuery.placeholder = 'Search';
-}
-
-function promptForCustomFindSource() {
-  if (!selectedSavedTypeEntry() && formParentType() !== 'other') return false;
-  const requested = els.itemFindSource?.value || 'auto';
-  const sourceKey = requested === 'auto' ? defaultFindSourceForType(automaticFormSourceType()) : requested;
-  if (sourceKey !== 'manual') return false;
-  syncFindItInputUI();
-  showFormMessage('Choose what Find it searches from the dropdown beside Find it.', false);
-  return true;
-}
-
-function youtubeVideoIdFromInput(value) {
-  const raw = String(value || '').trim();
-  if (/^[A-Za-z0-9_-]{11}$/.test(raw)) return raw;
-  try {
-    const url = new URL(raw);
-    if (url.hostname === 'youtu.be') return url.pathname.split('/').filter(Boolean)[0] || '';
-    if (url.hostname.includes('youtube.com')) {
-      if (url.pathname === '/watch') return url.searchParams.get('v') || '';
-      const parts = url.pathname.split('/').filter(Boolean);
-      const markerIndex = parts.findIndex(part => ['shorts','embed','live'].includes(part));
-      if (markerIndex >= 0) return parts[markerIndex + 1] || '';
-    }
-  } catch {}
-  return '';
-}
-
-function youtubeResultFromVideo(video) {
-  const snippet = video?.snippet || {};
-  return {
-    sourceType: 'youtube', provider: 'youtube', providerId: String(video?.id || ''),
-    title: snippet.title || 'YouTube video', subtitle: snippet.channelTitle || '',
-    image: snippet.thumbnails?.high?.url || snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || '',
-    description: snippet.description || '', raw: video
-  };
 }
 
 async function searchCatalogue() {
@@ -6288,8 +5964,7 @@ async function searchCatalogue() {
   const requested = els.itemFindSource?.value || 'auto';
   const sourceKey = requested === 'auto' ? defaultFindSourceForType(automaticFormSourceType()) : requested;
   if (sourceKey === 'manual') {
-    if (promptForCustomFindSource()) return;
-    showFormMessage('Type the title manually, or use the gear to choose a search.', false);
+    showFormMessage('Enter it manually.', false);
     return;
   }
   const sourceType = sourceKey === 'google-places' && automaticFormSourceType() === 'restaurant'
@@ -6319,21 +5994,7 @@ async function searchCatalogue() {
       }
     }
     else if (sourceKey === 'apple-songs') results = await TrackerAPI.searchCatalogue(query, 'song', state.settings);
-    else if (sourceKey === 'igdb-games') results = await TrackerAPI.searchCatalogue(query, 'video-game', state.settings, { maxResults: 20 });
-    else if (sourceKey === 'bgg-games') results = await TrackerAPI.searchCatalogue(query, 'board-game', state.settings, { maxResults: 20 });
-    else if (sourceKey === 'youtube-videos') {
-      if (/list=/.test(query)) {
-        if (els.itemUsePlaylist) els.itemUsePlaylist.checked = true;
-        if (els.playlistInput) els.playlistInput.value = query;
-        updateItemFormForType();
-        await loadPlaylistPreview();
-        return;
-      }
-      const videoId = youtubeVideoIdFromInput(query);
-      if (!videoId) throw new Error('Paste a YouTube video URL.');
-      const video = await TrackerAPI.getYouTubeVideo(videoId, state.settings);
-      results = [youtubeResultFromVideo(video)];
-    }
+    else if (sourceKey === 'youtube-videos') results = await TrackerAPI.searchCatalogue(query, 'youtube', state.settings, { maxResults: 20 });
     else if (sourceKey === 'google-places') results = sourceType === 'restaurant'
       ? await TrackerAPI.searchRestaurants(query, state.settings, options)
       : await TrackerAPI.searchPlaces(query, state.settings, options);
@@ -6706,14 +6367,7 @@ async function saveItemFromForm(event) {
   const buddyFriendId = startBuddyAfterSave ? (els.itemBuddyWatchPerson?.value || '') : '';
   const sourceType = selectedFormSourceType();
   const editing = findItem(els.editingId.value);
-  const repeatFrequency = els.reminderFrequency?.value || 'none';
-  const repeatReminderEnabled = repeatFrequency !== 'none';
-  const repeatStartDate = sourceType === 'book'
-    ? (els.bookStartDate?.value || '')
-    : els.itemUseDateRange?.checked
-      ? (els.activityStartDate?.value || '')
-      : (els.itemDate?.value || '');
-  const selectedActionCategory = normalizeAddActionCategory(els.itemActionChoice?.value || editing?.actionCategory || addActionForKind(kindForCurrentForm()) || 'other');
+  const selectedActionCategory = normalizeAddActionCategory(els.itemActionChoice?.value || editing?.actionCategory || 'other');
   let title = els.manualTitle.value.trim();
   let provider = els.provider.value;
   let providerId = els.providerId.value;
@@ -6742,10 +6396,6 @@ async function saveItemFromForm(event) {
     type = 'food';
     typeLabel = 'Food';
     fixedSubcategory = foodSubcategoryForSourceType(automaticSourceType);
-  } else if (displayParent === 'game') {
-    type = 'game';
-    typeLabel = 'Games';
-    fixedSubcategory = cleanTypeLabel(els.itemSubcategory?.value || '') || (sourceType === 'board-game' ? 'Board Game' : sourceType === 'video-game' ? 'Video Game' : '');
   } else if (displayParent === 'youtube') {
     type = 'youtube';
     typeLabel = 'YouTube';
@@ -6833,10 +6483,8 @@ async function saveItemFromForm(event) {
                   ? provider === 'tmdb'
                   : sourceType === 'youtube'
                     ? provider === 'youtube'
-                    : ['video-game','board-game'].includes(sourceType)
-                      ? provider === (sourceType === 'video-game' ? 'igdb' : 'bgg')
-                      : true;
-  const requiresCatalogueSelection = !manualLookup && ['tv','book','movie','artist','song','event','restaurant','place','youtube','video-game','board-game'].includes(sourceType);
+                    : true;
+  const requiresCatalogueSelection = !manualLookup && ['tv','book','movie','artist','song','event','restaurant','place','youtube'].includes(sourceType);
   if ((requiresCatalogueSelection && !providerId) || !validProvider) {
     showFormMessage('Choose a Find it result first, or switch Find it to Manual.', true);
     return;
@@ -6845,11 +6493,11 @@ async function saveItemFromForm(event) {
     showFormMessage('Choose the date for this class.', true);
     return;
   }
-  if ((sourceType === 'reminder' || repeatReminderEnabled) && !(repeatStartDate || els.reminderDueDate?.value)) {
-    showFormMessage(repeatReminderEnabled ? 'Choose a start date for the repeat.' : 'Choose a date for the reminder.', true);
+  if (sourceType === 'reminder' && !els.reminderDueDate?.value) {
+    showFormMessage(els.reminderFrequency?.value === 'none' ? 'Choose a date for the reminder.' : 'Choose a start date for the repeating reminder.', true);
     return;
   }
-  if ((sourceType === 'reminder' || repeatReminderEnabled) && repeatFrequency === 'custom' && Number(els.reminderInterval?.value || 0) < 1) {
+  if (sourceType === 'reminder' && els.reminderFrequency?.value === 'custom' && Number(els.reminderInterval?.value || 0) < 1) {
     showFormMessage('Custom repeats must be at least every 1 day, week, or month.', true);
     return;
   }
@@ -6920,16 +6568,17 @@ async function saveItemFromForm(event) {
       ? (normalizedReleaseDate(els.itemReleaseDate?.value) || normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)))
       : normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)),
     attachments: attachmentFiles,
-    coverAttachmentId: '',
+    coverAttachmentId: image ? '' : ((editing?.coverAttachmentId && attachmentFiles.some(file => file.id === editing.coverAttachmentId) && String(attachmentFiles.find(file => file.id === editing.coverAttachmentId)?.mime || '').startsWith('image/'))
+      ? editing.coverAttachmentId
+      : (attachmentFiles.find(file => String(file.mime || '').startsWith('image/'))?.id || '')),
     links: state.attachmentDraft.links.map(link => ({ ...link })),
     date: sourceType === 'reminder' ? '' : (sourceType === 'activity' || els.itemUseDateRange?.checked) ? (els.activityStartDate?.value || '') : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
-    queueStatus: (sourceType === 'reminder' || repeatReminderEnabled) ? 'upnext' : ['activity','class'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'),
-    active: sourceType === 'reminder' || repeatReminderEnabled || (!['activity','class'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
+    queueStatus: sourceType === 'reminder' ? 'upnext' : ['activity','class'].includes(sourceType) ? 'library' : (sourceType === 'restaurant' ? (els.itemQueueStatus.value === 'tbr' ? 'tbr' : 'library') : (['music','artist','song','concert','food','recipe'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'))),
+    active: sourceType === 'reminder' || (!['activity','class'].includes(sourceType) && !['restaurant','place'].includes(sourceType) && !['music','artist','song','concert','food','recipe'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
     featureConfig: {
       findSource: requestedFindSource,
       progressMode: effectiveItemProgressMode(sourceType),
       dateRange: Boolean(els.itemUseDateRange?.checked),
-      repeatableLog: Boolean(els.itemUseRepeatLog?.checked || (editing && repeatLogHistoryEntries(editing).length)),
       youtubePlaylist: Boolean(els.itemUsePlaylist?.checked)
     },
     createdAt: editing?.createdAt || new Date().toISOString(),
@@ -6967,24 +6616,21 @@ async function saveItemFromForm(event) {
 
   };
 
-  if (sourceType === 'reminder' || repeatReminderEnabled) {
-    const frequency = ['none','daily','weekly','biweekly','monthly','custom'].includes(repeatFrequency)
-      ? repeatFrequency
+  if (sourceType === 'reminder') {
+    const frequency = ['none','daily','weekly','biweekly','monthly','custom'].includes(els.reminderFrequency?.value)
+      ? els.reminderFrequency.value
       : 'none';
-    const scheduleStart = repeatStartDate || els.reminderDueDate?.value || todayString();
+    const scheduleStart = els.reminderDueDate?.value || todayString();
     const dueDate = frequency === 'none' ? scheduleStart : '';
     item.reminder = {
       frequency,
       dueDate,
       scheduleStart,
-      ...(frequency === 'weekly' ? { weekday: Math.max(0, Math.min(6, Number(els.reminderWeekday?.value ?? parseLocalDateString(scheduleStart).getDay()))) } : {}),
       interval: frequency === 'custom' ? Math.max(1, Math.min(365, Number(els.reminderInterval?.value || 1))) : undefined,
       intervalUnit: frequency === 'custom' && ['days','weeks','months'].includes(els.reminderIntervalUnit?.value)
         ? els.reminderIntervalUnit.value
         : undefined
     };
-  } else if (editing?.reminder) {
-    delete item.reminder;
   }
   const progressMode = effectiveItemProgressMode(sourceType);
   if (progressMode === 'tv') {
@@ -7015,7 +6661,9 @@ async function saveItemFromForm(event) {
       if (latest && !latest.endDate) latest.endDate = todayString();
     } else {
       item.completedAt = '';
-      if (item.progress.currentPage > 0) moveProgressedTbrItemToUpNext(item);
+      if (editing && getQueueStatus(editing) === 'tbr' && item.progress.currentPage > 0) {
+        setItemQueueStatus(item, 'upnext');
+      }
     }
   }
   if (sourceType === 'youtube' && item.featureConfig.youtubePlaylist) {
@@ -7048,13 +6696,16 @@ async function saveItemFromForm(event) {
     if (els.itemRecommended?.checked) existingRestaurant.recommended = true;
     if (formNotes && !String(existingRestaurant.notes || '').trim()) existingRestaurant.notes = formNotes;
     if (formComment) existingRestaurant.comment = formComment;
-    setItemQueueStatus(existingRestaurant, els.itemQueueStatus?.value || 'library');
+    if (els.itemQueueStatus?.value === 'tbr') setItemQueueStatus(existingRestaurant, 'tbr');
+    else setItemQueueStatus(existingRestaurant, 'library');
     existingRestaurant.updatedAt = new Date().toISOString();
     existingRestaurant.attachments = [
       ...(existingRestaurant.attachments || []),
       ...attachmentFiles.filter(file => !(existingRestaurant.attachments || []).some(saved => saved.id === file.id))
     ];
-    existingRestaurant.coverAttachmentId = '';
+    if (!existingRestaurant.image && !existingRestaurant.coverAttachmentId) {
+      existingRestaurant.coverAttachmentId = attachmentFiles.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
+    }
     existingRestaurant.links = [
       ...(existingRestaurant.links || []),
       ...state.attachmentDraft.links.filter(link => !(existingRestaurant.links || []).some(saved => saved.url === link.url))
@@ -7121,7 +6772,9 @@ async function saveItemFromForm(event) {
       ...(group.links || []),
       ...state.attachmentDraft.links.filter(link => !(group.links || []).some(saved => saved.url === link.url))
     ];
-    group.coverAttachmentId = '';
+    if (!group.image && !group.coverAttachmentId) {
+      group.coverAttachmentId = attachmentFiles.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
+    }
     group.updatedAt = new Date().toISOString();
     setItemQueueStatus(group, 'library');
     if (!existingClassGroup) state.items.push(group);
@@ -7151,42 +6804,6 @@ async function saveItemFromForm(event) {
     state.items = state.items.map(existing => existing.id === item.id ? item : existing);
   } else {
     state.items.push(item);
-  }
-
-  if (itemHasRepeatLog(item) && sourceType !== 'class') {
-    const priorLogs = repeatLogHistoryEntries(item);
-    const occurrenceDate = String(item.date || '').slice(0, 10);
-    // On creation (or when converting an ordinary card to Repeat), the normal
-    // Rating/Date/Note fields are the first occurrence. The aggregate title is
-    // kept on the Library card and is never changed by later entry edits.
-    if (!priorLogs.length && occurrenceDate) {
-      addHistoryRecord({
-        sourceItemId: item.id,
-        sourceType,
-        type: item.type,
-        typeLabel: getItemTypeLabel(item),
-        subcategory: item.subcategory || '',
-        date: occurrenceDate,
-        showOnCalendar: true,
-        kind: 'repeatable-log',
-        title: cleanTypeLabel(els.itemLogEntryTitle?.value || '') || item.title,
-        subtitle: '',
-        notes: item.notes || '',
-        comment: item.comment || '',
-        people: [...(item.people || [])],
-        rating: Number(item.rating || 0),
-        image: item.image || '',
-        provider: item.provider || 'manual',
-        providerId: item.providerId || ''
-      });
-    }
-    // Entry-specific values live in history; the aggregate card only owns the
-    // overall title/source/subtype and an average rating.
-    item.date = '';
-    item.notes = '';
-    item.comment = '';
-    item.people = [];
-    recalculateRepeatableItemRating(item);
   }
 
   if (foodHistoryDate && ['restaurant', 'recipe'].includes(sourceType)) {
@@ -7237,7 +6854,6 @@ async function saveItemFromForm(event) {
   recordTypeUse(item);
   refreshItemTypeOptions();
   saveItems();
-  if (itemHasRepeatLog(item)) saveHistory();
   await deleteRemovedDraftAttachments();
 
   let buddyWatchError = null;
@@ -7264,9 +6880,7 @@ async function deleteEditingItem() {
   if (!confirm(`Delete “${item.title}”?`)) return;
   await Promise.all((item.attachments || []).map(file => deleteAttachmentBlob(file.id).catch(() => {})));
   state.items = state.items.filter(existing => existing.id !== id);
-  state.history = state.history.filter(entry => entry.sourceItemId !== id);
   saveItems();
-  saveHistory();
   els.itemModal.close();
   renderAll();
 }
@@ -7368,12 +6982,18 @@ function showFormMessage(message, error = false) {
 }
 
 function attachmentCoverIdForItem(item) {
-  // User attachments are resources shown inside details, never implicit poster art.
-  return '';
+  if (!item || String(item.image || '').trim()) return '';
+  const attachments = Array.isArray(item.attachments) ? item.attachments : [];
+  const preferredId = String(item.coverAttachmentId || '');
+  const preferred = attachments.find(file => file.id === preferredId && String(file.mime || '').startsWith('image/'));
+  return preferred?.id || attachments.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
 }
 
 function displayImageForItem(item) {
-  return String(item?.image || '').trim();
+  const direct = String(item?.image || '').trim();
+  if (direct) return direct;
+  const id = attachmentCoverIdForItem(item);
+  return id ? (attachmentCoverObjectUrls.get(id) || '') : '';
 }
 
 async function ensureAttachmentCoverUrl(item) {
@@ -7420,7 +7040,7 @@ function loadingTipText() {
 }
 
 function loadingMarkup(label = 'Loading…') {
-  return `<div class=\"loading-with-tip\"><p class=\"loading-tip\"><strong>Tip</strong> ${escapeHtml(loadingTipText())}</p></div>`;
+  return `<div class=\"loading-with-tip\"><p class=\"loading-detail\">${escapeHtml(label)}</p><p class=\"loading-tip\"><strong>Tip</strong> ${escapeHtml(loadingTipText())}</p></div>`;
 }
 
 // ---------------------------
@@ -7443,7 +7063,6 @@ async function openDetails(id) {
     else if (sourceType === 'music') await renderMusicDetails(item);
     else if (sourceType === 'artist') await renderArtistDetails(item);
     else if (sourceType === 'song') await renderSongDetails(item);
-    else if (['video-game','board-game'].includes(sourceType)) await renderGameDetails(item);
     else if (sourceType === 'reminder') renderReminderDetails(item);
     else if (['event', 'concert'].includes(sourceType)) await renderEventDetails(item);
     else if (sourceType === 'restaurant') await renderRestaurantDetails(item);
@@ -7454,10 +7073,8 @@ async function openDetails(id) {
     appendFlexibleFeatureProgress(item);
     appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
-    appendReminderFeatureSummary(item);
     appendLibraryPeopleSummary(item);
     appendLibraryPersonalMetadata(item);
-    appendRepeatLogSection(item);
     await appendSocialFollowerContext(item, () => state.openDetailId === item.id && Boolean(els.detailModal?.open));
     await appendLibrarySimilarRecommendations(item);
     appendItemResources(item);
@@ -7466,10 +7083,8 @@ async function openDetails(id) {
     appendFlexibleFeatureProgress(item);
     appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
-    appendReminderFeatureSummary(item);
     appendLibraryPeopleSummary(item);
     appendLibraryPersonalMetadata(item);
-    appendRepeatLogSection(item);
     await appendSocialFollowerContext(item, () => state.openDetailId === item.id && Boolean(els.detailModal?.open));
     appendItemResources(item);
   }
@@ -7714,34 +7329,6 @@ async function renderMovieDetails(item) {
 }
 
 
-async function renderGameDetails(item) {
-  const sourceType = getSourceType(item);
-  const details = sourceType === 'board-game'
-    ? await getCached(`bgg:game:${item.providerId}`, () => TrackerAPI.getBoardGameDetails(item.providerId, state.settings))
-    : await getCached(`igdb:game:${item.providerId}`, () => TrackerAPI.getVideoGameDetails(item.providerId, state.settings));
-  const game = details || {
-    title: item.title, image: item.image, subtitle: item.subtitle, description: '', genres: item.genres || [], releaseDate: item.releaseDate || ''
-  };
-  if (game.image) item.image = game.image;
-  if (game.subtitle) item.subtitle = game.subtitle;
-  if (game.releaseDate) item.releaseDate = game.releaseDate;
-  if (game.genres?.length) item.genres = [...new Set(game.genres)];
-  item.raw = { ...(item.raw || {}), ...(game.raw || {}) };
-  saveItems();
-
-  const info = sourceType === 'board-game'
-    ? [game.minPlayers && game.maxPlayers ? `${game.minPlayers}${game.maxPlayers !== game.minPlayers ? `–${game.maxPlayers}` : ''} players` : '', game.playTime ? `${game.playTime} min` : '', ...(game.mechanics || []).slice(0,3)].filter(Boolean).join(' · ')
-    : [...(game.platforms || []).slice(0,4), ...(game.genres || []).slice(0,3)].filter(Boolean).join(' · ');
-  const rating = Number(game.catalogueRating || 0);
-  const ratingText = rating ? (rating > 10 ? `${(rating/10).toFixed(1)}/10` : `${rating.toFixed(1)}/10`) : '';
-  const url = game.catalogueUrl || '';
-  els.detailBody.innerHTML = `
-    ${libraryDetailHero({ type: sourceType === 'board-game' ? 'BOARD GAME' : 'VIDEO GAME', title: game.title || item.title, image: game.image || item.image, subtitle: [game.releaseDate?.slice(0,4) || '', ratingText, info].filter(Boolean).join(' · '), overview: game.description || '' })}
-    ${detailEditButton(item)}
-    ${url ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(url)}" target="_blank" rel="noopener">Open catalogue page ↗</a></section>` : ''}
-  `;
-}
-
 async function renderEventDetails(item) {
   let event = null;
   if (item.provider === 'ticketmaster' && item.providerId) {
@@ -7861,127 +7448,43 @@ function artistFavoriteButtonMarkup(item, payload) {
   return `<button class="artist-favorite-button${selected ? ' is-favorite' : ''}" type="button" data-artist-item-id="${escapeAttr(item.id)}" data-artist-favorite="${escapeAttr(encodeURIComponent(JSON.stringify(payload)))}" aria-label="${selected ? 'Remove from' : 'Add to'} favorite ${payload.kind === 'song' ? 'songs' : 'albums'}">♥</button>`;
 }
 
-function artistAlbumPayload(album = {}) {
-  const id = String(album.collectionId || album.id || '');
-  return {
-    kind: 'album',
-    id,
-    title: album.collectionName || album.title || 'Album',
-    year: String(album.releaseDate || album.year || '').slice(0, 4),
-    image: album.artworkUrl100 || album.image || '',
-    url: album.collectionViewUrl || album.url || ''
-  };
-}
-
-function artistAlbumAccordionMarkup(album, item = null) {
-  const payload = artistAlbumPayload(album);
-  const id = payload.id;
-  if (!id) return '';
-  const favorite = item ? artistFavoriteIsSaved(item, 'albums', id) : false;
-  const image = String(payload.image || '').replace('100x100bb', '180x180bb');
-  return `<article class="artist-album-card${favorite ? ' is-favorite' : ''}" data-artist-album-card="${escapeAttr(id)}">
-    <div class="artist-album-header">
-      <button class="artist-album-toggle" type="button" data-artist-album-toggle="${escapeAttr(id)}" ${item ? `data-artist-item-id="${escapeAttr(item.id)}"` : ''} aria-expanded="false">
-        <span class="artist-album-chevron" aria-hidden="true">›</span>
-        ${image ? `<img class="artist-album-art" src="${escapeAttr(image)}" alt="" loading="lazy" />` : '<span class="artist-album-art is-placeholder" aria-hidden="true">♪</span>'}
-        <span class="artist-album-copy"><strong>${escapeHtml(payload.title)}</strong>${payload.year ? `<small>${escapeHtml(payload.year)}</small>` : ''}</span>
-      </button>
-      <div class="artist-catalog-actions">
-        ${payload.url ? `<a class="artist-music-link" href="${escapeAttr(payload.url)}" target="_blank" rel="noopener" aria-label="Open ${escapeAttr(payload.title)} in Apple Music">↗ Music</a>` : ''}
-        ${item ? artistFavoriteButtonMarkup(item, payload) : ''}
-      </div>
-    </div>
-    <div class="artist-album-tracks" data-artist-album-tracks="${escapeAttr(id)}" hidden></div>
-  </article>`;
-}
-
-function artistAlbumTrackRowsMarkup(tracks, item = null) {
-  return (tracks || []).map((track, index) => {
-    const id = String(track.trackId || track.id || '');
-    const title = track.trackName || track.title || 'Track';
-    const albumName = track.collectionName || track.albumName || '';
-    const url = track.trackViewUrl || track.url || '';
-    const payload = { kind: 'song', id, title, albumName, image: track.artworkUrl100 || track.image || '', url };
-    const favorite = item && id ? artistFavoriteIsSaved(item, 'songs', id) : false;
-    return `<div class="artist-album-track${favorite ? ' is-favorite' : ''}">
-      <span class="artist-album-track-number">${escapeHtml(String(track.trackNumber || index + 1))}</span>
-      <span class="artist-album-track-copy"><strong>${escapeHtml(title)}</strong>${track.trackTimeMillis ? `<small>${escapeHtml(formatMillis(track.trackTimeMillis))}</small>` : ''}</span>
-      <span class="artist-catalog-actions">
-        ${url ? `<a class="artist-music-link" href="${escapeAttr(url)}" target="_blank" rel="noopener" aria-label="Open ${escapeAttr(title)} in Apple Music">↗ Music</a>` : ''}
-        ${item && id ? artistFavoriteButtonMarkup(item, payload) : ''}
-      </span>
-    </div>`;
-  }).join('');
-}
-
-async function expandArtistAlbum(toggle) {
-  const albumId = String(toggle?.dataset?.artistAlbumToggle || '');
-  if (!albumId) return;
-  const card = toggle.closest('[data-artist-album-card]');
-  const panel = card?.querySelector(`[data-artist-album-tracks="${CSS.escape(albumId)}"]`);
-  if (!panel) return;
-  const expanded = toggle.getAttribute('aria-expanded') === 'true';
-  toggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
-  card?.classList.toggle('is-expanded', !expanded);
-  panel.hidden = expanded;
-  if (expanded || panel.dataset.loaded === 'true' || panel.dataset.loading === 'true') return;
-
-  panel.dataset.loading = 'true';
-  panel.innerHTML = '<p class="artist-album-loading">Loading songs…</p>';
-  const item = findItem(toggle.dataset.artistItemId || '');
-  try {
-    const data = await getCached(`album:tracks:v2:${albumId}`, () => TrackerAPI.getMusicDetails(albumId, state.settings));
-    const tracks = (data?.results || [])
-      .filter(result => result.wrapperType === 'track')
-      .sort((a, b) => Number(a.discNumber || 1) - Number(b.discNumber || 1) || Number(a.trackNumber || 0) - Number(b.trackNumber || 0));
-    panel.innerHTML = tracks.length
-      ? `<div class="artist-album-track-list">${artistAlbumTrackRowsMarkup(tracks, item)}</div>`
-      : '<p class="artist-album-empty">No songs returned for this album.</p>';
-    panel.dataset.loaded = 'true';
-  } catch (error) {
-    console.warn('[Music] Could not load album tracks:', error?.message || error);
-    panel.innerHTML = '<p class="artist-album-empty">Could not load this album’s songs.</p>';
-  } finally {
-    delete panel.dataset.loading;
-  }
-}
-
 async function renderArtistDetails(item) {
-  // Artist pages are album-first. Songs are fetched only when an album is opened,
-  // rather than showing an unrelated list of recent/random tracks under the artist.
-  let appleArtistId = String(item.musicMeta?.itunesArtistId || (item.provider === 'itunes' ? item.providerId : '') || '');
-  if (!appleArtistId) {
-    try {
-      const matches = await TrackerAPI.searchCatalogue(item.title || item.artistName || '', 'artist', state.settings);
-      const wanted = normalizeSearchText(item.title || item.artistName || '');
-      const exact = (matches || []).find(match => normalizeSearchText(match.title || match.artistName || '') === wanted) || matches?.[0];
-      if (exact?.providerId) {
-        appleArtistId = String(exact.providerId);
-        item.musicMeta = { ...(item.musicMeta || {}), itunesArtistId: appleArtistId };
-        if (!item.image && exact.image) item.image = exact.image;
-        saveItems();
-      }
-    } catch (error) {
-      console.warn('[Music] Could not resolve artist catalogue:', error?.message || error);
-    }
-  }
-  const data = appleArtistId
-    ? await getCached(`artist:v4:${appleArtistId}`, () => TrackerAPI.getArtistDetails(appleArtistId, state.settings))
-    : { results: [] };
+  const data = await getCached(`artist:v2:${item.providerId}`, () => TrackerAPI.getArtistDetails(item.providerId, state.settings));
   const artist = (data.results || []).find(result => result.wrapperType === 'artist') || {};
   const liveAlbums = (data.results || []).filter(result => result.wrapperType === 'collection');
+  const liveSongs = (data.results || []).filter(result => result.wrapperType === 'track');
   const savedAlbums = artistFavoritesFor(item, 'albums');
+  const savedSongs = artistFavoritesFor(item, 'songs');
   const albums = mergeArtistCatalogWithFavorites(liveAlbums, savedAlbums, entry => entry.collectionId || entry.id);
+  const songs = mergeArtistCatalogWithFavorites(liveSongs, savedSongs, entry => entry.trackId || entry.id);
   const image = (liveAlbums.find(album => album.artworkUrl100)?.artworkUrl100 || savedAlbums.find(album => album.image)?.image || item.image || '').replace('100x100bb', '600x600bb');
   if (!item.image && image) { item.image = image; saveItems(); }
   const artistUrl = artist.artistLinkUrl || artist.artistViewUrl || item.artistViewUrl || '';
-  const albumRows = albums.slice(0, 18).map(album => artistAlbumAccordionMarkup(album, item)).join('');
+
+  const albumRows = albums.slice(0, 14).map(album => {
+    const id = String(album.collectionId || album.id || '');
+    const title = album.collectionName || album.title || 'Album';
+    const year = String(album.releaseDate || album.year || '').slice(0, 4);
+    const url = album.collectionViewUrl || album.url || '';
+    const payload = { kind: 'album', id, title, year, image: album.artworkUrl100 || album.image || '', url };
+    return `<div class="artist-catalog-row${artistFavoriteIsSaved(item, 'albums', id) ? ' is-favorite' : ''}"><div class="artist-catalog-copy"><div class="list-title">${escapeHtml(title)}</div><div class="list-meta">${escapeHtml(year)}</div></div><div class="artist-catalog-actions">${url ? `<a class="artist-music-link" href="${escapeAttr(url)}" target="_blank" rel="noopener" aria-label="Open ${escapeAttr(title)} in Apple Music">↗ Music</a>` : ''}${artistFavoriteButtonMarkup(item, payload)}</div></div>`;
+  }).join('');
+
+  const songRows = songs.slice(0, 16).map(song => {
+    const id = String(song.trackId || song.id || '');
+    const title = song.trackName || song.title || 'Song';
+    const albumName = song.collectionName || song.albumName || '';
+    const url = song.trackViewUrl || song.url || '';
+    const payload = { kind: 'song', id, title, albumName, image: song.artworkUrl100 || song.image || '', url };
+    return `<div class="artist-catalog-row${artistFavoriteIsSaved(item, 'songs', id) ? ' is-favorite' : ''}"><div class="artist-catalog-copy"><div class="list-title">${escapeHtml(title)}</div><div class="list-meta">${escapeHtml(albumName)}</div></div><div class="artist-catalog-actions">${url ? `<a class="artist-music-link" href="${escapeAttr(url)}" target="_blank" rel="noopener" aria-label="Open ${escapeAttr(title)} in Apple Music">↗ Music</a>` : ''}${artistFavoriteButtonMarkup(item, payload)}</div></div>`;
+  }).join('');
 
   els.detailBody.innerHTML = `
     ${libraryDetailHero({ type:'ARTIST', title:artist.artistName || item.title, image, subtitle:artist.primaryGenreName || item.subtitle || '', overview:'' })}
     ${detailEditButton(item)}
     ${artistUrl ? `<section class="detail-section artist-open-music"><a class="secondary-button detail-link-button" href="${escapeAttr(artistUrl)}" target="_blank" rel="noopener">Open artist in Apple Music ↗</a></section>` : ''}
-    ${albumRows ? `<section class="detail-section"><div class="detail-section-heading"><h3>Albums</h3><span class="artist-favorite-hint">Open an album to see its songs · ♥ saves favorites</span></div><div class="artist-album-list">${albumRows}</div></section>` : '<section class="detail-section"><p class="list-meta">No albums were returned for this artist.</p></section>'}`;
+    ${albumRows ? `<section class="detail-section"><div class="detail-section-heading"><h3>Albums</h3><span class="artist-favorite-hint">♥ saves inside this artist</span></div><div class="artist-catalog-list">${albumRows}</div></section>` : ''}
+    ${songRows ? `<section class="detail-section"><div class="detail-section-heading"><h3>Songs</h3><span class="artist-favorite-hint">♥ saves inside this artist</span></div><div class="artist-catalog-list">${songRows}</div></section>` : ''}`;
 }
 
 async function renderSongDetails(item) {
@@ -8052,141 +7555,6 @@ function renderActivityDetails(item) {
     ${libraryDetailHero({ type:'ACTIVITY', title:item.title, image:displayImageForItem(item), subtitle:[dateText, item.subcategory || ''].filter(Boolean).join(' · '), overview:'' })}
     ${detailEditButton(item)}
   `;
-}
-
-function itemHasRepeatLog(item) {
-  return Boolean(item && getSourceType(item) !== 'class' && item.featureConfig?.repeatableLog);
-}
-
-function repeatLogHistoryEntries(item) {
-  if (!item) return [];
-  const kind = getSourceType(item) === 'class' ? 'class-attended' : 'repeatable-log';
-  return state.history
-    .filter(entry => entry.sourceItemId === item.id && entry.kind === kind)
-    .sort((a, b) => String(b.date || b.createdAt || '').localeCompare(String(a.date || a.createdAt || '')));
-}
-
-function recalculateRepeatableItemRating(item) {
-  if (!item || (!itemHasRepeatLog(item) && getSourceType(item) !== 'class')) return;
-  const ratings = repeatLogHistoryEntries(item).map(entry => Number(entry.rating || 0)).filter(value => value > 0);
-  item.rating = ratings.length ? Math.round((ratings.reduce((sum, value) => sum + value, 0) / ratings.length) * 2) / 2 : 0;
-  item.updatedAt = new Date().toISOString();
-}
-
-let repeatLogDraftRating = 0;
-
-function ensureRepeatLogModal() {
-  let modal = $('#repeatLogModal');
-  if (modal) return modal;
-  modal = document.createElement('dialog');
-  modal.id = 'repeatLogModal';
-  modal.className = 'modal small-modal repeat-log-modal';
-  modal.innerHTML = `
-    <button class="modal-x" type="button" data-close="repeatLogModal" aria-label="Close">×</button>
-    <div class="modal-heading"><p class="modal-eyebrow">LOG</p><h2 id="repeatLogModalTitle">Add log</h2></div>
-    <form id="repeatLogForm" class="item-form">
-      <input id="repeatLogItemId" type="hidden" />
-      <label class="field"><span>Entry name <em>optional</em></span><input id="repeatLogTitle" type="text" autocomplete="off" placeholder="Leave blank to use the main title" /></label>
-      <fieldset class="rating-fieldset repeat-log-rating-field"><legend>Rating</legend><div id="repeatLogRatingPicker" class="star-picker" aria-label="Rating out of five stars">${[1,2,3,4,5].map(value => `<button type="button" data-repeat-log-rating="${value}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}<button id="repeatLogClearRating" class="clear-rating" type="button">clear</button></div></fieldset>
-      <label class="field"><span>Date</span><input id="repeatLogDate" type="date" required /></label>
-      <label class="field"><span>Note <em>optional</em></span><textarea id="repeatLogNote" rows="3" placeholder="Anything you want to remember"></textarea></label>
-      <div class="modal-actions end-only"><div class="actions-right"><button class="quiet-button" type="button" data-close="repeatLogModal">Cancel</button><button class="primary-button" type="submit">Save log</button></div></div>
-    </form>`;
-  document.body.appendChild(modal);
-  modal.querySelector('#repeatLogForm')?.addEventListener('submit', saveRepeatLogForm);
-  modal.querySelector('#repeatLogRatingPicker')?.addEventListener('click', event => {
-    const button = event.target.closest('[data-repeat-log-rating]');
-    if (!button) return;
-    const selected = ratingFromStarPointer(event, button, 'data-repeat-log-rating');
-    setRepeatLogDraftRating(toggledStarRating(repeatLogDraftRating, selected));
-  });
-  modal.querySelector('#repeatLogClearRating')?.addEventListener('click', () => setRepeatLogDraftRating(0));
-  return modal;
-}
-
-function setRepeatLogDraftRating(value) {
-  repeatLogDraftRating = normalizeStarRating(value);
-  syncStarPicker($('#repeatLogRatingPicker'), '[data-repeat-log-rating]', 'data-repeat-log-rating', repeatLogDraftRating);
-}
-
-function openRepeatLogModal(item) {
-  if (!item) return;
-  const modal = ensureRepeatLogModal();
-  $('#repeatLogItemId').value = item.id;
-  $('#repeatLogModalTitle').textContent = `Add log · ${item.title}`;
-  $('#repeatLogTitle').value = '';
-  $('#repeatLogDate').value = todayString();
-  $('#repeatLogNote').value = '';
-  setRepeatLogDraftRating(0);
-  showDialogAtTop(modal);
-}
-
-function saveRepeatLogForm(event) {
-  event.preventDefault();
-  const item = findItem($('#repeatLogItemId')?.value || '');
-  if (!item) return;
-  const date = $('#repeatLogDate')?.value || '';
-  if (!date) return;
-  const entryTitle = String($('#repeatLogTitle')?.value || '').trim() || item.title;
-  addHistoryRecord({
-    sourceItemId: item.id,
-    sourceType: getSourceType(item),
-    type: item.type,
-    typeLabel: getItemTypeLabel(item),
-    subcategory: item.subcategory || '',
-    date,
-    showOnCalendar: true,
-    kind: getSourceType(item) === 'class' ? 'class-attended' : 'repeatable-log',
-    title: entryTitle,
-    subtitle: '',
-    notes: String($('#repeatLogNote')?.value || '').trim(),
-    rating: repeatLogDraftRating,
-    image: item.image || '',
-    provider: item.provider || 'manual',
-    providerId: item.providerId || ''
-  });
-  recalculateRepeatableItemRating(item);
-  saveHistory();
-  saveItems();
-  $('#repeatLogModal')?.close();
-  renderAll();
-  openDetails(item.id);
-}
-
-function deleteRepeatLogEntry(id, itemId) {
-  const entry = state.history.find(record => record.id === id && record.sourceItemId === itemId);
-  const item = findItem(itemId);
-  if (!entry || !item) return;
-  if (!confirm(`Delete log “${entry.title || item.title}”?`)) return;
-  state.history = state.history.filter(record => record.id !== id);
-  recalculateRepeatableItemRating(item);
-  saveHistory();
-  saveItems();
-  renderAll();
-  openDetails(item.id);
-}
-
-function repeatLogSectionMarkup(item) {
-  const entries = repeatLogHistoryEntries(item);
-  const rows = entries.length ? entries.map(entry => `
-    <article class="repeat-log-history-row">
-      <div class="repeat-log-history-main">
-        <span class="repeat-log-history-date">${escapeHtml(entry.date ? formatShortCalendarDate(entry.date) : 'Undated')}</span>
-        <strong>${escapeHtml(entry.title || item.title)}</strong>
-        ${Number(entry.rating || 0) ? `<span class="repeat-log-history-stars">★ ${escapeHtml(formatPersonalRating(entry.rating))}</span>` : ''}
-        ${entry.notes ? `<p>${escapeHtml(entry.notes)}</p>` : ''}
-      </div>
-      <div class="repeat-log-history-actions">
-        <button class="secondary-button" type="button" data-edit-repeat-log="${escapeAttr(entry.id)}">Edit</button>
-        <button class="quiet-button" type="button" data-delete-repeat-log="${escapeAttr(entry.id)}" data-repeat-item-id="${escapeAttr(item.id)}">Delete</button>
-      </div>
-    </article>`).join('') : '<p class="detail-meta">No logs yet.</p>';
-  return `<section class="detail-section repeat-log-section" data-repeat-log-section="${escapeAttr(item.id)}"><div class="detail-section-heading"><h3>History</h3><button class="secondary-button repeat-log-add-button" type="button" data-add-repeat-log="${escapeAttr(item.id)}">+ Add log</button></div><div class="repeat-log-history-list">${rows}</div></section>`;
-}
-
-function appendRepeatLogSection(item) {
-  if (!itemHasRepeatLog(item) || !els.detailBody || els.detailBody.querySelector(`[data-repeat-log-section="${CSS.escape(item.id)}"]`)) return;
-  els.detailBody.insertAdjacentHTML('beforeend', repeatLogSectionMarkup(item));
 }
 
 function classHistoryEntries(item) {
@@ -8452,20 +7820,6 @@ function appendLibraryDateSummary(item) {
   }
 }
 
-function appendReminderFeatureSummary(item) {
-  if (!item || !hasReminderSchedule(item) || getSourceType(item) === 'reminder' || !els.detailBody) return;
-  if (els.detailBody.querySelector(`[data-library-repeat-summary="${CSS.escape(item.id)}"]`)) return;
-  const due = getNextReminderDueDate(item);
-  const markup = `<div class="library-detail-date-strip" data-library-repeat-summary="${escapeAttr(item.id)}"><span>Repeat</span><strong>${escapeHtml(reminderScheduleLabel(item))}${due ? ` · ${escapeHtml(reminderDueLabel(due))}` : ''}</strong></div>`;
-  const dateSummary = els.detailBody.querySelector(`[data-library-date-summary="${CSS.escape(item.id)}"]`);
-  if (dateSummary) dateSummary.insertAdjacentHTML('afterend', markup);
-  else {
-    const title = els.detailBody.querySelector('.detail-hero h2');
-    if (title) title.insertAdjacentHTML('afterend', markup);
-    else els.detailBody.insertAdjacentHTML('afterbegin', markup);
-  }
-}
-
 function libraryPeopleSummaryMarkup(item) {
   const people = getItemPeople(item);
   if (!people.length) return '';
@@ -8496,11 +7850,6 @@ function formatPersonalRating(value) {
 }
 
 function libraryPersonalMetadataMarkup(item) {
-  if (itemHasRepeatLog(item)) {
-    const count = repeatLogHistoryEntries(item).length;
-    const avg = Number(item.rating || 0) > 0 ? ` · ${formatPersonalRating(item.rating)}★ avg` : '';
-    return `<div class="library-personal-meta library-repeat-meta" data-library-personal-meta="${escapeAttr(item.id)}"><div class="library-personal-meta-row repeat-log-summary-actions"><span>${count} ${count === 1 ? 'log' : 'logs'}${escapeHtml(avg)}</span><div><button class="secondary-button repeat-summary-button" type="button" data-add-repeat-log="${escapeAttr(item.id)}">+ Add log</button><button class="secondary-button repeat-summary-button" type="button" data-edit-id="${escapeAttr(item.id)}">Edit</button></div></div></div>`;
-  }
   if (getSourceType(item) === 'class') {
     const count = classHistoryEntries(item).length;
     return `<div class="library-personal-meta library-class-meta" data-library-personal-meta="${escapeAttr(item.id)}"><div class="library-personal-meta-row"><span class="library-class-meta-count">${count} ${count === 1 ? 'class' : 'classes'} logged</span><button class="secondary-button library-personal-edit" type="button" data-add-class-log>+ Add class</button></div></div>`;
@@ -8728,42 +8077,21 @@ function appendItemResources(item) {
   const links = item.links || [];
   if (!attachments.length && !links.length) return;
 
-  const images = attachments.filter(file => String(file.mime || '').startsWith('image/'));
-  const files = attachments.filter(file => !String(file.mime || '').startsWith('image/'));
   const section = document.createElement('section');
-  section.className = 'detail-section resources-section compact-resources-section';
+  section.className = 'detail-section resources-section';
   section.innerHTML = `
     <h3>Files & links</h3>
-    ${images.length ? `<div class="resource-image-grid">${images.map(file => `
-      <button class="resource-image-card" type="button" data-inline-attachment-id="${escapeAttr(file.id)}" data-attachment-id="${escapeAttr(file.id)}" aria-label="Open ${escapeAttr(file.name || 'image')}">
-        <span class="resource-image-loading">Image</span>
-      </button>`).join('')}</div>` : ''}
-    ${files.length ? `<div class="resource-grid compact-resource-grid">${files.map(file => `
+    ${attachments.length ? `<div class="resource-grid">${attachments.map(file => `
       <button class="resource-card" type="button" data-attachment-id="${escapeAttr(file.id)}">
         <span class="resource-icon">${attachmentKindIcon(file.mime)}</span>
         <span><strong>${escapeHtml(file.name)}</strong><small>${escapeHtml(attachmentKindLabel(file.mime))} · ${formatBytes(file.size)}</small></span>
         <span class="resource-arrow">↗</span>
       </button>`).join('')}</div>` : ''}
-    ${links.length ? `<div class="external-links compact-external-links">${links.map(link => `
+    ${links.length ? `<div class="external-links">${links.map(link => `
       <a class="external-link-button" href="${escapeAttr(link.url)}" target="_blank" rel="noopener noreferrer">
         <span>${escapeHtml(link.label)}</span><span>↗</span>
       </a>`).join('')}</div>` : ''}`;
   els.detailBody.appendChild(section);
-
-  for (const file of images) {
-    getAttachmentBlob(file.id).then(record => {
-      const button = section.querySelector(`[data-inline-attachment-id="${CSS.escape(file.id)}"]`);
-      if (!button || !record?.blob) return;
-      const url = URL.createObjectURL(record.blob);
-      const image = document.createElement('img');
-      image.className = 'resource-inline-image';
-      image.alt = file.name || '';
-      image.src = url;
-      image.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
-      image.addEventListener('error', () => URL.revokeObjectURL(url), { once: true });
-      button.replaceChildren(image);
-    }).catch(() => {});
-  }
 }
 
 async function openAttachmentViewer(id) {
@@ -9058,8 +8386,7 @@ function saveBookProgress(event) {
   event.preventDefault();
   const item = findItem(els.bookProgressId.value);
   if (!item) return;
-  const previousCurrent = Math.max(0, Number(item.progress?.currentPage || 0));
-  const wasFinished = Boolean(item.completedAt) && Number(item.progress?.totalPages || 0) > 0 && previousCurrent >= Number(item.progress?.totalPages || 0);
+  const wasFinished = Boolean(item.completedAt) && Number(item.progress?.totalPages || 0) > 0 && Number(item.progress?.currentPage || 0) >= Number(item.progress?.totalPages || 0);
   const current = Math.max(0, Number(els.progressCurrentPage.value || 0));
   const total = Math.max(0, Number(els.progressTotalPages.value || 0));
 
@@ -9076,14 +8403,10 @@ function saveBookProgress(event) {
 
   const latestDraftPeriod = periods.at(-1);
   const readingPaused = Boolean(latestDraftPeriod?.startDate && latestDraftPeriod.endDate);
-  const resumedByProgress = current > previousCurrent;
   if (current > 0 && !(total && current >= total)) {
-    if (resumedByProgress) {
-      item.bookDisposition = '';
-      setItemQueueStatus(item, 'upnext');
-    } else if (readingPaused) {
+    if (readingPaused) {
       item.bookDisposition = 'paused';
-      setItemQueueStatus(item, 'tbr');
+      setItemQueueStatus(item, 'library');
     } else if (!['paused', 'dnf'].includes(item.bookDisposition)) {
       item.bookDisposition = '';
       setItemQueueStatus(item, 'upnext');
@@ -9605,7 +8928,7 @@ function getStickerConfig(type, entry = {}) {
   const key = stickerPreferenceKey(type, entry);
   const parentSaved = state.stickerPrefs?.[type] || {};
   const saved = key !== type ? (state.stickerPrefs?.[key] || parentSaved) : parentSaved;
-  const shape = STICKER_SHAPES.includes(saved.shape) ? saved.shape : defaults.shape;
+  const shape = ['square', 'circle', 'star', 'heart'].includes(saved.shape) ? saved.shape : defaults.shape;
   const color = STICKER_COLORS.includes(saved.color) ? saved.color : defaults.color;
   const label = cleanStickerLabel(saved.label !== undefined ? saved.label : defaults.label);
   return { ...defaults, shape, color, label };
@@ -9847,11 +9170,8 @@ function saveHistoryEdit(event) {
   entry.notes = els.historyEditNote.value.trim();
   entry.showOnCalendar = Boolean(els.historyEditShowCalendar.checked && entry.date);
   entry.updatedAt = new Date().toISOString();
-  const sourceItem = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
-  if (sourceItem && (itemHasRepeatLog(sourceItem) || getSourceType(sourceItem) === 'class')) recalculateRepeatableItemRating(sourceItem);
 
   saveHistory();
-  if (sourceItem) saveItems();
   els.historyEditModal.close();
   renderAll();
 }
@@ -9877,11 +9197,8 @@ function deleteHistoryEdit() {
   const entry = state.history.find(record => record.id === id);
   if (!entry) return;
   if (!confirm(`Delete tracked entry “${entry.title}”?`)) return;
-  const sourceItem = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
   state.history = state.history.filter(record => record.id !== id);
-  if (sourceItem && (itemHasRepeatLog(sourceItem) || getSourceType(sourceItem) === 'class')) recalculateRepeatableItemRating(sourceItem);
   saveHistory();
-  if (sourceItem) saveItems();
   els.historyEditModal.close();
   renderAll();
 }
@@ -9902,15 +9219,14 @@ const DISCOVER_GENRES = [
   { value: 'family', label: 'Family', tmdb: ['Family'], keywords: ['family'], book: ['family'] },
   { value: 'fantasy', label: 'Fantasy', tmdb: ['Fantasy', 'Sci-Fi & Fantasy'], keywords: ['fantasy'], book: ['fantasy'] },
   { value: 'history', label: 'History', tmdb: ['History', 'War & Politics'], keywords: ['history', 'historical'], book: ['history'] },
-  { value: 'horror', label: 'Horror', tmdb: ['Horror'], keywords: ['horror', 'supernatural horror', 'psychological horror', 'slasher', 'zombie'], book: ['horror'] },
+  { value: 'horror', label: 'Horror', tmdb: ['Horror'], keywords: ['horror'], book: ['horror'] },
   { value: 'mystery', label: 'Mystery', tmdb: ['Mystery'], keywords: ['mystery'], book: ['mystery'] },
   { value: 'philosophy', label: 'Philosophy', tmdb: [], keywords: ['philosophy'], book: ['philosophy'] },
   { value: 'psychology', label: 'Psychology', tmdb: [], keywords: ['psychology'], book: ['psychology'] },
   { value: 'romance', label: 'Romance', tmdb: ['Romance'], keywords: ['romance'], book: ['romance'] },
   { value: 'science', label: 'Science', tmdb: [], keywords: ['science'], book: ['science'] },
   { value: 'science-fiction', label: 'Science Fiction', tmdb: ['Science Fiction', 'Sci-Fi & Fantasy'], keywords: ['science fiction'], book: ['science fiction'] },
-  { value: 'thriller', label: 'Thriller', tmdb: ['Thriller'], keywords: ['thriller', 'suspense', 'psychological thriller', 'crime thriller'], book: ['thriller', 'suspense'] },
-  { value: 'reality', label: 'Reality', tmdb: ['Reality'], keywords: ['reality television', 'reality tv', 'reality'], book: [] }
+  { value: 'thriller', label: 'Thriller', tmdb: ['Thriller'], keywords: ['thriller', 'suspense'], book: ['thriller', 'suspense'] }
 ]
 
 function selectedDiscoverGenre() {
@@ -10063,10 +9379,6 @@ async function runDiscoverSearch(forcedQuery = '') {
   try {
     const types = normalizedDiscoverContentTypes();
     const settled = await Promise.allSettled(types.map(type => {
-      if (type === 'game') return Promise.allSettled([
-        TrackerAPI.searchCatalogue(query, 'video-game', state.settings, { maxResults: 20 }),
-        TrackerAPI.searchCatalogue(query, 'board-game', state.settings, { maxResults: 20 })
-      ]).then(entries => entries.flatMap(entry => entry.status === 'fulfilled' ? entry.value : []));
       if (type === 'concert') return TrackerAPI.searchCatalogue(query, 'concert', state.settings, {
         city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
         countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA'
@@ -10087,11 +9399,9 @@ async function runDiscoverSearch(forcedQuery = '') {
     for (let index = 0; index < settled.length; index += 1) {
       const entry = settled[index];
       if (entry.status !== 'fulfilled') continue;
-      const requestedType = types[index];
-      const rawResults = entry.value || [];
-      for (const result of rawResults) {
-        const sourceType = requestedType === 'game' ? (result.sourceType || result.gameKind || 'video-game') : requestedType;
-        if (findDiscoverItem({ ...result, sourceType })) continue;
+      const sourceType = types[index];
+      const availableResults = filterAlreadyKnown(entry.value || [], sourceType);
+      for (const result of availableResults) {
         const normalized = { ...result, sourceType, categories: result.raw?.volumeInfo?.categories || result.categories || [] };
         if (state.discoverPrefs.englishTVOnly === true && sourceType === 'tv' && String(normalized.raw?.original_language || '').toLowerCase() !== 'en') continue;
         if (!(await discoverSearchResultMatchesGenre(normalized))) continue;
@@ -10725,62 +10035,25 @@ function asLiveDiscoverCandidate(result, source, boost = 0, exploration = false)
   };
 }
 
-async function collectGameDiscoverCandidates(batchNumber, mode = 'for-you') {
-  const page = Math.max(1, Number(batchNumber || 1));
-  const settled = await Promise.allSettled([
-    TrackerAPI.discoverVideoGames(mode, page, state.settings, 24),
-    TrackerAPI.discoverBoardGames(mode, page, state.settings, 24)
-  ]);
-  const video = settled[0].status === 'fulfilled'
-    ? filterAlreadyKnown(settled[0].value || [], 'video-game').map((result, index) => ({
-        ...result, sourceType: 'video-game', _discoverSource: `igdb-${mode}`,
-        _discoverBoost: mode === 'popular' ? 7 - index * .03 : mode === 'new' ? 5 - index * .03 : 4 - index * .03,
-        _discoverExploration: mode === 'for-you'
-      }))
-    : [];
-  const board = settled[1].status === 'fulfilled'
-    ? filterAlreadyKnown(settled[1].value || [], 'board-game').map((result, index) => ({
-        ...result, sourceType: 'board-game', _discoverSource: `bgg-${mode}`,
-        _discoverBoost: mode === 'popular' ? 7 - index * .03 : mode === 'new' ? 5 - index * .03 : 4 - index * .03,
-        _discoverExploration: mode === 'for-you'
-      }))
-    : [];
-
-  if (settled[0].status === 'rejected') console.warn('[Discover][Video games] catalogue request failed:', settled[0].reason?.message || settled[0].reason);
-  if (settled[1].status === 'rejected') console.warn('[Discover][Board games] catalogue request failed:', settled[1].reason?.message || settled[1].reason);
-
-  // Keep both game catalogues visible. IGDB has much richer popularity signals,
-  // so a simple combined ranking can otherwise crowd BoardGameGeek out entirely.
-  const mixed = [];
-  const max = Math.max(video.length, board.length);
-  for (let index = 0; index < max; index += 1) {
-    if (video[index]) mixed.push(video[index]);
-    if (board[index]) mixed.push(board[index]);
-  }
-  return dedupeDiscoverCandidatesByBoost(mixed);
-}
-
 async function collectDiscoverFeedCandidates(batchNumber) {
   const selectedTypes = normalizedDiscoverContentTypes();
   const selected = new Set(selectedTypes);
-  const mode = state.discoverMode === 'new' ? 'new' : state.discoverMode === 'popular' ? 'popular' : 'for-you';
-  const matchesSelectedType = result => selected.has(result.sourceType)
-    || (selected.has('game') && ['video-game','board-game'].includes(result.sourceType));
-  const musicOnly = selectedTypes.length === 1 && selected.has('artist');
+  const musicOnly = selectedTypes.length > 0 && selectedTypes.every(type => ['music', 'artist', 'song'].includes(type));
 
-  // Music is artist-first now. Albums and songs are favorited inside an Artist
-  // card instead of occupying their own Discover categories.
+  // When every selected category is music-related, bypass unrelated catalogue
+  // collectors and use the richer Last.fm/iTunes music engine directly.
   if (musicOnly) {
+    const mode = state.discoverMode === 'new' ? 'new' : state.discoverMode === 'popular' ? 'popular' : 'for-you';
     const music = await collectMusicDiscoverCandidates(batchNumber, mode);
-    const filtered = music.filter(result => result.sourceType === 'artist');
-    musicDiscoverDebug('dedicated artist view candidates', {
-      mode, batchNumber, selectedTypes, totalMusicPool: music.length, matchingType: filtered.length
+    const filtered = music.filter(result => selected.has(result.sourceType));
+    musicDiscoverDebug('dedicated music view candidates', {
+      mode,
+      batchNumber,
+      selectedTypes,
+      totalMusicPool: music.length,
+      matchingType: filtered.length
     });
     return dedupeDiscoverCandidatesByBoost(filtered);
-  }
-
-  if (selectedTypes.length === 1 && selected.has('game')) {
-    return collectGameDiscoverCandidates(batchNumber, mode);
   }
 
   if (selectedTypes.length === 1 && selected.has('restaurant')) {
@@ -10797,12 +10070,7 @@ async function collectDiscoverFeedCandidates(batchNumber) {
   else if (state.discoverMode === 'popular') candidates = await collectPopularDiscoverCandidates(batchNumber);
   else candidates = await collectForYouDiscoverCandidates(batchNumber);
 
-  if (selected.has('game')) {
-    try { candidates.push(...await collectGameDiscoverCandidates(batchNumber, mode)); }
-    catch (error) { console.warn('[Discover][Games] collector failed:', error?.message || error); }
-  }
-
-  return dedupeDiscoverCandidatesByBoost(candidates.filter(matchesSelectedType));
+  return dedupeDiscoverCandidatesByBoost(candidates.filter(result => selected.has(result.sourceType)));
 }
 
 function musicRecommendationSeedScore(item) {
@@ -11003,7 +10271,7 @@ async function collectLastFmResolvedTracks(lastfmTracks, limit = 7) {
 
 async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
   const personalized = mode === 'for-you';
-  const includeArtists = true;
+  const includeArtists = mode !== 'new';
   const requestedContentTypes = normalizedDiscoverContentTypes();
   const dedicatedArtistView = requestedContentTypes.length === 1 && requestedContentTypes[0] === 'artist';
   const dedicatedSongView = requestedContentTypes.length === 1 && requestedContentTypes[0] === 'song';
@@ -11473,7 +10741,7 @@ async function collectNewDiscoverCandidates(batchNumber) {
     try {
       const music = await collectMusicDiscoverCandidates(batchNumber, 'new');
       musicDiscoverDebug('New music candidates', { batchNumber, total: music.length, byType: musicDiscoverTypeCounts(music) });
-      annotated.push(...music.filter(result => result.sourceType === 'artist'));
+      annotated.push(...music.filter(result => ['music','song'].includes(result.sourceType)));
     } catch {}
   }
 
@@ -11495,7 +10763,6 @@ async function collectNewDiscoverCandidates(batchNumber) {
 
   return dedupeDiscoverCandidatesByBoost(annotated).filter(result => {
     const date = discoverNewDate(result);
-    if (result.sourceType === 'artist') return true;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
     if (['event','concert'].includes(result.sourceType)) return date >= today && date <= upcomingEnd;
     return date >= windowStart && date <= windowEnd;
@@ -11997,7 +11264,6 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
 
 function discoverContentFamily(sourceType) {
   if (['music','artist','song'].includes(sourceType)) return 'music';
-  if (['video-game','board-game'].includes(sourceType)) return 'game';
   if (['concert','event'].includes(sourceType)) return 'live';
   if (sourceType === 'restaurant') return 'food';
   return sourceType || 'other';
@@ -12748,8 +12014,7 @@ function discoverCardMarkup(result, key, fallbackType) {
     : type === 'book'
       ? String(result.publishedDate || '').slice(0, 4)
       : String(result.subtitle || '').slice(0, 4);
-  const catalogueRating = Number(result.catalogueRating || result.rating || 0);
-  const rating = catalogueRating ? `★ ${catalogueRating > 10 ? (catalogueRating / 10).toFixed(1) : catalogueRating.toFixed(1)}` : '';
+  const rating = result.rating ? `★ ${Number(result.rating).toFixed(1)}` : '';
   const providers = (result.streamingProviderNames || result.preferredProviderNames || []).slice(0, 2);
   const streaming = providers.length ? providers.join(' + ') : (['tv','movie'].includes(type) ? 'Streaming varies' : '');
   const meta = type === 'concert' || type === 'event'
@@ -12762,18 +12027,17 @@ function discoverCardMarkup(result, key, fallbackType) {
           ? [result.rating ? `${Number(result.rating).toFixed(1)}★` : '', result.primaryTypeDisplayName || '', result.formattedAddress || result.subtitle || '', 'Google Maps'].filter(Boolean).join(' · ')
           : [year, rating, streaming].filter(Boolean).join(' · ');
   const queueStatus = item ? getQueueStatus(item) : '';
-  const plusLabel = queueStatus === 'upnext' ? 'In progress' : queueStatus === 'tbr' ? 'Not started' : 'Progress';
+  const plusLabel = queueStatus === 'upnext' ? '+ Queue' : queueStatus === 'tbr' ? '+ TBR' : '+ Add';
   const libraryOnly = ['music','artist','song','restaurant'].includes(type);
   const artworkUrl = String(result.image || '').trim();
   const isLastFmGenericArtwork = /2a96cbd8b46e442fc41c2b86b821562f/i.test(artworkUrl);
   // Last.fm currently supplies a generic star for many artists. It is a fallback
   // asset, not actual artist artwork, so render those results as no-image cards.
   const noImage = !artworkUrl || isLastFmGenericArtwork;
-  const progressCapable = ['tv','movie','book','video-game','board-game'].includes(type);
-  const completeAction = progressCapable
-    ? `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo completed' : 'Mark completed'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>`
+  const completeAction = ['tv','movie','book'].includes(type)
+    ? `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo watched / read' : 'Mark watched / read'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>`
     : '';
-  const queueAction = progressCapable
+  const queueAction = ['tv','movie','book'].includes(type)
     ? `<button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>`
     : '';
   const libraryAction = libraryOnly && type !== 'restaurant'
@@ -13130,9 +12394,9 @@ function renderDiscoverCardInPlace(key) {
 function openDiscoverQueueChoice(key) {
   const result = state.discoverResults.get(key);
   if (!result || !els.discoverQueueModal) return;
-  discoverBookSaveDebug('progress modal opened', result, { discoverKey: key });
+  discoverBookSaveDebug('queue modal opened', result, { discoverKey: key });
   state.pendingDiscoverKey = key;
-  els.discoverQueueTitle.textContent = 'Progress';
+  els.discoverQueueTitle.textContent = result.title || 'Where should this go?';
   showDialogAtTop(els.discoverQueueModal);
 }
 
@@ -13140,26 +12404,9 @@ async function handleDiscoverQueueChoice(event) {
   const button = event.target.closest('[data-discover-queue-choice]');
   if (!button || !state.pendingDiscoverKey) return;
   const key = state.pendingDiscoverKey;
-  const choice = button.dataset.discoverQueueChoice || 'upnext';
+  const status = button.dataset.discoverQueueChoice === 'tbr' ? 'tbr' : 'upnext';
   const result = state.discoverResults.get(key);
-  discoverBookSaveDebug('progress choice clicked', result, { discoverKey: key, target: choice });
-
-  if (choice === 'library') {
-    els.discoverQueueModal?.close();
-    state.pendingDiscoverKey = null;
-    if (!result) return;
-    if (result.sourceType === 'tv') {
-      await openDiscoverDetail(key);
-      requestAnimationFrame(() => els.detailBody?.querySelector('[data-tv-watch-picker]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
-    } else if (['movie','book','video-game','board-game'].includes(result.sourceType)) {
-      openDiscoverRatingPrompt(key, { completionIntent: true });
-    } else {
-      await markDiscoverCompleted(key, { promptForRating: false });
-    }
-    return;
-  }
-
-  const status = choice === 'tbr' ? 'tbr' : 'upnext';
+  discoverBookSaveDebug('queue choice clicked', result, { discoverKey: key, target: status });
   try {
     if (!result) throw new Error('Discover result is no longer available.');
     const item = addDiscoverToQueue(key, status);
@@ -13271,18 +12518,16 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
   const sourceType = result.sourceType;
   const isMusicFamily = ['music', 'artist', 'song', 'concert'].includes(sourceType);
   const isFoodFamily = ['food', 'restaurant', 'recipe'].includes(sourceType);
-  const isGameFamily = ['video-game', 'board-game'].includes(sourceType);
   const discoverMusicSubcategory = sourceType === 'music' ? 'Album' : musicSubcategoryForSourceType(sourceType);
   const discoverFoodSubcategory = foodSubcategoryForSourceType(sourceType);
-  const discoverGameSubcategory = sourceType === 'board-game' ? 'Board Game' : sourceType === 'video-game' ? 'Video Game' : '';
   item = {
     id: makeId(),
     sourceType,
-    type: isMusicFamily ? 'music' : isFoodFamily ? 'food' : isGameFamily ? 'game' : sourceType,
-    typeLabel: isMusicFamily ? 'Music' : isFoodFamily ? 'Food' : isGameFamily ? 'Games' : (SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType)),
-    subcategory: isMusicFamily ? discoverMusicSubcategory : isFoodFamily ? discoverFoodSubcategory : discoverGameSubcategory,
+    type: isMusicFamily ? 'music' : isFoodFamily ? 'food' : sourceType,
+    typeLabel: isMusicFamily ? 'Music' : isFoodFamily ? 'Food' : (SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType)),
+    subcategory: isMusicFamily ? discoverMusicSubcategory : discoverFoodSubcategory,
     title: result.title || 'Untitled',
-    provider: result.provider || (sourceType === 'book' ? 'googleBooks' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'restaurant' ? 'googlePlaces' : sourceType === 'concert' ? 'ticketmaster' : sourceType === 'event' ? 'ticketmaster' : sourceType === 'video-game' ? 'igdb' : sourceType === 'board-game' ? 'bgg' : 'tmdb'),
+    provider: result.provider || (sourceType === 'book' ? 'googleBooks' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'restaurant' ? 'googlePlaces' : sourceType === 'concert' ? 'ticketmaster' : sourceType === 'event' ? 'ticketmaster' : 'tmdb'),
     providerId: String(result.providerId || ''),
     image: result.image || '',
     subtitle: result.subtitle || '',
@@ -13386,12 +12631,12 @@ async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
   renderAll();
   renderDiscoverCardInPlace(key);
   if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
-  if (promptForRating && ['movie','video-game','board-game'].includes(result.sourceType)) openDiscoverRatingPrompt(key, { completionIntent: false });
+  if (promptForRating && result.sourceType === 'movie') openDiscoverRatingPrompt(key, { completionIntent: false });
 }
 
 function openDiscoverRatingPrompt(key, { allowTV = false, completionIntent = false, recommendIntent = null } = {}) {
   const result = state.discoverResults.get(key);
-  const allowed = ['movie','book','video-game','board-game'].includes(result?.sourceType) || (allowTV && result?.sourceType === 'tv');
+  const allowed = ['movie','book'].includes(result?.sourceType) || (allowTV && result?.sourceType === 'tv');
   if (!result || !allowed || !els.discoverRatingModal) return;
 
   // IMPORTANT: opening this modal must not mutate Library/history. Everything
@@ -13399,7 +12644,7 @@ function openDiscoverRatingPrompt(key, { allowTV = false, completionIntent = fal
   discoverBookSaveDebug('rating/date modal opened', result, { discoverKey: key, completionIntent: Boolean(completionIntent), recommendIntent });
   state.pendingDiscoverRatingKey = key;
   state.pendingDiscoverCompletionIntent = Boolean(completionIntent);
-  if (els.discoverRatingTitle) els.discoverRatingTitle.textContent = `Rate ${result.title || 'this item'}`;
+  if (els.discoverRatingTitle) els.discoverRatingTitle.textContent = `Rate ${result.title || (result.sourceType === 'book' ? 'this book' : 'this movie')}`;
   const existing = findDiscoverItem(result);
   const rating = Math.max(0, Math.min(5, Number(existing?.rating || 0)));
   state.pendingDiscoverRatingValue = rating;
@@ -13647,7 +12892,6 @@ async function openDiscoverDetail(key) {
     else if (result.sourceType === 'music') await renderDiscoverAlbumDetail(key);
     else if (result.sourceType === 'artist') await renderDiscoverArtistDetail(key);
     else if (result.sourceType === 'song') await renderDiscoverSongDetail(key);
-    else if (['video-game','board-game'].includes(result.sourceType)) await renderDiscoverGameDetail(key);
     else if (result.sourceType === 'concert') await renderDiscoverConcertDetail(key);
     else if (result.sourceType === 'restaurant') await renderDiscoverRestaurantDetail(key);
     else if (result.sourceType === 'event') await renderDiscoverEventDetail(key);
@@ -13773,12 +13017,12 @@ function saveDiscoverTVPersonalMetadata(key) {
 }
 
 function discoverQueueButtonsMarkup(result, key) {
-  if (!result || !['tv','movie','book','video-game','board-game'].includes(result.sourceType)) return '';
+  if (!result || !['tv','movie','book'].includes(result.sourceType)) return '';
   const item = findDiscoverItem(result);
   const current = item ? getQueueStatus(item) : 'library';
-  return `<div class="queue-toggle-buttons" aria-label="Progress">
-    <button class="secondary-button queue-toggle-button${current === 'upnext' ? ' is-selected' : ''}" type="button" data-discover-direct-queue="upnext" data-discover-key="${escapeAttr(key)}" aria-pressed="${current === 'upnext'}">In progress</button>
-    <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-discover-direct-queue="tbr" data-discover-key="${escapeAttr(key)}" aria-pressed="${current === 'tbr'}">Not started</button>
+  return `<div class="queue-toggle-buttons" aria-label="Queue placement">
+    <button class="secondary-button queue-toggle-button${current === 'upnext' ? ' is-selected' : ''}" type="button" data-discover-direct-queue="upnext" data-discover-key="${escapeAttr(key)}" aria-pressed="${current === 'upnext'}">Up Next</button>
+    <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-discover-direct-queue="tbr" data-discover-key="${escapeAttr(key)}" aria-pressed="${current === 'tbr'}">TBR</button>
   </div>`;
 }
 
@@ -14002,30 +13246,6 @@ async function syncDiscoverTVProgress(item) {
   }
 }
 
-async function renderDiscoverGameDetail(key) {
-  const result = state.discoverResults.get(key);
-  if (!result) return;
-  const details = result.sourceType === 'board-game'
-    ? await getCached(`bgg:game:${result.providerId}`, () => TrackerAPI.getBoardGameDetails(result.providerId, state.settings))
-    : await getCached(`igdb:game:${result.providerId}`, () => TrackerAPI.getVideoGameDetails(result.providerId, state.settings));
-  const game = { ...result, ...(details || {}), sourceType: result.sourceType };
-  state.discoverResults.set(key, game);
-  const completed = isDiscoverCompleted(game);
-  const info = game.sourceType === 'board-game'
-    ? [game.minPlayers && game.maxPlayers ? `${game.minPlayers}${game.maxPlayers !== game.minPlayers ? `–${game.maxPlayers}` : ''} players` : '', game.playTime ? `${game.playTime} min` : '', ...(game.mechanics || []).slice(0,3)].filter(Boolean).join(' · ')
-    : [...(game.platforms || []).slice(0,4), ...(game.genres || []).slice(0,3)].filter(Boolean).join(' · ');
-  const rating = Number(game.catalogueRating || 0);
-  const ratingText = rating ? (rating > 10 ? `★ ${(rating/10).toFixed(1)}` : `★ ${rating.toFixed(1)}`) : '';
-  els.detailBody.innerHTML = `
-    ${detailHero({ type: game.sourceType === 'board-game' ? 'BOARD GAME' : 'VIDEO GAME', title: game.title || result.title, image: game.image || result.image, subtitle: [game.releaseDate?.slice(0,4) || '', ratingText, info].filter(Boolean).join(' · '), overview: game.description || result.description || '' })}
-    <div class="discover-detail-actions">
-      ${discoverQueueButtonsMarkup(game, key)}
-      <button class="secondary-button${completed ? ' is-complete' : ''}" type="button" data-discover-detail-complete="${escapeAttr(key)}">${completed ? '↶ Mark not played' : '✓ Mark played'}</button>
-    </div>
-    ${game.catalogueUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(game.catalogueUrl)}" target="_blank" rel="noopener">Open catalogue page ↗</a></section>` : ''}
-  `;
-}
-
 async function renderDiscoverMovieDetail(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
@@ -14104,7 +13324,7 @@ async function renderDiscoverArtistDetail(key) {
       }
     }
     if (itunesArtistId) {
-      const data = await getCached(`artist:v4:${itunesArtistId}`, () => TrackerAPI.getArtistDetails(itunesArtistId, state.settings));
+      const data = await getCached(`artist:v2:${itunesArtistId}`, () => TrackerAPI.getArtistDetails(itunesArtistId, state.settings));
       artist = (data.results || []).find(r => r.wrapperType === 'artist') || {};
       albums = (data.results || []).filter(r => r.wrapperType === 'collection');
       musicDiscoverDebug('lazy iTunes artist detail resolution complete', { artist: result.title, itunesArtistId, albums: albums.length });
@@ -14116,12 +13336,11 @@ async function renderDiscoverArtistDetail(key) {
   const image = (albums.find(album => album.artworkUrl100)?.artworkUrl100 || result.image || '').replace('100x100bb','600x600bb');
   if (!result.image && image) result.image = image;
   const externalUrl = result.lastfmUrl || result.raw?.lastfmUrl || '';
-  const albumRows = albums.slice(0, 18).map(album => artistAlbumAccordionMarkup(album)).join('');
   els.detailBody.innerHTML = `
     ${detailHero({ type:'ARTIST', title:artist.artistName || result.title, image, subtitle:artist.primaryGenreName || result.subtitle || '', overview:'' })}
     ${discoverLibraryOnlyActionMarkup(result, key)}
     ${metadataError ? `<section class="detail-section"><p class="list-meta">Extra iTunes metadata is temporarily unavailable. The Last.fm recommendation is still usable.</p></section>` : ''}
-    ${albumRows ? `<section class="detail-section"><div class="detail-section-heading"><h3>Albums</h3><span class="artist-favorite-hint">Open an album to see its songs</span></div><div class="artist-album-list">${albumRows}</div></section>` : ''}
+    ${albums.length ? `<section class="detail-section"><h3>Recent albums</h3><div class="track-list">${albums.slice(0,8).map(album => `<div class="track-row"><div>•</div><div><div class="list-title">${escapeHtml(album.collectionName || 'Album')}</div><div class="list-meta">${escapeHtml(String(album.releaseDate || '').slice(0,4))}</div></div></div>`).join('')}</div></section>` : ''}
     ${externalUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(externalUrl)}" target="_blank" rel="noopener">Open on Last.fm ↗</a></section>` : ''}`;
 }
 
@@ -14370,7 +13589,10 @@ function renderStickerSettingsRows() {
         <label class="sticker-setting-field sticker-setting-shape-field">
           <span class="sticker-setting-mobile-label">Shape</span>
           <select data-sticker-field="shape">
-            ${STICKER_SHAPES.map(shape => `<option value="${shape}" ${config.shape === shape ? 'selected' : ''}>${shape[0].toUpperCase()+shape.slice(1)}</option>`).join('')}
+            <option value="square" ${config.shape === 'square' ? 'selected' : ''}>Square</option>
+            <option value="circle" ${config.shape === 'circle' ? 'selected' : ''}>Circle</option>
+            <option value="star" ${config.shape === 'star' ? 'selected' : ''}>Star</option>
+            <option value="heart" ${config.shape === 'heart' ? 'selected' : ''}>Heart</option>
           </select>
         </label>
         <label class="sticker-setting-field sticker-setting-color-field">
@@ -14851,7 +14073,7 @@ const WEEKDAY_OPTIONS = [
   { value: 0, short: 'S', label: 'Sunday' }
 ];
 
-function getBaseStreakGroups() {
+function getRecognizedStreakGroups() {
   const groups = new Map();
 
   for (const { type, label } of getRecognizedTypes()) {
@@ -14863,16 +14085,17 @@ function getBaseStreakGroups() {
         label: cleanLabel,
         memberTypes: [],
         representativeType: type,
-        representativeEntry: null,
-        scope: 'type',
-        parentKey: key,
-        subcategories: []
+        representativeEntry: null
       });
     }
     const group = groups.get(key);
     if (!group.memberTypes.includes(type)) group.memberTypes.push(type);
   }
 
+  // Calendar entries are the final authority for visible grouping. This also
+  // catches two different internal source types that have the same displayed
+  // type label (for example a YouTube item and a manual item both called
+  // "Workout").
   for (const entry of getCalendarEntries()) {
     const label = getStreakTypeGroupLabel(entry);
     const key = getStreakTypeGroupKey(entry);
@@ -14882,10 +14105,7 @@ function getBaseStreakGroups() {
         label,
         memberTypes: [],
         representativeType: entry.type,
-        representativeEntry: entry,
-        scope: 'type',
-        parentKey: key,
-        subcategories: []
+        representativeEntry: entry
       });
     }
     const group = groups.get(key);
@@ -14896,72 +14116,25 @@ function getBaseStreakGroups() {
   return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function streakSubcategoriesForParent(parentKey) {
-  return [...new Set(getCalendarEntries()
-    .filter(entry => getStreakTypeGroupKey(entry) === parentKey)
-    .map(entry => cleanTypeLabel(entry.subcategory || ''))
-    .filter(Boolean))]
-    .sort((a,b) => a.localeCompare(b));
-}
-
-function getRecognizedStreakGroups() {
-  const parents = getBaseStreakGroups();
-  const result = [];
-  for (const parent of parents) {
-    result.push(parent);
-    for (const subcategory of streakSubcategoriesForParent(parent.key)) {
-      result.push({
-        ...parent,
-        key: `${parent.key}::subcategory::${slugifyType(subcategory)}`,
-        label: `${parent.label} · ${subcategory}`,
-        shortLabel: subcategory,
-        scope: 'subcategory',
-        parentKey: parent.key,
-        subcategories: [subcategory]
-      });
-    }
-  }
-
-  // User-created grouped-subcategory streaks are stored directly in streakPrefs,
-  // so they survive reloads and remain independent from the individual subcategory streaks.
-  for (const [key, saved] of Object.entries(state.streakPrefs || {})) {
-    if (!saved || saved.scope !== 'group' || !saved.parentKey || !Array.isArray(saved.subcategories) || saved.subcategories.length < 2) continue;
-    const parent = parents.find(group => group.key === saved.parentKey);
-    if (!parent || result.some(group => group.key === key)) continue;
-    const subcategories = [...new Set(saved.subcategories.map(cleanTypeLabel).filter(Boolean))];
-    if (subcategories.length < 2) continue;
-    result.push({
-      ...parent,
-      key,
-      label: cleanTypeLabel(saved.name || '') || `${parent.label} · ${subcategories.join(' + ')}`,
-      shortLabel: cleanTypeLabel(saved.name || '') || subcategories.join(' + '),
-      scope: 'group',
-      parentKey: parent.key,
-      subcategories
-    });
-  }
-  return result;
-}
-
 function resolveStreakGroup(typeOrGroupKey) {
   const value = String(typeOrGroupKey || '');
   const groups = getRecognizedStreakGroups();
-  return groups.find(group => group.key === value || (group.scope === 'type' && group.memberTypes.includes(value))) || {
+  return groups.find(group => group.key === value || group.memberTypes.includes(value)) || {
     key: slugifyType(getTypeLabel(value) || value || 'Other'),
     label: getTypeLabel(value) || value || 'Other',
     memberTypes: value ? [value] : [],
     representativeType: value || 'other',
-    representativeEntry: null,
-    scope: 'type',
-    parentKey: slugifyType(getTypeLabel(value) || value || 'Other'),
-    subcategories: []
+    representativeEntry: null
   };
 }
 
 function getStreakConfig(typeOrGroupKey) {
   const group = resolveStreakGroup(typeOrGroupKey);
+
+  // New streak preferences are keyed by the visible type name. Fall back to
+  // the old internal-type keys so existing settings survive this migration.
   let saved = state.streakPrefs?.[group.key];
-  if (!saved && group.scope === 'type') {
+  if (!saved) {
     for (const memberType of group.memberTypes) {
       if (state.streakPrefs?.[memberType]) {
         saved = state.streakPrefs[memberType];
@@ -14970,40 +14143,20 @@ function getStreakConfig(typeOrGroupKey) {
     }
   }
   saved ||= {};
-  const representative = group.representativeEntry || { type: group.representativeType, typeLabel: group.label, subcategory: group.subcategories?.[0] || '' };
-  const defaultSticker = getStickerConfig(representative.type || group.representativeType, representative);
-  const shape = STICKER_SHAPES.includes(saved.stickerShape) ? saved.stickerShape : defaultSticker.shape;
-  const color = STICKER_COLORS.includes(saved.stickerColor) ? saved.stickerColor : defaultSticker.color;
-  const stickerLabel = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(saved.stickerLabel !== undefined ? saved.stickerLabel : defaultSticker.label);
-  const defaultName = group.scope === 'type' ? group.label : (group.shortLabel || group.label);
 
   return {
     enabled: Boolean(saved.enabled),
     restDays: Array.isArray(saved.restDays)
       ? [...new Set(saved.restDays.map(Number).filter(day => day >= 0 && day <= 6))]
-      : [],
-    name: cleanTypeLabel(saved.name || '') || defaultName,
-    stickerShape: shape,
-    stickerColor: color,
-    stickerLabel,
-    scope: group.scope,
-    parentKey: group.parentKey,
-    subcategories: [...(group.subcategories || [])]
+      : []
   };
 }
 
 function getTypeActivityDates(typeOrGroupKey) {
   const group = resolveStreakGroup(typeOrGroupKey);
-  const wantedSubcategories = new Set((group.subcategories || []).map(value => cleanTypeLabel(value).toLowerCase()).filter(Boolean));
   return new Set(
     getCalendarEntries()
-      .filter(entry => {
-        if (getStreakTypeGroupKey(entry) !== group.parentKey) return false;
-        if (group.scope === 'type') return true;
-        const subcategory = cleanTypeLabel(entry.subcategory || '').toLowerCase();
-        return Boolean(subcategory && wantedSubcategories.has(subcategory));
-      })
-      .filter(entry => entry.date && entry.showOnCalendar !== false)
+      .filter(entry => getStreakTypeGroupKey(entry) === group.key && entry.date && entry.showOnCalendar !== false)
       .map(entry => entry.date)
   );
 }
@@ -15070,20 +14223,10 @@ function streakBadgeMarkup(typeOrGroupKey) {
   return text ? `<span class="type-streak-badge">${escapeHtml(text)}</span>` : '';
 }
 
-function streakStickerMarkup(config, ariaLabel = 'Streak') {
-  const shape = STICKER_SHAPES.includes(config?.stickerShape) ? config.stickerShape : 'square';
-  const color = STICKER_COLORS.includes(config?.stickerColor) ? config.stickerColor : 'cream';
-  const text = shape === 'star' ? '★' : shape === 'heart' ? '♥' : escapeHtml(config?.stickerLabel || '');
-  return `<span class="sticker sticker-${shape} sticker-palette-${color} sticker-tilt-none" aria-label="${escapeAttr(`${ariaLabel} sticker`)}">${text}</span>`;
-}
-
 function renderTrackStreakSummary() {
   if (!els.trackStreakSummary) return;
   const active = getRecognizedStreakGroups()
-    .map(group => {
-      const config = getStreakConfig(group.key);
-      return { ...group, config, text: streakText(group.key, config) };
-    })
+    .map(group => ({ ...group, text: streakText(group.key) }))
     .filter(entry => entry.text);
 
   els.trackStreakSummary.hidden = active.length === 0;
@@ -15092,11 +14235,16 @@ function renderTrackStreakSummary() {
     return;
   }
 
-  els.trackStreakSummary.innerHTML = active.map(group => `
+  els.trackStreakSummary.innerHTML = active.map(group => {
+    const representative = group.representativeEntry
+      || getCalendarEntries().find(entry => getStreakTypeGroupKey(entry) === group.key)
+      || { type: group.representativeType, typeLabel: group.label };
+    return `
       <div class="track-streak-card">
-        <span class="track-streak-sticker">${streakStickerMarkup(group.config, group.config.name)}</span>
-        <span class="track-streak-copy"><strong>${escapeHtml(group.config.name)}</strong><small>${escapeHtml(group.text)}</small></span>
-      </div>`).join('');
+        <span class="track-streak-sticker">${calendarStickerMarkup(representative.type, representative)}</span>
+        <span class="track-streak-copy"><strong>${escapeHtml(group.label)}</strong><small>${escapeHtml(group.text)}</small></span>
+      </div>`;
+  }).join('');
 }
 
 function openStreakSettings() {
@@ -15112,33 +14260,15 @@ function renderStreakSettingsRows() {
   for (const group of getRecognizedStreakGroups()) {
     const config = getStreakConfig(group.key);
     const row = document.createElement('div');
-    row.className = `streak-setting-row streak-setting-row-${group.scope}${config.enabled ? ' is-enabled' : ''}`;
+    row.className = `streak-setting-row${config.enabled ? ' is-enabled' : ''}`;
     row.dataset.streakType = group.key;
-    row.dataset.streakScope = group.scope;
-    row.dataset.streakParentKey = group.parentKey || group.key;
-    row.dataset.streakSubcategories = JSON.stringify(group.subcategories || []);
-    const scopeLabel = group.scope === 'type' ? 'Whole type' : group.scope === 'subcategory' ? 'Subtype' : 'Group';
-    const canGroup = group.scope === 'type' && streakSubcategoriesForParent(group.key).length >= 2;
     row.innerHTML = `
-      <div class="streak-setting-identity">
-        <div class="streak-setting-preview" data-streak-preview>${streakStickerMarkup(config, config.name)}</div>
-        <label class="streak-name-field"><span>${escapeHtml(scopeLabel)}</span><input data-streak-field="name" type="text" maxlength="40" value="${escapeAttr(config.name)}" placeholder="${escapeAttr(group.shortLabel || group.label)}" /></label>
-        <details class="streak-style-details">
-          <summary title="Change streak sticker">Sticker</summary>
-          <div class="streak-style-controls">
-            <label><span>Shape</span><select data-streak-field="shape">${STICKER_SHAPES.map(shape => `<option value="${shape}" ${config.stickerShape === shape ? 'selected' : ''}>${shape[0].toUpperCase()+shape.slice(1)}</option>`).join('')}</select></label>
-            <label><span>Color</span><select data-streak-field="color">${STICKER_COLORS.map(color => `<option value="${color}" ${config.stickerColor === color ? 'selected' : ''}>${color[0].toUpperCase()+color.slice(1)}</option>`).join('')}</select></label>
-            <label><span>Text</span><input data-streak-field="sticker-label" type="text" maxlength="3" value="${escapeAttr(config.stickerLabel || '')}" ${['star','heart'].includes(config.stickerShape) ? 'disabled' : ''} placeholder="Optional" /></label>
-          </div>
-        </details>
-        ${canGroup ? `<button class="quiet-button streak-group-button" type="button" data-streak-add-group="${escapeAttr(group.key)}">+ Group subtypes</button>` : ''}
-        ${group.scope === 'group' ? `<button class="quiet-button streak-group-delete" type="button" data-streak-delete-group="${escapeAttr(group.key)}">Delete group</button>` : ''}
-      </div>
+      <div class="streak-setting-type"><strong>${escapeHtml(group.label)}</strong></div>
       <label class="streak-toggle">
         <input data-streak-field="enabled" type="checkbox" ${config.enabled ? 'checked' : ''} />
         <span>On</span>
       </label>
-      <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(config.name)}">
+      <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(group.label)}">
         ${WEEKDAY_OPTIONS.map(day => `
           <label class="rest-day-chip" title="${day.label}">
             <input data-streak-rest-day="${day.value}" type="checkbox" ${config.restDays.includes(day.value) ? 'checked' : ''} />
@@ -15151,20 +14281,10 @@ function renderStreakSettingsRows() {
 }
 
 function readStreakRowConfig(row) {
-  const shape = row.querySelector('[data-streak-field="shape"]')?.value || 'square';
-  let subcategories = [];
-  try { subcategories = JSON.parse(row.dataset.streakSubcategories || '[]'); } catch {}
   return {
     enabled: Boolean(row.querySelector('[data-streak-field="enabled"]')?.checked),
     restDays: [...row.querySelectorAll('[data-streak-rest-day]:checked')]
-      .map(input => Number(input.dataset.streakRestDay)),
-    name: cleanTypeLabel(row.querySelector('[data-streak-field="name"]')?.value || ''),
-    stickerShape: STICKER_SHAPES.includes(shape) ? shape : 'square',
-    stickerColor: row.querySelector('[data-streak-field="color"]')?.value || 'cream',
-    stickerLabel: ['star','heart'].includes(shape) ? '' : cleanStickerLabel(row.querySelector('[data-streak-field="sticker-label"]')?.value || ''),
-    scope: row.dataset.streakScope || 'type',
-    parentKey: row.dataset.streakParentKey || row.dataset.streakType,
-    subcategories
+      .map(input => Number(input.dataset.streakRestDay))
   };
 }
 
@@ -15175,63 +14295,6 @@ function previewStreakSettings(event) {
   row.classList.toggle('is-enabled', config.enabled);
   const current = row.querySelector('.streak-setting-current');
   if (current) current.textContent = streakText(row.dataset.streakType, config) || 'Off';
-  const labelInput = row.querySelector('[data-streak-field="sticker-label"]');
-  if (labelInput) labelInput.disabled = ['star','heart'].includes(config.stickerShape);
-  const preview = row.querySelector('[data-streak-preview]');
-  if (preview) preview.innerHTML = streakStickerMarkup(config, config.name || 'Streak');
-}
-
-function addStreakSubcategoryGroup(parentKey) {
-  const parent = getBaseStreakGroups().find(group => group.key === parentKey);
-  const available = streakSubcategoriesForParent(parentKey);
-  if (!parent || available.length < 2) {
-    alert('This type needs at least two subtypes before you can group them.');
-    return;
-  }
-  const raw = prompt(`Group which ${parent.label} subtypes?\n\nAvailable: ${available.join(', ')}\n\nEnter two or more, separated by commas.`);
-  if (raw == null) return;
-  const wanted = raw.split(',').map(cleanTypeLabel).filter(Boolean);
-  const selected = available.filter(option => wanted.some(value => value.toLowerCase() === option.toLowerCase()));
-  if (selected.length < 2) {
-    alert('Choose at least two of the listed subtypes.');
-    return;
-  }
-  const suggested = selected.join(' + ');
-  const name = cleanTypeLabel(prompt('Name this streak group:', suggested) || suggested) || suggested;
-  const key = `${parentKey}::group::${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
-  const representative = parent.representativeEntry || { type: parent.representativeType, typeLabel: parent.label };
-  const sticker = getStickerConfig(representative.type, representative);
-  state.streakPrefs[key] = {
-    enabled: true,
-    restDays: [],
-    name,
-    stickerShape: sticker.shape,
-    stickerColor: sticker.color,
-    stickerLabel: ['star','heart'].includes(sticker.shape) ? '' : sticker.label,
-    scope: 'group',
-    parentKey,
-    subcategories: selected
-  };
-  localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
-  scheduleCloudSync();
-  renderStreakSettingsRows();
-}
-
-function handleStreakSettingsClick(event) {
-  const add = event.target.closest('[data-streak-add-group]');
-  if (add) {
-    addStreakSubcategoryGroup(add.dataset.streakAddGroup);
-    return;
-  }
-  const remove = event.target.closest('[data-streak-delete-group]');
-  if (remove) {
-    if (!confirm('Delete this grouped-subtype streak?')) return;
-    delete state.streakPrefs[remove.dataset.streakDeleteGroup];
-    localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
-    scheduleCloudSync();
-    renderStreakSettingsRows();
-    renderTrackStreakSummary();
-  }
 }
 
 function saveStreakSettings(event) {
@@ -15424,21 +14487,6 @@ function itemLibraryDate(item) {
   return dates.sort().at(-1) || '';
 }
 
-function libraryCardExperienceDate(item) {
-  if (!item || getSourceType(item) === 'book') return '';
-  if (getSourceType(item) === 'activity') {
-    const start = String(item.activityMeta?.startDate || item.date || '').slice(0,10);
-    const end = String(item.activityMeta?.endDate || start).slice(0,10);
-    return end || start;
-  }
-  const dates = state.history
-    .filter(entry => entry.sourceItemId === item.id && entry.date)
-    .map(entry => String(entry.date).slice(0,10))
-    .filter(Boolean);
-  if (item.date) dates.push(String(item.date).slice(0,10));
-  return [...new Set(dates)].sort().at(-1) || '';
-}
-
 function itemLastTrackedDate(item) {
   if (!item) return '';
   const dates = state.history
@@ -15468,10 +14516,7 @@ function normalizeLibraryPrefs(value) {
   const keys = Array.isArray(value?.defaultTypeKeys)
     ? [...new Set(value.defaultTypeKeys.map(key => slugifyType(key)).filter(Boolean))]
     : null;
-  const addTypeKeys = Array.isArray(value?.addTypeKeys)
-    ? [...new Set(value.addTypeKeys.map(key => String(key || '').trim()).filter(key => CORE_LOG_TYPE_KEYS.has(key)))]
-    : null;
-  return { defaultTypeKeys: keys, addTypeKeys };
+  return { defaultTypeKeys: keys };
 }
 
 function isCoreLibraryGroupKey(key) {
@@ -15824,11 +14869,11 @@ function makeLibraryPoster(item) {
   albumButton.setAttribute('aria-label', `Add ${item.title} to album`);
   albumButton.title = 'Add to collection';
   shell.append(poster, albumButton);
-  const trackedDate = libraryCardExperienceDate(item);
+  const trackedDate = itemLastTrackedDate(item);
   if (trackedDate) {
     const tracked = document.createElement('span');
     tracked.className = 'library-card-tracked-date';
-    tracked.textContent = formatShortCalendarDate(trackedDate);
+    tracked.textContent = `Tracked ${formatShortCalendarDate(trackedDate)}`;
     shell.appendChild(tracked);
   }
   return shell;
@@ -15845,7 +14890,7 @@ function renderLibrary() {
     .filter(item => !(item.calendarQueueOnly === true && item.calendarTracked !== true))
     .filter(item => state.libraryView !== 'recommended' || item.recommended)
     .filter(item => visibleTypes.has(libraryTypeGroupKey(item)))
-    .filter(item => !libraryQuery || normalizeSearchText([item.title, item.subtitle, item.notes, item.subcategory, getItemTypeLabel(item), item.artistName, ...getItemPeople(item), ...(itemHasRepeatLog(item) || getSourceType(item) === 'class' ? repeatLogHistoryEntries(item).flatMap(entry => [entry.title, entry.notes, entry.date]) : [])].filter(Boolean).join(' ')).includes(libraryQuery));
+    .filter(item => !libraryQuery || normalizeSearchText([item.title, item.subtitle, item.notes, item.subcategory, getItemTypeLabel(item), item.artistName, ...getItemPeople(item), ...(getSourceType(item) === 'class' ? classHistoryEntries(item).flatMap(entry => [entry.title, entry.notes, entry.date]) : [])].filter(Boolean).join(' ')).includes(libraryQuery));
 
   // For Recent, dated/calendar-associated items always come first in descending
   // date order. Undated items are deliberately shuffled at the end instead of
@@ -16295,7 +15340,6 @@ function hasMeaningfulLocalState(snapshot = buildCloudState()) {
     Object.keys(snapshot.stickerPrefs || {}).length ||
     Object.keys(snapshot.streakPrefs || {}).length ||
     Array.isArray(snapshot.libraryPrefs?.defaultTypeKeys) ||
-    Array.isArray(snapshot.libraryPrefs?.addTypeKeys) ||
     snapshot.discoverPrefs?.streamingProviderIds?.length
   );
 }
@@ -16538,19 +15582,6 @@ function safeLocalSet(key, value) {
 
 function addHistoryRecord(record) {
   const source = record?.sourceItemId ? findItem(record.sourceItemId) : null;
-  let queueChanged = false;
-  // Logging something that was merely saved for later means it has started.
-  // Keep explicit paused/DNF items in TBR until the user resumes them.
-  if (source && getQueueStatus(source) === 'tbr') {
-    const paused = source.watchDisposition === 'paused' || source.bookDisposition === 'paused' || source.mediaDisposition === 'paused';
-    const stopped = source.watchDisposition === 'stopped' || source.bookDisposition === 'dnf' || source.mediaDisposition === 'stopped';
-    if (!paused && !stopped && getSourceType(source) !== 'reminder') {
-      setItemQueueStatus(source, 'upnext');
-      if (getSourceType(source) === 'tv' && source.watchDisposition === 'watch-later') source.watchDisposition = 'following';
-      source.updatedAt = new Date().toISOString();
-      queueChanged = true;
-    }
-  }
   const repeatKey = historyRepeatIdentity(record);
   const priorRepeats = repeatKey ? state.history.filter(entry => historyRepeatIdentity(entry) === repeatKey).length : 0;
   const isRepeat = record?.rewatch == null ? priorRepeats > 0 : Boolean(record.rewatch);
@@ -16568,7 +15599,6 @@ function addHistoryRecord(record) {
     ...(repeatKey ? { rewatch: isRepeat, repeatIndex } : {}),
     subtitle
   });
-  if (queueChanged) saveItems();
 }
 
 function loadJSON(key, fallback) {
@@ -16673,8 +15703,6 @@ const socialState = {
   peopleResults: [],
   followingProfiles: [],
   followingSnapshots: new Map(),
-  followerProfiles: [],
-  followRequestProfiles: [],
   acceptedConnections: [],
   buddyWatches: [],
   viewedProfile: null,
@@ -17145,8 +16173,6 @@ function openSocialProfileSettings() {
   $('#socialBio').value = socialState.profile.bio || '';
   $('#socialPrivateProfile').checked = Boolean(socialState.profile.is_private);
   renderSocialShareSettingsEditor();
-  const logTypeHost = $('#socialLogTypeChoices');
-  if (logTypeHost) logTypeHost.innerHTML = loggingTypeChoicesMarkup(loggingAddTypeKeys());
   setSocialProfileSettingsMessage('');
   showDialogAtTop($('#socialProfileSettingsModal'));
 }
@@ -17324,11 +16350,6 @@ async function saveSocialProfileSettings(event) {
   if (prefsResult.error) { setSocialProfileSettingsMessage(prefsResult.error.message, true); return; }
   socialState.profile = { ...data, share_settings: shareSettings };
   socialState.shareSettings = normalizeSocialShareSettings(shareSettings);
-  const logTypeHost = $('#socialLogTypeChoices');
-  if (logTypeHost) {
-    const selectedLogTypes = [...logTypeHost.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value);
-    saveLoggingAddTypeKeys(selectedLogTypes);
-  }
   await publishSocialSnapshot();
   $('#socialProfileSettingsModal')?.close();
   renderSocialMyProfile();
@@ -17389,14 +16410,12 @@ function socialFollowButtonMarkup(profile, relation = null) {
 
 async function loadSocialFollowing() {
   if (!socialState.schemaReady || !supabase || !currentUser) return;
-  const [outgoingResult, incomingResult, followersResult] = await Promise.all([
+  const [outgoingResult, incomingResult] = await Promise.all([
     supabase.from('follows').select('follower_id, following_id, status, created_at').eq('follower_id', currentUser.id),
-    supabase.from('follows').select('follower_id, following_id, status, created_at').eq('following_id', currentUser.id).eq('status','pending'),
-    supabase.from('follows').select('follower_id, following_id, status, created_at').eq('following_id', currentUser.id).eq('status','accepted')
+    supabase.from('follows').select('follower_id, following_id, status, created_at').eq('following_id', currentUser.id).eq('status','pending')
   ]);
   if (outgoingResult.error) throw outgoingResult.error;
   if (incomingResult.error) throw incomingResult.error;
-  if (followersResult.error) throw followersResult.error;
 
   const accepted = (outgoingResult.data || []).filter(row => row.status === 'accepted');
   const ids = accepted.map(row => row.following_id);
@@ -17420,24 +16439,14 @@ async function loadSocialFollowing() {
   if (host) host.innerHTML = profiles.map(profile => socialProfileCardMarkup(profile, snapshotMap.get(profile.user_id), relationMap.get(profile.user_id))).join('');
   if ($('#socialFollowingEmpty')) $('#socialFollowingEmpty').hidden = profiles.length > 0;
 
-  const followerIds = (followersResult.data || []).map(row => row.follower_id).filter(Boolean);
-  if (followerIds.length) {
-    const followerResult = await supabase.from('profiles').select('user_id, username, display_name, avatar_url, is_private').in('user_id', followerIds);
-    if (followerResult.error) throw followerResult.error;
-    socialState.followerProfiles = followerResult.data || [];
-  } else {
-    socialState.followerProfiles = [];
-  }
-
   const requests = incomingResult.data || [];
   const requestHost = $('#socialFollowRequests');
   if (requestHost) {
-    if (!requests.length) { socialState.followRequestProfiles = []; requestHost.innerHTML = ''; }
+    if (!requests.length) requestHost.innerHTML = '';
     else {
       const requestIds = requests.map(row => row.follower_id);
       const { data: requestProfiles, error } = await supabase.from('profiles').select('user_id, username, display_name, avatar_url, is_private').in('user_id', requestIds);
       if (error) throw error;
-      socialState.followRequestProfiles = requestProfiles || [];
       requestHost.innerHTML = `<div class="social-request-heading">Follow requests</div>${(requestProfiles || []).map(profile => `<article class="social-request-row"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}</small></span><div><button class="primary-button social-small-button" type="button" data-social-accept-follow="${escapeAttr(profile.user_id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-social-decline-follow="${escapeAttr(profile.user_id)}">Decline</button></div></article>`).join('')}`;
     }
   }
@@ -17472,15 +16481,6 @@ function socialBuddyInviteMarkup(watch) {
   return `<article class="social-buddy-invite"><div class="social-buddy-invite-main">${item.image ? `<img src="${escapeAttr(item.image)}" alt="" />` : ''}<span><small>Buddy Watch · ${escapeHtml(person)}</small><strong>${escapeHtml(item.title || watch.title || 'Buddy Watch')}</strong></span></div><div class="social-buddy-invite-actions"><button class="primary-button social-small-button" type="button" data-buddy-accept="${escapeAttr(watch.id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-buddy-decline="${escapeAttr(watch.id)}">Decline</button></div></article>`;
 }
 
-function socialFeedPeopleMarkup() {
-  const requests = socialState.followRequestProfiles || [];
-  const followers = socialState.followerProfiles || [];
-  if (!requests.length && !followers.length) return '';
-  const requestRows = requests.map(profile => `<article class="social-feed-request-row"><button class="social-feed-person-pill" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}</small></span></button><div><button class="primary-button social-small-button" type="button" data-social-accept-follow="${escapeAttr(profile.user_id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-social-decline-follow="${escapeAttr(profile.user_id)}">Decline</button></div></article>`).join('');
-  const followerPills = followers.map(profile => `<button class="social-feed-follower-pill" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span>${escapeHtml(profile.display_name || profile.username)}</span></button>`).join('');
-  return `<section class="social-feed-people">${requests.length ? `<div class="social-feed-people-block"><div class="social-feed-section-title">Follow requests</div><div class="social-feed-request-list">${requestRows}</div></div>` : ''}${followers.length ? `<div class="social-feed-people-block"><div class="social-feed-section-title">Followers</div><div class="social-feed-follower-list">${followerPills}</div></div>` : ''}</section>`;
-}
-
 function renderSocialFeed() {
   const host = $('#socialFeed');
   if (!host) return;
@@ -17495,9 +16495,8 @@ function renderSocialFeed() {
   }
   entries.sort((a,b) => String(b.date).localeCompare(String(a.date)));
   const invites = (socialState.buddyWatches || []).filter(watch => watch.myMembership?.status === 'pending');
-  const peopleMarkup = socialFeedPeopleMarkup();
-  host.innerHTML = peopleMarkup + invites.map(socialBuddyInviteMarkup).join('') + entries.slice(0,120).map(socialFeedCardMarkup).join('');
-  if ($('#socialFeedEmpty')) $('#socialFeedEmpty').hidden = Boolean(peopleMarkup) || invites.length > 0 || entries.length > 0;
+  host.innerHTML = invites.map(socialBuddyInviteMarkup).join('') + entries.slice(0,120).map(socialFeedCardMarkup).join('');
+  if ($('#socialFeedEmpty')) $('#socialFeedEmpty').hidden = invites.length > 0 || entries.length > 0;
 }
 
 async function handleSocialPeopleSearch(event) {
