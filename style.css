@@ -12304,3 +12304,47 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
   .date-options-panel .date-behavior-row > * { flex: 1 1 auto; }
   .item-secondary-actions { gap: 3px 12px; }
 }
+
+/* =========================================================
+   Add/Edit v83: explicit progressive disclosure + faster paint
+   ========================================================= */
+/* Closed optional controls must stay visually absent even if an older rule
+   elsewhere in this large stylesheet targets their inner panels. */
+.subtype-compact-disclosure:not([open]) > .subtype-compact-popover,
+.date-options-disclosure:not([open]) > .date-options-panel,
+.compact-inline-option:not([open]) > .compact-inline-body,
+.attachment-editor-collapsible:not([open]) > .attachment-editor-content {
+  display: none !important;
+}
+
+/* Exact default hierarchy: Type + Subtype / Find it + Title / Date + Options /
+   Rating + Comment / Note + People + Buddy Watch / status / Attach. */
+.item-modal .add-type-subtype-grid {
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: end !important;
+}
+.item-modal .subtype-compact-disclosure > summary,
+.item-modal .date-options-disclosure > summary,
+.item-modal .compact-inline-option > summary,
+.item-modal .attachment-editor-collapsible > summary {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.item-modal .subtype-compact-disclosure > summary { min-height: 42px; }
+.item-modal .date-with-actions { min-height: 48px; }
+.item-modal .date-options-disclosure > summary { min-height: 42px; }
+.item-modal .rating-comment-grid { align-items: start; }
+.item-modal .item-secondary-actions { border: 0; background: transparent; }
+.item-modal .progress-status-field { margin-top: 2px; }
+.item-modal .attachment-editor-collapsible { border: 0; background: transparent; }
+
+/* Off-screen sections do not need full layout/paint work during first load. */
+.track-section,
+.albums-section,
+.stats-section {
+  content-visibility: auto;
+}
+.track-section { contain-intrinsic-size: auto 720px; }
+.albums-section { contain-intrinsic-size: auto 420px; }
+.stats-section { contain-intrinsic-size: auto 760px; }

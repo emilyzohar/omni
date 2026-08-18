@@ -1,6 +1,6 @@
-import { TrackerAPI } from './api.js?v=omni-performance-82';
-import { API_CONFIG } from './config.js?v=omni-performance-82';
-import { supabase, hasSupabaseConfig } from './supabase.js?v=omni-performance-82';
+import { TrackerAPI } from './api.js?v=omni-fast-add-83';
+import { API_CONFIG } from './config.js?v=omni-fast-add-83';
+import { supabase, hasSupabaseConfig } from './supabase.js?v=omni-fast-add-83';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
 const CACHE_KEY = 'zoharTracker.apiCache.v1';
@@ -17,6 +17,8 @@ const ONBOARDING_KEY = 'zoharTracker.onboarding.v1';
 const ONBOARDING_STEP_KEY = 'zoharTracker.onboardingStep.v2';
 const CLOUD_UPDATED_AT_KEY = 'zoharTracker.cloudUpdatedAt.v1';
 const LOG_TYPE_PREFS_KEY = 'zoharTracker.logTypePrefs.v1';
+const DATA_MIGRATION_KEY = 'zoharTracker.dataMigration.v1';
+const DATA_MIGRATION_VERSION = 83;
 const PHOTO_WEEKLY_LIMIT = 20;
 const ATTACHMENT_DB_NAME = 'zoharTracker.attachments.v1';
 const ATTACHMENT_STORE_NAME = 'files';
@@ -160,6 +162,8 @@ let lastCloudUpdatedAt = '';
 let discoverFeedObserver = null;
 const attachmentCoverObjectUrls = new Map();
 const apiCacheInFlight = new Map();
+let libraryDateCache = null;
+let deferredInitialRenderHandle = null;
 
 
 const state = {
@@ -560,7 +564,7 @@ function bindAuthEvents() {
     startAppOnce();
     hydrateLargeLocalState().then(() => {
       runDataMigrations();
-      if (appStarted) renderAll();
+      if (appStarted) renderInitialPage();
     });
   });
   els.signOutButton?.addEventListener('click', handleSignOut);
@@ -700,7 +704,7 @@ async function startForUser(user) {
   try {
     await hydrateLargeLocalState();
     runDataMigrations();
-    if (appStarted) renderAll();
+    if (appStarted) renderInitialPage();
 
     const localMigrationChanges = cloudSyncDeferred;
     const cloudChanged = await hydrateCloudProfile(user.id);
@@ -708,8 +712,8 @@ async function startForUser(user) {
     if (cloudChanged) {
       // A newer cloud snapshot supersedes saves requested against the local cache.
       cloudSyncDeferred = false;
-      runDataMigrations();
-      if (appStarted) renderAll();
+      runDataMigrations({ force: true });
+      if (appStarted) renderInitialPage();
     } else if (localMigrationChanges) {
       // The cloud timestamp matched our cache, so local migration changes are safe
       // to persist now that hydration has confirmed the snapshot is current.
@@ -1215,9 +1219,10 @@ function normalizeFoodFamilyItem(item) {
 function migrateSavedFoodClassification() {
   let itemsChanged = false;
   let historyChanged = false;
+  const itemById = new Map(state.items.map(item => [item.id, item]));
   for (const item of state.items) if (normalizeFoodFamilyItem(item)) itemsChanged = true;
   for (const entry of state.history) {
-    const source = entry.sourceItemId ? state.items.find(item => item.id === entry.sourceItemId) : null;
+    const source = entry.sourceItemId ? itemById.get(entry.sourceItemId) || null : null;
     const sourceType = source ? getSourceType(source) : entry.sourceType || '';
     if (!['food','restaurant','recipe'].includes(sourceType)) continue;
     const subcategory = source ? (foodSubcategoryForSourceType(sourceType) || source.subcategory || '') : (foodSubcategoryForSourceType(sourceType) || entry.subcategory || '');
@@ -1232,6 +1237,7 @@ function migrateSavedFoodClassification() {
 function migrateSavedMusicClassification() {
   let itemsChanged = false;
   let historyChanged = false;
+  const itemById = new Map(state.items.map(item => [item.id, item]));
   for (const item of state.items) {
     if (normalizeMusicFamilyItem(item)) itemsChanged = true;
     const sourceType = getSourceType(item);
@@ -1250,7 +1256,7 @@ function migrateSavedMusicClassification() {
   }
 
   for (const entry of state.history) {
-    const source = entry.sourceItemId ? state.items.find(item => item.id === entry.sourceItemId) : null;
+    const source = entry.sourceItemId ? itemById.get(entry.sourceItemId) || null : null;
     let sourceType = source ? getSourceType(source) : '';
     if (!sourceType && ['artist', 'song', 'concert'].includes(entry.type)) sourceType = entry.type;
     if (!sourceType && entry.type === 'music') {
@@ -1472,7 +1478,16 @@ function migrateDuplicateLibraryItems() {
   if (historyChanged) saveHistory();
 }
 
-function runDataMigrations() {
+function dataMigrationStorageKey(userId = currentUser?.id || (localOnlyMode ? 'local' : 'anonymous')) {
+  return `${DATA_MIGRATION_KEY}.${userId}`;
+}
+
+function runDataMigrations({ force = false } = {}) {
+  const key = dataMigrationStorageKey();
+  if (!force && localStorage.getItem(key) === String(DATA_MIGRATION_VERSION)) {
+    reconcileLocalProgressQueues();
+    return false;
+  }
   migrateSavedMusicClassification();
   migrateSavedFoodClassification();
   migrateDuplicateLibraryItems();
@@ -1480,6 +1495,32 @@ function runDataMigrations() {
   migrateCustomTypeActionCategories();
   seedTypeUsageFromLibrary();
   reconcileLocalProgressQueues();
+  localStorage.setItem(key, String(DATA_MIGRATION_VERSION));
+  return true;
+}
+
+function scheduleDeferredInitialSections() {
+  if (deferredInitialRenderHandle) {
+    if ('cancelIdleCallback' in window && typeof deferredInitialRenderHandle === 'number') window.cancelIdleCallback(deferredInitialRenderHandle);
+    else clearTimeout(deferredInitialRenderHandle);
+  }
+  const run = () => {
+    deferredInitialRenderHandle = null;
+    if (els.trackerGrid) renderTracker();
+    if (els.trackStreakSummary) renderTrackStreakSummary();
+    if (els.albumsGrid) renderAlbums();
+    if (els.statsSummary) renderStats();
+  };
+  if ('requestIdleCallback' in window) deferredInitialRenderHandle = window.requestIdleCallback(run, { timeout: 650 });
+  else deferredInitialRenderHandle = window.setTimeout(run, 180);
+}
+
+function renderInitialPage() {
+  reconcileLocalProgressQueues();
+  if (els.upNextList) renderUpNext();
+  if (els.libraryGroups) renderLibrary();
+  if (els.discoverStatus) renderDiscover();
+  scheduleDeferredInitialSections();
 }
 
 function init() {
@@ -1491,7 +1532,7 @@ function init() {
 
   bindEvents();
   initSocialPage();
-  renderAll();
+  renderInitialPage();
 }
 
 function resetDialogScrollPosition(dialog) {
@@ -9218,12 +9259,19 @@ function renderMonthTracker() {
     els.trackerGrid.appendChild(dayCell);
   }
 
+  const entriesByGroupDate = new Map();
+  for (const entry of dated) {
+    const key = `${getCalendarTypeGroupKey(entry)}|${entry.date}`;
+    if (!entriesByGroupDate.has(key)) entriesByGroupDate.set(key, []);
+    entriesByGroupDate.get(key).push(entry);
+  }
+
   for (const group of displayGroups) {
     els.trackerGrid.appendChild(cell('tracker-cell tracker-category', group.label.toLowerCase()));
     for (let day=1; day<=days; day++) {
       const date = `${yearText}-${monthText}-${String(day).padStart(2, '0')}`;
       const container = cell(`tracker-cell${isCurrentMonth && date === today ? ' is-today-column' : ''}`, '');
-      const matches = dated.filter(entry => getCalendarTypeGroupKey(entry) === group.key && entry.date === date);
+      const matches = entriesByGroupDate.get(`${group.key}|${date}`) || [];
       const rangeMatches = matches.filter(entry => entry.kind === 'book-reading-day');
       const eventMatches = matches.filter(entry => entry.kind !== 'book-reading-day');
 
@@ -15096,7 +15144,59 @@ function setLibraryView(view) {
   renderLibrary();
 }
 
+function buildLibraryDateCache() {
+  const visibleHistory = new Map();
+  const allHistory = new Map();
+  for (const entry of state.history) {
+    const id = String(entry?.sourceItemId || '');
+    const date = String(entry?.date || '').slice(0, 10);
+    if (!id || !date) continue;
+    if (!allHistory.has(id)) allHistory.set(id, []);
+    allHistory.get(id).push(date);
+    if (entry.showOnCalendar !== false) {
+      if (!visibleHistory.has(id)) visibleHistory.set(id, []);
+      visibleHistory.get(id).push(date);
+    }
+  }
+
+  const library = new Map();
+  const footer = new Map();
+  for (const item of state.items) {
+    const id = String(item?.id || '');
+    const sourceType = getSourceType(item);
+    const calendarDates = item?.calendarHidden ? [] : [...(visibleHistory.get(id) || [])];
+    const footerDates = [...(allHistory.get(id) || [])];
+
+    if (!item?.calendarHidden && sourceType !== 'book' && item.date) calendarDates.push(String(item.date).slice(0, 10));
+    if (sourceType !== 'book' && item.date) footerDates.push(String(item.date).slice(0, 10));
+
+    if (sourceType === 'activity') {
+      const start = String(item.activityMeta?.startDate || item.date || '').slice(0, 10);
+      const end = String(item.activityMeta?.endDate || start).slice(0, 10);
+      if (!item?.calendarHidden && start) calendarDates.push(end && end >= start ? end : start);
+      footer.set(id, end || start || '');
+    } else if (sourceType === 'book') {
+      if (!item?.calendarHidden) {
+        const today = todayString();
+        for (const period of getBookReadingPeriods(item)) {
+          const start = String(period?.startDate || '').slice(0, 10);
+          if (!start) continue;
+          const end = String(period?.endDate || today).slice(0, 10);
+          if (end >= start) calendarDates.push(end);
+        }
+      }
+      footer.set(id, '');
+    } else {
+      footer.set(id, footerDates.filter(Boolean).sort().at(-1) || '');
+    }
+
+    library.set(id, item?.calendarHidden ? '' : calendarDates.filter(Boolean).sort().at(-1) || '');
+  }
+  return { library, footer };
+}
+
 function itemLibraryDate(item) {
+  if (item?.id && libraryDateCache?.library?.has(String(item.id))) return libraryDateCache.library.get(String(item.id)) || '';
   // Library → Recent follows the calendar, not when an item was added, edited,
   // rated, or silently completed. If an item has been removed from the calendar,
   // it is intentionally treated as undated here as well.
@@ -15136,6 +15236,7 @@ function itemLibraryDate(item) {
 }
 
 function libraryFooterDate(item) {
+  if (item?.id && libraryDateCache?.footer?.has(String(item.id))) return libraryDateCache.footer.get(String(item.id)) || '';
   if (!item || getSourceType(item) === 'book') return '';
   const sourceType = getSourceType(item);
   if (sourceType === 'activity') {
@@ -15545,6 +15646,7 @@ function makeLibraryPoster(item) {
 }
 
 function renderLibrary() {
+  libraryDateCache = buildLibraryDateCache();
   refreshTypeFilter();
   const visibleTypes = ensureLibraryVisibleTypes();
   const sort = els.librarySort?.value || 'date';
@@ -15970,11 +16072,13 @@ function cachePut(key, value) {
 }
 
 function saveItems() {
+  libraryDateCache = null;
   safeLocalSet(ITEMS_KEY, state.items);
   scheduleCloudSync();
 }
 
 function saveHistory() {
+  libraryDateCache = null;
   // History can contain hundreds or thousands of episode/video records.
   // localStorage is intentionally not used here because browsers normally
   // cap it at only a few MB per origin. IndexedDB is the durable local cache.
@@ -16197,8 +16301,8 @@ async function refreshCloudProfile() {
       await persistCloudStateLocally(data.state);
       rememberCloudUpdatedAt(data.updated_at, currentUser.id);
       cloudSyncDeferred = false;
-      runDataMigrations();
-      if (appStarted) renderAll();
+      runDataMigrations({ force: true });
+      if (appStarted) renderInitialPage();
       setSyncStatus('Synced');
     }
   } catch (error) {
