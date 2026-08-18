@@ -1106,11 +1106,18 @@ export const TrackerAPI = (() => {
 
   async function gameCatalogueProxy(settings, payload) {
     const url = gameCatalogueProxyUrl(settings);
-    return fetchJson(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload || {})
     });
+    let data = null;
+    try { data = await response.json(); } catch {}
+    if (!response.ok) {
+      const message = data?.error || data?.message || `${response.status} ${response.statusText || 'Game catalogue request failed'}`.trim();
+      throw new Error(message);
+    }
+    return data || {};
   }
 
   function igdbCoverUrl(imageId, size = 't_cover_big') {

@@ -14,10 +14,6 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-function secretConfigured(name) {
-  return Boolean(String(Deno.env.get(name) || '').trim());
-}
-
 function requiredSecret(name) {
   const value = String(Deno.env.get(name) || '').trim();
   if (!value) throw new Error(`${name} is not configured for the game-catalogue function.`);
@@ -73,7 +69,7 @@ async function igdbRequest(body) {
 
 async function handleIGDB(payload) {
   const action = String(payload.action || 'search');
-  const fields = 'id,name,summary,storyline,url,first_release_date,total_rating,total_rating_count,rating,rating_count,hypes,cover.image_id,genres.name,platforms.name';
+  const fields = 'id,name,summary,storyline,url,first_release_date,total_rating,total_rating_count,rating,rating_count,cover.image_id,genres.name,platforms.name';
   if (action === 'search') {
     const query = escapeApicalypse(payload.query);
     if (!query) return { results: [] };
@@ -81,33 +77,31 @@ async function handleIGDB(payload) {
     const body = `search "${query}"; fields ${fields}; where version_parent = null; limit ${limit};`;
     return { results: await igdbRequest(body) };
   }
-  if (action === 'discover') {
-    const mode = ['new','popular','for-you'].includes(String(payload.mode || '')) ? String(payload.mode) : 'for-you';
-    const limit = Math.max(1, Math.min(30, Number(payload.limit || 24)));
-    const offset = Math.max(0, Math.min(1500, Number(payload.offset || 0)));
-    const now = Math.floor(Date.now() / 1000);
-    const sixMonths = 183 * 24 * 60 * 60;
-    let where = 'version_parent = null & first_release_date > 0';
-    let sort = 'sort total_rating_count desc;';
-    if (mode === 'new') {
-      where += ` & first_release_date >= ${now - sixMonths} & first_release_date <= ${now + sixMonths}`;
-      sort = 'sort first_release_date desc;';
-    } else if (mode === 'popular') {
-      where += ' & total_rating_count > 20';
-      sort = 'sort total_rating_count desc;';
-    } else {
-      where += ' & total_rating_count > 5';
-      sort = 'sort total_rating_count desc;';
-    }
-    const rows = await igdbRequest(`fields ${fields}; where ${where}; ${sort} offset ${offset}; limit ${limit};`);
-    return { results: rows || [] };
-  }
-
   if (action === 'details') {
     const id = String(payload.id || '').replace(/\D/g, '');
     if (!id) throw new Error('A numeric IGDB game id is required.');
     const rows = await igdbRequest(`fields ${fields}; where id = ${id}; limit 1;`);
     return { result: rows?.[0] || null };
+  }
+  if (action === 'discover') {
+    const mode = String(payload.mode || 'popular').toLowerCase();
+    const limit = Math.max(1, Math.min(30, Number(payload.limit || 24)));
+    const page = Math.max(1, Number(payload.page || 1));
+    const offset = (page - 1) * limit;
+    const now = Math.floor(Date.now() / 1000);
+    let where = 'version_parent = null & cover != null & first_release_date != null';
+    let sort = 'total_rating_count desc';
+    if (mode === 'new') {
+      where += ` & first_release_date <= ${now}`;
+      sort = 'first_release_date desc';
+    } else if (mode === 'for-you') {
+      where += ' & total_rating_count >= 8';
+      sort = 'total_rating desc';
+    } else {
+      where += ' & total_rating_count >= 20';
+    }
+    const body = `fields ${fields}; where ${where}; sort ${sort}; offset ${offset}; limit ${limit};`;
+    return { results: await igdbRequest(body) };
   }
   throw new Error(`Unsupported IGDB action: ${action}`);
 }
@@ -141,12 +135,6 @@ async function handleBGG(payload) {
     url.searchParams.set('type', 'boardgame');
     return { xml: await fetchBGG(url.toString()) };
   }
-  if (action === 'hot') {
-    const url = new URL('https://boardgamegeek.com/xmlapi2/hot');
-    url.searchParams.set('type', 'boardgame');
-    return { xml: await fetchBGG(url.toString()) };
-  }
-
   if (action === 'details') {
     const id = String(payload.id || '').replace(/\D/g, '');
     if (!id) throw new Error('A numeric BoardGameGeek id is required.');
@@ -154,6 +142,13 @@ async function handleBGG(payload) {
     url.searchParams.set('id', id);
     url.searchParams.set('type', 'boardgame');
     url.searchParams.set('stats', '1');
+    return { xml: await fetchBGG(url.toString()) };
+  }
+  if (action === 'discover') {
+    // BGG's XML API exposes a Hot list rather than IGDB-style discover feeds.
+    // The frontend rotates/paginates this list for For You / New / Popular.
+    const url = new URL('https://boardgamegeek.com/xmlapi2/hot');
+    url.searchParams.set('type', 'boardgame');
     return { xml: await fetchBGG(url.toString()) };
   }
   throw new Error(`Unsupported BoardGameGeek action: ${action}`);
@@ -165,22 +160,10 @@ Deno.serve(async request => {
 
   try {
     const payload = await request.json();
-    const provider = String(payload?.provider || '').toLowerCase();
-    const action = String(payload?.action || '').toLowerCase();
-
-    // Let the browser verify deployment/runtime configuration without making a
-    // provider request. This prevents Discover from repeatedly hitting a broken
-    // provider and producing a wall of 500s when a secret was not synced yet.
-    if (action === 'health' || provider === 'health') {
-      return json({
-        ok: true,
-        providers: {
-          igdb: { configured: secretConfigured('IGDB_CLIENT_ID') && secretConfigured('IGDB_CLIENT_SECRET') },
-          bgg: { configured: secretConfigured('BGG_APPLICATION_TOKEN') }
-        }
-      });
+    if (String(payload?.action || '').toLowerCase() === 'health') {
+      return json({ ok: true, service: 'game-catalogue', providers: ['igdb', 'bgg'], discover: true });
     }
-
+    const provider = String(payload?.provider || '').toLowerCase();
     const body = provider === 'igdb'
       ? await handleIGDB(payload)
       : provider === 'bgg'
@@ -189,11 +172,6 @@ Deno.serve(async request => {
     return json(body);
   } catch (error) {
     console.error('[game-catalogue]', error);
-    const message = error?.message || String(error);
-    const status = /is not configured/i.test(message) ? 503
-      : /required|unsupported|provider must/i.test(message) ? 400
-        : /Twitch OAuth|IGDB request|BoardGameGeek request/i.test(message) ? 502
-          : 500;
-    return json({ error: { message } }, status);
+    return json({ error: { message: error?.message || String(error) } }, 500);
   }
 });

@@ -1,6 +1,6 @@
-import { TrackerAPI } from './api.js?v=omni-streak-scopes-games-83';
-import { API_CONFIG } from './config.js?v=omni-streak-scopes-games-83';
-import { supabase, hasSupabaseConfig } from './supabase.js';
+import { TrackerAPI } from './api.js?v=omni-performance-82';
+import { API_CONFIG } from './config.js?v=omni-performance-82';
+import { supabase, hasSupabaseConfig } from './supabase.js?v=omni-performance-82';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
 const CACHE_KEY = 'zoharTracker.apiCache.v1';
@@ -15,6 +15,7 @@ const TYPE_USAGE_KEY = 'zoharTracker.typeUsage.v1';
 const PHOTO_UPLOAD_LOG_KEY = 'zoharTracker.photoUploadLog.v1';
 const ONBOARDING_KEY = 'zoharTracker.onboarding.v1';
 const ONBOARDING_STEP_KEY = 'zoharTracker.onboardingStep.v2';
+const CLOUD_UPDATED_AT_KEY = 'zoharTracker.cloudUpdatedAt.v1';
 const LOG_TYPE_PREFS_KEY = 'zoharTracker.logTypePrefs.v1';
 const PHOTO_WEEKLY_LIMIT = 20;
 const ATTACHMENT_DB_NAME = 'zoharTracker.attachments.v1';
@@ -151,9 +152,14 @@ let localOnlyMode = false;
 let cloudSyncTimer = null;
 let cloudSyncBusy = false;
 let cloudSyncQueued = false;
+let cloudHydrationReady = false;
+let cloudSyncDeferred = false;
+let socialStartupTimer = null;
+let statsEnrichmentPromise = null;
 let lastCloudUpdatedAt = '';
 let discoverFeedObserver = null;
 const attachmentCoverObjectUrls = new Map();
+const apiCacheInFlight = new Map();
 
 
 const state = {
@@ -411,6 +417,8 @@ const els = {
   itemLogEntryFields: $('#itemLogEntryFields'),
   itemLogEntryTitle: $('#itemLogEntryTitle'),
   itemLogModeHint: $('#itemLogModeHint'),
+  itemDateOptionsDisclosure: $('#itemDateOptionsDisclosure'),
+  itemDateOptionsSummary: $('#itemDateOptionsSummary'),
   findSourcePrompt: $('#findSourcePrompt'),
   itemUsePlaylist: $('#itemUsePlaylist'),
   catalogueQuery: $('#catalogueQuery'),
@@ -545,11 +553,15 @@ async function bootstrapAuth() {
 
 function bindAuthEvents() {
   els.authForm?.addEventListener('submit', handleAuthSubmit);
-  els.continueLocalButton?.addEventListener('click', async () => {
+  els.continueLocalButton?.addEventListener('click', () => {
     localOnlyMode = true;
-    await hydrateLargeLocalState();
+    cloudHydrationReady = true;
     unlockApp();
     startAppOnce();
+    hydrateLargeLocalState().then(() => {
+      runDataMigrations();
+      if (appStarted) renderAll();
+    });
   });
   els.signOutButton?.addEventListener('click', handleSignOut);
 }
@@ -666,25 +678,70 @@ async function startForUser(user) {
     window.location.assign('index.html');
     return;
   }
+
   currentUser = user;
+  cloudHydrationReady = false;
+  cloudSyncDeferred = false;
   if (els.userEmail) els.userEmail.textContent = user.email || '';
-  setAuthMessage('Loading your profile…', false);
+
+  // Paint the locally cached app immediately. Cloud state and the potentially
+  // large IndexedDB history are hydration work, not a reason to keep the entire
+  // interface behind the auth loading screen.
+  unlockApp();
+  startAppOnce();
+  maybeShowOnboarding(user);
+  setSyncStatus('Syncing…');
+
+  window.addEventListener('focus', refreshCloudProfile);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshCloudProfile();
+  });
+
   try {
     await hydrateLargeLocalState();
-    await hydrateCloudProfile(user.id);
-    unlockApp();
-    startAppOnce();
-    initializeSocialForUser().catch(error => console.warn('[Social] background initialization failed:', error));
-    maybeShowOnboarding(user);
+    runDataMigrations();
+    if (appStarted) renderAll();
+
+    const localMigrationChanges = cloudSyncDeferred;
+    const cloudChanged = await hydrateCloudProfile(user.id);
+    cloudHydrationReady = true;
+    if (cloudChanged) {
+      // A newer cloud snapshot supersedes saves requested against the local cache.
+      cloudSyncDeferred = false;
+      runDataMigrations();
+      if (appStarted) renderAll();
+    } else if (localMigrationChanges) {
+      // The cloud timestamp matched our cache, so local migration changes are safe
+      // to persist now that hydration has confirmed the snapshot is current.
+      cloudSyncDeferred = false;
+      scheduleCloudSync();
+    }
     setSyncStatus('Synced');
-    window.addEventListener('focus', refreshCloudProfile);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') refreshCloudProfile();
-    });
+    deferSocialStartup();
   } catch (error) {
-    currentUser = null;
-    lockApp();
-    setAuthMessage(`Signed in, but your cloud profile could not load: ${error.message}`, true);
+    // Keep the cached app usable when the network is slow/offline. We deliberately
+    // leave cloudHydrationReady false so a stale local snapshot cannot overwrite
+    // a cloud profile that we failed to read.
+    console.warn('Cloud profile hydration failed:', error);
+    setSyncStatus('Offline', true);
+    deferSocialStartup();
+  }
+}
+
+function deferSocialStartup() {
+  if (socialStartupTimer || localOnlyMode || !currentUser) return;
+  const start = () => {
+    socialStartupTimer = null;
+    initializeSocialForUser().catch(error => console.warn('[Social] background initialization failed:', error));
+  };
+  if ($('#socialRoot')) {
+    start();
+    return;
+  }
+  if ('requestIdleCallback' in window) {
+    socialStartupTimer = window.requestIdleCallback(start, { timeout: 1800 });
+  } else {
+    socialStartupTimer = window.setTimeout(start, 900);
   }
 }
 
@@ -1415,7 +1472,7 @@ function migrateDuplicateLibraryItems() {
   if (historyChanged) saveHistory();
 }
 
-function init() {
+function runDataMigrations() {
   migrateSavedMusicClassification();
   migrateSavedFoodClassification();
   migrateDuplicateLibraryItems();
@@ -1423,6 +1480,9 @@ function init() {
   migrateCustomTypeActionCategories();
   seedTypeUsageFromLibrary();
   reconcileLocalProgressQueues();
+}
+
+function init() {
   const now = new Date();
   if (els.monthPicker) {
     els.monthPicker.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -1545,8 +1605,6 @@ function bindEvents() {
   els.openStreakSettings?.addEventListener('click', openStreakSettings);
   els.streakSettingsForm?.addEventListener('submit', saveStreakSettings);
   els.streakSettingsRows?.addEventListener('change', previewStreakSettings);
-  els.streakSettingsRows?.addEventListener('input', previewStreakSettings);
-  els.streakSettingsRows?.addEventListener('click', handleStreakSettingsClick);
   els.resetStreakSettings?.addEventListener('click', resetStreakSettings);
   els.calendarRowSettingsForm?.addEventListener('submit', saveCalendarRowSettings);
   els.resetCalendarRowSettings?.addEventListener('click', resetCalendarRowSettings);
@@ -3035,14 +3093,30 @@ async function renderStats() {
       .map(group => `<button class="stat-type-row" type="button" data-stats-type-key="${escapeAttr(group.key)}" data-stats-label="${escapeAttr(group.label)}"><span>${escapeHtml(group.label)}</span><strong>${group.items.length}</strong></button>`).join('');
   }
   renderGenrePie(genres);
-  const [minutes] = await Promise.all([estimatedWatchMinutes(), enrichWatchedTVStatsGenres()]);
-  if (els.statsSummary?.dataset.renderToken !== requestToken) return;
-  const hours = formatWatchHours(minutes);
-  const cards = [...els.statsSummary.querySelectorAll('.stat-card')];
-  const watchCard = cards.find(card => card.querySelector('span')?.textContent === 'Watch hours');
-  if (watchCard) watchCard.querySelector('strong').textContent = hours;
-  // Runtime lookups can also fill missing genre metadata.
-  renderGenrePie(watchedGenreCounts());
+  scheduleStatsEnrichment(requestToken);
+}
+
+function scheduleStatsEnrichment(requestToken) {
+  if (statsEnrichmentPromise) return;
+  const run = async () => {
+    try {
+      const [minutes] = await Promise.all([estimatedWatchMinutes(), enrichWatchedTVStatsGenres()]);
+      if (!els.statsSummary) return;
+      const hours = formatWatchHours(minutes);
+      const cards = [...els.statsSummary.querySelectorAll('.stat-card')];
+      const watchCard = cards.find(card => card.querySelector('span')?.textContent === 'Watch hours');
+      if (watchCard) watchCard.querySelector('strong').textContent = hours;
+      renderGenrePie(watchedGenreCounts());
+    } finally {
+      statsEnrichmentPromise = null;
+    }
+  };
+
+  statsEnrichmentPromise = new Promise(resolve => {
+    const start = () => run().finally(resolve);
+    if ('requestIdleCallback' in window) window.requestIdleCallback(start, { timeout: 2200 });
+    else window.setTimeout(start, 1200);
+  });
 }
 
 function isPlaceBackedItem(item) {
@@ -5661,6 +5735,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.itemSubcategoryDisclosure) els.itemSubcategoryDisclosure.open = false;
   if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.open = false;
   if (els.itemAttachmentsDisclosure) els.itemAttachmentsDisclosure.open = false;
+  if (els.itemDateOptionsDisclosure) els.itemDateOptionsDisclosure.open = false;
   if (els.itemFindSourceDisclosure) els.itemFindSourceDisclosure.open = false;
   if (els.itemNoteDisclosure) els.itemNoteDisclosure.open = false;
   if (els.itemBuddyWatchToggle) els.itemBuddyWatchToggle.checked = false;
@@ -5950,7 +6025,7 @@ function clearSourceSelectionForTypeChange() {
 function syncItemSubcategoryDisclosure() {
   if (!els.itemSubcategoryDisclosure) return;
   const value = cleanTypeLabel(els.itemSubcategory?.value || '');
-  if (els.itemSubcategorySummary) els.itemSubcategorySummary.textContent = value ? `· ${value}` : 'optional';
+  if (els.itemSubcategorySummary) els.itemSubcategorySummary.textContent = value ? `· ${value}` : '';
   els.itemSubcategoryDisclosure.classList.toggle('has-value', Boolean(value));
 }
 
@@ -5958,7 +6033,7 @@ function syncItemPeopleDisclosure() {
   if (!els.itemPeopleDisclosure) return;
   const people = parseItemPeople(els.itemPeople?.value || '');
   if (els.itemPeopleSummary) {
-    els.itemPeopleSummary.textContent = people.length ? `· ${people.length} ${people.length === 1 ? 'person' : 'people'}` : 'optional';
+    els.itemPeopleSummary.textContent = people.length ? `· ${people.length}` : '';
   }
   els.itemPeopleDisclosure.classList.toggle('has-value', people.length > 0);
 }
@@ -5970,8 +6045,22 @@ function syncItemAttachmentsDisclosure() {
   const newCount = (state.attachmentDraft?.newFiles || []).length;
   const linkCount = (state.attachmentDraft?.links || []).length;
   const total = existingCount + newCount + linkCount;
-  if (els.itemAttachmentsSummary) els.itemAttachmentsSummary.textContent = total ? `${total} ${total === 1 ? 'item' : 'items'}` : 'optional';
+  if (els.itemAttachmentsSummary) els.itemAttachmentsSummary.textContent = total ? `${total}` : '';
   els.itemAttachmentsDisclosure.classList.toggle('has-value', total > 0);
+}
+
+function syncItemDateOptionsDisclosure() {
+  if (!els.itemDateOptionsDisclosure) return;
+  const bits = [];
+  if (els.itemUseRepeatLog?.checked) bits.push('Multiple logs');
+  const frequency = els.reminderFrequency?.value || 'none';
+  if (frequency !== 'none') {
+    const repeatLabel = String(els.itemRepeatSummary?.textContent || '').trim();
+    bits.push(repeatLabel || 'Repeat');
+  }
+  if (els.itemUseDateRange?.checked) bits.push('Multi-day');
+  if (els.itemDateOptionsSummary) els.itemDateOptionsSummary.textContent = bits.length ? `· ${bits.join(' · ')}` : '';
+  els.itemDateOptionsDisclosure.classList.toggle('has-value', bits.length > 0);
 }
 
 function syncItemOptionalDisclosures() {
@@ -5979,6 +6068,7 @@ function syncItemOptionalDisclosures() {
   syncItemPeopleDisclosure();
   syncItemAttachmentsDisclosure();
   syncItemBuddyWatchToggle();
+  syncItemDateOptionsDisclosure();
 }
 
 function syncItemBuddyWatchToggle() {
@@ -6183,6 +6273,7 @@ function updateReminderFormFields() {
   if (els.reminderCustomFields) els.reminderCustomFields.hidden = !custom;
   if (els.reminderDueDate && !els.reminderDueDate.value) els.reminderDueDate.value = els.itemDate?.value || todayString();
   if (custom && els.reminderInterval && Number(els.reminderInterval.value || 0) < 1) els.reminderInterval.value = '1';
+  syncItemDateOptionsDisclosure();
 }
 
 function parseYouTubeVideoId(value) {
@@ -7236,6 +7327,7 @@ function setRating(value) {
   const rating = normalizeStarRating(value);
   els.itemRating.value = String(rating);
   syncStarPicker(els.starPicker, '[data-rating]', 'data-rating', rating);
+  if (els.clearRating) els.clearRating.hidden = rating <= 0;
 }
 
 let actionFeedbackTimer = null;
@@ -9683,27 +9775,43 @@ function selectedDiscoverGenre() {
 
 async function ensureDiscoverGenreCatalog() {
   if (!els.discoverGenreFilter) return;
-  if (!state.discoverGenreCatalog.tv.length || !state.discoverGenreCatalog.movie.length) {
-    const [tv, movie] = await Promise.allSettled([
-      TrackerAPI.getTMDBGenres('tv', state.settings),
-      TrackerAPI.getTMDBGenres('movie', state.settings)
-    ]);
-    if (tv.status === 'fulfilled') state.discoverGenreCatalog.tv = tv.value;
-    if (movie.status === 'fulfilled') state.discoverGenreCatalog.movie = movie.value;
-  }
+
+  // The genre menu itself is static. Do not make two TMDB requests before the
+  // first Discover card can render when the user is simply viewing All genres.
+  const current = state.discoverPrefs.genre || 'all';
+  els.discoverGenreFilter.innerHTML = '<option value="all">All genres</option>' + DISCOVER_GENRES.map(genre => `<option value="${escapeAttr(genre.value)}">${escapeHtml(genre.label)}</option>`).join('');
+  els.discoverGenreFilter.value = DISCOVER_GENRES.some(genre => genre.value === current) ? current : 'all';
 
   const selected = selectedDiscoverGenre();
-  if (selected && !state.discoverKeywordCatalog[selected.value]) {
+  if (!selected) return;
+
+  const enabled = new Set(normalizedDiscoverContentTypes());
+  const genreRequests = [];
+  const genreTargets = [];
+  if (enabled.has('tv') && !state.discoverGenreCatalog.tv.length) {
+    genreTargets.push('tv');
+    genreRequests.push(TrackerAPI.getTMDBGenres('tv', state.settings));
+  }
+  if (enabled.has('movie') && !state.discoverGenreCatalog.movie.length) {
+    genreTargets.push('movie');
+    genreRequests.push(TrackerAPI.getTMDBGenres('movie', state.settings));
+  }
+  if (genreRequests.length) {
+    const settled = await Promise.allSettled(genreRequests);
+    settled.forEach((result, index) => {
+      if (result.status === 'fulfilled') state.discoverGenreCatalog[genreTargets[index]] = result.value;
+    });
+  }
+
+  const needsTmdbKeywords = (enabled.has('tv') || enabled.has('movie'))
+    && !['tv','movie'].some(type => enabled.has(type) && discoverTMDBGenreIds(type).length);
+  if (needsTmdbKeywords && !state.discoverKeywordCatalog[selected.value]) {
     try {
       state.discoverKeywordCatalog[selected.value] = await TrackerAPI.getTMDBKeywordIds(selected.keywords || [], state.settings);
     } catch {
       state.discoverKeywordCatalog[selected.value] = [];
     }
   }
-
-  const current = state.discoverPrefs.genre || 'all';
-  els.discoverGenreFilter.innerHTML = '<option value="all">All genres</option>' + DISCOVER_GENRES.map(genre => `<option value="${escapeAttr(genre.value)}">${escapeHtml(genre.label)}</option>`).join('');
-  els.discoverGenreFilter.value = DISCOVER_GENRES.some(genre => genre.value === current) ? current : 'all';
 }
 
 function discoverTMDBGenreIds(type) {
@@ -11393,6 +11501,8 @@ async function collectLiveDiscoverCandidates(batchNumber, mode = 'for-you') {
 }
 
 async function collectForYouDiscoverCandidates(batchNumber) {
+  const selectedTypes = normalizedDiscoverContentTypes();
+  const selected = new Set(selectedTypes);
   const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
   const candidates = [];
   const add = (results, sourceType, source, boost = 0, exploration = false) => (results || []).forEach(result => candidates.push({
@@ -11404,101 +11514,159 @@ async function collectForYouDiscoverCandidates(batchNumber) {
   }));
   const recommendationPage = 1 + ((batchNumber - 1) % 3);
 
+  // Personalized TV/movie recommendations used to run one request after another.
+  // Run the selected categories concurrently and skip categories the user disabled.
+  const personalRequests = [];
   for (const sourceType of ['tv', 'movie']) {
+    if (!selected.has(sourceType)) continue;
     const used = new Set();
     for (let i = 0; i < 3; i++) {
       const seed = pickDiscoverSeed(sourceType, used);
       if (!seed?.providerId) continue;
       used.add(String(seed.providerId));
-      try {
-        const recs = await getCached(
+      personalRequests.push({
+        sourceType,
+        seed,
+        promise: getCached(
           `discover:for-you:${sourceType}:${seed.providerId}:${recommendationPage}`,
           () => TrackerAPI.getTMDBRecommendations(sourceType, seed.providerId, state.settings, recommendationPage)
-        );
-        add(filterAlreadyKnown(recs, sourceType), sourceType, 'personal', 11 + Number(seed.rating || 0));
-      } catch {}
+        )
+      });
     }
   }
+  if (personalRequests.length) {
+    const settled = await Promise.allSettled(personalRequests.map(entry => entry.promise));
+    settled.forEach((result, index) => {
+      if (result.status !== 'fulfilled') return;
+      const request = personalRequests[index];
+      add(filterAlreadyKnown(result.value, request.sourceType), request.sourceType, 'personal', 11 + Number(request.seed.rating || 0));
+    });
+  }
 
-  const readAuthors = getReadAuthors();
-  if (readAuthors.length && state.discoverPrefs.prioritizeAuthors !== false) {
-    const start = ((batchNumber - 1) * 2) % readAuthors.length;
-    for (const author of [readAuthors[start], readAuthors[(start + 1) % readAuthors.length]].filter(Boolean)) {
+  if (selected.has('book')) {
+    const readAuthors = getReadAuthors();
+    if (readAuthors.length && state.discoverPrefs.prioritizeAuthors !== false) {
+      const start = ((batchNumber - 1) * 2) % readAuthors.length;
+      const authors = [...new Set([readAuthors[start], readAuthors[(start + 1) % readAuthors.length]].filter(Boolean))];
+      const authorResults = await Promise.allSettled(authors.map(author =>
+        getCached(`discover:for-you:author:${author.toLowerCase()}`, () => TrackerAPI.getBooksByAuthor(author, state.settings))
+      ));
+      authorResults.forEach(result => {
+        if (result.status === 'fulfilled') add(filterAlreadyKnown(result.value, 'book'), 'book', 'familiar-author', 13);
+      });
+    }
+
+    const bookSeed = pickDiscoverSeed('book');
+    if (bookSeed?.providerId) {
       try {
-        const books = await getCached(`discover:for-you:author:${author.toLowerCase()}`, () => TrackerAPI.getBooksByAuthor(author, state.settings));
-        add(filterAlreadyKnown(books, 'book'), 'book', 'familiar-author', 13);
+        const books = await getCached(`discover:for-you:book:${bookSeed.providerId}`, () => TrackerAPI.getBookRecommendations(bookSeed.providerId, state.settings));
+        add(filterAlreadyKnown(books, 'book'), 'book', 'personal', 11 + Number(bookSeed.rating || 0));
       } catch {}
     }
   }
 
-  const bookSeed = pickDiscoverSeed('book');
-  if (bookSeed?.providerId) {
-    try {
-      const books = await getCached(`discover:for-you:book:${bookSeed.providerId}`, () => TrackerAPI.getBookRecommendations(bookSeed.providerId, state.settings));
-      add(filterAlreadyKnown(books, 'book'), 'book', 'personal', 11 + Number(bookSeed.rating || 0));
-    } catch {}
-  }
-
-  if (selectedProviders.length) {
+  if (selectedProviders.length && (selected.has('tv') || selected.has('movie'))) {
     const providerPage = 1 + ((batchNumber - 1) % 8);
-    const providerResults = await Promise.allSettled([
-      TrackerAPI.getTMDBDiscover('tv', providerPage, state.settings, discoverTMDBOptions('tv', { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 20 })),
-      TrackerAPI.getTMDBDiscover('movie', providerPage, state.settings, discoverTMDBOptions('movie', { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 30 }))
-    ]);
-    if (providerResults[0].status === 'fulfilled') add(filterAlreadyKnown(providerResults[0].value.results, 'tv'), 'tv', 'preferred-streaming', 8);
-    if (providerResults[1].status === 'fulfilled') add(filterAlreadyKnown(providerResults[1].value.results, 'movie'), 'movie', 'preferred-streaming', 8);
+    const providerRequests = [];
+    if (selected.has('tv')) providerRequests.push({
+      sourceType: 'tv',
+      promise: TrackerAPI.getTMDBDiscover('tv', providerPage, state.settings, discoverTMDBOptions('tv', { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 20 }))
+    });
+    if (selected.has('movie')) providerRequests.push({
+      sourceType: 'movie',
+      promise: TrackerAPI.getTMDBDiscover('movie', providerPage, state.settings, discoverTMDBOptions('movie', { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 30 }))
+    });
+    const providerResults = await Promise.allSettled(providerRequests.map(entry => entry.promise));
+    providerResults.forEach((result, index) => {
+      if (result.status !== 'fulfilled') return;
+      const sourceType = providerRequests[index].sourceType;
+      add(filterAlreadyKnown(result.value.results, sourceType), sourceType, 'preferred-streaming', 8);
+    });
   }
 
-  // Deliberate exploration: roughly a quarter of the final For You batch is
-  // reserved for broader catalogue material, rather than hiding it in a separate
-  // "Discover" tab. These candidates are marked so rankDiscoverFeedCandidates
-  // can guarantee they actually survive the personalized ranking.
+  // Only request exploration catalogues for categories that are actually enabled.
   const explorationPage = 1 + ((batchNumber + Math.floor(state.discoverFeedSession * 11)) % 12);
-  const explore = await Promise.allSettled([
-    TrackerAPI.getTMDBDiscover('tv', explorationPage, state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 25 })),
-    TrackerAPI.getTMDBDiscover('movie', explorationPage, state.settings, discoverTMDBOptions('movie', { sortBy: 'popularity.desc', minVotes: 40 })),
-    TrackerAPI.getBookFeed((batchNumber - 1) * DISCOVER_BOOK_BATCH_SIZE, state.settings, discoverBookOptions({ query: chooseDiscoverBookPlan([], batchNumber).query, orderBy: 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE }))
-  ]);
-  if (explore[0].status === 'fulfilled') add(filterAlreadyKnown(explore[0].value.results, 'tv'), 'tv', 'explore', 4, true);
-  if (explore[1].status === 'fulfilled') add(filterAlreadyKnown(explore[1].value.results, 'movie'), 'movie', 'explore', 4, true);
-  if (explore[2].status === 'fulfilled') add(filterAlreadyKnown(explore[2].value.results, 'book'), 'book', 'explore', 3, true);
-
-  if (normalizedDiscoverContentTypes().some(type => ['music','artist','song'].includes(type))) {
-    try {
-      candidates.push(...await collectMusicDiscoverCandidates(batchNumber, 'for-you'));
-    } catch (error) {
-      musicDiscoverWarn('For You music collector failed', { batchNumber, error: error?.message || String(error) });
-    }
+  const exploreRequests = [];
+  if (selected.has('tv')) exploreRequests.push({
+    sourceType: 'tv',
+    promise: TrackerAPI.getTMDBDiscover('tv', explorationPage, state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 25 }))
+  });
+  if (selected.has('movie')) exploreRequests.push({
+    sourceType: 'movie',
+    promise: TrackerAPI.getTMDBDiscover('movie', explorationPage, state.settings, discoverTMDBOptions('movie', { sortBy: 'popularity.desc', minVotes: 40 }))
+  });
+  if (selected.has('book')) exploreRequests.push({
+    sourceType: 'book',
+    promise: TrackerAPI.getBookFeed((batchNumber - 1) * DISCOVER_BOOK_BATCH_SIZE, state.settings, discoverBookOptions({ query: chooseDiscoverBookPlan([], batchNumber).query, orderBy: 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE }))
+  });
+  if (exploreRequests.length) {
+    const explore = await Promise.allSettled(exploreRequests.map(entry => entry.promise));
+    explore.forEach((result, index) => {
+      if (result.status !== 'fulfilled') return;
+      const sourceType = exploreRequests[index].sourceType;
+      const rows = sourceType === 'book' ? result.value.results : result.value.results;
+      add(filterAlreadyKnown(rows, sourceType), sourceType, 'explore', sourceType === 'book' ? 3 : 4, true);
+    });
   }
 
-  if (state.settings.googlePlacesKey && discoverTypeSelected('restaurant')) {
-    candidates.push(...await collectRestaurantDiscoverCandidates(batchNumber, 'for-you'));
+  const supplementalRequests = [];
+  if (selectedTypes.some(type => ['music','artist','song'].includes(type))) {
+    supplementalRequests.push({
+      kind: 'music',
+      promise: collectMusicDiscoverCandidates(batchNumber, 'for-you')
+    });
   }
-
-  if (state.settings.ticketmasterKey && normalizedDiscoverContentTypes().some(type => ['concert','event'].includes(type))) {
-    try {
-      const [concerts, relatedConcerts, generalEvents] = await Promise.all([
-        getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 12 }),
-        getRelatedTicketmasterConcerts(batchNumber, 12),
+  if (state.settings.googlePlacesKey && selected.has('restaurant')) {
+    supplementalRequests.push({
+      kind: 'restaurant',
+      promise: collectRestaurantDiscoverCandidates(batchNumber, 'for-you')
+    });
+  }
+  if (state.settings.ticketmasterKey && selectedTypes.some(type => ['concert','event'].includes(type))) {
+    supplementalRequests.push({
+      kind: 'live',
+      promise: Promise.all([
+        selected.has('concert') ? getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 12 }) : Promise.resolve([]),
+        selected.has('concert') ? getRelatedTicketmasterConcerts(batchNumber, 12) : Promise.resolve([]),
         fetchTicketmasterEventsForPreferences('', { page: Math.max(0, batchNumber - 1), size: 36, skipPrioritySearch: true })
-      ]);
-      candidates.push(...concerts.map(result => ({
-        ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-liked',
-        _discoverBoost: result.likedArtist ? 14 : 10, _discoverExploration: false
-      })));
-      candidates.push(...relatedConcerts.map(result => ({
-        ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-related',
-        _discoverBoost: 8, _discoverExploration: false
-      })));
-      candidates.push(...generalEvents.map(result => asLiveDiscoverCandidate(result, 'live-explore', 3, true)));
-    } catch {}
+      ])
+    });
+  }
+
+  if (supplementalRequests.length) {
+    const supplemental = await Promise.allSettled(supplementalRequests.map(entry => entry.promise));
+    supplemental.forEach((result, index) => {
+      if (result.status !== 'fulfilled') {
+        if (supplementalRequests[index].kind === 'music') musicDiscoverWarn('For You music collector failed', { batchNumber, error: result.reason?.message || String(result.reason || '') });
+        return;
+      }
+      const kind = supplementalRequests[index].kind;
+      if (kind === 'music' || kind === 'restaurant') {
+        candidates.push(...result.value);
+        return;
+      }
+      const [concerts, relatedConcerts, generalEvents] = result.value;
+      if (selected.has('concert')) {
+        candidates.push(...concerts.map(entry => ({
+          ...entry, sourceType: 'concert', _discoverSource: 'ticketmaster-liked',
+          _discoverBoost: entry.likedArtist ? 14 : 10, _discoverExploration: false
+        })));
+        candidates.push(...relatedConcerts.map(entry => ({
+          ...entry, sourceType: 'concert', _discoverSource: 'ticketmaster-related',
+          _discoverBoost: 8, _discoverExploration: false
+        })));
+      }
+      candidates.push(...generalEvents
+        .map(entry => asLiveDiscoverCandidate(entry, 'live-explore', 3, true))
+        .filter(entry => selected.has(entry.sourceType)));
+    });
   }
 
   return dedupeDiscoverCandidatesByBoost(candidates);
 }
 
 function discoverLoadingLabel() {
-  return `Loading… · Tip: ${loadingTipText()}`;
+  return `Tip: ${loadingTipText()}`;
 }
 
 function discoverEndlessLabel() {
@@ -14553,7 +14721,7 @@ const WEEKDAY_OPTIONS = [
   { value: 0, short: 'S', label: 'Sunday' }
 ];
 
-function getBaseStreakGroups() {
+function getRecognizedStreakGroups() {
   const groups = new Map();
 
   for (const { type, label } of getRecognizedTypes()) {
@@ -14572,7 +14740,11 @@ function getBaseStreakGroups() {
     if (!group.memberTypes.includes(type)) group.memberTypes.push(type);
   }
 
-  for (const entry of getCalendarEntries({ respectVisibility: false })) {
+  // Calendar entries are the final authority for visible grouping. This also
+  // catches two different internal source types that have the same displayed
+  // type label (for example a YouTube item and a manual item both called
+  // "Workout").
+  for (const entry of getCalendarEntries()) {
     const label = getStreakTypeGroupLabel(entry);
     const key = getStreakTypeGroupKey(entry);
     if (!groups.has(key)) {
@@ -14592,113 +14764,26 @@ function getBaseStreakGroups() {
   return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function getStreakSubcategories(baseKey) {
-  const base = getBaseStreakGroups().find(group => group.key === baseKey);
-  if (!base) return [];
-  const labels = new Map();
-  const add = value => {
-    const label = cleanTypeLabel(value || '');
-    const key = slugifyType(label);
-    if (label && key && !labels.has(key)) labels.set(key, label);
-  };
-
-  state.items.forEach(item => {
-    if (base.memberTypes.includes(item.type)) add(item.subcategory);
-  });
-  state.history.forEach(entry => {
-    if (base.memberTypes.includes(entry.type)) add(entry.subcategory || findItem(entry.sourceItemId)?.subcategory);
-  });
-  getCalendarEntries({ respectVisibility: false }).forEach(entry => {
-    if (getStreakTypeGroupKey(entry) === baseKey) add(entry.subcategory);
-  });
-
-  return [...labels.entries()]
-    .map(([key, label]) => ({ key, label }))
-    .sort((a, b) => a.label.localeCompare(b.label));
-}
-
-function streakSubcategoryTargetKey(baseKey, subcategory) {
-  return `${baseKey}::sub::${slugifyType(subcategory)}`;
-}
-
-function configuredStreakGroupsForBase(baseKey) {
-  const base = getBaseStreakGroups().find(group => group.key === baseKey);
-  if (!base) return [];
-  return Object.entries(state.streakPrefs || {})
-    .filter(([key, saved]) => saved && typeof saved === 'object' && saved.scope === 'group' && (saved.baseKey === baseKey || key.startsWith(`${baseKey}::group::`)))
-    .map(([key, saved]) => {
-      const subcategories = Array.isArray(saved.subcategories)
-        ? [...new Set(saved.subcategories.map(value => cleanTypeLabel(value)).filter(Boolean))]
-        : [];
-      return {
-        key,
-        label: cleanTypeLabel(saved.label || '') || subcategories.join(' + ') || `${base.label} group`,
-        memberTypes: [...base.memberTypes],
-        representativeType: base.representativeType,
-        representativeEntry: base.representativeEntry,
-        scope: 'group',
-        baseKey,
-        subcategories
-      };
-    })
-    .sort((a, b) => a.label.localeCompare(b.label));
-}
-
-function getRecognizedStreakGroups() {
-  const output = [];
-  for (const base of getBaseStreakGroups()) {
-    output.push({
-      ...base,
-      scope: 'type',
-      baseKey: base.key,
-      subcategories: []
-    });
-    for (const subcategory of getStreakSubcategories(base.key)) {
-      output.push({
-        key: streakSubcategoryTargetKey(base.key, subcategory.label),
-        label: subcategory.label,
-        memberTypes: [...base.memberTypes],
-        representativeType: base.representativeType,
-        representativeEntry: base.representativeEntry,
-        scope: 'subcategory',
-        baseKey: base.key,
-        subcategories: [subcategory.label]
-      });
-    }
-    output.push(...configuredStreakGroupsForBase(base.key));
-  }
-  return output;
-}
-
 function resolveStreakGroup(typeOrGroupKey) {
-  if (typeOrGroupKey && typeof typeOrGroupKey === 'object' && typeOrGroupKey.key) return typeOrGroupKey;
   const value = String(typeOrGroupKey || '');
   const groups = getRecognizedStreakGroups();
-  const direct = groups.find(group => group.key === value);
-  if (direct) return direct;
-
-  const base = getBaseStreakGroups().find(group => group.memberTypes.includes(value) || group.key === value);
-  if (base) return { ...base, scope: 'type', baseKey: base.key, subcategories: [] };
-
-  return {
+  return groups.find(group => group.key === value || group.memberTypes.includes(value)) || {
     key: slugifyType(getTypeLabel(value) || value || 'Other'),
     label: getTypeLabel(value) || value || 'Other',
     memberTypes: value ? [value] : [],
     representativeType: value || 'other',
-    representativeEntry: null,
-    scope: 'type',
-    baseKey: slugifyType(getTypeLabel(value) || value || 'Other'),
-    subcategories: []
+    representativeEntry: null
   };
 }
 
 function getStreakConfig(typeOrGroupKey) {
-  const target = resolveStreakGroup(typeOrGroupKey);
-  let saved = state.streakPrefs?.[target.key];
+  const group = resolveStreakGroup(typeOrGroupKey);
 
-  // Fall back to the pre-scope type keys so existing whole-type streaks survive.
-  if (!saved && target.scope === 'type') {
-    for (const memberType of target.memberTypes) {
+  // New streak preferences are keyed by the visible type name. Fall back to
+  // the old internal-type keys so existing settings survive this migration.
+  let saved = state.streakPrefs?.[group.key];
+  if (!saved) {
+    for (const memberType of group.memberTypes) {
       if (state.streakPrefs?.[memberType]) {
         saved = state.streakPrefs[memberType];
         break;
@@ -14707,57 +14792,35 @@ function getStreakConfig(typeOrGroupKey) {
   }
   saved ||= {};
 
-  const subcategories = Array.isArray(saved.subcategories)
-    ? [...new Set(saved.subcategories.map(value => cleanTypeLabel(value)).filter(Boolean))]
-    : [...(target.subcategories || [])];
-
   return {
     enabled: Boolean(saved.enabled),
     restDays: Array.isArray(saved.restDays)
       ? [...new Set(saved.restDays.map(Number).filter(day => day >= 0 && day <= 6))]
-      : [],
-    scope: saved.scope || target.scope || 'type',
-    baseKey: saved.baseKey || target.baseKey || target.key,
-    subcategories,
-    label: cleanTypeLabel(saved.label || '') || target.label,
-    sticker: saved.sticker && typeof saved.sticker === 'object' ? { ...saved.sticker } : null
+      : []
   };
 }
 
-function streakTargetMatchesEntry(targetOrKey, entry, overrideConfig = null) {
-  const target = resolveStreakGroup(targetOrKey);
-  const config = overrideConfig || getStreakConfig(target);
-  const baseKey = config.baseKey || target.baseKey || target.key;
-  if (getStreakTypeGroupKey(entry) !== baseKey) return false;
-  if ((config.scope || target.scope) === 'type') return true;
-
-  const wanted = new Set((config.subcategories || target.subcategories || []).map(value => slugifyType(cleanTypeLabel(value))).filter(Boolean));
-  if (!wanted.size) return false;
-  return wanted.has(slugifyType(cleanTypeLabel(entry?.subcategory || '')));
-}
-
-function getTypeActivityDates(typeOrGroupKey, overrideConfig = null) {
-  const target = resolveStreakGroup(typeOrGroupKey);
-  const config = overrideConfig || getStreakConfig(target);
+function getTypeActivityDates(typeOrGroupKey) {
+  const group = resolveStreakGroup(typeOrGroupKey);
   return new Set(
     getCalendarEntries()
-      .filter(entry => entry.date && entry.showOnCalendar !== false && streakTargetMatchesEntry(target, entry, config))
+      .filter(entry => getStreakTypeGroupKey(entry) === group.key && entry.date && entry.showOnCalendar !== false)
       .map(entry => entry.date)
   );
 }
 
 function calculateTypeStreak(typeOrGroupKey, overrideConfig = null) {
-  const target = resolveStreakGroup(typeOrGroupKey);
-  const config = overrideConfig || getStreakConfig(target);
+  const config = overrideConfig || getStreakConfig(typeOrGroupKey);
   if (!config.enabled) return { enabled: false, count: 0, restToday: false };
 
-  const activityDates = getTypeActivityDates(target, config);
+  const activityDates = getTypeActivityDates(typeOrGroupKey);
   const restDays = new Set((config.restDays || []).map(Number));
   const now = new Date();
   let cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
   let count = 0;
   let firstCalendarDay = true;
 
+  // Ten years is only a safety guard against malformed dates/settings.
   for (let guard = 0; guard < 3650; guard += 1) {
     const weekday = cursor.getDay();
     const date = localDateString(cursor);
@@ -14775,15 +14838,21 @@ function calculateTypeStreak(typeOrGroupKey, overrideConfig = null) {
       continue;
     }
 
+    // Today is still in progress, so absence today does not break a streak yet.
     if (firstCalendarDay) {
       cursor = addDays(cursor, -1);
       firstCalendarDay = false;
       continue;
     }
+
     break;
   }
 
-  return { enabled: true, count, restToday: restDays.has(now.getDay()) };
+  return {
+    enabled: true,
+    count,
+    restToday: restDays.has(now.getDay())
+  };
 }
 
 function streakText(typeOrGroupKey, overrideConfig = null) {
@@ -14802,37 +14871,11 @@ function streakBadgeMarkup(typeOrGroupKey) {
   return text ? `<span class="type-streak-badge">${escapeHtml(text)}</span>` : '';
 }
 
-function getStreakStickerConfig(targetOrKey, overrideConfig = null) {
-  const target = resolveStreakGroup(targetOrKey);
-  const config = overrideConfig || getStreakConfig(target);
-  const representative = getCalendarEntries({ respectVisibility: false }).find(entry => streakTargetMatchesEntry(target, entry, config))
-    || target.representativeEntry
-    || { type: target.representativeType, typeLabel: getBaseStreakGroups().find(base => base.key === target.baseKey)?.label || target.label };
-  const baseSticker = getStickerConfig(representative.type || target.representativeType, representative);
-  const saved = config.sticker || {};
-  const allowedShapes = ['square', 'circle', 'star', 'heart'];
-  const shape = allowedShapes.includes(saved.shape) ? saved.shape : baseSticker.shape;
-  const color = STICKER_COLORS.includes(saved.color) ? saved.color : baseSticker.color;
-  const label = ['star', 'heart'].includes(shape)
-    ? ''
-    : cleanStickerLabel(saved.label !== undefined ? saved.label : baseSticker.label);
-  return { ...baseSticker, shape, color, label };
-}
-
-function streakStickerMarkup(targetOrKey, overrideConfig = null) {
-  const config = getStreakStickerConfig(targetOrKey, overrideConfig);
-  const symbol = config.shape === 'star' ? '★' : config.shape === 'heart' ? '♥' : escapeHtml(config.label || '');
-  return `<span class="sticker sticker-${config.shape} sticker-palette-${config.color} sticker-tilt-${config.tilt}">${symbol}</span>`;
-}
-
 function renderTrackStreakSummary() {
   if (!els.trackStreakSummary) return;
   const active = getRecognizedStreakGroups()
-    .map(target => {
-      const config = getStreakConfig(target);
-      return { ...target, config, text: streakText(target, config) };
-    })
-    .filter(entry => entry.config.enabled && entry.text);
+    .map(group => ({ ...group, text: streakText(group.key) }))
+    .filter(entry => entry.text);
 
   els.trackStreakSummary.hidden = active.length === 0;
   if (!active.length) {
@@ -14840,11 +14883,16 @@ function renderTrackStreakSummary() {
     return;
   }
 
-  els.trackStreakSummary.innerHTML = active.map(target => `
-    <div class="track-streak-card">
-      <span class="track-streak-sticker">${streakStickerMarkup(target, target.config)}</span>
-      <span class="track-streak-copy"><strong>${escapeHtml(target.config.label || target.label)}</strong><small>${escapeHtml(target.text)}</small></span>
-    </div>`).join('');
+  els.trackStreakSummary.innerHTML = active.map(group => {
+    const representative = group.representativeEntry
+      || getCalendarEntries().find(entry => getStreakTypeGroupKey(entry) === group.key)
+      || { type: group.representativeType, typeLabel: group.label };
+    return `
+      <div class="track-streak-card">
+        <span class="track-streak-sticker">${calendarStickerMarkup(representative.type, representative)}</span>
+        <span class="track-streak-copy"><strong>${escapeHtml(group.label)}</strong><small>${escapeHtml(group.text)}</small></span>
+      </div>`;
+  }).join('');
 }
 
 function openStreakSettings() {
@@ -14853,227 +14901,55 @@ function openStreakSettings() {
   showDialogAtTop(els.stickerSettingsModal);
 }
 
-function streakScopeLabel(target) {
-  if (target.scope === 'subcategory') return 'Subtype';
-  if (target.scope === 'group') return 'Grouped subtypes';
-  return 'Whole type';
-}
-
-function createStreakSettingRow(target, options = {}) {
-  const config = options.config || getStreakConfig(target);
-  const sticker = getStreakStickerConfig(target, config);
-  const row = document.createElement('div');
-  row.className = `streak-setting-row${config.enabled ? ' is-enabled' : ''}${target.scope === 'group' ? ' is-group' : ''}`;
-  row.dataset.streakType = target.key;
-  row.dataset.streakScope = config.scope || target.scope || 'type';
-  row.dataset.streakBaseKey = config.baseKey || target.baseKey || target.key;
-  row.dataset.streakSubcategories = JSON.stringify(config.subcategories || target.subcategories || []);
-  row.dataset.streakDefaultLabel = target.label || '';
-  row.innerHTML = `
-    <div class="streak-setting-identity">
-      <span class="streak-setting-sticker-preview">${streakStickerMarkup(target, config)}</span>
-      <div class="streak-setting-name-wrap">
-        <input class="streak-setting-name-input" data-streak-field="name" type="text" maxlength="40" value="${escapeAttr(config.label || target.label)}" aria-label="Streak name" />
-        <small>${escapeHtml(streakScopeLabel(target))}</small>
-      </div>
-      <details class="streak-style-editor">
-        <summary>Sticker</summary>
-        <div class="streak-style-controls">
-          <label><span>Shape</span><select data-streak-field="sticker-shape">
-            ${['square','circle','star','heart'].map(shape => `<option value="${shape}" ${sticker.shape === shape ? 'selected' : ''}>${shape[0].toUpperCase()+shape.slice(1)}</option>`).join('')}
-          </select></label>
-          <label><span>Color</span><select data-streak-field="sticker-color">
-            ${STICKER_COLORS.map(color => `<option value="${color}" ${sticker.color === color ? 'selected' : ''}>${color[0].toUpperCase()+color.slice(1)}</option>`).join('')}
-          </select></label>
-          <label><span>Text</span><input data-streak-field="sticker-label" type="text" maxlength="3" value="${escapeAttr(['star','heart'].includes(sticker.shape) ? '' : sticker.label)}" ${['star','heart'].includes(sticker.shape) ? 'disabled' : ''} /></label>
-        </div>
-      </details>
-      ${target.scope === 'group' ? '<button class="quiet-button streak-delete-group" type="button" data-streak-delete-group>Delete group</button>' : ''}
-    </div>
-    <label class="streak-toggle">
-      <input data-streak-field="enabled" type="checkbox" ${config.enabled ? 'checked' : ''} />
-      <span>On</span>
-    </label>
-    <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(config.label || target.label)}">
-      ${WEEKDAY_OPTIONS.map(day => `
-        <label class="rest-day-chip" title="${day.label}">
-          <input data-streak-rest-day="${day.value}" type="checkbox" ${config.restDays.includes(day.value) ? 'checked' : ''} />
-          <span>${day.short}</span>
-        </label>`).join('')}
-    </div>
-    <div class="streak-setting-current">${escapeHtml(streakText(target, config) || 'Off')}</div>`;
-  return row;
-}
-
-function createStreakGroupBuilder(base) {
-  const subcategories = getStreakSubcategories(base.key);
-  const builder = document.createElement('div');
-  builder.className = 'streak-group-builder';
-  builder.dataset.streakGroupBuilder = base.key;
-  builder.hidden = true;
-  builder.innerHTML = `
-    <div class="streak-group-builder-fields">
-      <label class="streak-group-name"><span>Group name</span><input data-streak-group-name type="text" maxlength="40" placeholder="Optional" /></label>
-      <div class="streak-group-subtypes" aria-label="Choose ${escapeAttr(base.label)} subtypes">
-        ${subcategories.map(subcategory => `<label><input type="checkbox" data-streak-group-subcategory value="${escapeAttr(subcategory.label)}" /><span>${escapeHtml(subcategory.label)}</span></label>`).join('')}
-      </div>
-    </div>
-    <div class="streak-group-builder-actions">
-      <button class="quiet-button" type="button" data-streak-cancel-group>Cancel</button>
-      <button class="secondary-button" type="button" data-streak-create-group>Create group</button>
-    </div>`;
-  return builder;
-}
-
 function renderStreakSettingsRows() {
   if (!els.streakSettingsRows) return;
   els.streakSettingsRows.innerHTML = '';
 
-  for (const base of getBaseStreakGroups()) {
-    const section = document.createElement('section');
-    section.className = 'streak-type-section';
-    section.dataset.streakBaseSection = base.key;
-    const subcategories = getStreakSubcategories(base.key);
-    section.innerHTML = `
-      <div class="streak-type-section-heading">
-        <strong>${escapeHtml(base.label)}</strong>
-        ${subcategories.length >= 2 ? '<button class="quiet-button streak-add-group" type="button" data-streak-add-group>+ Group subtypes</button>' : ''}
+  for (const group of getRecognizedStreakGroups()) {
+    const config = getStreakConfig(group.key);
+    const row = document.createElement('div');
+    row.className = `streak-setting-row${config.enabled ? ' is-enabled' : ''}`;
+    row.dataset.streakType = group.key;
+    row.innerHTML = `
+      <div class="streak-setting-type"><strong>${escapeHtml(group.label)}</strong></div>
+      <label class="streak-toggle">
+        <input data-streak-field="enabled" type="checkbox" ${config.enabled ? 'checked' : ''} />
+        <span>On</span>
+      </label>
+      <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(group.label)}">
+        ${WEEKDAY_OPTIONS.map(day => `
+          <label class="rest-day-chip" title="${day.label}">
+            <input data-streak-rest-day="${day.value}" type="checkbox" ${config.restDays.includes(day.value) ? 'checked' : ''} />
+            <span>${day.short}</span>
+          </label>`).join('')}
       </div>
-      <div class="streak-type-section-rows"></div>`;
-    const rows = section.querySelector('.streak-type-section-rows');
-
-    rows.appendChild(createStreakSettingRow({ ...base, scope: 'type', baseKey: base.key, subcategories: [] }));
-    for (const subcategory of subcategories) {
-      rows.appendChild(createStreakSettingRow({
-        key: streakSubcategoryTargetKey(base.key, subcategory.label),
-        label: subcategory.label,
-        memberTypes: [...base.memberTypes],
-        representativeType: base.representativeType,
-        representativeEntry: base.representativeEntry,
-        scope: 'subcategory',
-        baseKey: base.key,
-        subcategories: [subcategory.label]
-      }));
-    }
-    for (const group of configuredStreakGroupsForBase(base.key)) rows.appendChild(createStreakSettingRow(group));
-
-    section.appendChild(createStreakGroupBuilder(base));
-    els.streakSettingsRows.appendChild(section);
+      <div class="streak-setting-current">${escapeHtml(streakText(group.key, config) || 'Off')}</div>`;
+    els.streakSettingsRows.appendChild(row);
   }
 }
 
-function streakRowTargetFromElement(row) {
-  if (!row) return null;
-  const subcategories = (() => {
-    try { return JSON.parse(row.dataset.streakSubcategories || '[]'); }
-    catch { return []; }
-  })();
-  const base = getBaseStreakGroups().find(group => group.key === row.dataset.streakBaseKey);
-  return {
-    key: row.dataset.streakType,
-    label: cleanTypeLabel(row.querySelector('[data-streak-field="name"]')?.value || row.dataset.streakDefaultLabel || ''),
-    memberTypes: [...(base?.memberTypes || [])],
-    representativeType: base?.representativeType || 'other',
-    representativeEntry: base?.representativeEntry || null,
-    scope: row.dataset.streakScope || 'type',
-    baseKey: row.dataset.streakBaseKey || row.dataset.streakType,
-    subcategories
-  };
-}
-
 function readStreakRowConfig(row) {
-  const target = streakRowTargetFromElement(row);
-  const shape = row.querySelector('[data-streak-field="sticker-shape"]')?.value || 'square';
-  const color = row.querySelector('[data-streak-field="sticker-color"]')?.value || 'cream';
-  const labelInput = row.querySelector('[data-streak-field="sticker-label"]');
-  const stickerLabel = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(labelInput?.value || '');
   return {
     enabled: Boolean(row.querySelector('[data-streak-field="enabled"]')?.checked),
-    restDays: [...row.querySelectorAll('[data-streak-rest-day]:checked')].map(input => Number(input.dataset.streakRestDay)),
-    scope: target.scope,
-    baseKey: target.baseKey,
-    subcategories: target.subcategories,
-    label: cleanTypeLabel(row.querySelector('[data-streak-field="name"]')?.value || '') || row.dataset.streakDefaultLabel || target.label,
-    sticker: { shape, color, label: stickerLabel }
+    restDays: [...row.querySelectorAll('[data-streak-rest-day]:checked')]
+      .map(input => Number(input.dataset.streakRestDay))
   };
 }
 
 function previewStreakSettings(event) {
   const row = event.target.closest('.streak-setting-row[data-streak-type]');
   if (!row) return;
-  const target = streakRowTargetFromElement(row);
   const config = readStreakRowConfig(row);
   row.classList.toggle('is-enabled', config.enabled);
-
-  const labelInput = row.querySelector('[data-streak-field="sticker-label"]');
-  if (labelInput) labelInput.disabled = ['star','heart'].includes(config.sticker.shape);
-  const preview = row.querySelector('.streak-setting-sticker-preview');
-  if (preview) preview.innerHTML = streakStickerMarkup(target, config);
   const current = row.querySelector('.streak-setting-current');
-  if (current) current.textContent = streakText(target, config) || 'Off';
-}
-
-function handleStreakSettingsClick(event) {
-  const section = event.target.closest('.streak-type-section[data-streak-base-section]');
-  if (!section) return;
-  const builder = section.querySelector('.streak-group-builder');
-
-  if (event.target.closest('[data-streak-add-group]')) {
-    if (builder) builder.hidden = false;
-    return;
-  }
-  if (event.target.closest('[data-streak-cancel-group]')) {
-    if (builder) builder.hidden = true;
-    return;
-  }
-  if (event.target.closest('[data-streak-create-group]')) {
-    const selected = [...builder.querySelectorAll('[data-streak-group-subcategory]:checked')].map(input => cleanTypeLabel(input.value)).filter(Boolean);
-    if (selected.length < 2) {
-      alert('Choose at least two subtypes to make a grouped streak.');
-      return;
-    }
-    const baseKey = section.dataset.streakBaseSection;
-    const base = getBaseStreakGroups().find(group => group.key === baseKey);
-    if (!base) return;
-    const customName = cleanTypeLabel(builder.querySelector('[data-streak-group-name]')?.value || '');
-    const label = customName || selected.join(' + ');
-    const key = `${baseKey}::group::${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
-    const target = {
-      key, label, memberTypes: [...base.memberTypes], representativeType: base.representativeType,
-      representativeEntry: base.representativeEntry, scope: 'group', baseKey, subcategories: selected
-    };
-    section.querySelector('.streak-type-section-rows')?.appendChild(createStreakSettingRow(target, {
-      config: { ...getStreakConfig(target), enabled: true, label, scope: 'group', baseKey, subcategories: selected }
-    }));
-    builder.querySelectorAll('input').forEach(input => { if (input.type === 'checkbox') input.checked = false; else input.value = ''; });
-    builder.hidden = true;
-    return;
-  }
-  const deleteButton = event.target.closest('[data-streak-delete-group]');
-  if (deleteButton) {
-    deleteButton.closest('.streak-setting-row')?.remove();
-  }
+  if (current) current.textContent = streakText(row.dataset.streakType, config) || 'Off';
 }
 
 function saveStreakSettings(event) {
   event.preventDefault();
   const next = {};
   els.streakSettingsRows?.querySelectorAll('.streak-setting-row[data-streak-type]').forEach(row => {
-    const target = streakRowTargetFromElement(row);
-    const config = readStreakRowConfig(row);
-    const baseline = getStreakStickerConfig(target, {
-      ...config,
-      sticker: null,
-      label: row.dataset.streakDefaultLabel || target.label
-    });
-    const defaultName = cleanTypeLabel(row.dataset.streakDefaultLabel || target.label);
-    const customName = cleanTypeLabel(config.label) !== defaultName;
-    const customSticker = config.sticker.shape !== baseline.shape
-      || config.sticker.color !== baseline.color
-      || cleanStickerLabel(config.sticker.label) !== cleanStickerLabel(baseline.label);
-    if (config.enabled || config.scope === 'group' || config.restDays.length || customName || customSticker) {
-      next[row.dataset.streakType] = config;
-    }
+    next[row.dataset.streakType] = readStreakRowConfig(row);
   });
   state.streakPrefs = next;
   localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
@@ -15083,7 +14959,7 @@ function saveStreakSettings(event) {
 }
 
 function resetStreakSettings() {
-  if (!confirm('Turn off all streaks and clear subtype groups, names, stickers, and rest days?')) return;
+  if (!confirm('Turn off all streaks and clear scheduled rest days?')) return;
   state.streakPrefs = {};
   localStorage.removeItem(STREAK_PREFS_KEY);
   scheduleCloudSync();
@@ -16075,9 +15951,17 @@ async function getPlaylistCached(id) {
 async function getCached(key, loader) {
   const cached = state.cache[key];
   if (cached && Date.now() - cached.savedAt < CACHE_TTL) return cached.value;
-  const value = await loader();
-  cachePut(key, value);
-  return value;
+  if (apiCacheInFlight.has(key)) return apiCacheInFlight.get(key);
+
+  const request = Promise.resolve()
+    .then(loader)
+    .then(value => {
+      cachePut(key, value);
+      return value;
+    })
+    .finally(() => apiCacheInFlight.delete(key));
+  apiCacheInFlight.set(key, request);
+  return request;
 }
 
 function cachePut(key, value) {
@@ -16170,22 +16054,56 @@ async function persistCloudStateLocally(snapshot) {
   localStorage.removeItem(HISTORY_KEY);
 }
 
+function cloudUpdatedAtStorageKey(userId = currentUser?.id || '') {
+  return userId ? `${CLOUD_UPDATED_AT_KEY}.${userId}` : '';
+}
+
+function rememberCloudUpdatedAt(value, userId = currentUser?.id || '') {
+  const key = cloudUpdatedAtStorageKey(userId);
+  if (!key || !value) return;
+  lastCloudUpdatedAt = String(value);
+  localStorage.setItem(key, lastCloudUpdatedAt);
+}
+
+function rememberedCloudUpdatedAt(userId = currentUser?.id || '') {
+  const key = cloudUpdatedAtStorageKey(userId);
+  return key ? String(localStorage.getItem(key) || '') : '';
+}
+
 async function hydrateCloudProfile(userId) {
   if (!supabase || !userId) return;
 
   const localSnapshot = buildCloudState();
-  const { data, error } = await supabase
+  const cachedUpdatedAt = rememberedCloudUpdatedAt(userId);
+
+  // Page-to-page navigation used to download the entire (potentially very large)
+  // cloud state every time. Check the tiny timestamp first and only transfer the
+  // state blob when another device/session actually changed it.
+  const { data: metadata, error: metadataError } = await supabase
     .from('user_state')
-    .select('state, updated_at')
+    .select('updated_at')
     .eq('user_id', userId)
     .maybeSingle();
 
-  if (error) throw error;
+  if (metadataError) throw metadataError;
 
-  if (data?.state) {
-    await persistCloudStateLocally(data.state);
-    lastCloudUpdatedAt = data.updated_at || '';
-    return;
+  if (metadata?.updated_at && cachedUpdatedAt && metadata.updated_at === cachedUpdatedAt) {
+    rememberCloudUpdatedAt(metadata.updated_at, userId);
+    return false;
+  }
+
+  if (metadata?.updated_at) {
+    const { data, error } = await supabase
+      .from('user_state')
+      .select('state, updated_at')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error) throw error;
+    if (data?.state) {
+      await persistCloudStateLocally(data.state);
+      rememberCloudUpdatedAt(data.updated_at || metadata.updated_at, userId);
+      return true;
+    }
   }
 
   const initialState = localSnapshot;
@@ -16199,11 +16117,16 @@ async function hydrateCloudProfile(userId) {
     });
 
   if (insertError) throw insertError;
-  lastCloudUpdatedAt = updatedAt;
+  rememberCloudUpdatedAt(updatedAt, userId);
+  return false;
 }
 
 function scheduleCloudSync() {
   if (localOnlyMode || !currentUser || !supabase) return;
+  if (!cloudHydrationReady) {
+    cloudSyncDeferred = true;
+    return;
+  }
   clearTimeout(cloudSyncTimer);
   setSyncStatus('Saving…');
   cloudSyncTimer = setTimeout(pushCloudState, 350);
@@ -16230,7 +16153,7 @@ async function pushCloudState() {
       });
 
     if (error) throw error;
-    lastCloudUpdatedAt = updatedAt;
+    rememberCloudUpdatedAt(updatedAt, currentUser.id);
     setSyncStatus('Synced');
   } catch (error) {
     setSyncStatus('Not synced', true);
@@ -16246,20 +16169,35 @@ async function pushCloudState() {
 
 async function refreshCloudProfile() {
   if (localOnlyMode || !currentUser || !supabase || cloudSyncBusy) return;
+  if (!lastCloudUpdatedAt) lastCloudUpdatedAt = rememberedCloudUpdatedAt(currentUser.id);
 
   try {
+    const { data: metadata, error: metadataError } = await supabase
+      .from('user_state')
+      .select('updated_at')
+      .eq('user_id', currentUser.id)
+      .maybeSingle();
+
+    if (metadataError) throw metadataError;
+    cloudHydrationReady = true;
+    if (!metadata?.updated_at || metadata.updated_at === lastCloudUpdatedAt) {
+      if (cloudSyncDeferred) { cloudSyncDeferred = false; scheduleCloudSync(); }
+      return;
+    }
+
     const { data, error } = await supabase
       .from('user_state')
       .select('state, updated_at')
       .eq('user_id', currentUser.id)
       .maybeSingle();
-
     if (error) throw error;
-    if (!data?.state || !data.updated_at || data.updated_at === lastCloudUpdatedAt) return;
+    if (!data?.state || !data.updated_at) return;
 
     if (!lastCloudUpdatedAt || new Date(data.updated_at) > new Date(lastCloudUpdatedAt)) {
       await persistCloudStateLocally(data.state);
-      lastCloudUpdatedAt = data.updated_at;
+      rememberCloudUpdatedAt(data.updated_at, currentUser.id);
+      cloudSyncDeferred = false;
+      runDataMigrations();
       if (appStarted) renderAll();
       setSyncStatus('Synced');
     }
@@ -16273,6 +16211,10 @@ function clearLocalSyncedState() {
   [ITEMS_KEY, HISTORY_KEY, CUSTOM_TYPES_KEY, ALBUMS_KEY, TYPE_USAGE_KEY, PHOTO_UPLOAD_LOG_KEY, DISCOVER_PREFS_KEY, STICKER_PREFS_KEY, STREAK_PREFS_KEY, LIBRARY_PREFS_KEY].forEach(key => {
     localStorage.removeItem(key);
   });
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index);
+    if (key?.startsWith(`${CLOUD_UPDATED_AT_KEY}.`)) localStorage.removeItem(key);
+  }
   deleteLargeState(HISTORY_IDB_KEY).catch(() => {});
 }
 
