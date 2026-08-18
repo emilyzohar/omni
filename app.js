@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-add-controls-78';
-import { API_CONFIG } from './config.js?v=omni-add-controls-78';
+import { TrackerAPI } from './api.js?v=omni-unified-add-79';
+import { API_CONFIG } from './config.js?v=omni-unified-add-79';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -15,6 +15,7 @@ const TYPE_USAGE_KEY = 'zoharTracker.typeUsage.v1';
 const PHOTO_UPLOAD_LOG_KEY = 'zoharTracker.photoUploadLog.v1';
 const ONBOARDING_KEY = 'zoharTracker.onboarding.v1';
 const ONBOARDING_STEP_KEY = 'zoharTracker.onboardingStep.v2';
+const LOG_TYPE_PREFS_KEY = 'zoharTracker.logTypePrefs.v1';
 const PHOTO_WEEKLY_LIMIT = 20;
 const ATTACHMENT_DB_NAME = 'zoharTracker.attachments.v1';
 const ATTACHMENT_STORE_NAME = 'files';
@@ -28,6 +29,7 @@ const TYPE_LABELS = {
   tv: 'TV',
   book: 'Books',
   movie: 'Movies',
+  game: 'Games',
   music: 'Music',
   food: 'Food',
   event: 'Events',
@@ -42,6 +44,9 @@ const SOURCE_ITEM_LABELS = {
   tv: 'TV',
   movie: 'Movie',
   book: 'Book',
+  game: 'Game',
+  'video-game': 'Video Game',
+  'board-game': 'Board Game',
   music: 'Music',
   artist: 'Artist',
   song: 'Song',
@@ -56,7 +61,7 @@ const SOURCE_ITEM_LABELS = {
   recipe: 'Recipe'
 };
 
-const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class', 'food', 'restaurant', 'recipe', 'shopping', 'other']);
+const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'game', 'video-game', 'board-game', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class', 'food', 'restaurant', 'recipe', 'shopping', 'other']);
 const STICKER_COLORS = ['rust', 'burgundy', 'red', 'coral', 'orange', 'yellow', 'cream', 'sand', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'slate', 'teal', 'green', 'forest', 'mint', 'olive', 'stone', 'brown', 'charcoal', 'black', 'white'];
 const CALENDAR_THEMES = [
   { id: 'blue', label: 'Dusty blue' },
@@ -106,9 +111,9 @@ const DEFAULT_DISCOVER_PREFS = {
   eventAutoLikedArtistCalendar: true,
   upcomingHorizonDays: 30
 };
-const DISCOVER_CONTENT_TYPES = ['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'restaurant', 'event'];
+const DISCOVER_CONTENT_TYPES = ['tv', 'movie', 'book', 'game', 'artist', 'concert', 'restaurant', 'event'];
 const DISCOVER_CONTENT_TYPE_LABELS = {
-  tv: 'TV', movie: 'Movies', book: 'Books', music: 'Albums', artist: 'Artists', song: 'Songs',
+  tv: 'TV', movie: 'Movies', book: 'Books', game: 'Games', artist: 'Music',
   concert: 'Concerts', restaurant: 'Restaurants', event: 'Live Events'
 };
 function normalizedDiscoverContentTypes(prefs = state?.discoverPrefs || DEFAULT_DISCOVER_PREFS) {
@@ -117,7 +122,8 @@ function normalizedDiscoverContentTypes(prefs = state?.discoverPrefs || DEFAULT_
     const legacy = String(prefs?.contentType || '').trim();
     values = legacy && legacy !== 'all' ? [legacy] : ['tv', 'movie'];
   }
-  const valid = [...new Set(values.map(value => String(value || '').trim()).filter(value => DISCOVER_CONTENT_TYPES.includes(value)))];
+  values = values.map(value => ['music','song'].includes(String(value || '').trim()) ? 'artist' : String(value || '').trim());
+  const valid = [...new Set(values.filter(value => DISCOVER_CONTENT_TYPES.includes(value)))];
   return valid.length ? valid : ['tv', 'movie'];
 }
 function discoverTypeSelected(type) {
@@ -401,6 +407,11 @@ const els = {
   itemFeaturesSummary: $('#itemFeaturesSummary'),
   itemProgressMode: $('#itemProgressMode'),
   itemUseDateRange: $('#itemUseDateRange'),
+  itemUseRepeatLog: $('#itemUseRepeatLog'),
+  itemLogEntryFields: $('#itemLogEntryFields'),
+  itemLogEntryTitle: $('#itemLogEntryTitle'),
+  itemLogModeHint: $('#itemLogModeHint'),
+  findSourcePrompt: $('#findSourcePrompt'),
   itemUsePlaylist: $('#itemUsePlaylist'),
   catalogueQuery: $('#catalogueQuery'),
   catalogueSearchButton: $('#catalogueSearchButton'),
@@ -702,6 +713,8 @@ function finishOnboarding(user = currentUser) {
   clearOnboardingGuide();
   const modal = $('#onboardingColorModal');
   if (modal?.open) modal.close();
+  const typesModal = $('#onboardingLogTypesModal');
+  if (typesModal?.open) typesModal.close();
 }
 
 function validCalendarThemeId(themeId) {
@@ -745,14 +758,65 @@ function ensureOnboardingColorModal() {
     render();
   });
   modal.querySelector('[data-onboarding-colour-continue]').addEventListener('click', () => {
-    setOnboardingStep(1);
     modal.close();
-    showOnboardingGuideStep();
+    showDialogAtTop(ensureOnboardingLogTypesModal());
   });
   modal.querySelector('[data-onboarding-skip]').addEventListener('click', () => finishOnboarding());
   modal.addEventListener('cancel', event => event.preventDefault());
   render();
   return modal;
+}
+
+function ensureOnboardingLogTypesModal() {
+  let modal = $('#onboardingLogTypesModal');
+  if (modal) return modal;
+  modal = document.createElement('dialog');
+  modal.id = 'onboardingLogTypesModal';
+  modal.className = 'modal small-modal onboarding-log-types-modal';
+  modal.innerHTML = `<div class="modal-heading"><p class="modal-eyebrow">WELCOME TO OMNI</p><h2>What do you want to log?</h2><p>Pick the main Types you use. Add will stay simple and show only these. You can change this later in Profile settings.</p></div><div class="onboarding-log-type-grid"></div><div class="modal-actions"><button class="quiet-button" type="button" data-onboarding-log-all>Use all</button><div class="actions-right"><button class="primary-button" type="button" data-onboarding-log-continue>Continue</button></div></div>`;
+  document.body.appendChild(modal);
+  const render = () => {
+    const grid = modal.querySelector('.onboarding-log-type-grid');
+    if (grid) grid.innerHTML = logTypeChoiceMarkup(enabledLogTypeKeys());
+  };
+  modal.querySelector('[data-onboarding-log-all]')?.addEventListener('click', () => {
+    saveEnabledLogTypeKeys(DEFAULT_LOG_TYPE_KEYS);
+    render();
+  });
+  modal.querySelector('[data-onboarding-log-continue]')?.addEventListener('click', () => {
+    const checked = [...modal.querySelectorAll('.onboarding-log-type-grid input:checked')].map(input => input.value);
+    saveEnabledLogTypeKeys(checked.length ? checked : DEFAULT_LOG_TYPE_KEYS);
+    refreshItemKindChoices();
+    setOnboardingStep(1);
+    modal.close();
+    showOnboardingGuideStep();
+  });
+  modal.addEventListener('cancel', event => event.preventDefault());
+  render();
+  return modal;
+}
+
+function renderSocialLogTypeSettings() {
+  const form = $('#socialProfileSettingsForm');
+  if (!form) return;
+  let section = $('#socialLogTypeSettingsSection');
+  if (!section) {
+    section = document.createElement('section');
+    section.id = 'socialLogTypeSettingsSection';
+    section.className = 'social-settings-section social-log-types-setting';
+    section.innerHTML = `<div class="social-sharing-heading"><div><h3>What you log</h3><small>These are the main Types shown in Add. Custom Types still remain available.</small></div></div><div id="socialLogTypeSettings" class="onboarding-log-type-grid"></div>`;
+    const sharing = $('#socialShareSettings')?.closest('.social-settings-section');
+    if (sharing) sharing.insertAdjacentElement('beforebegin', section);
+    else form.prepend(section);
+  }
+  const host = $('#socialLogTypeSettings');
+  if (host) host.innerHTML = logTypeChoiceMarkup(enabledLogTypeKeys());
+}
+
+function saveSocialLogTypeSettings() {
+  const checked = [...$$('#socialLogTypeSettings input:checked')].map(input => input.value);
+  saveEnabledLogTypeKeys(checked.length ? checked : DEFAULT_LOG_TYPE_KEYS);
+  refreshItemKindChoices();
 }
 
 let onboardingGuideCleanup = null;
@@ -869,14 +933,14 @@ function showOnboardingGuideStep(user = currentUser) {
     setTimeout(() => {
       const steps = {
         2: {
-          selector: '.add-intent-grid',
-          title: 'Pick the type',
-          body: 'Choose what you did, then choose what it was.'
+          selector: '.add-type-subtype-grid',
+          title: 'Pick a Type',
+          body: 'Add only shows the Types you chose during onboarding. Open Subtype when you want to be more specific.'
         },
         3: {
           selector: '#catalogueSearchBlock',
-          title: 'Search',
-          body: 'Search for the item and pick the matching result. Open Search source only if you need a different lookup.'
+          title: 'Find it or type it',
+          body: 'Find it searches the selected source shown inside the box. Change the source from its dropdown, or enter a Title manually.'
         },
         4: {
           selector: '.rating-fieldset',
@@ -895,8 +959,8 @@ function showOnboardingGuideStep(user = currentUser) {
         },
         7: {
           selector: '#queueStatusField',
-          title: 'Choose where it goes',
-          body: 'Library only saves it. Up Next puts it in your active queue. TBR saves it for later.'
+          title: 'Choose status',
+          body: 'Finished saves it in Library. Up Next is active. TBR is not started yet.'
         }
       };
       const config = steps[step];
@@ -1224,10 +1288,8 @@ function mergeLibraryItemRecords(primary, duplicate) {
     ...(primary.attachments || []),
     ...(duplicate.attachments || []).filter(file => !(primary.attachments || []).some(saved => saved.id === file.id))
   ];
-  if (!primary.image && !primary.coverAttachmentId) {
-    const preferredCover = [primary, duplicate].map(candidate => candidate.coverAttachmentId).find(id => id && primary.attachments.some(file => file.id === id && String(file.mime || '').startsWith('image/')));
-    primary.coverAttachmentId = preferredCover || primary.attachments.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
-  }
+  // Attachments are detail resources, never automatic poster art.
+  primary.coverAttachmentId = '';
   primary.links = [
     ...(primary.links || []),
     ...(duplicate.links || []).filter(link => !(primary.links || []).some(saved => saved.url === link.url))
@@ -1509,6 +1571,8 @@ function bindEvents() {
   els.itemFindSource?.addEventListener('change', () => {
     clearSourceSelectionForTypeChange();
     syncItemFindSourceSummary();
+    els.itemFindSource?.classList.remove('needs-choice');
+    if (els.findSourcePrompt) els.findSourcePrompt.hidden = true;
     updateItemFormForType();
   });
   els.itemStatusPicker?.addEventListener('click', event => {
@@ -1519,8 +1583,15 @@ function bindEvents() {
   });
   els.itemProgressMode?.addEventListener('change', updateItemFormForType);
   els.itemUseDateRange?.addEventListener('change', updateItemFormForType);
+  els.itemUseRepeatLog?.addEventListener('change', updateItemFormForType);
   els.itemUsePlaylist?.addEventListener('change', updateItemFormForType);
   els.catalogueSearchButton?.addEventListener('click', searchCatalogue);
+  els.catalogueQuery?.addEventListener('focus', () => {
+    if (selectedSavedTypeEntry() && defaultFindSourceForType(automaticFormSourceType()) === 'manual' && (els.itemFindSource?.value || 'auto') === 'auto') {
+      if (els.findSourcePrompt) els.findSourcePrompt.hidden = false;
+      els.itemFindSource?.classList.add('needs-choice');
+    }
+  });
   els.catalogueQuery?.addEventListener('keydown', event => {
     if (event.key === 'Enter') {
       event.preventDefault();
@@ -1529,6 +1600,8 @@ function bindEvents() {
   });
   els.playlistLoadButton?.addEventListener('click', loadPlaylistPreview);
   els.reminderFrequency?.addEventListener('change', updateReminderFormFields);
+  els.reminderWeekday?.addEventListener('change', updateReminderFormFields);
+  els.reminderDueDate?.addEventListener('change', updateReminderFormFields);
   els.reminderIntervalUnit?.addEventListener('change', updateReminderFormFields);
   els.tvWatchSetupList?.addEventListener('change', handleTVDraftEpisodeToggle);
   els.tvWatchSetupList?.addEventListener('click', handleTVDraftSeasonAction);
@@ -1540,7 +1613,7 @@ function bindEvents() {
     renderItemPeopleSuggestions();
     syncItemPeopleDisclosure();
   });
-  els.itemSubcategory?.addEventListener('input', syncItemSubcategoryDisclosure);
+  els.itemSubcategory?.addEventListener('input', () => { syncItemSubcategoryDisclosure(); updateItemFormForType(); });
   els.itemBuddyWatchToggle?.addEventListener('change', syncItemBuddyWatchToggle);
   els.deleteItem?.addEventListener('click', deleteEditingItem);
   document.addEventListener('click', event => {
@@ -1749,6 +1822,38 @@ function bindEvents() {
         updateItemFormForType();
         selectCatalogueResult(result);
       } catch {}
+      return;
+    }
+
+    const addRepeatLog = event.target.closest('[data-add-repeat-log]');
+    if (addRepeatLog) {
+      const item = findItem(addRepeatLog.dataset.addRepeatLog || state.openDetailId);
+      if (item) openRepeatLogModal(item);
+      return;
+    }
+    const editRepeatHistory = event.target.closest('[data-edit-repeat-history]');
+    if (editRepeatHistory) {
+      els.detailModal?.close();
+      openHistoryEdit(editRepeatHistory.dataset.editRepeatHistory);
+      return;
+    }
+    const deleteRepeatHistory = event.target.closest('[data-delete-repeat-history]');
+    if (deleteRepeatHistory) {
+      const id = deleteRepeatHistory.dataset.deleteRepeatHistory;
+      const entry = state.history.find(record => record.id === id);
+      if (entry && confirm(`Delete this ${entry.date ? formatLongDate(entry.date) : 'log'} entry?`)) {
+        state.history = state.history.filter(record => record.id !== id);
+        saveHistory(); renderAll();
+        const item = findItem(entry.sourceItemId || '');
+        if (item && els.detailModal?.open) await openDetails(item.id);
+      }
+      return;
+    }
+
+    const artistAlbumToggle = event.target.closest('[data-artist-album-toggle]');
+    if (artistAlbumToggle) {
+      event.preventDefault();
+      await toggleArtistAlbumTracks(artistAlbumToggle);
       return;
     }
 
@@ -2047,7 +2152,8 @@ function bindEvents() {
         state.openDetailId = null;
         els.detailModal.close();
       } else {
-        renderReminderDetails(item);
+        if (getSourceType(item) === 'reminder') renderReminderDetails(item);
+        else await openDetails(item.id);
       }
       return;
     }
@@ -2470,17 +2576,79 @@ function watchedTitleHasConsumption(item) {
   return false;
 }
 
+const STATS_GENRE_COLORS = Object.freeze({
+  Action:'#307351', Adventure:'#648767', Animation:'#f7e186', Comedy:'#669bbc', Crime:'#c1121f',
+  Documentary:'#2C4251', Drama:'#003049', Family:'#21A179', Fantasy:'#297373', History:'#595A4A',
+  Horror:'#0F110C', Mystery:'#67597A', Romance:'#780000', 'Science Fiction':'#A09BE7', Thriller:'#031D44',
+  War:'#6d7480', Western:'#9c7450', 'TV Movie':'#8fa8bc', Politics:'#9a4353', Reality:'#F786AA',
+  Music:'#bb7a3e', News:'#597c8d', Soap:'#9d6b78', Talk:'#7770a6', Other:'#b0a79a'
+});
+const STATS_RECOGNIZED_GENRES = new Set(Object.keys(STATS_GENRE_COLORS).filter(label => label !== 'Other'));
+
+function canonicalStatsGenreLabels(value) {
+  const label = cleanTypeLabel(typeof value === 'string' ? value : value?.name || '');
+  if (!label) return [];
+  const normalized = label.toLowerCase().replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
+  if (['sci-fi & fantasy','science fiction & fantasy','sci fi & fantasy'].includes(normalized)) return ['Science Fiction','Fantasy'];
+  if (['sci-fi','sci fi','science-fiction','science fiction'].includes(normalized)) return ['Science Fiction'];
+  if (normalized === 'action & adventure') return ['Action','Adventure'];
+  if (normalized === 'kids') return ['Family'];
+  if (normalized === 'war & politics') return ['War'];
+  if (['reality','reality tv','reality television'].includes(normalized)) return ['Reality'];
+  if (normalized === 'horror') return ['Horror'];
+  if (normalized === 'thriller') return ['Thriller'];
+  const exact = [...STATS_RECOGNIZED_GENRES].find(candidate => candidate.toLowerCase() === normalized);
+  return [exact || label];
+}
+
 function watchedGenreCounts() {
   const counts = new Map();
   for (const item of state.items) {
     if (!watchedTitleHasConsumption(item)) continue;
+    const perTitle = new Set();
     for (const genre of item.genres || []) {
-      const label = cleanTypeLabel(typeof genre === 'string' ? genre : genre?.name || '');
-      if (!label) continue;
-      counts.set(label, (counts.get(label) || 0) + 1);
+      for (const label of canonicalStatsGenreLabels(genre)) if (label) perTitle.add(label);
     }
+    for (const label of perTitle) counts.set(label, (counts.get(label) || 0) + 1);
   }
   return [...counts.entries()].sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+const statsTvGenreEnrichmentInFlight = new Set();
+async function enrichWatchedTVStatsGenres() {
+  if (!state.settings.tmdbToken || !TrackerAPI.getTVDetails) return false;
+  let changed = false;
+  const watched = state.items.filter(item => getSourceType(item) === 'tv' && item.providerId && watchedTitleHasConsumption(item));
+  for (const item of watched) {
+    if (statsTvGenreEnrichmentInFlight.has(item.id)) continue;
+    statsTvGenreEnrichmentInFlight.add(item.id);
+    try {
+      const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
+      const merged = new Set(item.genres || []);
+      for (const genre of details?.genres || []) if (genre?.name) merged.add(genre.name);
+
+      // TMDB has no native TV Horror/Thriller genres, so use its keywords for those two.
+      if (TrackerAPI.getTMDBItemKeywords) {
+        try {
+          const keywords = await getCached(`tv:${item.providerId}:stats-keywords`, () => TrackerAPI.getTMDBItemKeywords('tv', item.providerId, state.settings));
+          const names = (keywords || []).map(keyword => String(keyword?.name || '').toLowerCase());
+          const horrorTerms = ['horror','supernatural horror','psychological horror','slasher','zombie'];
+          const thrillerTerms = ['thriller','suspense','psychological thriller','crime thriller'];
+          if (names.some(name => horrorTerms.some(term => name.includes(term)))) merged.add('Horror');
+          if (names.some(name => thrillerTerms.some(term => name.includes(term)))) merged.add('Thriller');
+        } catch {}
+      }
+      const next = [...merged];
+      if (JSON.stringify(next) !== JSON.stringify(item.genres || [])) {
+        item.genres = next;
+        changed = true;
+      }
+    } catch {} finally {
+      statsTvGenreEnrichmentInFlight.delete(item.id);
+    }
+  }
+  if (changed) saveItems();
+  return changed;
 }
 
 function iso8601DurationMinutes(value) {
@@ -2587,12 +2755,13 @@ async function estimatedWatchMinutes() {
 }
 
 function statsGenreItems(labels = []) {
-  const wanted = new Set((labels || []).map(value => cleanTypeLabel(value).toLowerCase()).filter(Boolean));
+  const wanted = new Set((labels || []).flatMap(canonicalStatsGenreLabels).map(value => cleanTypeLabel(value).toLowerCase()).filter(Boolean));
   if (!wanted.size) return [];
-  return state.items.filter(item => watchedTitleHasConsumption(item) && (item.genres || []).some(genre => {
-    const label = cleanTypeLabel(typeof genre === 'string' ? genre : genre?.name || '').toLowerCase();
-    return wanted.has(label);
-  }));
+  return state.items.filter(item => {
+    if (!watchedTitleHasConsumption(item)) return false;
+    const canonical = new Set((item.genres || []).flatMap(canonicalStatsGenreLabels).map(value => value.toLowerCase()));
+    return [...wanted].some(label => canonical.has(label));
+  });
 }
 
 function statsPiePath(cx, cy, radius, startAngle, endAngle) {
@@ -2614,34 +2783,20 @@ function renderGenrePie(genres = []) {
     els.statsGenres.innerHTML = '<p class="empty-state">No watched genres yet.</p>';
     return;
   }
-  const visible = genres.slice(0, 9).map(([label,count]) => ({ label, count, labels:[label] }));
-  const overflow = genres.slice(9);
-  if (overflow.length) visible.push({ label:'Other', count:overflow.reduce((sum,entry) => sum + entry[1],0), labels:overflow.map(entry => entry[0]) });
+  const visible = [];
+  const unknown = [];
+  for (const [label,count] of genres) {
+    if (STATS_RECOGNIZED_GENRES.has(label)) visible.push({ label, count, labels:[label] });
+    else unknown.push([label,count]);
+  }
+  if (unknown.length) visible.push({
+    label:'Other',
+    count:unknown.reduce((sum,entry) => sum + entry[1],0),
+    labels:unknown.map(entry => entry[0])
+  });
+  visible.sort((a,b) => b.count - a.count || a.label.localeCompare(b.label));
   const total = visible.reduce((sum,entry) => sum + entry.count,0) || 1;
-  const genreColors = {
-      Romance: '#f77390',
-  Crime: '#65151B',
-  Horror: '#17151D',
-  Comedy: '#EFD98B',
-  Drama: '#907bb9',
-  Thriller: '#405463',
-  Mystery: '#4D4566',
-  Action: '#B95032',
-  Adventure: '#355F7C',
-  Fantasy: '#79558F',
-  'Science Fiction': '#2F6870',
-  Documentary: '#61795D',
-  Animation: '#C97891',
-  Family: '#99AA65',
-  History: '#8F6246',
-  'Other': '#aaa9a9' 
-};
-  const genreAliases = {
-    'Sci-Fi & Fantasy': 'Science Fiction',
-    'Action & Adventure': 'Action',
-    Kids: 'Family'
-  };
-  const genreColor = label => genreColors[genreAliases[label] || label] || genreColors.Other;
+  const genreColor = label => STATS_GENRE_COLORS[label] || STATS_GENRE_COLORS.Other;
   let angle = -Math.PI / 2;
   const paths = visible.map(entry => {
     const next = angle + (entry.count / total) * Math.PI * 2;
@@ -2878,7 +3033,7 @@ async function renderStats() {
       .map(group => `<button class="stat-type-row" type="button" data-stats-type-key="${escapeAttr(group.key)}" data-stats-label="${escapeAttr(group.label)}"><span>${escapeHtml(group.label)}</span><strong>${group.items.length}</strong></button>`).join('');
   }
   renderGenrePie(genres);
-  const minutes = await estimatedWatchMinutes();
+  const [minutes] = await Promise.all([estimatedWatchMinutes(), enrichWatchedTVStatsGenres()]);
   if (els.statsSummary?.dataset.renderToken !== requestToken) return;
   const hours = formatWatchHours(minutes);
   const cards = [...els.statsSummary.querySelectorAll('.stat-card')];
@@ -3051,7 +3206,7 @@ async function renderUpNext(options = {}) {
   const today = todayString();
   const availableItems = state.items.filter(item => {
     if (getQueueStatus(item) !== view) return false;
-    if (view === 'upnext' && getSourceType(item) === 'reminder') {
+    if (view === 'upnext' && item.reminder) {
       const dueDate = getNextReminderDueDate(item);
       return !dueDate || dueDate <= today;
     }
@@ -3123,6 +3278,7 @@ async function renderUpNext(options = {}) {
             ? `<img class="tbr-thumbnail-image" src="${escapeAttr(item.image)}" alt="" loading="lazy" />`
             : `<span class="tbr-thumbnail-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`;
         }
+        if (libraryDnfState(item) === 'paused') button.insertAdjacentHTML('beforeend', '<span class="tbr-paused-badge">Paused</span>');
         grid.appendChild(button);
       }
 
@@ -3887,7 +4043,7 @@ async function handleUpNextClick(event) {
 }
 
 function queueSortKey(item, view = 'upnext') {
-  if (view === 'upnext' && getSourceType(item) === 'reminder') return `0:${getNextReminderDueDate(item) || '9999-12-31'}:${item.createdAt || ''}`;
+  if (view === 'upnext' && item.reminder) return `0:${getNextReminderDueDate(item) || '9999-12-31'}:${item.createdAt || ''}`;
   if (['event', 'concert'].includes(getSourceType(item))) return `0:${item.date || item.eventMeta?.eventDate || '9999-12-31'}:${item.createdAt || ''}`;
   return `1:${item.createdAt || ''}`;
 }
@@ -3935,7 +4091,7 @@ function reminderCompletionRecord(item) {
 function reminderFrequency(item) {
   const value = item?.reminder?.frequency;
   if (['none', 'daily', 'weekly', 'biweekly', 'monthly', 'custom'].includes(value)) return value;
-  return 'weekly';
+  return item?.reminder ? 'weekly' : 'none';
 }
 
 function reminderRecurrence(item) {
@@ -3959,7 +4115,7 @@ function getReminderScheduleStart(item) {
 }
 
 function getNextReminderDueDate(item) {
-  if (getSourceType(item) !== 'reminder') return '';
+  if (!item?.reminder) return '';
   const frequency = reminderFrequency(item);
   const scheduleStart = getReminderScheduleStart(item);
 
@@ -4891,6 +5047,7 @@ async function moveItemToQueue(item, status) {
     else if (sourceType === 'youtube') { if (isYouTubePlaylistItem(item)) await renderWorkoutDetails(item); else await renderStandaloneYouTubeDetails(item); }
     else if (sourceType === 'book') await renderBookDetails(item);
     else if (sourceType === 'movie') await renderMovieDetails(item);
+    else if (['video-game','board-game'].includes(sourceType)) await renderGameDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
     else if (sourceType === 'artist') await renderArtistDetails(item);
     else if (sourceType === 'song') await renderSongDetails(item);
@@ -5073,9 +5230,43 @@ async function toggleSpecificYouTubeVideo(item, videoId) {
 // ADD / EDIT
 // ---------------------------
 const BASE_ITEM_TYPE_OPTIONS = [
-  ['tv','TV'], ['movie','Movie'], ['book','Book'], ['music','Music'], ['food','Food'],
+  ['tv','TV'], ['movie','Movie'], ['book','Book'], ['game','Games'], ['music','Music'], ['food','Food'],
   ['event','Event'], ['activity','Activity'], ['class','Class'], ['shopping','Shopping'], ['youtube','YouTube'], ['workout','Workouts'], ['reminder','Reminder'], ['other','New type']
 ];
+
+const MAIN_ADD_KIND_OPTIONS = Object.freeze([
+  { value: 'workout', label: 'Workouts', parent: 'workout' },
+  { value: 'movie', label: 'Movies', parent: 'movie' },
+  { value: 'tv', label: 'TV', parent: 'tv' },
+  { value: 'book', label: 'Books', parent: 'book' },
+  { value: 'artist', label: 'Music', parent: 'music', subtype: 'artist' },
+  { value: 'food', label: 'Food', parent: 'food', subtype: 'manual' },
+  { value: 'game', label: 'Games', parent: 'game', subtype: 'video-game' },
+  { value: 'event', label: 'Events', parent: 'event', subtype: 'live-event' }
+]);
+const DEFAULT_LOG_TYPE_KEYS = Object.freeze(MAIN_ADD_KIND_OPTIONS.map(option => option.value));
+
+function logTypePrefsStorageKey(user = currentUser) {
+  return `${LOG_TYPE_PREFS_KEY}.${user?.id || 'local'}`;
+}
+function enabledLogTypeKeys(user = currentUser) {
+  const saved = loadJSON(logTypePrefsStorageKey(user), null);
+  if (!Array.isArray(saved) || !saved.length) return new Set(DEFAULT_LOG_TYPE_KEYS);
+  const valid = saved.filter(value => DEFAULT_LOG_TYPE_KEYS.includes(value));
+  return new Set(valid.length ? valid : DEFAULT_LOG_TYPE_KEYS);
+}
+function saveEnabledLogTypeKeys(values, user = currentUser) {
+  const valid = [...new Set((values || []).filter(value => DEFAULT_LOG_TYPE_KEYS.includes(value)))];
+  safeLocalSet(logTypePrefsStorageKey(user), valid.length ? valid : [...DEFAULT_LOG_TYPE_KEYS]);
+  scheduleCloudSync();
+  return new Set(valid.length ? valid : DEFAULT_LOG_TYPE_KEYS);
+}
+function mainAddKindOption(kind) {
+  return MAIN_ADD_KIND_OPTIONS.find(option => option.value === kind) || null;
+}
+function logTypeChoiceMarkup(selected = enabledLogTypeKeys()) {
+  return MAIN_ADD_KIND_OPTIONS.map(option => `<label class="log-type-choice"><input type="checkbox" value="${escapeAttr(option.value)}" ${selected.has(option.value) ? 'checked' : ''} /><span>${escapeHtml(option.label)}</span></label>`).join('');
+}
 
 function itemTypeOptionUsageKey(value) {
   return String(value || '').startsWith('custom:') ? String(value) : `builtin:${value}`;
@@ -5210,26 +5401,29 @@ function kindForCurrentForm(item = null) {
 }
 
 function refreshItemKindChoices(preferredKind = '', actionOverride = '') {
-  if (!els.itemKindChoice || !els.itemActionChoice) return;
-  const action = actionOverride || els.itemActionChoice.value || 'watched';
-  const base = [...(ADD_ACTION_KIND_OPTIONS[action] || ADD_ACTION_KIND_OPTIONS.other)];
-  const custom = customAddKindOptions(action);
-  const actionOptions = [
-    ...custom.filter(option => typeUsageCount(addKindUsageValue(option)) > 0),
+  if (!els.itemKindChoice) return;
+  const enabled = enabledLogTypeKeys();
+  const base = MAIN_ADD_KIND_OPTIONS.filter(option => enabled.has(option.value));
+  const custom = customAddKindOptions('');
+  const options = [
     ...base,
-    ...custom.filter(option => typeUsageCount(addKindUsageValue(option)) <= 0)
+    ...custom,
+    { value: 'new-type', label: 'Create your own…', parent: 'other', createNew: true }
   ];
-  const options = [...actionOptions, ...UNIVERSAL_ADD_KIND_OPTIONS];
   const seen = new Set();
   const uniqueOptions = options.filter(option => option?.value && !seen.has(option.value) && seen.add(option.value));
-  const current = preferredKind || els.itemKindChoice.value || uniqueOptions[0]?.value || '';
+  const current = preferredKind || els.itemKindChoice.value || uniqueOptions[0]?.value || 'new-type';
+  if (current && !uniqueOptions.some(option => option.value === current)) {
+    const legacy = [...Object.values(ADD_ACTION_KIND_OPTIONS).flat(), ...UNIVERSAL_ADD_KIND_OPTIONS].find(option => option.value === current);
+    if (legacy) uniqueOptions.unshift(legacy);
+  }
   els.itemKindChoice.innerHTML = uniqueOptions.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
-  els.itemKindChoice.value = uniqueOptions.some(option => option.value === current) ? current : (uniqueOptions[0]?.value || '');
+  els.itemKindChoice.value = uniqueOptions.some(option => option.value === current) ? current : (uniqueOptions[0]?.value || 'new-type');
 }
 
 function setUnderlyingFormTypeForKind(kind) {
   if (!els.itemSourceType) return;
-  const all = [...Object.values(ADD_ACTION_KIND_OPTIONS).flat(), ...UNIVERSAL_ADD_KIND_OPTIONS];
+  const all = [...MAIN_ADD_KIND_OPTIONS, ...Object.values(ADD_ACTION_KIND_OPTIONS).flat(), ...UNIVERSAL_ADD_KIND_OPTIONS];
   const option = String(kind || '').startsWith('custom:')
     ? { value: kind, parent: kind }
     : all.find(entry => entry.value === kind) || { value: 'new-type', parent: 'other' };
@@ -5237,6 +5431,10 @@ function setUnderlyingFormTypeForKind(kind) {
   els.itemSourceType.value = option.parent;
   configureItemSubtype(true);
   if (option.subtype && els.itemSubtype) els.itemSubtype.value = option.subtype;
+  if (els.itemSubcategory && !String(kind || '').startsWith('custom:')) {
+    const suggested = option.value === 'artist' ? 'Artist' : option.value === 'game' ? 'Video Game' : option.value === 'event' ? 'Live Event' : '';
+    if (!els.editingId?.value || !els.itemSubcategory.value) els.itemSubcategory.value = suggested;
+  }
 }
 
 function applyItemKindChoice(clearSource = false) {
@@ -5247,22 +5445,18 @@ function applyItemKindChoice(clearSource = false) {
 }
 
 function syncAddActionControls(item = null) {
-  if (!els.itemActionChoice || !els.itemKindChoice) return;
+  if (!els.itemKindChoice) return;
   const kind = kindForCurrentForm(item);
-  const storedAction = String(item?.actionCategory || '');
-  const action = ['watched','read','went','completed','other'].includes(storedAction) ? storedAction : addActionForKind(kind);
-  els.itemActionChoice.value = action;
-  refreshItemKindChoices(kind, action);
+  refreshItemKindChoices(kind);
 }
 
 function preferredAddKindFromUsage() {
-  const candidates = Object.entries(ADD_ACTION_KIND_OPTIONS).flatMap(([action, options]) => options.map(option => ({ action, option })));
-  for (const action of ADD_ACTION_CATEGORIES) {
-    for (const option of customAddKindOptions(action)) candidates.push({ action, option });
-  }
+  const enabled = enabledLogTypeKeys();
+  const candidates = MAIN_ADD_KIND_OPTIONS.filter(option => enabled.has(option.value)).map(option => ({ option }));
+  for (const option of customAddKindOptions('')) candidates.push({ option });
   candidates.sort((a,b) => typeUsageCount(addKindUsageValue(b.option)) - typeUsageCount(addKindUsageValue(a.option)));
-  const best = candidates[0];
-  return best && typeUsageCount(addKindUsageValue(best.option)) > 0 ? { action: best.action, kind: best.option.value } : { action: 'watched', kind: 'movie' };
+  const best = candidates[0]?.option;
+  return { action: best ? addActionForKind(best.value) : 'other', kind: best?.value || MAIN_ADD_KIND_OPTIONS.find(option => enabled.has(option.value))?.value || 'new-type' };
 }
 
 function selectedSavedTypeEntry() {
@@ -5374,6 +5568,8 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     if (els.itemFindSource) els.itemFindSource.value = item.featureConfig?.findSource || (sourceType === 'place' ? 'google-places' : 'auto');
     if (els.itemProgressMode) els.itemProgressMode.value = item.featureConfig?.progressMode || 'auto';
     if (els.itemUseDateRange) els.itemUseDateRange.checked = Boolean(item.featureConfig?.dateRange || (item.activityMeta && sourceType !== 'activity'));
+    if (els.itemUseRepeatLog) els.itemUseRepeatLog.checked = Boolean(item.featureConfig?.repeatableLog);
+    if (els.itemLogEntryTitle) els.itemLogEntryTitle.value = '';
     if (els.itemUsePlaylist) els.itemUsePlaylist.checked = Boolean(item.featureConfig?.youtubePlaylist || (sourceType === 'youtube' && (item.type === 'workout' || item.playlistItems)));
     if (['youtube', 'reminder', 'other', 'place'].includes(sourceType) || selectedSavedTypeEntry()) els.itemDisplayType.value = getItemTypeLabel(item);
     els.provider.value = item.provider || 'manual';
@@ -5411,16 +5607,17 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
       els.bookStartDate.value = latest?.startDate || '';
       els.bookEndDate.value = latest?.endDate || '';
     }
+    if (item.reminder) {
+      if (els.reminderFrequency) els.reminderFrequency.value = reminderFrequency(item);
+      if (els.reminderDueDate) els.reminderDueDate.value = item.reminder?.dueDate || item.reminder?.scheduleStart || getNextReminderDueDate(item) || item.date || todayString();
+      if (els.reminderInterval) els.reminderInterval.value = String(Math.max(1, Number(item.reminder?.interval || 2)));
+      if (els.reminderIntervalUnit) els.reminderIntervalUnit.value = ['days','weeks','months'].includes(item.reminder?.intervalUnit) ? item.reminder.intervalUnit : 'weeks';
+      if (els.reminderWeekday) els.reminderWeekday.value = String(Number.isInteger(Number(item.reminder?.weekday)) ? Number(item.reminder.weekday) : new Date(`${els.reminderDueDate?.value || todayString()}T12:00:00`).getDay());
+    }
     if (sourceType === 'youtube') {
       els.playlistInput.value = item.providerId || '';
       state.loadedPlaylist = null;
       showSelectedSource({ title: item.title, subtitle: item.subtitle, image: item.image }, true);
-    } else if (sourceType === 'reminder') {
-      if (els.reminderFrequency) els.reminderFrequency.value = reminderFrequency(item);
-      if (els.reminderDueDate) els.reminderDueDate.value = (reminderFrequency(item) === 'weekly' && !item.reminder?.intervalUnit && Number.isInteger(Number(item.reminder?.weekday))) ? (getNextReminderDueDate(item) || todayString()) : (item.reminder?.dueDate || item.reminder?.scheduleStart || getNextReminderDueDate(item) || todayString());
-      if (els.reminderInterval) els.reminderInterval.value = String(Math.max(1, Number(item.reminder?.interval || 2)));
-      if (els.reminderIntervalUnit) els.reminderIntervalUnit.value = ['days','weeks','months'].includes(item.reminder?.intervalUnit) ? item.reminder.intervalUnit : 'weeks';
-      if (els.reminderWeekday) els.reminderWeekday.value = String(Number.isInteger(Number(item.reminder?.weekday)) ? Number(item.reminder.weekday) : 6);
     } else if (item.provider && item.provider !== 'manual' && item.provider !== 'reminder') {
       state.selectedSource = { provider: item.provider, providerId: item.providerId, title: item.title, subtitle: item.subtitle, image: item.image };
       showSelectedSource(state.selectedSource);
@@ -5468,6 +5665,8 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.itemFindSource) els.itemFindSource.value = 'auto';
   if (els.itemProgressMode) els.itemProgressMode.value = 'auto';
   if (els.itemUseDateRange) els.itemUseDateRange.checked = false;
+  if (els.itemUseRepeatLog) els.itemUseRepeatLog.checked = false;
+  if (els.itemLogEntryTitle) els.itemLogEntryTitle.value = '';
   if (els.itemUsePlaylist) els.itemUsePlaylist.checked = false;
   if (els.itemFeaturesDisclosure) els.itemFeaturesDisclosure.open = false;
   if (els.itemBuddyWatchPerson) els.itemBuddyWatchPerson.innerHTML = '';
@@ -5476,6 +5675,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.activityEndDate) els.activityEndDate.value = '';
   if (els.itemPeople) els.itemPeople.value = '';
   if (els.itemComment) els.itemComment.value = '';
+  if (els.itemDate) els.itemDate.value = todayString();
   els.itemQueueStatus.value = ['upnext','tbr','library'].includes(defaultQueueStatus) ? defaultQueueStatus : 'library';
   syncItemStatusPicker();
   els.nextSeason.value = 1;
@@ -5489,7 +5689,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.reminderDueDate) els.reminderDueDate.value = todayString();
   if (els.reminderInterval) els.reminderInterval.value = '2';
   if (els.reminderIntervalUnit) els.reminderIntervalUnit.value = 'weeks';
-  if (els.reminderWeekday) els.reminderWeekday.value = '6';
+  if (els.reminderWeekday) els.reminderWeekday.value = String(new Date(`${todayString()}T12:00:00`).getDay());
   els.provider.value = '';
   els.providerId.value = '';
   els.providerImage.value = '';
@@ -5526,25 +5726,31 @@ function resetItemForm(defaultQueueStatus = 'library') {
 
 const FORM_SUBTYPE_OPTIONS = {
   music: [
-    { value: 'manual', label: 'Manual' },
-    { value: 'album', label: 'Album' },
-    { value: 'artist', label: 'Artist' },
-    { value: 'song', label: 'Song' },
-    { value: 'concert', label: 'Concert' }
+    { value: 'artist', label: 'Artist' }
   ],
   food: [
-    { value: 'manual', label: 'Manual' },
+    { value: 'manual', label: 'Food' },
     { value: 'restaurant', label: 'Restaurant' },
     { value: 'recipe', label: 'Recipe' }
+  ],
+  game: [
+    { value: 'video-game', label: 'Video Game' },
+    { value: 'board-game', label: 'Board Game' }
+  ],
+  event: [
+    { value: 'live-event', label: 'Live Event' },
+    { value: 'personal-event', label: 'Personal Event' }
   ]
 };
 
 function formSubtypeForItem(sourceType, item = null) {
-  if (sourceType === 'artist' || sourceType === 'song' || sourceType === 'concert' || sourceType === 'restaurant' || sourceType === 'recipe') return sourceType;
-  if (sourceType === 'music') {
-    if (item?.provider === 'itunes' || cleanTypeLabel(item?.subcategory || '') === 'Album') return 'album';
-    return 'manual';
-  }
+  const label = cleanTypeLabel(item?.subcategory || '').toLowerCase();
+  if (sourceType === 'artist') return 'artist';
+  if (sourceType === 'restaurant') return 'restaurant';
+  if (sourceType === 'recipe') return 'recipe';
+  if (sourceType === 'video-game') return 'video-game';
+  if (sourceType === 'board-game') return 'board-game';
+  if (sourceType === 'event') return /personal|vacation|trip|occasion/.test(label) ? 'personal-event' : 'live-event';
   if (sourceType === 'food') return 'manual';
   return '';
 }
@@ -5552,27 +5758,54 @@ function formSubtypeForItem(sourceType, item = null) {
 function configureItemSubtype(reset = false, sourceTypeHint = '', item = null) {
   if (!els.itemSubtypeBlock || !els.itemSubtype) return;
   const parent = formParentType();
-  const options = FORM_SUBTYPE_OPTIONS[parent] || null;
-  // The staged I… / What? controls own this choice now; keep the legacy subtype
-  // select as internal state only so the form never asks the same question twice.
+  const options = FORM_SUBTYPE_OPTIONS[parent] || [];
+  // The hidden select keeps the behavioural subtype separate from the visible,
+  // user-editable Subtype field. The visible field can always contain a custom subtype.
   els.itemSubtypeBlock.hidden = true;
-  if (!options) {
+  if (!options.length) {
     els.itemSubtype.innerHTML = '';
     return;
   }
-
   const previous = reset ? '' : els.itemSubtype.value;
   els.itemSubtype.innerHTML = options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
   const hinted = formSubtypeForItem(sourceTypeHint, item);
-  const preferred = hinted || (options.some(option => option.value === previous) ? previous : 'manual');
-  els.itemSubtype.value = options.some(option => option.value === preferred) ? preferred : 'manual';
-  if (els.itemSubtypeLabel) els.itemSubtypeLabel.textContent = parent === 'music' ? 'Music type' : 'Food type';
+  const fallback = options[0]?.value || '';
+  const preferred = hinted || (options.some(option => option.value === previous) ? previous : fallback);
+  els.itemSubtype.value = options.some(option => option.value === preferred) ? preferred : fallback;
+}
+
+function syncSubtypeSuggestionsForType() {
+  if (!els.itemSubcategory) return;
+  const parent = formParentType();
+  const builtIns = {
+    music: ['Artist'],
+    food: ['Food', 'Restaurant', 'Recipe'],
+    game: ['Video Game', 'Board Game'],
+    event: ['Live Event', 'Personal Event']
+  }[parent] || [];
+  const rawType = String(els.itemSourceType?.value || '');
+  const customType = rawType.startsWith('custom:') ? rawType.slice(7) : '';
+  const saved = new Set();
+  for (const entry of [...(state.items || []), ...(state.history || [])]) {
+    const entryParent = customType
+      ? (String(entry?.type || '') === customType)
+      : (entry?.type === parent || getSourceType(entry) === parent || (parent === 'game' && ['video-game','board-game'].includes(getSourceType(entry))) || (parent === 'music' && ['music','artist','song','concert'].includes(getSourceType(entry))) || (parent === 'food' && ['food','restaurant','recipe'].includes(getSourceType(entry))));
+    if (!entryParent) continue;
+    const value = cleanTypeLabel(entry?.subcategory || '');
+    if (value) saved.add(value);
+  }
+  const values = [...new Set([...builtIns, ...saved])];
+  const list = document.querySelector('#itemSubtypeSuggestions');
+  if (list) list.innerHTML = values.map(value => `<option value="${escapeAttr(value)}"></option>`).join('');
+  els.itemSubcategory.placeholder = values.length ? `e.g. ${values.slice(0, 2).join(', ')}` : 'Optional subtype';
 }
 
 const FIND_SOURCE_CONFIG = Object.freeze({
   'tmdb-tv': { sourceType: 'tv', label: 'TV' },
   'tmdb-movie': { sourceType: 'movie', label: 'Movies' },
   'google-books': { sourceType: 'book', label: 'Books' },
+  'igdb-games': { sourceType: 'video-game', label: 'Video games' },
+  'bgg-games': { sourceType: 'board-game', label: 'Board games' },
   'apple-albums': { sourceType: 'music', label: 'Albums' },
   'lastfm-artists': { sourceType: 'artist', label: 'Artists' },
   'apple-songs': { sourceType: 'song', label: 'Songs' },
@@ -5585,42 +5818,50 @@ const FIND_SOURCE_CONFIG = Object.freeze({
 
 function automaticFormSourceType() {
   const parent = formParentType();
+  const visibleSubtype = cleanTypeLabel(els.itemSubcategory?.value || '').toLowerCase();
   if (parent === 'shopping') return 'place';
   if (parent === 'workout') return 'workout';
-  if (parent === 'music') {
-    const subtype = els.itemSubtype?.value || 'manual';
-    if (['artist','song','concert'].includes(subtype)) return subtype;
-    return 'music';
-  }
+  if (parent === 'music') return 'artist';
   if (parent === 'food') {
-    const subtype = els.itemSubtype?.value || 'manual';
-    if (['restaurant','recipe'].includes(subtype)) return subtype;
+    if (/restaurant/.test(visibleSubtype) || els.itemSubtype?.value === 'restaurant') return 'restaurant';
+    if (/recipe/.test(visibleSubtype) || els.itemSubtype?.value === 'recipe') return 'recipe';
     return 'food';
   }
+  if (parent === 'game') {
+    if (/board/.test(visibleSubtype) || els.itemSubtype?.value === 'board-game') return 'board-game';
+    return 'video-game';
+  }
+  if (parent === 'event') return 'event';
   return parent;
 }
 
 function defaultFindSourceForType(sourceType = automaticFormSourceType()) {
+  if (formParentType() === 'event' && /personal/.test(cleanTypeLabel(els.itemSubcategory?.value || '').toLowerCase())) return 'manual';
   return ({
-    tv: 'tmdb-tv', movie: 'tmdb-movie', book: 'google-books', music: 'apple-albums',
-    artist: 'lastfm-artists', song: 'apple-songs', concert: 'ticketmaster-concerts',
+    tv: 'tmdb-tv', movie: 'tmdb-movie', book: 'google-books',
+    'video-game': 'igdb-games', 'board-game': 'bgg-games',
+    music: 'lastfm-artists', artist: 'lastfm-artists', song: 'apple-songs', concert: 'ticketmaster-concerts',
     event: 'ticketmaster-events', restaurant: 'google-places', place: 'google-places', shopping: 'google-places', youtube: 'youtube-videos'
   })[sourceType] || 'manual';
 }
 
+function selectedLookupSourceType() {
+  const automatic = automaticFormSourceType();
+  const findSource = els.itemFindSource?.value || 'auto';
+  const sourceKey = findSource === 'auto' ? defaultFindSourceForType(automatic) : findSource;
+  if (sourceKey === 'google-places' && automatic === 'restaurant') return 'restaurant';
+  return FIND_SOURCE_CONFIG[sourceKey]?.sourceType || automatic;
+}
+
 function selectedFormSourceType() {
   const automatic = automaticFormSourceType();
-  // A playlist is a behavior, not a display Type. Turning it on makes YouTube
-  // the content backend while the chosen Type/label remains whatever the user picked.
   if (els.itemUsePlaylist?.checked) return 'youtube';
   const findSource = els.itemFindSource?.value || 'auto';
   const editingHint = String(els.itemForm?.dataset?.sourceTypeHint || '');
-  if (findSource === 'auto' && editingHint) return editingHint;
-  if (findSource === 'auto') return automatic;
-  if (findSource === 'google-places' && automatic === 'restaurant') return 'restaurant';
-  return FIND_SOURCE_CONFIG[findSource]?.sourceType || automatic;
+  // Existing custom items retain their saved backend until the user chooses a new Find source.
+  if (findSource === 'auto' && editingHint && selectedSavedTypeEntry()) return editingHint;
+  return selectedLookupSourceType() || automatic;
 }
-
 function effectiveItemProgressMode(sourceType = selectedFormSourceType()) {
   const explicit = els.itemProgressMode?.value || 'auto';
   if (explicit === 'tv' || explicit === 'book' || explicit === 'none') return explicit;
@@ -5636,9 +5877,10 @@ function effectiveItemProgressMode(sourceType = selectedFormSourceType()) {
 
 function syncItemFindSourceSummary() {
   if (!els.itemFindSource) return;
-  const automaticKey = els.itemFindSource.dataset.defaultSource || defaultFindSourceForType(automaticFormSourceType());
-  const automaticLabel = FIND_SOURCE_CONFIG[automaticKey]?.label || 'Manual';
+  const automaticKey = defaultFindSourceForType(automaticFormSourceType());
+  els.itemFindSource.dataset.defaultSource = automaticKey;
   const automaticOption = els.itemFindSource.querySelector('option[value="auto"]');
+  const automaticLabel = automaticKey === 'manual' ? 'Choose source' : (FIND_SOURCE_CONFIG[automaticKey]?.label || 'Choose source');
   if (automaticOption) automaticOption.textContent = automaticLabel;
   const option = els.itemFindSource.options[els.itemFindSource.selectedIndex];
   if (els.itemFindSourceSummary) els.itemFindSourceSummary.textContent = option?.textContent || automaticLabel;
@@ -5662,7 +5904,7 @@ function syncItemFeatureSummary() {
   if (progress === 'book') bits.push('pages');
   if (els.itemUseDateRange?.checked) bits.push('date range');
   if (els.itemUsePlaylist?.checked) bits.push('playlist');
-  els.itemFeaturesSummary.textContent = bits.length ? bits.join(' · ') : 'automatic';
+  els.itemFeaturesSummary.textContent = bits.length ? bits.join(' · ') : 'None';
 }
 
 
@@ -5809,153 +6051,159 @@ function syncTVDraftHistoryVisibility(sourceType = selectedFormSourceType()) {
 
 function updateItemFormForType() {
   configureItemSubtype(false);
+  syncSubtypeSuggestionsForType();
   const savedType = selectedSavedTypeEntry();
   const parentType = formParentType();
-  const subtype = els.itemSubtype?.value || '';
-  let sourceType = selectedFormSourceType();
-  if (els.itemFindSource && els.itemFindSource.value === 'auto') {
-    els.itemFindSource.dataset.defaultSource = defaultFindSourceForType(automaticFormSourceType());
-  }
-  const musicManual = parentType === 'music' && subtype === 'manual';
-  const musicAlbum = parentType === 'music' && subtype === 'album';
-  const foodManual = parentType === 'food' && subtype === 'manual';
-  const findSource = els.itemFindSource?.value || 'auto';
-  const isCatalogue = findSource !== 'manual';
-  const isYouTube = sourceType === 'youtube';
-  const isReminder = sourceType === 'reminder';
-  const isActivity = sourceType === 'activity';
-  const isClass = sourceType === 'class';
-  const isManual = sourceType === 'other' || Boolean(savedType);
-  const isFoodManual = sourceType === 'food' || sourceType === 'recipe';
+  const visibleSubtype = cleanTypeLabel(els.itemSubcategory?.value || '');
 
-  els.catalogueSearchBlock.hidden = isClass;
-  if (els.catalogueQuery) els.catalogueQuery.disabled = !isCatalogue;
-  if (els.catalogueSearchButton) els.catalogueSearchButton.disabled = !isCatalogue;
-  els.workoutBlock.hidden = !Boolean(els.itemUsePlaylist?.checked);
-  if (els.reminderBlock) els.reminderBlock.hidden = false;
-  if (els.activityFields) els.activityFields.hidden = !(isActivity || Boolean(els.itemUseDateRange?.checked));
+  // Keep the hidden behavioural subtype in sync with recognizable visible subtype names.
+  if (els.itemSubtype) {
+    const lower = visibleSubtype.toLowerCase();
+    if (parentType === 'food') {
+      if (/restaurant/.test(lower)) els.itemSubtype.value = 'restaurant';
+      else if (/recipe/.test(lower)) els.itemSubtype.value = 'recipe';
+      else els.itemSubtype.value = 'manual';
+    } else if (parentType === 'game') {
+      els.itemSubtype.value = /board/.test(lower) ? 'board-game' : 'video-game';
+    } else if (parentType === 'event') {
+      els.itemSubtype.value = /personal|vacation|trip|occasion/.test(lower) ? 'personal-event' : 'live-event';
+    } else if (parentType === 'music') {
+      els.itemSubtype.value = 'artist';
+    }
+  }
+
+  const automaticType = automaticFormSourceType();
+  const defaultSourceKey = defaultFindSourceForType(automaticType);
+  if (els.itemFindSource && els.itemFindSource.value === 'auto') els.itemFindSource.dataset.defaultSource = defaultSourceKey;
+  const findSource = els.itemFindSource?.value || 'auto';
+  const sourceKey = findSource === 'auto' ? defaultSourceKey : findSource;
+  const sourceType = selectedFormSourceType();
+  const isCatalogue = sourceKey !== 'manual';
+  const customNeedsSource = Boolean(savedType) && sourceKey === 'manual' && findSource === 'auto';
+  const isYouTube = sourceKey === 'youtube-videos' || sourceType === 'youtube';
+
+  if (els.catalogueSearchBlock) els.catalogueSearchBlock.hidden = false;
+  if (els.catalogueQuery) {
+    els.catalogueQuery.disabled = !isCatalogue;
+    const placeholders = {
+      tv: 'Search TV', movie: 'Search movies', book: 'Search books',
+      'video-game': 'Search video games', 'board-game': 'Search board games',
+      artist: 'Search artists', concert: 'Search concerts', event: 'Search events',
+      restaurant: 'Search restaurants', place: 'Search places', youtube: 'Paste YouTube URL'
+    };
+    els.catalogueQuery.placeholder = customNeedsSource ? 'Choose a source first' : (isCatalogue ? (placeholders[sourceType] || 'Search') : 'Manual title only');
+  }
+  if (els.catalogueSearchButton) {
+    els.catalogueSearchButton.disabled = !isCatalogue;
+    els.catalogueSearchButton.textContent = isYouTube ? 'Load' : 'Find';
+  }
+  if (els.findSourcePrompt) els.findSourcePrompt.hidden = !customNeedsSource;
+
+  if (els.workoutBlock) els.workoutBlock.hidden = !Boolean(els.itemUsePlaylist?.checked);
+  if (els.activityFields) els.activityFields.hidden = !Boolean(els.itemUseDateRange?.checked);
+  if (els.itemLogEntryFields) els.itemLogEntryFields.hidden = !Boolean(els.itemUseRepeatLog?.checked);
+  if (els.itemLogModeHint) els.itemLogModeHint.hidden = !Boolean(els.itemUseRepeatLog?.checked);
+
   const bookDisplay = parentType === 'book' || sourceType === 'book';
   if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.hidden = bookDisplay;
   if (els.itemPeopleBlock) els.itemPeopleBlock.hidden = bookDisplay;
   if (els.itemPeopleSuggestions && bookDisplay) els.itemPeopleSuggestions.hidden = true;
   else if (els.itemPeopleSuggestions && els.itemModal?.open) refreshItemPeopleSuggestions().catch(() => {});
+
   const creatingNewType = parentType === 'other' && !savedType && els.itemKindChoice?.value === 'new-type';
-  const showDisplayType = parentType === 'reminder' || creatingNewType;
-  els.displayTypeBlock.hidden = !showDisplayType;
-  els.manualTitleBlock.hidden = false;
+  if (els.displayTypeBlock) els.displayTypeBlock.hidden = !creatingNewType;
+  if (els.manualTitleBlock) els.manualTitleBlock.hidden = false;
+
   const progressMode = effectiveItemProgressMode(sourceType);
   syncTVDraftHistoryVisibility(progressMode === 'tv' && sourceType === 'tv' ? 'tv' : sourceType);
   if (els.tvProgressFields && (progressMode !== 'tv' || sourceType !== 'tv')) els.tvProgressFields.hidden = true;
   syncFlexibleEpisodeProgressFields(sourceType, progressMode);
-  els.bookProgressFields.hidden = progressMode !== 'book';
-  if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder || isActivity;
-  if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = !['tv','movie','book','music','artist','song'].includes(sourceType);
-  if (progressMode === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
-    els.bookStartDate.value = todayString();
-  }
-  if (isActivity && !els.editingId.value && els.activityStartDate && !els.activityStartDate.value) {
-    els.activityStartDate.value = todayString();
-  }
-  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || isActivity || isClass || ['music','artist','song','concert','food','recipe'].includes(sourceType);
+  if (els.bookProgressFields) els.bookProgressFields.hidden = progressMode !== 'book';
+  if (els.itemDateField) els.itemDateField.hidden = bookDisplay;
+  if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = !['tv','movie','book','music','artist','song','video-game','board-game'].includes(sourceType);
+  if (progressMode === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) els.bookStartDate.value = todayString();
+
+  // Status is explicit for every ordinary item: Finished, Up Next, or TBR.
+  if (els.queueStatusField) els.queueStatusField.hidden = false;
   refreshItemBuddyWatchOptions().catch(() => {});
-  if (isActivity && els.itemQueueStatus) els.itemQueueStatus.value = 'library';
 
-  const upNextOption = els.itemQueueStatus?.querySelector('option[value="upnext"]');
-  if (upNextOption) {
-    upNextOption.hidden = sourceType === 'restaurant';
-    upNextOption.disabled = sourceType === 'restaurant';
-    if (sourceType === 'restaurant' && els.itemQueueStatus.value === 'upnext') els.itemQueueStatus.value = 'library';
-  }
-
-  const fixedSubcategory = musicAlbum
-    ? 'Album'
-    : musicSubcategoryForSourceType(sourceType) || foodSubcategoryForSourceType(sourceType) || '';
   if (els.itemSubcategory) {
-    if (fixedSubcategory) {
-      els.itemSubcategory.value = fixedSubcategory;
-      els.itemSubcategory.readOnly = true;
-      els.itemSubcategory.placeholder = fixedSubcategory;
-    } else {
-      els.itemSubcategory.readOnly = false;
-      if (!els.editingId.value && !els.itemSubcategory.value) els.itemSubcategory.value = '';
-      els.itemSubcategory.placeholder = isActivity ? 'e.g. Trip, Outing, Social' : 'e.g. Documentary, Lecture, Gym';
+    els.itemSubcategory.readOnly = false;
+    if (!els.editingId.value && !els.itemSubcategory.value) {
+      if (parentType === 'music') els.itemSubcategory.value = 'Artist';
+      else if (parentType === 'game') els.itemSubcategory.value = 'Video Game';
+      else if (parentType === 'event') els.itemSubcategory.value = 'Live Event';
     }
   }
   syncItemSubcategoryDisclosure();
 
-  if (parentType === 'youtube') {
-    els.displayTypeLabel.textContent = 'Display as';
-    if (els.displayTypeHint) els.displayTypeHint.textContent = '';
-    if (!els.itemDisplayType.value.trim()) els.itemDisplayType.value = 'Workout';
-  } else if (parentType === 'reminder') {
-    els.displayTypeLabel.textContent = 'Type';
-    if (els.displayTypeHint) els.displayTypeHint.textContent = '';
-    if (!els.editingId.value || !els.itemDisplayType.value.trim()) els.itemDisplayType.value = 'Chores';
-    if (els.itemQueueStatus) els.itemQueueStatus.value = 'upnext';
-  } else if (parentType === 'other' && !savedType && creatingNewType) {
-    els.displayTypeLabel.textContent = 'New type name';
-    if (els.displayTypeHint) els.displayTypeHint.textContent = '';
-    if (!els.editingId.value) els.itemDisplayType.value = '';
-  } else if (parentType === 'other' && !savedType) {
-    if (!els.editingId.value) els.itemDisplayType.value = '';
+  if (creatingNewType) {
+    if (els.displayTypeLabel) els.displayTypeLabel.textContent = 'New type name';
+    if (!els.editingId.value && els.itemDisplayType) els.itemDisplayType.value = '';
   }
 
   if (!els.editingId.value) {
     state.selectedSource = null;
     state.loadedPlaylist = null;
-    const manualProvider = isManual || isFoodManual || musicManual || isActivity || isClass || sourceType === 'concert';
-    els.provider.value = isYouTube ? 'youtube' : isReminder ? 'reminder' : manualProvider ? 'manual' : '';
-    els.providerId.value = '';
-    els.providerImage.value = '';
-    els.providerSubtitle.value = '';
-    els.searchResults.hidden = true;
-    els.selectedSource.hidden = true;
-    els.playlistPreview.hidden = true;
+    if (els.provider) els.provider.value = isCatalogue ? '' : 'manual';
+    if (els.providerId) els.providerId.value = '';
+    if (els.providerImage) els.providerImage.value = '';
+    if (els.providerSubtitle) els.providerSubtitle.value = '';
+    if (els.searchResults) els.searchResults.hidden = true;
+    if (els.selectedSource) els.selectedSource.hidden = true;
+    if (els.playlistPreview) els.playlistPreview.hidden = true;
   }
 
   updateReminderFormFields();
-
-  const placeholders = { tv: 'Search TV', movie: 'Search movies', book: 'Search books', music: 'Search albums', artist: 'Search artists', song: 'Search songs', concert: 'Search concerts', event: 'Search events', restaurant: 'Search restaurants', place: 'Search places', youtube: 'Search YouTube' };
-  els.catalogueQuery.placeholder = isCatalogue ? (placeholders[sourceType] || 'Search') : 'Manual';
   syncItemFeatureSummary();
   syncItemFindSourceSummary();
   syncItemStatusPicker();
-
-  if (els.manualTitle) {
-    els.manualTitle.placeholder = sourceType === 'recipe'
-      ? 'Recipe name'
-      : sourceType === 'restaurant'
-        ? 'Name this restaurant in your tracker'
-        : sourceType === 'activity'
-          ? 'What did you do?'
-          : sourceType === 'class'
-            ? 'Class title (e.g. Spin, Pottery)'
-            : 'Title';
-  }
-  if (els.itemNote) {
-    els.itemNote.placeholder = sourceType === 'restaurant'
-      ? 'What you ordered, who you went with, or anything to remember'
-      : sourceType === 'recipe'
-        ? 'What you changed, how it turned out, or anything to remember'
-        : sourceType === 'activity'
-          ? 'Anything you want to remember'
-          : 'Anything you want to remember';
-  }
+  if (els.manualTitle) els.manualTitle.placeholder = 'Enter title manually';
   if (els.itemLinkLabel) els.itemLinkLabel.placeholder = sourceType === 'recipe' ? 'Recipe source (optional)' : 'Link label (optional)';
 }
 
 function updateReminderFormFields() {
   if (!els.reminderFrequency) return;
   const frequency = els.reminderFrequency.value;
-  const repeatLabels = { none: 'Off', daily: 'Daily', weekly: 'Weekly', biweekly: 'Every 2 weeks', monthly: 'Monthly', custom: 'Custom' };
-  if (els.itemRepeatSummary) els.itemRepeatSummary.textContent = repeatLabels[frequency] || 'Off';
+  const weekday = Number(els.reminderWeekday?.value ?? new Date(`${els.reminderDueDate?.value || todayString()}T12:00:00`).getDay());
+  const weekdays = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const repeatLabels = {
+    none: '', daily: 'Every day', weekly: `Every ${weekdays[weekday] || 'week'}`,
+    biweekly: `Every 2 weeks${Number.isInteger(weekday) ? ` · ${weekdays[weekday]}` : ''}`,
+    monthly: 'Every month', custom: 'Custom'
+  };
+  if (els.itemRepeatSummary) els.itemRepeatSummary.textContent = repeatLabels[frequency] || '';
   const custom = frequency === 'custom';
-  if (els.reminderWeekdayField) els.reminderWeekdayField.hidden = true;
-  if (els.reminderDateField) els.reminderDateField.hidden = false;
-  if (els.reminderDateLabel) els.reminderDateLabel.textContent = frequency === 'none' ? 'Date' : 'Starts';
+  const weekly = frequency === 'weekly' || frequency === 'biweekly';
+  if (els.reminderWeekdayField) els.reminderWeekdayField.hidden = !weekly;
+  if (els.reminderDateField) els.reminderDateField.hidden = frequency === 'none';
+  if (els.reminderDateLabel) els.reminderDateLabel.textContent = 'Starts';
   if (els.reminderCustomFields) els.reminderCustomFields.hidden = !custom;
-  if (els.reminderDueDate && !els.reminderDueDate.value) els.reminderDueDate.value = todayString();
+  if (els.reminderDueDate && !els.reminderDueDate.value) els.reminderDueDate.value = els.itemDate?.value || todayString();
   if (custom && els.reminderInterval && Number(els.reminderInterval.value || 0) < 1) els.reminderInterval.value = '1';
+}
+
+function parseYouTubeVideoId(value) {
+  const raw = String(value || '').trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(raw)) return raw;
+  try {
+    const url = new URL(raw);
+    if (/youtu\.be$/i.test(url.hostname)) return url.pathname.split('/').filter(Boolean)[0] || '';
+    if (/youtube\.com$/i.test(url.hostname) || /www\.youtube\.com$/i.test(url.hostname) || /m\.youtube\.com$/i.test(url.hostname)) {
+      return url.searchParams.get('v') || url.pathname.match(/\/(?:shorts|embed)\/([A-Za-z0-9_-]{11})/)?.[1] || '';
+    }
+  } catch {}
+  return '';
+}
+
+function mapYouTubeVideoForFind(video) {
+  const snippet = video?.snippet || {};
+  return {
+    sourceType: 'youtube', provider: 'youtube', providerId: String(video?.id || ''),
+    title: snippet.title || 'Untitled video', subtitle: snippet.channelTitle || '',
+    image: snippet.thumbnails?.high?.url || snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || '',
+    description: snippet.description || '', raw: video
+  };
 }
 
 async function searchCatalogue() {
@@ -5984,6 +6232,8 @@ async function searchCatalogue() {
     if (sourceKey === 'tmdb-tv') results = await TrackerAPI.searchCatalogue(query, 'tv', state.settings);
     else if (sourceKey === 'tmdb-movie') results = await TrackerAPI.searchCatalogue(query, 'movie', state.settings);
     else if (sourceKey === 'google-books') results = await TrackerAPI.searchCatalogue(query, 'book', state.settings);
+    else if (sourceKey === 'igdb-games') results = await TrackerAPI.searchCatalogue(query, 'video-game', state.settings, { maxResults: 20 });
+    else if (sourceKey === 'bgg-games') results = await TrackerAPI.searchCatalogue(query, 'board-game', state.settings, { maxResults: 20 });
     else if (sourceKey === 'apple-albums') results = await TrackerAPI.searchCatalogue(query, 'music', state.settings);
     else if (sourceKey === 'lastfm-artists') {
       try {
@@ -5994,7 +6244,11 @@ async function searchCatalogue() {
       }
     }
     else if (sourceKey === 'apple-songs') results = await TrackerAPI.searchCatalogue(query, 'song', state.settings);
-    else if (sourceKey === 'youtube-videos') results = await TrackerAPI.searchCatalogue(query, 'youtube', state.settings, { maxResults: 20 });
+    else if (sourceKey === 'youtube-videos') {
+      const videoId = parseYouTubeVideoId(query);
+      if (!videoId) throw new Error('Paste a YouTube video URL or video ID.');
+      results = [mapYouTubeVideoForFind(await TrackerAPI.getYouTubeVideo(videoId, state.settings))].filter(result => result.providerId);
+    }
     else if (sourceKey === 'google-places') results = sourceType === 'restaurant'
       ? await TrackerAPI.searchRestaurants(query, state.settings, options)
       : await TrackerAPI.searchPlaces(query, state.settings, options);
@@ -6367,7 +6621,7 @@ async function saveItemFromForm(event) {
   const buddyFriendId = startBuddyAfterSave ? (els.itemBuddyWatchPerson?.value || '') : '';
   const sourceType = selectedFormSourceType();
   const editing = findItem(els.editingId.value);
-  const selectedActionCategory = normalizeAddActionCategory(els.itemActionChoice?.value || editing?.actionCategory || 'other');
+  const selectedActionCategory = normalizeAddActionCategory(editing?.actionCategory || addActionForKind(els.itemKindChoice?.value || '') || 'other');
   let title = els.manualTitle.value.trim();
   let provider = els.provider.value;
   let providerId = els.providerId.value;
@@ -6390,12 +6644,20 @@ async function saveItemFromForm(event) {
   } else if (displayParent === 'music') {
     type = 'music';
     typeLabel = 'Music';
-    fixedSubcategory = musicSubcategoryForSourceType(automaticSourceType);
+    fixedSubcategory = cleanTypeLabel(els.itemSubcategory?.value || '') || musicSubcategoryForSourceType(automaticSourceType);
     if (automaticSourceType === 'music' && (state.selectedSource?.provider === 'itunes' || (editing?.provider === 'itunes' && editing?.providerId))) fixedSubcategory = 'Album';
   } else if (displayParent === 'food') {
     type = 'food';
     typeLabel = 'Food';
-    fixedSubcategory = foodSubcategoryForSourceType(automaticSourceType);
+    fixedSubcategory = cleanTypeLabel(els.itemSubcategory?.value || '') || foodSubcategoryForSourceType(automaticSourceType);
+  } else if (displayParent === 'game') {
+    type = 'game';
+    typeLabel = 'Games';
+    fixedSubcategory = cleanTypeLabel(els.itemSubcategory?.value || '') || (automaticSourceType === 'board-game' ? 'Board Game' : 'Video Game');
+  } else if (displayParent === 'event') {
+    type = 'event';
+    typeLabel = 'Events';
+    fixedSubcategory = cleanTypeLabel(els.itemSubcategory?.value || '') || 'Live Event';
   } else if (displayParent === 'youtube') {
     type = 'youtube';
     typeLabel = 'YouTube';
@@ -6475,6 +6737,10 @@ async function saveItemFromForm(event) {
           ? ['itunes', 'lastfm'].includes(provider)
           : sourceType === 'concert'
             ? ['ticketmaster', 'manual'].includes(provider)
+            : sourceType === 'video-game'
+              ? provider === 'igdb'
+              : sourceType === 'board-game'
+                ? provider === 'bgg'
             : ['restaurant','place'].includes(sourceType)
               ? provider === 'googlePlaces'
               : sourceType === 'event'
@@ -6484,7 +6750,7 @@ async function saveItemFromForm(event) {
                   : sourceType === 'youtube'
                     ? provider === 'youtube'
                     : true;
-  const requiresCatalogueSelection = !manualLookup && ['tv','book','movie','artist','song','event','restaurant','place','youtube'].includes(sourceType);
+  const requiresCatalogueSelection = !manualLookup && ['tv','book','movie','video-game','board-game','artist','song','event','restaurant','place','youtube'].includes(sourceType);
   if ((requiresCatalogueSelection && !providerId) || !validProvider) {
     showFormMessage('Choose a Find it result first, or switch Find it to Manual.', true);
     return;
@@ -6493,11 +6759,11 @@ async function saveItemFromForm(event) {
     showFormMessage('Choose the date for this class.', true);
     return;
   }
-  if (sourceType === 'reminder' && !els.reminderDueDate?.value) {
-    showFormMessage(els.reminderFrequency?.value === 'none' ? 'Choose a date for the reminder.' : 'Choose a start date for the repeating reminder.', true);
+  if (els.reminderFrequency?.value !== 'none' && !els.reminderDueDate?.value) {
+    showFormMessage('Choose when the repeat starts.', true);
     return;
   }
-  if (sourceType === 'reminder' && els.reminderFrequency?.value === 'custom' && Number(els.reminderInterval?.value || 0) < 1) {
+  if (els.reminderFrequency?.value === 'custom' && Number(els.reminderInterval?.value || 0) < 1) {
     showFormMessage('Custom repeats must be at least every 1 day, week, or month.', true);
     return;
   }
@@ -6568,18 +6834,17 @@ async function saveItemFromForm(event) {
       ? (normalizedReleaseDate(els.itemReleaseDate?.value) || normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)))
       : normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)),
     attachments: attachmentFiles,
-    coverAttachmentId: image ? '' : ((editing?.coverAttachmentId && attachmentFiles.some(file => file.id === editing.coverAttachmentId) && String(attachmentFiles.find(file => file.id === editing.coverAttachmentId)?.mime || '').startsWith('image/'))
-      ? editing.coverAttachmentId
-      : (attachmentFiles.find(file => String(file.mime || '').startsWith('image/'))?.id || '')),
+    coverAttachmentId: '',
     links: state.attachmentDraft.links.map(link => ({ ...link })),
-    date: sourceType === 'reminder' ? '' : (sourceType === 'activity' || els.itemUseDateRange?.checked) ? (els.activityStartDate?.value || '') : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
-    queueStatus: sourceType === 'reminder' ? 'upnext' : ['activity','class'].includes(sourceType) ? 'library' : (sourceType === 'restaurant' ? (els.itemQueueStatus.value === 'tbr' ? 'tbr' : 'library') : (['music','artist','song','concert','food','recipe'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'))),
-    active: sourceType === 'reminder' || (!['activity','class'].includes(sourceType) && !['restaurant','place'].includes(sourceType) && !['music','artist','song','concert','food','recipe'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
+    date: (sourceType === 'activity' || els.itemUseDateRange?.checked) ? (els.activityStartDate?.value || els.itemDate?.value || '') : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
+    queueStatus: els.itemQueueStatus?.value || 'library',
+    active: (els.itemQueueStatus?.value || 'library') === 'upnext',
     featureConfig: {
       findSource: requestedFindSource,
       progressMode: effectiveItemProgressMode(sourceType),
       dateRange: Boolean(els.itemUseDateRange?.checked),
-      youtubePlaylist: Boolean(els.itemUsePlaylist?.checked)
+      youtubePlaylist: Boolean(els.itemUsePlaylist?.checked),
+      repeatableLog: Boolean(els.itemUseRepeatLog?.checked)
     },
     createdAt: editing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -6616,21 +6881,20 @@ async function saveItemFromForm(event) {
 
   };
 
-  if (sourceType === 'reminder') {
-    const frequency = ['none','daily','weekly','biweekly','monthly','custom'].includes(els.reminderFrequency?.value)
-      ? els.reminderFrequency.value
-      : 'none';
-    const scheduleStart = els.reminderDueDate?.value || todayString();
-    const dueDate = frequency === 'none' ? scheduleStart : '';
+  const repeatFrequency = ['none','daily','weekly','biweekly','monthly','custom'].includes(els.reminderFrequency?.value)
+    ? els.reminderFrequency.value : 'none';
+  if (repeatFrequency !== 'none') {
+    const scheduleStart = els.reminderDueDate?.value || els.itemDate?.value || todayString();
     item.reminder = {
-      frequency,
-      dueDate,
+      frequency: repeatFrequency,
+      dueDate: '',
       scheduleStart,
-      interval: frequency === 'custom' ? Math.max(1, Math.min(365, Number(els.reminderInterval?.value || 1))) : undefined,
-      intervalUnit: frequency === 'custom' && ['days','weeks','months'].includes(els.reminderIntervalUnit?.value)
-        ? els.reminderIntervalUnit.value
-        : undefined
+      weekday: ['weekly','biweekly'].includes(repeatFrequency) ? Number(els.reminderWeekday?.value ?? new Date(`${scheduleStart}T12:00:00`).getDay()) : undefined,
+      interval: repeatFrequency === 'custom' ? Math.max(1, Math.min(365, Number(els.reminderInterval?.value || 1))) : undefined,
+      intervalUnit: repeatFrequency === 'custom' && ['days','weeks','months'].includes(els.reminderIntervalUnit?.value) ? els.reminderIntervalUnit.value : undefined
     };
+  } else {
+    delete item.reminder;
   }
   const progressMode = effectiveItemProgressMode(sourceType);
   if (progressMode === 'tv') {
@@ -6703,9 +6967,7 @@ async function saveItemFromForm(event) {
       ...(existingRestaurant.attachments || []),
       ...attachmentFiles.filter(file => !(existingRestaurant.attachments || []).some(saved => saved.id === file.id))
     ];
-    if (!existingRestaurant.image && !existingRestaurant.coverAttachmentId) {
-      existingRestaurant.coverAttachmentId = attachmentFiles.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
-    }
+    existingRestaurant.coverAttachmentId = '';
     existingRestaurant.links = [
       ...(existingRestaurant.links || []),
       ...state.attachmentDraft.links.filter(link => !(existingRestaurant.links || []).some(saved => saved.url === link.url))
@@ -6772,9 +7034,7 @@ async function saveItemFromForm(event) {
       ...(group.links || []),
       ...state.attachmentDraft.links.filter(link => !(group.links || []).some(saved => saved.url === link.url))
     ];
-    if (!group.image && !group.coverAttachmentId) {
-      group.coverAttachmentId = attachmentFiles.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
-    }
+    group.coverAttachmentId = '';
     group.updatedAt = new Date().toISOString();
     setItemQueueStatus(group, 'library');
     if (!existingClassGroup) state.items.push(group);
@@ -6800,10 +7060,29 @@ async function saveItemFromForm(event) {
 
   applyReleaseQueueAutomation(item);
 
+  // Logging a real date/progress on something that was sitting in TBR means it has started.
+  // Preserve deliberate TBR saves, but do not leave an edited/logged item stranded there.
+  if (editing && getQueueStatus(editing) === 'tbr' && item.date && item.date !== editing.date && getQueueStatus(item) === 'tbr') {
+    resumeTbrItemAfterLog(item);
+  }
+
   if (editing) {
     state.items = state.items.map(existing => existing.id === item.id ? item : existing);
   } else {
     state.items.push(item);
+  }
+
+  if (!editing && item.featureConfig?.repeatableLog) {
+    const logDate = els.itemDate?.value || todayString();
+    addHistoryRecord({
+      sourceItemId: item.id, sourceType, type: item.type, typeLabel: getItemTypeLabel(item),
+      subcategory: item.subcategory || '', date: logDate, showOnCalendar: true, kind: 'repeatable-log',
+      title: cleanTypeLabel(els.itemLogEntryTitle?.value || '') || item.title,
+      subtitle: item.title, notes: item.notes || '', comment: item.comment || '', people: item.people || [],
+      rating: Number(item.rating || 0), image: item.image || '', provider: item.provider, providerId: item.providerId
+    });
+    item.date = '';
+    saveHistory();
   }
 
   if (foodHistoryDate && ['restaurant', 'recipe'].includes(sourceType)) {
@@ -6982,11 +7261,8 @@ function showFormMessage(message, error = false) {
 }
 
 function attachmentCoverIdForItem(item) {
-  if (!item || String(item.image || '').trim()) return '';
-  const attachments = Array.isArray(item.attachments) ? item.attachments : [];
-  const preferredId = String(item.coverAttachmentId || '');
-  const preferred = attachments.find(file => file.id === preferredId && String(file.mime || '').startsWith('image/'));
-  return preferred?.id || attachments.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
+  // User attachments should remain visible inside the item, not become its Library cover.
+  return '';
 }
 
 function displayImageForItem(item) {
@@ -7040,7 +7316,87 @@ function loadingTipText() {
 }
 
 function loadingMarkup(label = 'Loading…') {
-  return `<div class=\"loading-with-tip\"><p class=\"loading-detail\">${escapeHtml(label)}</p><p class=\"loading-tip\"><strong>Tip</strong> ${escapeHtml(loadingTipText())}</p></div>`;
+  return `<div class=\"loading-with-tip\"><p class=\"loading-tip\"><strong>Tip</strong> ${escapeHtml(loadingTipText())}</p></div>`;
+}
+
+function repeatLogEntries(item) {
+  return (state.history || []).filter(entry => entry.sourceItemId === item?.id && entry.kind === 'repeatable-log')
+    .sort((a,b) => String(b.date || b.createdAt || '').localeCompare(String(a.date || a.createdAt || '')));
+}
+
+function ensureRepeatLogModal() {
+  let modal = $('#repeatLogModal');
+  if (modal) return modal;
+  modal = document.createElement('dialog');
+  modal.id = 'repeatLogModal';
+  modal.className = 'modal small-modal repeat-log-modal';
+  modal.innerHTML = `<button class="modal-x" type="button" data-close="repeatLogModal" aria-label="Close">×</button><div class="modal-heading"><p class="modal-eyebrow">ADD LOG</p><h2 id="repeatLogModalTitle">Add log</h2></div><form id="repeatLogForm"><input id="repeatLogItemId" type="hidden"/><label class="field"><span>Entry name <em>optional</em></span><input id="repeatLogTitle" type="text" placeholder="e.g. Evening session"/></label><div class="rating-date-grid"><fieldset class="rating-fieldset"><legend>Rating</legend><div id="repeatLogRatingPicker" class="star-picker">${[1,2,3,4,5].map(value => `<button type="button" data-repeat-log-rating="${value}" aria-label="${value} stars">★</button>`).join('')}<button class="clear-rating" type="button" data-repeat-log-clear>clear</button></div><input id="repeatLogRating" type="hidden" value="0"/></fieldset><label class="field"><span>Date</span><input id="repeatLogDate" type="date" required/></label></div><label class="field"><span>Comment <em>optional</em></span><textarea id="repeatLogComment" rows="2"></textarea></label><label class="field"><span>Note to self <em>optional</em></span><textarea id="repeatLogNote" rows="2"></textarea></label><div class="modal-actions"><button class="quiet-button" type="button" data-close="repeatLogModal">Cancel</button><div class="actions-right"><button class="primary-button" type="submit">Add log</button></div></div></form>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', event => {
+    const star = event.target.closest('[data-repeat-log-rating]');
+    if (star) {
+      const value = ratingFromStarPointer(event, star, 'data-repeat-log-rating');
+      $('#repeatLogRating').value = String(value);
+      syncStarPicker($('#repeatLogRatingPicker'), '[data-repeat-log-rating]', 'data-repeat-log-rating', value);
+      return;
+    }
+    if (event.target.closest('[data-repeat-log-clear]')) {
+      $('#repeatLogRating').value = '0';
+      syncStarPicker($('#repeatLogRatingPicker'), '[data-repeat-log-rating]', 'data-repeat-log-rating', 0);
+    }
+  });
+  modal.querySelector('#repeatLogForm')?.addEventListener('submit', event => {
+    event.preventDefault();
+    const item = findItem($('#repeatLogItemId')?.value || '');
+    if (!item) return;
+    addHistoryRecord({
+      sourceItemId:item.id, sourceType:getSourceType(item), type:item.type, typeLabel:getItemTypeLabel(item), subcategory:item.subcategory || '',
+      date:$('#repeatLogDate')?.value || todayString(), showOnCalendar:true, kind:'repeatable-log',
+      title:cleanTypeLabel($('#repeatLogTitle')?.value || '') || item.title, subtitle:item.title,
+      notes:String($('#repeatLogNote')?.value || '').trim(), comment:String($('#repeatLogComment')?.value || '').trim(),
+      rating:Number($('#repeatLogRating')?.value || 0), image:item.image || '', provider:item.provider, providerId:item.providerId
+    });
+    saveHistory(); saveItems(); renderAll(); modal.close();
+    if (els.detailModal?.open && state.openDetailId === item.id) openDetails(item.id);
+  });
+  return modal;
+}
+
+function openRepeatLogModal(item) {
+  const modal = ensureRepeatLogModal();
+  $('#repeatLogItemId').value = item.id;
+  $('#repeatLogModalTitle').textContent = item.title;
+  $('#repeatLogTitle').value = '';
+  $('#repeatLogDate').value = todayString();
+  $('#repeatLogComment').value = '';
+  $('#repeatLogNote').value = '';
+  $('#repeatLogRating').value = '0';
+  syncStarPicker($('#repeatLogRatingPicker'), '[data-repeat-log-rating]', 'data-repeat-log-rating', 0);
+  showDialogAtTop(modal);
+}
+
+function appendRepeatLogHistory(item) {
+  if (!item?.featureConfig?.repeatableLog || !els.detailBody || els.detailBody.querySelector('[data-repeat-log-history]')) return;
+  const entries = repeatLogEntries(item);
+  const section = document.createElement('section');
+  section.className = 'detail-section repeat-log-history-section';
+  section.dataset.repeatLogHistory = 'true';
+  section.innerHTML = `<div class="detail-section-heading"><div><h3>Logs</h3><p class="detail-meta">Separate dated entries for ${escapeHtml(item.title)}.</p></div><button class="secondary-button" type="button" data-add-repeat-log="${escapeAttr(item.id)}">+ Add log</button></div><div class="repeat-log-history-list">${entries.length ? entries.map(entry => `<article class="repeat-log-history-row"><div><strong>${escapeHtml(entry.title || item.title)}</strong><small>${escapeHtml(entry.date ? formatLongDate(entry.date) : 'Undated')}${Number(entry.rating || 0) ? ` · ★ ${escapeHtml(formatPersonalRating(entry.rating))}` : ''}</small>${entry.comment ? `<p>${escapeHtml(entry.comment)}</p>` : ''}</div><div class="repeat-log-row-actions"><button class="quiet-button" type="button" data-edit-repeat-history="${escapeAttr(entry.id)}">Edit</button><button class="quiet-button danger-text" type="button" data-delete-repeat-history="${escapeAttr(entry.id)}">Delete</button></div></article>`).join('') : '<p class="detail-meta">No logs yet.</p>'}</div>`;
+  els.detailBody.appendChild(section);
+}
+
+function appendRepeatReminderControls(item) {
+  if (!item?.reminder || getSourceType(item) === 'reminder' || !els.detailBody) return;
+  if (els.detailBody.querySelector('[data-repeat-reminder-controls]')) return;
+  const dueDate = getNextReminderDueDate(item);
+  const dueNow = !dueDate || dueDate <= todayString();
+  const section = document.createElement('section');
+  section.className = 'detail-section repeat-reminder-controls';
+  section.dataset.repeatReminderControls = 'true';
+  section.innerHTML = `<div class="detail-section-heading"><div><h3>Repeat</h3><p class="detail-meta">${escapeHtml(reminderScheduleLabel(item))}${dueDate ? ` · next ${escapeHtml(formatLongDate(dueDate))}` : ''}</p></div><button class="secondary-button" type="button" data-reminder-complete="${escapeAttr(item.id)}" ${dueNow ? '' : 'disabled'}>${dueNow ? '✓ Done this time' : 'Not due yet'}</button></div>`;
+  const actions = els.detailBody.querySelector('.library-detail-actions, .detail-actions');
+  if (actions) actions.insertAdjacentElement('afterend', section);
+  else els.detailBody.appendChild(section);
 }
 
 // ---------------------------
@@ -7060,6 +7416,7 @@ async function openDetails(id) {
     else if (sourceType === 'youtube') { if (isYouTubePlaylistItem(item)) await renderWorkoutDetails(item); else await renderStandaloneYouTubeDetails(item); }
     else if (sourceType === 'book') await renderBookDetails(item);
     else if (sourceType === 'movie') await renderMovieDetails(item);
+    else if (['video-game','board-game'].includes(sourceType)) await renderGameDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
     else if (sourceType === 'artist') await renderArtistDetails(item);
     else if (sourceType === 'song') await renderSongDetails(item);
@@ -7071,6 +7428,8 @@ async function openDetails(id) {
     else if (sourceType === 'class') renderClassDetails(item);
     else renderManualDetails(item);
     appendFlexibleFeatureProgress(item);
+    appendRepeatReminderControls(item);
+    appendRepeatLogHistory(item);
     appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
     appendLibraryPeopleSummary(item);
@@ -7081,6 +7440,8 @@ async function openDetails(id) {
   } catch (error) {
     els.detailBody.innerHTML = `${basicDetailHero(item)}<div class="api-error">${escapeHtml(error.message)}</div>${detailEditButton(item)}`;
     appendFlexibleFeatureProgress(item);
+    appendRepeatReminderControls(item);
+    appendRepeatLogHistory(item);
     appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
     appendLibraryPeopleSummary(item);
@@ -7096,8 +7457,9 @@ async function renderTVDetails(item) {
     getItemStreamingAvailability(item).catch(() => ({ providers: [], link: '' }))
   ]);
   const detailGenres = (details.genres || []).map(genre => genre.name).filter(Boolean);
-  const metadataChanged = (detailGenres.length && JSON.stringify(item.genres || []) !== JSON.stringify(detailGenres)) || (details.first_air_date && item.releaseDate !== details.first_air_date);
-  if (detailGenres.length) item.genres = detailGenres;
+  const mergedDetailGenres = [...new Set([...(item.genres || []), ...detailGenres])];
+  const metadataChanged = (detailGenres.length && JSON.stringify(item.genres || []) !== JSON.stringify(mergedDetailGenres)) || (details.first_air_date && item.releaseDate !== details.first_air_date);
+  if (detailGenres.length) item.genres = mergedDetailGenres;
   if (details.first_air_date) item.releaseDate = details.first_air_date;
   const changed = await reconcileSingleTVItem(item, details);
   if (changed || metadataChanged) saveItems();
@@ -7388,6 +7750,31 @@ async function renderEventDetails(item) {
     </section>`;
 }
 
+async function renderGameDetails(item) {
+  const sourceType = getSourceType(item);
+  const details = sourceType === 'board-game'
+    ? await getCached(`board-game:${item.providerId}`, () => TrackerAPI.getBoardGameDetails(item.providerId, state.settings))
+    : await getCached(`video-game:${item.providerId}`, () => TrackerAPI.getVideoGameDetails(item.providerId, state.settings));
+  const game = details || item;
+  const meta = sourceType === 'board-game'
+    ? [game.minPlayers && game.maxPlayers ? `${game.minPlayers}–${game.maxPlayers} players` : '', game.playTime ? `${game.playTime} min` : '', game.catalogueRating ? `★ ${Number(game.catalogueRating).toFixed(1)}` : ''].filter(Boolean).join(' · ')
+    : [...(game.platforms || []).slice(0,3), game.catalogueRating ? `★ ${Number(game.catalogueRating).toFixed(0)}` : ''].filter(Boolean).join(' · ');
+  els.detailBody.innerHTML = `${libraryDetailHero({ type: sourceType === 'board-game' ? 'BOARD GAME' : 'VIDEO GAME', title:game.title || item.title, image:game.image || item.image || '', subtitle:meta || game.subtitle || item.subtitle || '', overview:game.description || '' })}${detailEditButton(item)}${game.genres?.length ? `<section class="detail-section"><h3>Genres</h3><p>${escapeHtml(game.genres.join(' · '))}</p></section>` : ''}${sourceType === 'board-game' && game.mechanics?.length ? `<section class="detail-section"><h3>Mechanics</h3><p>${escapeHtml(game.mechanics.join(' · '))}</p></section>` : ''}`;
+}
+
+async function renderDiscoverGameDetail(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const details = result.sourceType === 'board-game'
+    ? await TrackerAPI.getBoardGameDetails(result.providerId, state.settings)
+    : await TrackerAPI.getVideoGameDetails(result.providerId, state.settings);
+  const game = details || result;
+  const meta = result.sourceType === 'board-game'
+    ? [game.minPlayers && game.maxPlayers ? `${game.minPlayers}–${game.maxPlayers} players` : '', game.playTime ? `${game.playTime} min` : '', game.catalogueRating ? `★ ${Number(game.catalogueRating).toFixed(1)}` : ''].filter(Boolean).join(' · ')
+    : [...(game.platforms || []).slice(0,3), game.catalogueRating ? `★ ${Number(game.catalogueRating).toFixed(0)}` : ''].filter(Boolean).join(' · ');
+  els.detailBody.innerHTML = `${detailHero({ type: result.sourceType === 'board-game' ? 'BOARD GAME' : 'VIDEO GAME', title:game.title || result.title, image:game.image || result.image || '', subtitle:meta || game.subtitle || result.subtitle || '', overview:game.description || result.description || '' })}<div class="discover-detail-actions">${discoverQueueButtonsMarkup(result, key)}<button class="secondary-button${isDiscoverCompleted(result) ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}">${isDiscoverCompleted(result) ? '↶ Undo played' : '✓ Played'}</button></div>${game.genres?.length ? `<section class="detail-section"><h3>Genres</h3><p>${escapeHtml(game.genres.join(' · '))}</p></section>` : ''}`;
+}
+
 async function renderMusicDetails(item) {
   const data = await getCached(`music:${item.providerId}`, () => TrackerAPI.getMusicDetails(item.providerId, state.settings));
   const collection = (data.results || []).find(r => r.wrapperType === 'collection') || (data.results || [])[0] || {};
@@ -7448,44 +7835,73 @@ function artistFavoriteButtonMarkup(item, payload) {
   return `<button class="artist-favorite-button${selected ? ' is-favorite' : ''}" type="button" data-artist-item-id="${escapeAttr(item.id)}" data-artist-favorite="${escapeAttr(encodeURIComponent(JSON.stringify(payload)))}" aria-label="${selected ? 'Remove from' : 'Add to'} favorite ${payload.kind === 'song' ? 'songs' : 'albums'}">♥</button>`;
 }
 
+function artistAlbumRowMarkup(item, album, { discover = false } = {}) {
+  const id = String(album.collectionId || album.id || '');
+  const title = album.collectionName || album.title || 'Album';
+  const year = String(album.releaseDate || album.year || '').slice(0, 4);
+  const image = album.artworkUrl100 || album.image || '';
+  const url = album.collectionViewUrl || album.url || '';
+  const favorite = !discover && item ? artistFavoriteButtonMarkup(item, { kind:'album', id, title, year, image, url }) : '';
+  return `<article class="artist-album-entry" data-artist-album-entry="${escapeAttr(id)}">
+    <button class="artist-album-toggle" type="button" data-artist-album-toggle="${escapeAttr(id)}" data-artist-owner-id="${escapeAttr(item?.id || '')}" aria-expanded="false">
+      ${image ? `<img src="${escapeAttr(image.replace('100x100bb','160x160bb'))}" alt="" />` : '<span class="artist-album-placeholder">♪</span>'}
+      <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(year)}</small></span><b aria-hidden="true">⌄</b>
+    </button>
+    <div class="artist-catalog-actions">${url ? `<a class="artist-music-link" href="${escapeAttr(url)}" target="_blank" rel="noopener">↗ Music</a>` : ''}${favorite}</div>
+    <div class="artist-album-tracks" data-artist-album-tracks="${escapeAttr(id)}" hidden></div>
+  </article>`;
+}
+
+function artistAlbumTracksMarkup(item, tracks = []) {
+  if (!tracks.length) return '<p class="detail-meta">No tracks returned.</p>';
+  return tracks.map((song, index) => {
+    const id = String(song.trackId || '');
+    const title = song.trackName || 'Song';
+    const url = song.trackViewUrl || '';
+    const payload = { kind:'song', id, title, albumName:song.collectionName || '', image:song.artworkUrl100 || '', url };
+    return `<div class="artist-album-track${item && artistFavoriteIsSaved(item, 'songs', id) ? ' is-favorite' : ''}"><span>${index + 1}</span><strong>${escapeHtml(title)}</strong>${song.trackTimeMillis ? `<small>${escapeHtml(formatMillis(song.trackTimeMillis))}</small>` : ''}<span class="artist-catalog-actions">${url ? `<a class="artist-music-link" href="${escapeAttr(url)}" target="_blank" rel="noopener">↗</a>` : ''}${item ? artistFavoriteButtonMarkup(item, payload) : ''}</span></div>`;
+  }).join('');
+}
+
+async function toggleArtistAlbumTracks(button) {
+  const albumId = String(button?.dataset?.artistAlbumToggle || '');
+  if (!albumId) return;
+  const entry = button.closest('[data-artist-album-entry]');
+  const body = entry?.querySelector(`[data-artist-album-tracks="${CSS.escape(albumId)}"]`);
+  if (!body) return;
+  const opening = body.hidden;
+  body.hidden = !opening;
+  button.setAttribute('aria-expanded', String(opening));
+  entry?.classList.toggle('is-open', opening);
+  if (!opening || body.dataset.loaded === 'true') return;
+  body.innerHTML = loadingMarkup('Loading tracks…');
+  try {
+    const tracks = await getCached(`album-tracks:${albumId}`, () => TrackerAPI.getAlbumTracks(albumId, state.settings));
+    const item = findItem(button.dataset.artistOwnerId || '');
+    body.innerHTML = artistAlbumTracksMarkup(item, tracks || []);
+    body.dataset.loaded = 'true';
+  } catch (error) {
+    body.innerHTML = `<p class="api-error">${escapeHtml(error?.message || 'Could not load tracks.')}</p>`;
+  }
+}
+
 async function renderArtistDetails(item) {
-  const data = await getCached(`artist:v2:${item.providerId}`, () => TrackerAPI.getArtistDetails(item.providerId, state.settings));
+  const data = await getCached(`artist:v3:${item.providerId}`, () => TrackerAPI.getArtistDetails(item.providerId, state.settings));
   const artist = (data.results || []).find(result => result.wrapperType === 'artist') || {};
   const liveAlbums = (data.results || []).filter(result => result.wrapperType === 'collection');
-  const liveSongs = (data.results || []).filter(result => result.wrapperType === 'track');
   const savedAlbums = artistFavoritesFor(item, 'albums');
-  const savedSongs = artistFavoritesFor(item, 'songs');
   const albums = mergeArtistCatalogWithFavorites(liveAlbums, savedAlbums, entry => entry.collectionId || entry.id);
-  const songs = mergeArtistCatalogWithFavorites(liveSongs, savedSongs, entry => entry.trackId || entry.id);
   const image = (liveAlbums.find(album => album.artworkUrl100)?.artworkUrl100 || savedAlbums.find(album => album.image)?.image || item.image || '').replace('100x100bb', '600x600bb');
   if (!item.image && image) { item.image = image; saveItems(); }
   const artistUrl = artist.artistLinkUrl || artist.artistViewUrl || item.artistViewUrl || '';
-
-  const albumRows = albums.slice(0, 14).map(album => {
-    const id = String(album.collectionId || album.id || '');
-    const title = album.collectionName || album.title || 'Album';
-    const year = String(album.releaseDate || album.year || '').slice(0, 4);
-    const url = album.collectionViewUrl || album.url || '';
-    const payload = { kind: 'album', id, title, year, image: album.artworkUrl100 || album.image || '', url };
-    return `<div class="artist-catalog-row${artistFavoriteIsSaved(item, 'albums', id) ? ' is-favorite' : ''}"><div class="artist-catalog-copy"><div class="list-title">${escapeHtml(title)}</div><div class="list-meta">${escapeHtml(year)}</div></div><div class="artist-catalog-actions">${url ? `<a class="artist-music-link" href="${escapeAttr(url)}" target="_blank" rel="noopener" aria-label="Open ${escapeAttr(title)} in Apple Music">↗ Music</a>` : ''}${artistFavoriteButtonMarkup(item, payload)}</div></div>`;
-  }).join('');
-
-  const songRows = songs.slice(0, 16).map(song => {
-    const id = String(song.trackId || song.id || '');
-    const title = song.trackName || song.title || 'Song';
-    const albumName = song.collectionName || song.albumName || '';
-    const url = song.trackViewUrl || song.url || '';
-    const payload = { kind: 'song', id, title, albumName, image: song.artworkUrl100 || song.image || '', url };
-    return `<div class="artist-catalog-row${artistFavoriteIsSaved(item, 'songs', id) ? ' is-favorite' : ''}"><div class="artist-catalog-copy"><div class="list-title">${escapeHtml(title)}</div><div class="list-meta">${escapeHtml(albumName)}</div></div><div class="artist-catalog-actions">${url ? `<a class="artist-music-link" href="${escapeAttr(url)}" target="_blank" rel="noopener" aria-label="Open ${escapeAttr(title)} in Apple Music">↗ Music</a>` : ''}${artistFavoriteButtonMarkup(item, payload)}</div></div>`;
-  }).join('');
-
+  const albumRows = albums.slice(0, 24).map(album => artistAlbumRowMarkup(item, album)).join('');
   els.detailBody.innerHTML = `
     ${libraryDetailHero({ type:'ARTIST', title:artist.artistName || item.title, image, subtitle:artist.primaryGenreName || item.subtitle || '', overview:'' })}
     ${detailEditButton(item)}
     ${artistUrl ? `<section class="detail-section artist-open-music"><a class="secondary-button detail-link-button" href="${escapeAttr(artistUrl)}" target="_blank" rel="noopener">Open artist in Apple Music ↗</a></section>` : ''}
-    ${albumRows ? `<section class="detail-section"><div class="detail-section-heading"><h3>Albums</h3><span class="artist-favorite-hint">♥ saves inside this artist</span></div><div class="artist-catalog-list">${albumRows}</div></section>` : ''}
-    ${songRows ? `<section class="detail-section"><div class="detail-section-heading"><h3>Songs</h3><span class="artist-favorite-hint">♥ saves inside this artist</span></div><div class="artist-catalog-list">${songRows}</div></section>` : ''}`;
+    <section class="detail-section"><div class="detail-section-heading"><h3>Albums</h3><span class="artist-favorite-hint">Open an album to see songs · ♥ saves favorites</span></div><div class="artist-album-list">${albumRows || '<p class="detail-meta">No albums returned.</p>'}</div></section>`;
 }
+
 
 async function renderSongDetails(item) {
   const data = await getCached(`song:${item.providerId}`, () => TrackerAPI.getSongDetails(item.providerId, state.settings));
@@ -8077,11 +8493,17 @@ function appendItemResources(item) {
   const links = item.links || [];
   if (!attachments.length && !links.length) return;
 
+  const images = attachments.filter(file => String(file.mime || '').startsWith('image/'));
+  const otherFiles = attachments.filter(file => !String(file.mime || '').startsWith('image/'));
   const section = document.createElement('section');
   section.className = 'detail-section resources-section';
   section.innerHTML = `
     <h3>Files & links</h3>
-    ${attachments.length ? `<div class="resource-grid">${attachments.map(file => `
+    ${images.length ? `<div class="resource-image-grid">${images.map(file => `
+      <button class="resource-image-card" type="button" data-attachment-id="${escapeAttr(file.id)}" aria-label="Open ${escapeAttr(file.name)}">
+        <span class="resource-image-loading" data-inline-attachment-id="${escapeAttr(file.id)}">Photo</span>
+      </button>`).join('')}</div>` : ''}
+    ${otherFiles.length ? `<div class="resource-grid">${otherFiles.map(file => `
       <button class="resource-card" type="button" data-attachment-id="${escapeAttr(file.id)}">
         <span class="resource-icon">${attachmentKindIcon(file.mime)}</span>
         <span><strong>${escapeHtml(file.name)}</strong><small>${escapeHtml(attachmentKindLabel(file.mime))} · ${formatBytes(file.size)}</small></span>
@@ -8092,6 +8514,29 @@ function appendItemResources(item) {
         <span>${escapeHtml(link.label)}</span><span>↗</span>
       </a>`).join('')}</div>` : ''}`;
   els.detailBody.appendChild(section);
+  hydrateInlineAttachmentImages(section);
+}
+
+function hydrateInlineAttachmentImages(root) {
+  root?.querySelectorAll?.('[data-inline-attachment-id]').forEach(async placeholder => {
+    const id = String(placeholder.dataset.inlineAttachmentId || '');
+    if (!id) return;
+    try {
+      let url = attachmentCoverObjectUrls.get(id) || '';
+      if (!url) {
+        const record = await getAttachmentBlob(id);
+        if (!record?.blob || !String(record.blob.type || '').startsWith('image/')) return;
+        url = URL.createObjectURL(record.blob);
+        attachmentCoverObjectUrls.set(id, url);
+      }
+      if (!placeholder.isConnected) return;
+      const img = document.createElement('img');
+      img.className = 'resource-inline-image';
+      img.src = url;
+      img.alt = '';
+      placeholder.replaceWith(img);
+    } catch {}
+  });
 }
 
 async function openAttachmentViewer(id) {
@@ -9224,6 +9669,7 @@ const DISCOVER_GENRES = [
   { value: 'philosophy', label: 'Philosophy', tmdb: [], keywords: ['philosophy'], book: ['philosophy'] },
   { value: 'psychology', label: 'Psychology', tmdb: [], keywords: ['psychology'], book: ['psychology'] },
   { value: 'romance', label: 'Romance', tmdb: ['Romance'], keywords: ['romance'], book: ['romance'] },
+  { value: 'reality', label: 'Reality', tmdb: ['Reality'], keywords: ['reality television', 'reality tv'], book: [] },
   { value: 'science', label: 'Science', tmdb: [], keywords: ['science'], book: ['science'] },
   { value: 'science-fiction', label: 'Science Fiction', tmdb: ['Science Fiction', 'Sci-Fi & Fantasy'], keywords: ['science fiction'], book: ['science fiction'] },
   { value: 'thriller', label: 'Thriller', tmdb: ['Thriller'], keywords: ['thriller', 'suspense'], book: ['thriller', 'suspense'] }
@@ -9383,6 +9829,10 @@ async function runDiscoverSearch(forcedQuery = '') {
         city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
         countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA'
       });
+      if (type === 'game') return Promise.all([
+        TrackerAPI.searchCatalogue(query, 'video-game', state.settings, { maxResults: 15 }),
+        TrackerAPI.searchCatalogue(query, 'board-game', state.settings, { maxResults: 15 })
+      ]).then(([video, board]) => [...video, ...board]);
       if (type === 'restaurant') return TrackerAPI.searchCatalogue(query, 'restaurant', state.settings, {
         city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
         region: state.discoverPrefs.eventCountry || state.settings.homeCountry || 'CA',
@@ -9399,9 +9849,10 @@ async function runDiscoverSearch(forcedQuery = '') {
     for (let index = 0; index < settled.length; index += 1) {
       const entry = settled[index];
       if (entry.status !== 'fulfilled') continue;
-      const sourceType = types[index];
-      const availableResults = filterAlreadyKnown(entry.value || [], sourceType);
+      const selectedType = types[index];
+      const availableResults = filterAlreadyKnown(entry.value || [], selectedType);
       for (const result of availableResults) {
+        const sourceType = selectedType === 'game' ? (result.sourceType || 'video-game') : selectedType;
         const normalized = { ...result, sourceType, categories: result.raw?.volumeInfo?.categories || result.categories || [] };
         if (state.discoverPrefs.englishTVOnly === true && sourceType === 'tv' && String(normalized.raw?.original_language || '').toLowerCase() !== 'en') continue;
         if (!(await discoverSearchResultMatchesGenre(normalized))) continue;
@@ -10035,6 +10486,31 @@ function asLiveDiscoverCandidate(result, source, boost = 0, exploration = false)
   };
 }
 
+function discoverSelectionTypeForSource(sourceType) {
+  if (['video-game','board-game','game'].includes(sourceType)) return 'game';
+  if (['music','song'].includes(sourceType)) return 'artist';
+  return sourceType;
+}
+
+async function collectGameDiscoverCandidates(batchNumber, mode = state.discoverMode) {
+  const gameMode = mode === 'new' ? 'new' : mode === 'popular' ? 'popular' : 'for-you';
+  const [video, board] = await Promise.allSettled([
+    TrackerAPI.discoverVideoGames(gameMode, batchNumber, state.settings, 18),
+    TrackerAPI.discoverBoardGames(gameMode, batchNumber, state.settings, 18)
+  ]);
+  if (video.status === 'rejected') console.warn('[Discover][Video games] catalogue request failed:', video.reason?.message || video.reason);
+  if (board.status === 'rejected') console.warn('[Discover][Board games] catalogue request failed:', board.reason?.message || board.reason);
+  const vg = video.status === 'fulfilled' ? video.value : [];
+  const bg = board.status === 'fulfilled' ? board.value : [];
+  const mixed = [];
+  const length = Math.max(vg.length, bg.length);
+  for (let index = 0; index < length; index += 1) {
+    if (vg[index]) mixed.push({ ...vg[index], sourceType:'video-game', _discoverSource:'igdb' });
+    if (bg[index]) mixed.push({ ...bg[index], sourceType:'board-game', _discoverSource:'bgg' });
+  }
+  return mixed;
+}
+
 async function collectDiscoverFeedCandidates(batchNumber) {
   const selectedTypes = normalizedDiscoverContentTypes();
   const selected = new Set(selectedTypes);
@@ -10056,6 +10532,9 @@ async function collectDiscoverFeedCandidates(batchNumber) {
     return dedupeDiscoverCandidatesByBoost(filtered);
   }
 
+  if (selectedTypes.length === 1 && selected.has('game')) {
+    return collectGameDiscoverCandidates(batchNumber, state.discoverMode);
+  }
   if (selectedTypes.length === 1 && selected.has('restaurant')) {
     return collectRestaurantDiscoverCandidates(batchNumber, state.discoverMode);
   }
@@ -10069,8 +10548,9 @@ async function collectDiscoverFeedCandidates(batchNumber) {
   if (state.discoverMode === 'new') candidates = await collectNewDiscoverCandidates(batchNumber);
   else if (state.discoverMode === 'popular') candidates = await collectPopularDiscoverCandidates(batchNumber);
   else candidates = await collectForYouDiscoverCandidates(batchNumber);
+  if (selected.has('game')) candidates.push(...await collectGameDiscoverCandidates(batchNumber, state.discoverMode));
 
-  return dedupeDiscoverCandidatesByBoost(candidates.filter(result => selected.has(result.sourceType)));
+  return dedupeDiscoverCandidatesByBoost(candidates.filter(result => selected.has(discoverSelectionTypeForSource(result.sourceType))));
 }
 
 function musicRecommendationSeedScore(item) {
@@ -11263,6 +11743,7 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
 }
 
 function discoverContentFamily(sourceType) {
+  if (['video-game','board-game','game'].includes(sourceType)) return 'game';
   if (['music','artist','song'].includes(sourceType)) return 'music';
   if (['concert','event'].includes(sourceType)) return 'live';
   if (sourceType === 'restaurant') return 'food';
@@ -12034,10 +12515,10 @@ function discoverCardMarkup(result, key, fallbackType) {
   // Last.fm currently supplies a generic star for many artists. It is a fallback
   // asset, not actual artist artwork, so render those results as no-image cards.
   const noImage = !artworkUrl || isLastFmGenericArtwork;
-  const completeAction = ['tv','movie','book'].includes(type)
+  const completeAction = ['tv','movie','book','video-game','board-game'].includes(type)
     ? `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo watched / read' : 'Mark watched / read'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>`
     : '';
-  const queueAction = ['tv','movie','book'].includes(type)
+  const queueAction = ['tv','movie','book','video-game','board-game'].includes(type)
     ? `<button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>`
     : '';
   const libraryAction = libraryOnly && type !== 'restaurant'
@@ -12517,17 +12998,18 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
 
   const sourceType = result.sourceType;
   const isMusicFamily = ['music', 'artist', 'song', 'concert'].includes(sourceType);
+  const isGameFamily = ['video-game','board-game'].includes(sourceType);
   const isFoodFamily = ['food', 'restaurant', 'recipe'].includes(sourceType);
   const discoverMusicSubcategory = sourceType === 'music' ? 'Album' : musicSubcategoryForSourceType(sourceType);
   const discoverFoodSubcategory = foodSubcategoryForSourceType(sourceType);
   item = {
     id: makeId(),
     sourceType,
-    type: isMusicFamily ? 'music' : isFoodFamily ? 'food' : sourceType,
-    typeLabel: isMusicFamily ? 'Music' : isFoodFamily ? 'Food' : (SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType)),
-    subcategory: isMusicFamily ? discoverMusicSubcategory : discoverFoodSubcategory,
+    type: isGameFamily ? 'game' : isMusicFamily ? 'music' : isFoodFamily ? 'food' : sourceType,
+    typeLabel: isGameFamily ? 'Games' : isMusicFamily ? 'Music' : isFoodFamily ? 'Food' : (SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType)),
+    subcategory: isGameFamily ? (sourceType === 'board-game' ? 'Board Game' : 'Video Game') : isMusicFamily ? discoverMusicSubcategory : discoverFoodSubcategory,
     title: result.title || 'Untitled',
-    provider: result.provider || (sourceType === 'book' ? 'googleBooks' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'restaurant' ? 'googlePlaces' : sourceType === 'concert' ? 'ticketmaster' : sourceType === 'event' ? 'ticketmaster' : 'tmdb'),
+    provider: result.provider || (sourceType === 'book' ? 'googleBooks' : sourceType === 'video-game' ? 'igdb' : sourceType === 'board-game' ? 'bgg' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'restaurant' ? 'googlePlaces' : sourceType === 'concert' ? 'ticketmaster' : sourceType === 'event' ? 'ticketmaster' : 'tmdb'),
     providerId: String(result.providerId || ''),
     image: result.image || '',
     subtitle: result.subtitle || '',
@@ -12581,7 +13063,7 @@ function isDiscoverCompleted(result) {
   return state.history.some(entry =>
     entry.showOnCalendar === false &&
     String(entry.providerId || '') === providerId &&
-    ['series-watched','movie-watched','book-finished'].includes(entry.kind)
+    ['series-watched','movie-watched','book-finished','game-played'].includes(entry.kind)
   );
 }
 
@@ -12605,7 +13087,7 @@ async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
   if (completed) {
     item.completedAt = '';
     state.history = state.history.filter(entry => !(
-      entry.sourceItemId === item.id && ['movie-watched','item-completed'].includes(entry.kind)
+      entry.sourceItemId === item.id && ['movie-watched','game-played','item-completed'].includes(entry.kind)
     ));
     item.updatedAt = new Date().toISOString();
     saveItems();
@@ -12619,7 +13101,7 @@ async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
   setItemQueueStatus(item, 'library');
   item.completedAt = todayString();
   item.updatedAt = new Date().toISOString();
-  const kind = result.sourceType === 'movie' ? 'movie-watched' : 'item-completed';
+  const kind = result.sourceType === 'movie' ? 'movie-watched' : ['video-game','board-game'].includes(result.sourceType) ? 'game-played' : 'item-completed';
   state.history = state.history.filter(entry => !(entry.sourceItemId === item.id && entry.kind === kind));
   addHistoryRecord({
     sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: '', showOnCalendar: false, kind,
@@ -12889,6 +13371,7 @@ async function openDiscoverDetail(key) {
     if (result.sourceType === 'tv') await renderDiscoverTVDetail(key);
     else if (result.sourceType === 'movie') await renderDiscoverMovieDetail(key);
     else if (result.sourceType === 'book') await renderDiscoverBookDetail(key);
+    else if (['video-game','board-game'].includes(result.sourceType)) await renderDiscoverGameDetail(key);
     else if (result.sourceType === 'music') await renderDiscoverAlbumDetail(key);
     else if (result.sourceType === 'artist') await renderDiscoverArtistDetail(key);
     else if (result.sourceType === 'song') await renderDiscoverSongDetail(key);
@@ -13312,7 +13795,6 @@ async function renderDiscoverArtistDetail(key) {
   try {
     let itunesArtistId = String(result.raw?.itunesArtistId || result.artistId || '');
     if (!itunesArtistId || result.provider !== 'itunes') {
-      musicDiscoverDebug('lazy iTunes artist detail resolution start', { artist: result.title, provider: result.provider });
       const resolved = await resolveLastFmArtistCandidate({ name: result.title, mbid: result.raw?.lastfmMbid || '', match: result.raw?.lastfmMatch || 0 });
       itunesArtistId = String(resolved?.providerId || '');
       if (resolved) {
@@ -13320,29 +13802,25 @@ async function renderDiscoverArtistDetail(key) {
         result.artistId = itunesArtistId;
         result.image = result.image || resolved.image || '';
         result.subtitle = resolved.subtitle || result.subtitle;
-        result.description = resolved.description || result.description;
       }
     }
     if (itunesArtistId) {
-      const data = await getCached(`artist:v2:${itunesArtistId}`, () => TrackerAPI.getArtistDetails(itunesArtistId, state.settings));
+      const data = await getCached(`artist:v3:${itunesArtistId}`, () => TrackerAPI.getArtistDetails(itunesArtistId, state.settings));
       artist = (data.results || []).find(r => r.wrapperType === 'artist') || {};
       albums = (data.results || []).filter(r => r.wrapperType === 'collection');
-      musicDiscoverDebug('lazy iTunes artist detail resolution complete', { artist: result.title, itunesArtistId, albums: albums.length });
     }
-  } catch (error) {
-    metadataError = error?.message || String(error);
-    musicDiscoverWarn('lazy iTunes artist detail resolution failed', { artist: result.title, error: metadataError });
-  }
+  } catch (error) { metadataError = error?.message || String(error); }
   const image = (albums.find(album => album.artworkUrl100)?.artworkUrl100 || result.image || '').replace('100x100bb','600x600bb');
   if (!result.image && image) result.image = image;
   const externalUrl = result.lastfmUrl || result.raw?.lastfmUrl || '';
   els.detailBody.innerHTML = `
     ${detailHero({ type:'ARTIST', title:artist.artistName || result.title, image, subtitle:artist.primaryGenreName || result.subtitle || '', overview:'' })}
     ${discoverLibraryOnlyActionMarkup(result, key)}
-    ${metadataError ? `<section class="detail-section"><p class="list-meta">Extra iTunes metadata is temporarily unavailable. The Last.fm recommendation is still usable.</p></section>` : ''}
-    ${albums.length ? `<section class="detail-section"><h3>Recent albums</h3><div class="track-list">${albums.slice(0,8).map(album => `<div class="track-row"><div>•</div><div><div class="list-title">${escapeHtml(album.collectionName || 'Album')}</div><div class="list-meta">${escapeHtml(String(album.releaseDate || '').slice(0,4))}</div></div></div>`).join('')}</div></section>` : ''}
+    ${metadataError ? `<section class="detail-section"><p class="list-meta">Extra album metadata is temporarily unavailable.</p></section>` : ''}
+    <section class="detail-section"><div class="detail-section-heading"><h3>Albums</h3><span class="artist-favorite-hint">Open an album to see its songs</span></div><div class="artist-album-list">${albums.slice(0,24).map(album => artistAlbumRowMarkup(null, album, { discover:true })).join('') || '<p class="detail-meta">No albums returned.</p>'}</div></section>
     ${externalUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(externalUrl)}" target="_blank" rel="noopener">Open on Last.fm ↗</a></section>` : ''}`;
 }
+
 
 async function renderDiscoverSongDetail(key) {
   const result = state.discoverResults.get(key);
@@ -14487,6 +14965,23 @@ function itemLibraryDate(item) {
   return dates.sort().at(-1) || '';
 }
 
+function libraryFooterDate(item) {
+  if (!item || getSourceType(item) === 'book') return '';
+  const sourceType = getSourceType(item);
+  if (sourceType === 'activity') {
+    const start = String(item.activityMeta?.startDate || item.date || '').slice(0,10);
+    const end = String(item.activityMeta?.endDate || start).slice(0,10);
+    return end || start;
+  }
+  const historyDates = state.history
+    .filter(entry => entry.sourceItemId === item.id && entry.date)
+    .map(entry => String(entry.date).slice(0,10))
+    .filter(Boolean);
+  const dates = [...new Set([item.date ? String(item.date).slice(0,10) : '', ...historyDates].filter(Boolean))]
+    .sort((a,b) => String(b).localeCompare(String(a)));
+  return dates[0] || '';
+}
+
 function itemLastTrackedDate(item) {
   if (!item) return '';
   const dates = state.history
@@ -14869,11 +15364,11 @@ function makeLibraryPoster(item) {
   albumButton.setAttribute('aria-label', `Add ${item.title} to album`);
   albumButton.title = 'Add to collection';
   shell.append(poster, albumButton);
-  const trackedDate = itemLastTrackedDate(item);
+  const trackedDate = libraryFooterDate(item);
   if (trackedDate) {
     const tracked = document.createElement('span');
     tracked.className = 'library-card-tracked-date';
-    tracked.textContent = `Tracked ${formatShortCalendarDate(trackedDate)}`;
+    tracked.textContent = formatShortCalendarDate(trackedDate);
     shell.appendChild(tracked);
   }
   return shell;
@@ -15178,7 +15673,7 @@ function getSourceType(item) {
   if (item.sourceType) return item.sourceType;
   if (item.provider === 'youtube' || item.type === 'workout') return 'youtube';
   if (item.provider === 'ticketmaster') return 'event';
-  if (['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class'].includes(item.type)) return item.type;
+  if (['tv', 'movie', 'book', 'game', 'video-game', 'board-game', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class'].includes(item.type)) return item.type;
   return 'other';
 }
 
@@ -15325,7 +15820,8 @@ function buildCloudState() {
     discoverPrefs: state.discoverPrefs,
     stickerPrefs: state.stickerPrefs,
     streakPrefs: state.streakPrefs,
-    libraryPrefs: normalizeLibraryPrefs(state.libraryPrefs)
+    libraryPrefs: normalizeLibraryPrefs(state.libraryPrefs),
+    logTypePrefs: [...enabledLogTypeKeys()]
   };
 }
 
@@ -15361,6 +15857,10 @@ async function persistCloudStateLocally(snapshot) {
     ? snapshot.streakPrefs
     : {};
   state.libraryPrefs = normalizeLibraryPrefs(snapshot?.libraryPrefs || DEFAULT_LIBRARY_PREFS);
+  if (Array.isArray(snapshot?.logTypePrefs)) {
+    const validLogTypes = snapshot.logTypePrefs.filter(value => DEFAULT_LOG_TYPE_KEYS.includes(value));
+    safeLocalSet(logTypePrefsStorageKey(), validLogTypes.length ? validLogTypes : [...DEFAULT_LOG_TYPE_KEYS]);
+  }
   state.libraryVisibleTypes = null;
 
   safeLocalSet(ITEMS_KEY, state.items);
@@ -15580,8 +16080,20 @@ function safeLocalSet(key, value) {
   }
 }
 
+function resumeTbrItemAfterLog(item) {
+  if (!item || getQueueStatus(item) !== 'tbr' || item.completedAt) return;
+  const sourceType = getSourceType(item);
+  if (['event','concert','restaurant','place'].includes(sourceType)) return;
+  if (sourceType === 'tv') item.watchDisposition = 'following';
+  if (sourceType === 'book') item.bookDisposition = '';
+  if (sourceType === 'movie') item.mediaDisposition = '';
+  setItemQueueStatus(item, 'upnext');
+  item.updatedAt = new Date().toISOString();
+}
+
 function addHistoryRecord(record) {
   const source = record?.sourceItemId ? findItem(record.sourceItemId) : null;
+  if (source && record?.date && record?.showOnCalendar !== false) resumeTbrItemAfterLog(source);
   const repeatKey = historyRepeatIdentity(record);
   const priorRepeats = repeatKey ? state.history.filter(entry => historyRepeatIdentity(entry) === repeatKey).length : 0;
   const isRepeat = record?.rewatch == null ? priorRepeats > 0 : Boolean(record.rewatch);
@@ -15702,6 +16214,8 @@ const socialState = {
   initializedPage: false,
   peopleResults: [],
   followingProfiles: [],
+  followerProfiles: [],
+  followRequestProfiles: [],
   followingSnapshots: new Map(),
   acceptedConnections: [],
   buddyWatches: [],
@@ -16172,6 +16686,7 @@ function openSocialProfileSettings() {
   $('#socialDisplayName').value = socialState.profile.display_name || '';
   $('#socialBio').value = socialState.profile.bio || '';
   $('#socialPrivateProfile').checked = Boolean(socialState.profile.is_private);
+  renderSocialLogTypeSettings();
   renderSocialShareSettingsEditor();
   setSocialProfileSettingsMessage('');
   showDialogAtTop($('#socialProfileSettingsModal'));
@@ -16331,6 +16846,7 @@ async function saveSocialProfileSettings(event) {
     return;
   }
   const shareSettings = readSocialShareSettingsEditor();
+  saveSocialLogTypeSettings();
   setSocialProfileSettingsMessage('Saving…');
   const update = {
     user_id: currentUser.id,
@@ -16412,7 +16928,7 @@ async function loadSocialFollowing() {
   if (!socialState.schemaReady || !supabase || !currentUser) return;
   const [outgoingResult, incomingResult] = await Promise.all([
     supabase.from('follows').select('follower_id, following_id, status, created_at').eq('follower_id', currentUser.id),
-    supabase.from('follows').select('follower_id, following_id, status, created_at').eq('following_id', currentUser.id).eq('status','pending')
+    supabase.from('follows').select('follower_id, following_id, status, created_at').eq('following_id', currentUser.id)
   ]);
   if (outgoingResult.error) throw outgoingResult.error;
   if (incomingResult.error) throw incomingResult.error;
@@ -16439,16 +16955,24 @@ async function loadSocialFollowing() {
   if (host) host.innerHTML = profiles.map(profile => socialProfileCardMarkup(profile, snapshotMap.get(profile.user_id), relationMap.get(profile.user_id))).join('');
   if ($('#socialFollowingEmpty')) $('#socialFollowingEmpty').hidden = profiles.length > 0;
 
-  const requests = incomingResult.data || [];
+  const incoming = incomingResult.data || [];
+  const requests = incoming.filter(row => row.status === 'pending');
+  const followers = incoming.filter(row => row.status === 'accepted');
+  const incomingIds = [...new Set(incoming.map(row => row.follower_id).filter(Boolean))];
+  let incomingProfiles = [];
+  if (incomingIds.length) {
+    const { data, error } = await supabase.from('profiles').select('user_id, username, display_name, avatar_url, is_private').in('user_id', incomingIds);
+    if (error) throw error;
+    incomingProfiles = data || [];
+  }
+  const incomingProfileMap = new Map(incomingProfiles.map(profile => [profile.user_id, profile]));
+  socialState.followRequestProfiles = requests.map(row => incomingProfileMap.get(row.follower_id)).filter(Boolean);
+  socialState.followerProfiles = followers.map(row => incomingProfileMap.get(row.follower_id)).filter(Boolean);
   const requestHost = $('#socialFollowRequests');
   if (requestHost) {
-    if (!requests.length) requestHost.innerHTML = '';
-    else {
-      const requestIds = requests.map(row => row.follower_id);
-      const { data: requestProfiles, error } = await supabase.from('profiles').select('user_id, username, display_name, avatar_url, is_private').in('user_id', requestIds);
-      if (error) throw error;
-      requestHost.innerHTML = `<div class="social-request-heading">Follow requests</div>${(requestProfiles || []).map(profile => `<article class="social-request-row"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}</small></span><div><button class="primary-button social-small-button" type="button" data-social-accept-follow="${escapeAttr(profile.user_id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-social-decline-follow="${escapeAttr(profile.user_id)}">Decline</button></div></article>`).join('')}`;
-    }
+    requestHost.innerHTML = socialState.followRequestProfiles.length
+      ? `<div class="social-request-heading">Follow requests</div>${socialState.followRequestProfiles.map(profile => `<article class="social-request-row"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><button class="social-request-person" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}</small></span></button><div><button class="primary-button social-small-button" type="button" data-social-accept-follow="${escapeAttr(profile.user_id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-social-decline-follow="${escapeAttr(profile.user_id)}">Decline</button></div></article>`).join('')}`
+      : '';
   }
   await loadAcceptedSocialConnections();
   renderSocialFeed();
@@ -16495,8 +17019,12 @@ function renderSocialFeed() {
   }
   entries.sort((a,b) => String(b.date).localeCompare(String(a.date)));
   const invites = (socialState.buddyWatches || []).filter(watch => watch.myMembership?.status === 'pending');
-  host.innerHTML = invites.map(socialBuddyInviteMarkup).join('') + entries.slice(0,120).map(socialFeedCardMarkup).join('');
-  if ($('#socialFeedEmpty')) $('#socialFeedEmpty').hidden = invites.length > 0 || entries.length > 0;
+  const requests = socialState.followRequestProfiles || [];
+  const followers = socialState.followerProfiles || [];
+  const requestsMarkup = requests.length ? `<section class="social-feed-network"><div class="social-feed-network-heading"><strong>Follow requests</strong></div><div class="social-feed-network-list">${requests.map(profile => `<article class="social-feed-network-person"><button type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}</small></span></button><div><button class="primary-button social-small-button" type="button" data-social-accept-follow="${escapeAttr(profile.user_id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-social-decline-follow="${escapeAttr(profile.user_id)}">Decline</button></div></article>`).join('')}</div></section>` : '';
+  const followersMarkup = followers.length ? `<section class="social-feed-network"><div class="social-feed-network-heading"><strong>Followers</strong><small>${followers.length}</small></div><div class="social-feed-follower-strip">${followers.map(profile => `<button class="social-feed-follower" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span>${escapeHtml(profile.display_name || profile.username)}</span></button>`).join('')}</div></section>` : '';
+  host.innerHTML = requestsMarkup + followersMarkup + invites.map(socialBuddyInviteMarkup).join('') + entries.slice(0,120).map(socialFeedCardMarkup).join('');
+  if ($('#socialFeedEmpty')) $('#socialFeedEmpty').hidden = requests.length > 0 || followers.length > 0 || invites.length > 0 || entries.length > 0;
 }
 
 async function handleSocialPeopleSearch(event) {

@@ -356,6 +356,12 @@ export const TrackerAPI = (() => {
     return fetchJson(`${base}&entity=album&limit=24&sort=recent`);
   }
 
+  async function getAlbumTracks(id, settings) {
+    const country = (settings.itunesCountry || 'CA').toUpperCase();
+    const data = await fetchJson(`${ITUNES_ROOT}/lookup?id=${encodeURIComponent(id)}&country=${encodeURIComponent(country)}&entity=song`);
+    return (data.results || []).filter(result => result.wrapperType === 'track');
+  }
+
   async function getSongDetails(id, settings) {
     const country = (settings.itunesCountry || 'CA').toUpperCase();
     return fetchJson(`${ITUNES_ROOT}/lookup?id=${encodeURIComponent(id)}&country=${encodeURIComponent(country)}`);
@@ -1292,6 +1298,7 @@ export const TrackerAPI = (() => {
     getLastFmChartTopTracks,
     getMusicDetails,
     getArtistDetails,
+    getAlbumTracks,
     getSongDetails,
     parsePlaylistId,
     getPlaylist,
