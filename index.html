@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-track-cleanup-73" />
+  <link rel="stylesheet" href="style.css?v=omni-add-flow-social-tbr-75" />
 </head>
 <body class="auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -286,13 +286,23 @@
         <input id="itemDisplayType" type="text" autocomplete="off" placeholder="Workout" />
       </label>
 
-      <details id="itemFeaturesDisclosure" class="compact-add-option item-features-disclosure">
-        <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Extras</span><small id="itemFeaturesSummary">None</small></summary>
-        <div class="compact-add-body item-feature-grid">
-          <div id="itemFindSourceDisclosure" class="item-feature-source">
-            <label class="field compact-field">
-              <span>Search with</span>
-              <select id="itemFindSource" aria-label="Search with a service">
+      <div class="add-title-find-grid">
+        <div id="manualTitleBlock">
+          <label class="field">
+            <span>Title</span>
+            <input id="manualTitle" type="text" placeholder="Type a title" required />
+          </label>
+        </div>
+
+        <div id="catalogueSearchBlock" class="find-it-block">
+          <div class="find-it-heading-row">
+            <span class="field-label">Find it <em>optional</em></span>
+            <details id="itemFindSettingsDisclosure" class="find-settings-disclosure">
+              <summary aria-label="Choose what Find it searches" title="Choose what Find it searches">⚙︎</summary>
+              <div id="itemFindSourceDisclosure" class="find-settings-panel">
+                <label class="field compact-field">
+                  <span>Search</span>
+                  <select id="itemFindSource" aria-label="Search source">
                 <option value="auto">Automatic</option>
                 <option value="manual">None</option>
                 <option value="youtube-videos">YouTube</option>
@@ -304,33 +314,24 @@
                 <option value="google-books">Books · Google Books</option>
                 <option value="igdb-games">Video games · IGDB</option>
                 <option value="bgg-games">Board games · BoardGameGeek</option>
-                <option value="apple-albums">Albums · Apple Music</option>
                 <option value="lastfm-artists">Artists · Last.fm</option>
-                <option value="apple-songs">Songs · Apple Music</option>
               </select>
-            </label>
-            <small id="itemFindSourceSummary" class="item-feature-inline-summary">Automatic</small>
+                </label>
+                <small id="itemFindSourceSummary" class="item-feature-inline-summary">Automatic</small>
+              </div>
+            </details>
           </div>
-          <label class="checkbox-field compact-feature-toggle"><input id="itemUseRepeatLog" type="checkbox" /><span>Repeat logs</span></label>
-          <label class="checkbox-field compact-feature-toggle"><input id="itemUseReminder" type="checkbox" /><span>Reminder</span></label>
-          <label class="checkbox-field compact-feature-toggle"><input id="itemUseDateRange" type="checkbox" /><span>Date range</span></label>
-          <label class="checkbox-field compact-feature-toggle"><input id="itemUsePlaylist" type="checkbox" /><span>Playlist</span></label>
-          <label class="field compact-field"><span>Progress</span><select id="itemProgressMode"><option value="auto">Automatic</option><option value="none">Off</option><option value="tv">Episodes</option><option value="book">Pages</option></select></label>
-          
-        </div>
-      </details>
-
-      <div id="catalogueSearchBlock" class="find-it-block">
-        <label class="field">
-          <span>Find it</span>
           <div class="search-row">
             <input id="catalogueQuery" type="search" autocomplete="off" placeholder="Search" />
-            <button id="catalogueSearchButton" class="secondary-button" type="button">Search</button>
+            <button id="catalogueSearchButton" class="secondary-button" type="button">Find</button>
           </div>
-        </label>
-        <div id="searchResults" class="search-results" hidden></div>
-        <div id="selectedSource" class="selected-source" hidden></div>
+          <div id="searchResults" class="search-results" hidden></div>
+          <div id="selectedSource" class="selected-source" hidden></div>
+        </div>
       </div>
+
+      <input id="itemProgressMode" type="hidden" value="auto" />
+      <input id="itemUsePlaylist" type="checkbox" hidden />
 
       <div id="workoutBlock" hidden>
         <label class="field">
@@ -390,12 +391,6 @@
         </div>
       </div>
 
-      <div id="manualTitleBlock">
-        <label class="field">
-          <span>Title</span>
-          <input id="manualTitle" type="text" placeholder="Title" required />
-        </label>
-      </div>
 
       <div id="tvProgressFields" class="progress-fields tv-watch-history-setup" hidden>
         <input id="nextSeason" type="hidden" value="1" />
@@ -451,6 +446,17 @@
         <input id="itemRating" type="hidden" value="0" />
       </fieldset>
 
+      <div id="itemDateField" class="date-options-row">
+        <label id="itemDateInputField" class="field date-main-field">
+          <span>Date <em>optional</em></span>
+          <input id="itemDate" type="date" />
+        </label>
+        <div class="date-quick-options" aria-label="Date options">
+          <label class="mini-toggle"><input id="itemUseRepeatLog" type="checkbox" /><span>Repeat</span></label>
+          <label class="mini-toggle"><input id="itemUseDateRange" type="checkbox" /><span>Multi-day</span></label>
+        </div>
+      </div>
+
       <label class="field item-comment-field">
         <span>Comment <em>public</em></span>
         <textarea id="itemComment" rows="2" maxlength="500" placeholder="What did you think?"></textarea>
@@ -493,6 +499,19 @@
         </div>
       </div>
 
+
+      <input id="itemRecommended" type="checkbox" hidden />
+
+
+      <label id="queueStatusField" class="field progress-status-field">
+        <span>Progress</span>
+        <select id="itemQueueStatus">
+          <option value="library">Completed</option>
+          <option value="upnext">In progress</option>
+          <option value="tbr">Not started</option>
+        </select>
+      </label>
+
       <details id="itemAttachmentsDisclosure" class="attachment-editor attachment-editor-collapsible">
         <summary class="attachment-editor-heading">
           <span><span class="compact-add-plus" aria-hidden="true">+</span> Files, images & links</span>
@@ -514,23 +533,6 @@
           <div id="linkEditorList" class="attachment-editor-list"></div>
         </div>
       </details>
-
-      <input id="itemRecommended" type="checkbox" hidden />
-
-      <label id="itemDateField" class="field">
-        <span>Date <em>optional</em></span>
-        <input id="itemDate" type="date" />
-      </label>
-
-      <label id="queueStatusField" class="field">
-        <span>Where</span>
-        <select id="itemQueueStatus">
-          <option value="library">Library only</option>
-          <option value="upnext">Up Next</option>
-          <option value="tbr">TBR</option>
-        </select>
-      </label>
-
       <p id="formMessage" class="form-message" hidden></p>
 
       <div class="modal-actions">
@@ -671,6 +673,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-subtypes-74"></script>
+  <script type="module" src="app.js?v=omni-add-flow-social-tbr-75"></script>
 </body>
 </html>

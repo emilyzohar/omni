@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-collections-library-70" />
+  <link rel="stylesheet" href="style.css?v=omni-add-flow-social-tbr-75" />
 </head>
 <body class="social-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -103,7 +103,7 @@
 
   <dialog id="socialProfileSettingsModal" class="modal social-profile-settings-modal">
     <button class="modal-x" type="button" data-close="socialProfileSettingsModal" aria-label="Close">×</button>
-    <div class="modal-heading"><h2>Profile & sharing</h2></div>
+    <div class="modal-heading"><h2>Profile settings</h2></div>
     <form id="socialProfileSettingsForm" class="social-profile-settings-form">
       <section class="social-settings-section">
         <div class="two-column-fields">
@@ -119,12 +119,18 @@
         <div id="socialShareSettings" class="social-share-settings"></div>
       </section>
 
+      <section class="social-settings-section social-log-types-setting">
+        <div class="social-sharing-heading"><h3>What you log</h3></div>
+        <p class="social-setting-help">Choose the main Types you want in Add. You can change this anytime.</p>
+        <div id="socialLogTypeChoices" class="social-log-type-choices"></div>
+      </section>
+
       <p id="socialProfileSettingsMessage" class="form-message" hidden></p>
       <section class="social-settings-section onboarding-replay-setting">
         <div><strong>Onboarding</strong><small>Run the guided tour again without changing your account or data.</small></div>
         <button id="rewatchOnboardingButton" class="secondary-button" type="button">Rewatch onboarding</button>
       </section>
-      <div class="modal-actions end-only"><div class="actions-right"><button class="quiet-button" type="button" data-close="socialProfileSettingsModal">Cancel</button><button class="primary-button" type="submit">Save sharing</button></div></div>
+      <div class="modal-actions end-only"><div class="actions-right"><button class="quiet-button" type="button" data-close="socialProfileSettingsModal">Cancel</button><button class="primary-button" type="submit">Save settings</button></div></div>
     </form>
   </dialog>
 
@@ -167,6 +173,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-collections-library-70"></script>
+  <script type="module" src="app.js?v=omni-add-flow-social-tbr-75"></script>
 </body>
 </html>

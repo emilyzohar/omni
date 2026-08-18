@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-game-health-32';
-import { API_CONFIG } from './config.js?v=omni-collections-library-70';
+import { TrackerAPI } from './api.js?v=omni-library-stats-30';
+import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -53,13 +53,16 @@ const SOURCE_ITEM_LABELS = {
   restaurant: 'Restaurant',
   place: 'Place',
   shopping: 'Shopping',
-  recipe: 'Recipe'
+  recipe: 'Recipe',
+  youtube: 'YouTube',
+  workout: 'Workout',
+  reminder: 'Reminder'
 };
 
-const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'game', 'video-game', 'board-game', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class', 'food', 'restaurant', 'recipe', 'shopping', 'other']);
+const RESERVED_DISPLAY_TYPES = new Set(['tv', 'movie', 'book', 'game', 'video-game', 'board-game', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class', 'food', 'restaurant', 'place', 'recipe', 'shopping', 'youtube', 'workout', 'reminder', 'other']);
+
+const STICKER_SHAPES = ['square', 'circle', 'star', 'heart', 'triangle', 'diamond', 'hexagon', 'pentagon', 'oval'];
 const STICKER_COLORS = ['rust', 'burgundy', 'red', 'coral', 'orange', 'yellow', 'cream', 'sand', 'peach', 'pink', 'lavender', 'purple', 'navy', 'blue', 'sky', 'slate', 'teal', 'green', 'forest', 'mint', 'olive', 'stone', 'brown', 'charcoal', 'black', 'white'];
-const STICKER_SHAPES = ['square', 'circle', 'triangle', 'diamond', 'hexagon', 'pentagon', 'oval', 'star', 'heart'];
-const STICKER_SYMBOL_SHAPES = new Set(['star', 'heart']);
 const CALENDAR_THEMES = [
   { id: 'blue', label: 'Dusty blue' },
   { id: 'burgundy', label: 'Burgundy' },
@@ -108,9 +111,9 @@ const DEFAULT_DISCOVER_PREFS = {
   eventAutoLikedArtistCalendar: true,
   upcomingHorizonDays: 30
 };
-const DISCOVER_CONTENT_TYPES = ['tv', 'movie', 'book', 'game', 'music', 'artist', 'song', 'concert', 'restaurant', 'event'];
+const DISCOVER_CONTENT_TYPES = ['tv', 'movie', 'book', 'artist', 'game', 'concert', 'restaurant', 'event'];
 const DISCOVER_CONTENT_TYPE_LABELS = {
-  tv: 'TV', movie: 'Movies', book: 'Books', game: 'Games', music: 'Albums', artist: 'Artists', song: 'Songs',
+  tv: 'TV', movie: 'Movies', book: 'Books', artist: 'Music', game: 'Games',
   concert: 'Concerts', restaurant: 'Restaurants', event: 'Live Events'
 };
 function normalizedDiscoverContentTypes(prefs = state?.discoverPrefs || DEFAULT_DISCOVER_PREFS) {
@@ -119,28 +122,14 @@ function normalizedDiscoverContentTypes(prefs = state?.discoverPrefs || DEFAULT_
     const legacy = String(prefs?.contentType || '').trim();
     values = legacy && legacy !== 'all' ? [legacy] : ['tv', 'movie'];
   }
-  const valid = [...new Set(values.map(value => String(value || '').trim()).filter(value => DISCOVER_CONTENT_TYPES.includes(value)))];
+  // Albums and songs now live inside Artist cards. Migrate old Music/Song
+  // Discover preferences to the single Artist category.
+  values = values.map(value => ['music','song'].includes(String(value || '').trim()) ? 'artist' : String(value || '').trim());
+  const valid = [...new Set(values.filter(value => DISCOVER_CONTENT_TYPES.includes(value)))];
   return valid.length ? valid : ['tv', 'movie'];
 }
 function discoverTypeSelected(type) {
   return normalizedDiscoverContentTypes().includes(type);
-}
-
-function expandedDiscoverSourceTypes(types = normalizedDiscoverContentTypes()) {
-  const expanded = new Set();
-  for (const type of types || []) {
-    if (type === 'game') {
-      expanded.add('video-game');
-      expanded.add('board-game');
-    } else {
-      expanded.add(type);
-    }
-  }
-  return expanded;
-}
-
-function discoverSourceTypeIsSelected(sourceType, types = normalizedDiscoverContentTypes()) {
-  return expandedDiscoverSourceTypes(types).has(String(sourceType || ''));
 }
 function discoverSelectionLabel(types = normalizedDiscoverContentTypes()) {
   const selected = [...types];
@@ -157,7 +146,12 @@ function syncDiscoverTypeFilterUI() {
   if (els.discoverTypeFilterSummary) els.discoverTypeFilterSummary.textContent = discoverSelectionLabel([...selected]);
 }
 
-const DEFAULT_LIBRARY_PREFS = { defaultTypeKeys: null };
+const CORE_LOG_TYPE_OPTIONS = Object.freeze([
+  ['workout','Workouts'], ['movie','Movies'], ['tv','TV'], ['book','Books'],
+  ['music','Music'], ['food','Food'], ['game','Games'], ['event','Events']
+]);
+const CORE_LOG_TYPE_KEYS = new Set(CORE_LOG_TYPE_OPTIONS.map(([key]) => key));
+const DEFAULT_LIBRARY_PREFS = { defaultTypeKeys: null, addTypeKeys: null };
 let currentUser = null;
 let appStarted = false;
 let localOnlyMode = false;
@@ -288,8 +282,6 @@ const els = {
   streakSettingsForm: $('#streakSettingsForm'),
   streakSettingsRows: $('#streakSettingsRows'),
   resetStreakSettings: $('#resetStreakSettings'),
-  cleanUnusedTrackTypes: $('#cleanUnusedTrackTypes'),
-  trackSettingsCleanupStatus: $('#trackSettingsCleanupStatus'),
   calendarRowSettingsForm: $('#calendarRowSettingsForm'),
   calendarRowSettingsRows: $('#calendarRowSettingsRows'),
   resetCalendarRowSettings: $('#resetCalendarRowSettings'),
@@ -418,13 +410,13 @@ const els = {
   itemFindSource: $('#itemFindSource'),
   itemFindSourceDisclosure: $('#itemFindSourceDisclosure'),
   itemFindSourceSummary: $('#itemFindSourceSummary'),
+  itemFindSettingsDisclosure: $('#itemFindSettingsDisclosure'),
   itemFeaturesDisclosure: $('#itemFeaturesDisclosure'),
   itemFeaturesSummary: $('#itemFeaturesSummary'),
   itemProgressMode: $('#itemProgressMode'),
   itemUseDateRange: $('#itemUseDateRange'),
-  itemUsePlaylist: $('#itemUsePlaylist'),
-  itemUseReminder: $('#itemUseReminder'),
   itemUseRepeatLog: $('#itemUseRepeatLog'),
+  itemUsePlaylist: $('#itemUsePlaylist'),
   catalogueQuery: $('#catalogueQuery'),
   catalogueSearchButton: $('#catalogueSearchButton'),
   searchResults: $('#searchResults'),
@@ -766,11 +758,35 @@ function ensureOnboardingColorModal() {
     render();
   });
   modal.querySelector('[data-onboarding-colour-continue]').addEventListener('click', () => {
+    modal.close();
+    requestAnimationFrame(() => showDialogAtTop(ensureOnboardingLogTypesModal()));
+  });
+  modal.querySelector('[data-onboarding-skip]').addEventListener('click', () => finishOnboarding());
+  modal.addEventListener('cancel', event => event.preventDefault());
+  render();
+  return modal;
+}
+
+function ensureOnboardingLogTypesModal() {
+  let modal = $('#onboardingLogTypesModal');
+  if (modal) return modal;
+  modal = document.createElement('dialog');
+  modal.id = 'onboardingLogTypesModal';
+  modal.className = 'modal small-modal onboarding-log-types-modal';
+  modal.innerHTML = `<div class="modal-heading"><p class="modal-eyebrow">SET UP ADD</p><h2>What do you want to log?</h2><p class="field-hint">Pick only what you use. This keeps Add simple. You can change it later in Profile settings.</p></div><div id="onboardingLogTypeChoices" class="onboarding-log-type-choices"></div><div class="modal-actions"><button class="quiet-button" type="button" data-onboarding-log-all>Choose all</button><div class="actions-right"><button class="primary-button" type="button" data-onboarding-log-continue>Continue</button></div></div>`;
+  document.body.appendChild(modal);
+  const host = modal.querySelector('#onboardingLogTypeChoices');
+  const render = () => { host.innerHTML = loggingTypeChoicesMarkup(loggingAddTypeKeys()); };
+  modal.querySelector('[data-onboarding-log-all]')?.addEventListener('click', () => {
+    host.querySelectorAll('input[type="checkbox"]').forEach(input => { input.checked = true; });
+  });
+  modal.querySelector('[data-onboarding-log-continue]')?.addEventListener('click', () => {
+    const keys = [...host.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value);
+    saveLoggingAddTypeKeys(keys);
     setOnboardingStep(1);
     modal.close();
     showOnboardingGuideStep();
   });
-  modal.querySelector('[data-onboarding-skip]').addEventListener('click', () => finishOnboarding());
   modal.addEventListener('cancel', event => event.preventDefault());
   render();
   return modal;
@@ -892,12 +908,12 @@ function showOnboardingGuideStep(user = currentUser) {
         2: {
           selector: '.add-intent-grid',
           title: 'Pick the type',
-          body: 'Choose the Type you want to add.'
+          body: 'Choose a Type. Add only shows the Types you picked during setup.'
         },
         3: {
           selector: '#catalogueSearchBlock',
           title: 'Search',
-          body: 'Search for the item and pick the matching result. Open Search source only if you need a different lookup.'
+          body: 'Type a title yourself, or use Find it. The gear changes what Find it searches.'
         },
         4: {
           selector: '.rating-fieldset',
@@ -916,8 +932,8 @@ function showOnboardingGuideStep(user = currentUser) {
         },
         7: {
           selector: '#queueStatusField',
-          title: 'Choose where it goes',
-          body: 'Library only saves it. Up Next puts it in your active queue. TBR saves it for later.'
+          title: 'Set progress',
+          body: 'Completed goes to Library, In progress goes to Up Next, and Not started goes to TBR.'
         }
       };
       const config = steps[step];
@@ -1068,14 +1084,13 @@ function musicSubcategoryForSourceType(sourceType) {
 function inferredMusicSubcategory(item) {
   if (!item) return '';
   const sourceType = getSourceType(item);
-  const existing = cleanTypeLabel(item.subcategory || '');
-  // A user-created subtype always wins. Catalogue source types provide a default
-  // only when no subtype has been saved yet.
-  if (existing) return existing;
   const fixed = musicSubcategoryForSourceType(sourceType);
   if (fixed) return fixed;
   if (sourceType !== 'music') return '';
-  // iTunes `music` results in this app are album results.
+  const existing = cleanTypeLabel(item.subcategory || '');
+  if (existing) return existing;
+  // iTunes `music` results in this app are album results. Manual Music items are
+  // allowed to remain uncategorized (or use any user-entered subcategory).
   if (item.provider === 'itunes' && item.providerId) return 'Album';
   return '';
 }
@@ -1105,8 +1120,7 @@ function normalizeFoodFamilyItem(item) {
   if (!item) return false;
   const sourceType = getSourceType(item);
   if (!['food','restaurant','recipe'].includes(sourceType)) return false;
-  const existingSubtype = cleanTypeLabel(item.subcategory || '');
-  const subcategory = existingSubtype || foodSubcategoryForSourceType(sourceType);
+  const subcategory = foodSubcategoryForSourceType(sourceType) || cleanTypeLabel(item.subcategory || '');
   let changed = false;
   if (item.type !== 'food') { item.type = 'food'; changed = true; }
   if (item.typeLabel !== 'Food') { item.typeLabel = 'Food'; changed = true; }
@@ -1122,7 +1136,7 @@ function migrateSavedFoodClassification() {
     const source = entry.sourceItemId ? state.items.find(item => item.id === entry.sourceItemId) : null;
     const sourceType = source ? getSourceType(source) : entry.sourceType || '';
     if (!['food','restaurant','recipe'].includes(sourceType)) continue;
-    const subcategory = source ? (source.subcategory || foodSubcategoryForSourceType(sourceType) || '') : (entry.subcategory || foodSubcategoryForSourceType(sourceType) || '');
+    const subcategory = source ? (foodSubcategoryForSourceType(sourceType) || source.subcategory || '') : (foodSubcategoryForSourceType(sourceType) || entry.subcategory || '');
     if (entry.type !== 'food') { entry.type = 'food'; historyChanged = true; }
     if (entry.typeLabel !== 'Food') { entry.typeLabel = 'Food'; historyChanged = true; }
     if (subcategory && cleanTypeLabel(entry.subcategory || '') !== cleanTypeLabel(subcategory)) { entry.subcategory = cleanTypeLabel(subcategory); historyChanged = true; }
@@ -1172,7 +1186,7 @@ function migrateSavedMusicClassification() {
 }
 
 const CANONICAL_LIBRARY_ENTITY_TYPES = new Set([
-  'tv','movie','book','video-game','board-game','youtube','music','artist','song','concert','event','restaurant','place','recipe','food','shopping'
+  'tv','movie','book','youtube','music','artist','song','concert','event','restaurant','place','recipe','food','shopping'
 ]);
 
 function canonicalLibraryIdentity(value) {
@@ -1247,7 +1261,10 @@ function mergeLibraryItemRecords(primary, duplicate) {
     ...(primary.attachments || []),
     ...(duplicate.attachments || []).filter(file => !(primary.attachments || []).some(saved => saved.id === file.id))
   ];
-  primary.coverAttachmentId = '';
+  if (!primary.image && !primary.coverAttachmentId) {
+    const preferredCover = [primary, duplicate].map(candidate => candidate.coverAttachmentId).find(id => id && primary.attachments.some(file => file.id === id && String(file.mime || '').startsWith('image/')));
+    primary.coverAttachmentId = preferredCover || primary.attachments.find(file => String(file.mime || '').startsWith('image/'))?.id || '';
+  }
   primary.links = [
     ...(primary.links || []),
     ...(duplicate.links || []).filter(link => !(primary.links || []).some(saved => saved.url === link.url))
@@ -1503,9 +1520,9 @@ function bindEvents() {
   els.openStreakSettings?.addEventListener('click', openStreakSettings);
   els.streakSettingsForm?.addEventListener('submit', saveStreakSettings);
   els.streakSettingsRows?.addEventListener('change', previewStreakSettings);
+  els.streakSettingsRows?.addEventListener('input', previewStreakSettings);
   els.streakSettingsRows?.addEventListener('click', handleStreakSettingsClick);
   els.resetStreakSettings?.addEventListener('click', resetStreakSettings);
-  els.cleanUnusedTrackTypes?.addEventListener('click', () => cleanUpUnusedTypes({ origin: 'track' }));
   els.calendarRowSettingsForm?.addEventListener('submit', saveCalendarRowSettings);
   els.resetCalendarRowSettings?.addEventListener('click', resetCalendarRowSettings);
   els.addCalendarRow?.addEventListener('click', addCalendarRowSettingsGroup);
@@ -1525,34 +1542,20 @@ function bindEvents() {
     updateItemFormForType();
   });
   els.itemSubtype?.addEventListener('change', () => {
-    const parent = formParentType();
-    if (FORM_SUBTYPE_OPTIONS[parent]?.some(option => option.value === els.itemSubtype.value)) {
-      els.itemSubtype.dataset.behaviorSubtype = els.itemSubtype.value;
-    }
     clearSourceSelectionForTypeChange();
-    if (els.itemSubtype.value === FORM_SUBTYPE_CUSTOM_VALUE && els.itemSubcategory) {
-      const priorAuto = cleanTypeLabel(els.itemSubcategory.dataset.autoSubtype || '');
-      if (priorAuto && cleanTypeLabel(els.itemSubcategory.value || '') === priorAuto) els.itemSubcategory.value = '';
-      els.itemSubcategory.readOnly = false;
-      els.itemSubcategory.placeholder = 'Name subtype';
-      if (els.itemSubcategoryDisclosure) {
-        els.itemSubcategoryDisclosure.hidden = false;
-        els.itemSubcategoryDisclosure.open = true;
-      }
-      requestAnimationFrame(() => els.itemSubcategory?.focus());
-    }
     updateItemFormForType();
   });
   els.itemFindSource?.addEventListener('change', () => {
     clearSourceSelectionForTypeChange();
     syncItemFindSourceSummary();
     updateItemFormForType();
+    syncFindItInputUI();
   });
   els.itemProgressMode?.addEventListener('change', updateItemFormForType);
   els.itemUseDateRange?.addEventListener('change', updateItemFormForType);
-  els.itemUsePlaylist?.addEventListener('change', updateItemFormForType);
-  els.itemUseReminder?.addEventListener('change', updateItemFormForType);
   els.itemUseRepeatLog?.addEventListener('change', updateItemFormForType);
+  els.itemUsePlaylist?.addEventListener('change', updateItemFormForType);
+  els.catalogueQuery?.addEventListener('focus', promptForCustomFindSource);
   els.catalogueSearchButton?.addEventListener('click', searchCatalogue);
   els.catalogueQuery?.addEventListener('keydown', event => {
     if (event.key === 'Enter') {
@@ -1935,68 +1938,21 @@ function bindEvents() {
 
     const addRepeatLog = event.target.closest('[data-add-repeat-log]');
     if (addRepeatLog) {
-      const group = findItem(addRepeatLog.dataset.addRepeatLog || '');
-      if (!group) return;
-      els.detailModal.close();
-      openItemModal('', 'library');
-      if (els.itemForm) {
-        els.itemForm.dataset.repeatGroupId = group.id;
-        els.itemForm.classList.add('is-repeat-log-entry');
-      }
-      setItemFormSourceType(getSourceType(group), group);
-      if (els.itemUseRepeatLog) els.itemUseRepeatLog.checked = true;
-      if (els.itemUseReminder) els.itemUseReminder.checked = false;
-      if (els.itemFindSource) els.itemFindSource.value = group.featureConfig?.findSource || 'auto';
-      if (els.itemProgressMode) els.itemProgressMode.value = 'none';
-      if (els.itemUseDateRange) els.itemUseDateRange.checked = false;
-      if (els.itemUsePlaylist) els.itemUsePlaylist.checked = false;
-      if (els.manualTitle) {
-        els.manualTitle.value = '';
-        els.manualTitle.required = false;
-        els.manualTitle.placeholder = 'Log title (optional)';
-      }
-      if (els.itemSubcategory) els.itemSubcategory.value = group.subcategory || '';
-      if (els.itemDate) els.itemDate.value = todayString();
-      if (els.itemPeople) els.itemPeople.value = '';
-      if (els.itemNote) els.itemNote.value = '';
-      if (els.itemComment) els.itemComment.value = '';
-      if (els.itemRecommended) els.itemRecommended.checked = false;
-      setRating(0);
-      state.selectedSource = null;
-      state.loadedPlaylist = null;
-      els.provider.value = 'manual';
-      els.providerId.value = '';
-      els.providerImage.value = '';
-      els.providerSubtitle.value = '';
-      els.itemModalEyebrow.hidden = false;
-      els.itemModalEyebrow.textContent = 'ADD LOG';
-      els.itemModalTitle.textContent = group.title || 'Add log';
-      els.deleteItem.hidden = true;
-      updateItemFormForType();
-      syncItemFeatureSummary();
+      const item = findItem(addRepeatLog.dataset.addRepeatLog || state.openDetailId);
+      if (item) openRepeatLogModal(item);
       return;
     }
 
     const editRepeatLog = event.target.closest('[data-edit-repeat-log]');
     if (editRepeatLog) {
-      els.detailModal.close();
-      openHistoryEdit(editRepeatLog.dataset.editRepeatLog || '');
+      els.detailModal?.close();
+      openHistoryEdit(editRepeatLog.dataset.editRepeatLog);
       return;
     }
 
     const deleteRepeatLog = event.target.closest('[data-delete-repeat-log]');
     if (deleteRepeatLog) {
-      const entry = state.history.find(record => record.id === (deleteRepeatLog.dataset.deleteRepeatLog || ''));
-      if (!entry) return;
-      if (!confirm(`Delete log “${entry.title || 'Untitled'}”?`)) return;
-      const sourceItemId = entry.sourceItemId || '';
-      state.history = state.history.filter(record => record.id !== entry.id);
-      syncRepeatLogGroupRating(sourceItemId);
-      saveHistory();
-      saveItems();
-      renderAll();
-      if (sourceItemId && els.detailModal?.open) await openDetails(sourceItemId);
-      else if (sourceItemId) await openDetails(sourceItemId);
+      deleteRepeatLogEntry(deleteRepeatLog.dataset.deleteRepeatLog, deleteRepeatLog.dataset.repeatItemId || state.openDetailId);
       return;
     }
 
@@ -2004,9 +1960,11 @@ function bindEvents() {
     if (addClassLog) {
       els.detailModal.close();
       openItemModal('', 'library');
-      if (els.itemKindChoice) els.itemKindChoice.value = 'workout';
-      setUnderlyingFormTypeForKind('workout');
-      if (els.itemUseRepeatLog) els.itemUseRepeatLog.checked = true;
+      if (els.itemActionChoice) els.itemActionChoice.value = 'completed';
+      refreshItemKindChoices('class', 'completed');
+      setUnderlyingFormTypeForKind('class');
+      if (els.itemKindChoice) els.itemKindChoice.value = 'class';
+      if (els.itemSourceType) els.itemSourceType.value = 'class';
       if (els.itemFindSource) els.itemFindSource.value = 'manual';
       if (els.itemDate) els.itemDate.value = todayString();
       updateItemFormForType();
@@ -2325,7 +2283,7 @@ function ensureAlbumEditorModal() {
     <form id="albumEditorForm" class="item-form album-editor-form">
       <input id="albumEditingId" type="hidden"/>
       <div class="album-editor-toolbar">
-        <label class="album-toolbar-name"><span class="sr-only">Collection name</span><input id="albumName" type="text" maxlength="80" placeholder="Collection title *" aria-label="Collection title (required)" required/></label>
+        <label class="album-toolbar-name"><span class="sr-only">Collection name</span><input id="albumName" type="text" maxlength="80" placeholder="Collection name" aria-label="Collection name" required/></label>
         <label class="album-toolbar-search"><span class="sr-only">Search your Library</span><input id="albumItemSearch" type="search" autocomplete="off" placeholder="Search Library…" aria-label="Search your Library" /></label>
         <details id="albumTypeFilter" class="library-type-filter album-type-filter">
           <summary id="albumTypeFilterSummary">All types</summary>
@@ -2359,18 +2317,9 @@ function ensureAlbumEditorModal() {
   });
   modal.querySelector('#albumItemChoices')?.addEventListener('change', event => {
     if (!event.target.matches('[data-album-item]')) return;
-    // Keep selection entirely in-place. The hidden checkbox is anchored inside its
-    // card (see CSS), so focusing/toggling it cannot make the collection browser
-    // jump to a distant scroll position.
-    const browser = $('#albumItemChoices');
-    const scrollTop = browser?.scrollTop || 0;
-    const scrollLeft = event.target.closest('.album-library-shelf')?.scrollLeft || 0;
-    const shelf = event.target.closest('.album-library-shelf');
     if (event.target.checked) albumEditorSelectedIds.add(event.target.value);
     else albumEditorSelectedIds.delete(event.target.value);
     renderAlbumSelectedSummary();
-    if (browser) browser.scrollTop = scrollTop;
-    if (shelf) shelf.scrollLeft = scrollLeft;
   });
   modal.querySelector('#albumEditorForm')?.addEventListener('submit', event => {
     event.preventDefault();
@@ -2390,10 +2339,7 @@ function ensureAlbumEditorModal() {
   modal.querySelector('#albumDelete')?.addEventListener('click', () => {
     const id = $('#albumEditingId')?.value || '';
     if (!id) return;
-    const album = state.albums.find(entry => entry.id === id);
-    const label = album?.title || 'this collection';
-    if (!window.confirm(`Delete “${label}”? This removes the collection only; its Library items will stay.`)) return;
-    state.albums = state.albums.filter(entry => entry.id !== id);
+    state.albums = state.albums.filter(album => album.id !== id);
     saveAlbums(); renderAlbums(); modal.close(); scheduleCloudSync();
   });
   return modal;
@@ -2546,8 +2492,9 @@ function ensureAlbumDetailModal() {
   modal.addEventListener('click', event => {
     const itemButton = event.target.closest('[data-album-open-item], [data-details-id]');
     if (itemButton) {
-      const itemId = itemButton.dataset.albumOpenItem || itemButton.dataset.detailsId || '';
-      if (itemId) { modal.close(); openDetails(itemId); }
+      const itemId = itemButton.dataset.albumOpenItem || itemButton.dataset.detailsId;
+      modal.close();
+      openDetails(itemId);
       return;
     }
     const edit = event.target.closest('[data-album-edit]');
@@ -2561,33 +2508,32 @@ function openAlbumDetail(id) {
   if (!album) return;
   const modal = ensureAlbumDetailModal();
   const items = (album.itemIds || []).map(findItem).filter(Boolean);
+  const groups = new Map();
+  for (const item of items) {
+    const key = libraryTypeGroupKey(item);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  const sortedGroups = [...groups.entries()]
+    .map(([key, groupItems]) => ({ key, items: groupItems, label: libraryTypeGroupLabel(groupItems, key) }))
+    .sort((a,b) => a.label.localeCompare(b.label));
 
-  $('#albumDetailBody').innerHTML = `<div class="album-detail-header">
-    <div class="modal-heading album-detail-heading">
-      <h2>${escapeHtml(album.title)}</h2>
-      ${album.description ? `<p class="album-detail-note">${escapeHtml(album.description)}</p>` : ''}
-    </div>
-    <div class="album-detail-actions"><button class="secondary-button" type="button" data-album-edit="${escapeAttr(album.id)}">Edit</button></div>
-  </div>
-  <div id="albumDetailLibrary" class="album-detail-library library-groups"></div>`;
-
-  const host = $('#albumDetailLibrary');
+  const body = $('#albumDetailBody');
+  body.innerHTML = `<div class="collection-library-heading"><div><h2>${escapeHtml(album.title)}</h2>${album.description ? `<p class="collection-library-note">${escapeHtml(album.description)}</p>` : ''}</div><button class="secondary-button" type="button" data-album-edit="${escapeAttr(album.id)}">Edit</button></div><div class="collection-library-groups"></div>`;
+  const host = body.querySelector('.collection-library-groups');
   if (!items.length) {
     host.innerHTML = '<p class="empty-state">Empty collection.</p>';
   } else {
-    const grouped = new Map();
-    for (const item of items) {
-      const key = libraryTypeGroupKey(item);
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key).push(item);
-    }
-    for (const [key, groupItems] of grouped.entries()) {
+    for (const group of sortedGroups) {
       const section = document.createElement('section');
-      section.className = 'library-group library-shelf album-detail-library-group';
-      const label = libraryTypeGroupLabel(groupItems, key);
-      section.innerHTML = `<div class="library-group-heading-row album-detail-library-heading"><div class="library-group-title-wrap"><h3 class="library-group-title">${escapeHtml(label)}</h3><span class="library-group-count">${groupItems.length}</span></div></div><div class="library-poster-grid is-expanded album-detail-poster-grid"></div>`;
-      const grid = section.querySelector('.album-detail-poster-grid');
-      for (const item of groupItems) grid.appendChild(makeLibraryPoster(item));
+      section.className = 'collection-library-group';
+      section.innerHTML = `<div class="collection-library-group-heading"><h3>${escapeHtml(group.label)}</h3><span>${group.items.length}</span></div><div class="library-poster-grid is-expanded collection-library-grid"></div>`;
+      const grid = section.querySelector('.collection-library-grid');
+      group.items.forEach(item => {
+        const card = makeLibraryPoster(item);
+        card.querySelector('.library-card-album-button')?.remove();
+        grid.appendChild(card);
+      });
       host.appendChild(section);
     }
   }
@@ -2607,91 +2553,102 @@ function watchedTitleHasConsumption(item) {
   return false;
 }
 
+const STATS_GENRE_COLORS = Object.freeze({
+  Action: '#B95032',
+  Adventure: '#355F7C',
+  Animation: '#C97891',
+  Comedy: '#EFD98B',
+  Crime: '#65151B',
+  Documentary: '#61795D',
+  Drama: '#907bb9',
+  Family: '#99AA65',
+  Fantasy: '#79558F',
+  History: '#8F6246',
+  Horror: '#17151D',
+  Mystery: '#4D4566',
+  Romance: '#f77390',
+  'Science Fiction': '#2F6870',
+  Thriller: '#405463',
+  War: '#6d7480',
+  Western: '#9c7450',
+  'TV Movie': '#8fa8bc',
+  Politics: '#9a4353',
+  Reality: '#F786AA',
+  Other: '#aaa9a9'
+});
+const STATS_RECOGNIZED_GENRES = new Set(Object.keys(STATS_GENRE_COLORS).filter(label => label !== 'Other'));
+
 function canonicalStatsGenreLabels(value) {
-  const label = cleanTypeLabel(value || '');
+  const label = cleanTypeLabel(typeof value === 'string' ? value : value?.name || '');
   if (!label) return [];
   const key = label.toLowerCase().replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
-  // Normalize TMDB's combined TV taxonomy and common stored/API synonyms so a
-  // genre never splits into multiple Stats slices.
   if (['sci-fi & fantasy', 'science fiction & fantasy', 'sci fi & fantasy'].includes(key)) return ['Science Fiction', 'Fantasy'];
-  if (['science fiction', 'sci-fi', 'sci fi', 'scifi'].includes(key)) return ['Science Fiction'];
+  if (['sci-fi', 'sci fi', 'science-fiction', 'science fiction'].includes(key)) return ['Science Fiction'];
   if (key === 'action & adventure') return ['Action', 'Adventure'];
   if (key === 'kids') return ['Family'];
-  if (key === 'war & politics') return ['War'];
-  if (['reality', 'reality tv', 'reality television'].includes(key)) return ['Reality'];
-  if (['horror', 'supernatural horror', 'psychological horror'].includes(key)) return ['Horror'];
-  if (['thriller', 'suspense', 'psychological thriller', 'crime thriller'].includes(key)) return ['Thriller'];
+  if (key === 'war & politics') return ['War', 'Politics'];
+  if (['reality tv', 'reality television', 'reality'].includes(key)) return ['Reality'];
+  for (const recognized of STATS_RECOGNIZED_GENRES) {
+    if (recognized.toLowerCase() === key) return [recognized];
+  }
   return [label];
 }
 
 function statsItemGenreLabels(item) {
-  const labels = new Set();
-  for (const genre of item?.genres || []) {
-    const raw = typeof genre === 'string' ? genre : genre?.name || '';
-    for (const label of canonicalStatsGenreLabels(raw)) labels.add(label);
-  }
-  return [...labels];
+  return [...new Set((item?.genres || []).flatMap(canonicalStatsGenreLabels).filter(Boolean))];
 }
 
 function watchedGenreCounts() {
   const counts = new Map();
   for (const item of state.items) {
     if (!watchedTitleHasConsumption(item)) continue;
-    for (const label of statsItemGenreLabels(item)) {
-      counts.set(label, (counts.get(label) || 0) + 1);
-    }
+    const labels = statsItemGenreLabels(item);
+    const recognized = labels.filter(label => STATS_RECOGNIZED_GENRES.has(label));
+    // "Other" is exclusive: a title with a real visible genre never also
+    // inflates Other just because TMDB supplied Soap/News/Talk metadata.
+    const counted = recognized.length ? recognized : (labels.length ? ['Other'] : []);
+    for (const label of counted) counts.set(label, (counts.get(label) || 0) + 1);
   }
-  return [...counts.entries()].sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const rows = [...counts.entries()]
+    .filter(([label]) => label !== 'Other')
+    .sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  if (counts.get('Other')) rows.push(['Other', counts.get('Other')]);
+  return rows;
 }
 
 async function enrichWatchedTVStatsGenres() {
-  if (!state.settings.tmdbToken) return false;
-  const watchedTV = state.items.filter(item => getSourceType(item) === 'tv' && watchedTitleHasConsumption(item) && item.providerId);
-  if (!watchedTV.length) return false;
-
-  let horrorIds = [];
-  let thrillerIds = [];
-  if (TrackerAPI.getTMDBKeywordIds && TrackerAPI.getTMDBItemKeywords) {
-    try {
-      [horrorIds, thrillerIds] = await Promise.all([
-        TrackerAPI.getTMDBKeywordIds(['horror', 'supernatural horror', 'psychological horror', 'slasher', 'zombie'], state.settings),
-        TrackerAPI.getTMDBKeywordIds(['thriller', 'suspense', 'psychological thriller', 'crime thriller'], state.settings)
-      ]);
-    } catch {}
-  }
-
-  const horrorSet = new Set((horrorIds || []).map(String));
-  const thrillerSet = new Set((thrillerIds || []).map(String));
+  if (!state.settings.tmdbToken || !TrackerAPI.getTVDetails) return false;
+  const items = state.items.filter(item => getSourceType(item) === 'tv' && item.providerId && watchedTitleHasConsumption(item));
+  if (!items.length) return false;
   let changed = false;
+  const horrorTerms = ['horror', 'supernatural horror', 'psychological horror', 'slasher', 'zombie'];
+  const thrillerTerms = ['thriller', 'suspense', 'psychological thriller', 'crime thriller'];
+  const hasKeyword = (names, terms) => terms.some(term => names.some(name => name === term || name.includes(term)));
 
-  await Promise.allSettled(watchedTV.map(async item => {
-    const genres = new Set((item.genres || []).map(value => cleanTypeLabel(typeof value === 'string' ? value : value?.name || '')).filter(Boolean));
-    const before = [...genres].sort().join('|');
+  await Promise.allSettled(items.map(async item => {
+    const before = [...new Set((item.genres || []).map(value => cleanTypeLabel(typeof value === 'string' ? value : value?.name || '')).filter(Boolean))];
+    const merged = new Set(before);
 
-    // Always merge TMDB's current official TV genres, even when this item already
-    // has some saved genres. This repairs older items that were missing Reality.
+    const rawIds = item.raw?.genre_ids || [];
+    rawIds.map(id => TMDB_TV_GENRES[Number(id)]).filter(Boolean).forEach(label => merged.add(label));
+
     try {
       const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
-      for (const genre of details?.genres || []) {
-        const label = cleanTypeLabel(genre?.name || '');
-        if (label) genres.add(label);
-      }
+      (details?.genres || []).map(genre => genre?.name).filter(Boolean).forEach(label => merged.add(cleanTypeLabel(label)));
     } catch {}
 
-    // TV has no official Horror or Thriller genre IDs, so supplement those two
-    // categories from TMDB keywords.
-    if (TrackerAPI.getTMDBItemKeywords && (horrorSet.size || thrillerSet.size)) {
+    if (TrackerAPI.getTMDBItemKeywords) {
       try {
-        const keywords = await getCached(`tmdb:stats-keywords:tv:${item.providerId}`, () => TrackerAPI.getTMDBItemKeywords('tv', item.providerId, state.settings));
-        const keywordIds = new Set((keywords || []).map(keyword => String(keyword.id || '')).filter(Boolean));
-        if ([...horrorSet].some(id => keywordIds.has(id))) genres.add('Horror');
-        if ([...thrillerSet].some(id => keywordIds.has(id))) genres.add('Thriller');
+        const keywords = await getCached(`tv:keywords:${item.providerId}`, () => TrackerAPI.getTMDBItemKeywords('tv', item.providerId, state.settings));
+        const names = (keywords || []).map(keyword => String(keyword?.name || '').toLowerCase().trim()).filter(Boolean);
+        if (hasKeyword(names, horrorTerms)) merged.add('Horror');
+        if (hasKeyword(names, thrillerTerms)) merged.add('Thriller');
       } catch {}
     }
 
-    const after = [...genres].sort().join('|');
-    if (after !== before) {
-      item.genres = [...genres];
+    const next = [...merged].filter(Boolean);
+    if (next.length !== before.length || next.some(label => !before.includes(label))) {
+      item.genres = next;
       changed = true;
     }
   }));
@@ -2803,15 +2760,15 @@ async function estimatedWatchMinutes() {
   return total;
 }
 
-function statsGenreItems(labels = [], excludeLabels = []) {
-  const wanted = new Set((labels || []).flatMap(canonicalStatsGenreLabels).map(value => value.toLowerCase()).filter(Boolean));
-  const excluded = new Set((excludeLabels || []).flatMap(canonicalStatsGenreLabels).map(value => value.toLowerCase()).filter(Boolean));
+function statsGenreItems(labels = []) {
+  const wanted = new Set((labels || []).map(value => cleanTypeLabel(value)).filter(Boolean));
   if (!wanted.size) return [];
   return state.items.filter(item => {
     if (!watchedTitleHasConsumption(item)) return false;
-    const itemLabels = statsItemGenreLabels(item).map(value => value.toLowerCase());
-    if (!itemLabels.some(label => wanted.has(label))) return false;
-    return !itemLabels.some(label => excluded.has(label));
+    const itemLabels = statsItemGenreLabels(item);
+    const recognized = itemLabels.filter(label => STATS_RECOGNIZED_GENRES.has(label));
+    if (wanted.has('Other') && !recognized.length && itemLabels.length) return true;
+    return recognized.some(label => wanted.has(label));
   });
 }
 
@@ -2834,63 +2791,18 @@ function renderGenrePie(genres = []) {
     els.statsGenres.innerHTML = '<p class="empty-state">No watched genres yet.</p>';
     return;
   }
-
-  const genreColors = {
-    Action: '#307351',
-    Adventure: '#648767',
-    Animation: '#f7e186',
-    Comedy: '#669bbc',
-    Crime: '#c1121f',
-    Documentary: '#2C4251',
-    Drama: '#031D44',
-    Family: '#21A179',
-    Fantasy: '#297373',
-    History: '#595A4A',
-    Horror: '#0F110C',
-    Mystery: '#67597A',
-    Romance: '#780000',
-    'Science Fiction': '#A09BE7',
-    Thriller: '#003049',
-    War: '#6d7480',
-    Western: '#9c7450',
-    'TV Movie': '#8fa8bc',
-    Politics: '#9a4353',
-    Reality: '#F786AA',
-    Other: '#b0a79a'
-  };
-
-  // Every genre Omni explicitly recognizes gets its own slice. "Other" is only
-  // for genuinely unrecognized/overflow labels; it never swallows Reality,
-  // Horror, Thriller, Science Fiction, or another known genre just because that
-  // genre is less common in the user's library.
-  const recognized = new Set(Object.keys(genreColors).filter(label => label !== 'Other'));
-  const visible = genres
-    .filter(([label]) => recognized.has(label))
-    .map(([label, count]) => ({ label, count, labels: [label], excludeLabels: [] }));
-  const unknownLabels = genres.filter(([label]) => !recognized.has(label)).map(([label]) => label);
-  if (unknownLabels.length) {
-    const recognizedLabels = visible.map(entry => entry.label);
-    const otherCount = statsGenreItems(unknownLabels, recognizedLabels).length;
-    if (otherCount) visible.push({ label: 'Other', count: otherCount, labels: unknownLabels, excludeLabels: recognizedLabels });
-  }
-
-  if (!visible.length) {
-    els.statsGenres.innerHTML = '<p class="empty-state">No watched genres yet.</p>';
-    return;
-  }
-
-  const total = visible.reduce((sum, entry) => sum + entry.count, 0) || 1;
-  const genreColor = label => genreColors[label] || genreColors.Other;
+  const visible = genres.map(([label,count]) => ({ label, count, labels:[label] }));
+  const total = visible.reduce((sum,entry) => sum + entry.count,0) || 1;
+  const genreColor = label => STATS_GENRE_COLORS[label] || STATS_GENRE_COLORS.Other;
   let angle = -Math.PI / 2;
   const paths = visible.map(entry => {
     const next = angle + (entry.count / total) * Math.PI * 2;
-    const d = statsPiePath(100, 100, 82, angle, next);
+    const d = statsPiePath(100,100,82,angle,next);
     angle = next;
-    const labels = escapeAttr(JSON.stringify(entry.labels));
-    const excludes = escapeAttr(JSON.stringify(entry.excludeLabels || []));
-    return `<path class="stats-genre-slice" d="${d}" fill="${genreColor(entry.label)}" tabindex="0" role="button" data-stats-genre-list="${labels}" data-stats-genre-exclude="${excludes}" aria-label="${escapeAttr(`${entry.label}: ${entry.count}`)}"><title>${escapeHtml(entry.label)} · ${entry.count}</title></path>`;
+    const encoded = escapeAttr(JSON.stringify(entry.labels));
+    return `<path class="stats-genre-slice" d="${d}" fill="${genreColor(entry.label)}" tabindex="0" role="button" data-stats-genre-list="${encoded}" aria-label="${escapeAttr(`${entry.label}: ${entry.count}`)}"><title>${escapeHtml(entry.label)} · ${entry.count}</title></path>`;
   }).join('');
-  const legend = visible.map(entry => `<button class="stats-genre-legend-row" type="button" data-stats-genre-list="${escapeAttr(JSON.stringify(entry.labels))}" data-stats-genre-exclude="${escapeAttr(JSON.stringify(entry.excludeLabels || []))}"><span class="stats-genre-swatch" style="--genre-color:${genreColor(entry.label)}"></span><span>${escapeHtml(entry.label)}</span><strong>${entry.count}</strong></button>`).join('');
+  const legend = visible.map(entry => `<button class="stats-genre-legend-row" type="button" data-stats-genre-list="${escapeAttr(JSON.stringify(entry.labels))}"><span class="stats-genre-swatch" style="--genre-color:${genreColor(entry.label)}"></span><span>${escapeHtml(entry.label)}</span><strong>${entry.count}</strong></button>`).join('');
   els.statsGenres.innerHTML = `<div class="stats-genre-pie-layout"><svg class="stats-genre-pie" viewBox="0 0 200 200" role="img" aria-label="Genres watched pie chart">${paths}</svg><div class="stats-genre-legend">${legend}</div></div>`;
 }
 
@@ -2948,11 +2860,9 @@ function handleStatsBreakdownClick(event) {
   const genreTarget = event.target.closest('[data-stats-genre-list]');
   if (genreTarget) {
     let labels = [];
-    let excludeLabels = [];
     try { labels = JSON.parse(genreTarget.dataset.statsGenreList || '[]'); } catch {}
-    try { excludeLabels = JSON.parse(genreTarget.dataset.statsGenreExclude || '[]'); } catch {}
-    const title = labels.length === 1 && !excludeLabels.length ? labels[0] : 'Other genres';
-    openStatsCatalogue(title, statsGenreItems(labels, excludeLabels));
+    const title = labels.length === 1 ? labels[0] : 'Other genres';
+    openStatsCatalogue(title, statsGenreItems(labels));
   }
 }
 
@@ -3012,9 +2922,6 @@ function makeRecentTrackedPoster(entry) {
         subcategory: entry.subcategory || ''
       };
   const shell = makeLibraryPoster(display);
-  // The Last 30 Days popup already groups entries under their date heading, so
-  // don't repeat the Library footer date inside each card.
-  shell.querySelector('.library-card-tracked-date')?.remove();
   shell.classList.add('stats-recent-card');
   const poster = shell.querySelector('.library-poster-button');
   if (poster) {
@@ -3123,10 +3030,7 @@ async function renderStats() {
       .map(group => `<button class="stat-type-row" type="button" data-stats-type-key="${escapeAttr(group.key)}" data-stats-label="${escapeAttr(group.label)}"><span>${escapeHtml(group.label)}</span><strong>${group.items.length}</strong></button>`).join('');
   }
   renderGenrePie(genres);
-  const [minutes] = await Promise.all([
-    estimatedWatchMinutes(),
-    enrichWatchedTVStatsGenres()
-  ]);
+  const [minutes] = await Promise.all([estimatedWatchMinutes(), enrichWatchedTVStatsGenres()]);
   if (els.statsSummary?.dataset.renderToken !== requestToken) return;
   const hours = formatWatchHours(minutes);
   const cards = [...els.statsSummary.querySelectorAll('.stat-card')];
@@ -3299,7 +3203,7 @@ async function renderUpNext(options = {}) {
   const today = todayString();
   const availableItems = state.items.filter(item => {
     if (getQueueStatus(item) !== view) return false;
-    if (view === 'upnext' && itemHasReminder(item)) {
+    if (view === 'upnext' && getSourceType(item) === 'reminder') {
       const dueDate = getNextReminderDueDate(item);
       return !dueDate || dueDate <= today;
     }
@@ -3363,13 +3267,14 @@ async function renderUpNext(options = {}) {
         button.dataset.id = item.id;
         button.setAttribute('aria-label', `Open ${item.title}`);
         button.title = item.title;
+        const pausedBadge = libraryDnfState(item) === 'paused' ? '<span class="tbr-paused-badge">Paused</span>' : '';
         if (getSourceType(item) === 'restaurant') {
           button.classList.add('tbr-text-button');
-          button.innerHTML = `<span class="tbr-text-title">${escapeHtml(item.title || 'Restaurant')}</span><span class="tbr-text-meta">Restaurant</span>`;
+          button.innerHTML = `<span class="tbr-text-title">${escapeHtml(item.title || 'Restaurant')}</span><span class="tbr-text-meta">Restaurant</span>${pausedBadge}`;
         } else {
-          button.innerHTML = item.image
+          button.innerHTML = (item.image
             ? `<img class="tbr-thumbnail-image" src="${escapeAttr(item.image)}" alt="" loading="lazy" />`
-            : `<span class="tbr-thumbnail-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`;
+            : `<span class="tbr-thumbnail-placeholder">${escapeHtml((item.title || '?').slice(0,1).toUpperCase())}</span>`) + pausedBadge;
         }
         grid.appendChild(button);
       }
@@ -3742,7 +3647,7 @@ async function buildQueueCalendarEntries() {
 
   for (const item of state.items) {
     const sourceType = getSourceType(item);
-    if (itemHasReminder(item)) {
+    if (sourceType === 'reminder') {
       let due = getNextReminderDueDate(item);
       if (!due || due < today) continue;
       const frequency = reminderFrequency(item);
@@ -3885,13 +3790,14 @@ function queueCardMarkup(item, info) {
     : `<div class="upnext-art placeholder">${escapeHtml(getItemTypeLabel(item)?.[0] || '•')}</div>`;
   const sourceType = getSourceType(item);
   const isTBR = Boolean(info.tbr);
+  const pausedBadge = isTBR && libraryDnfState(item) === 'paused' ? '<span class="tbr-paused-badge queue-card-paused-badge">Paused</span>' : '';
 
   let action = '';
   if (isTBR) {
     action = `<button class="check-button start-button" type="button" data-action="start" data-id="${item.id}" aria-label="Up Next" title="Up Next">→</button>`;
   } else if (sourceType === 'book') {
     action = `<button class="check-button book-check" type="button" data-action="complete" data-id="${item.id}" aria-label="Update pages & dates" title="Update pages & dates">↗</button>`;
-  } else if (itemHasReminder(item)) {
+  } else if (sourceType === 'reminder') {
     const due = info.dueDate || getNextReminderDueDate(item);
     const canComplete = !due || due <= todayString();
     action = `<button class="check-button reminder-check" type="button" data-action="complete" data-id="${item.id}" aria-label="Mark reminder complete" title="${canComplete ? 'Mark complete' : `Due ${escapeAttr(formatLongDate(due))}`}" ${canComplete ? '' : 'disabled'}>✓</button>`;
@@ -3907,6 +3813,7 @@ function queueCardMarkup(item, info) {
         <p class="upnext-title">${escapeHtml(info.title || item.title)}</p>
         <p class="upnext-meta">${escapeHtml(info.meta || progressFallback(item))}</p>
         <p class="upnext-category">${escapeHtml([getItemTypeLabel(item), isTBR ? 'TBR' : '', info.streaming || ''].filter(Boolean).join(' · '))}</p>
+        ${pausedBadge}
         ${!isTBR ? buddyQueueMarkup(item) : ''}
         ${info.error ? `<div class="queue-error">${escapeHtml(info.error)}</div>` : ''}
       </div>
@@ -3952,10 +3859,11 @@ function streamingDetailMarkup(availability) {
 
 function tbrMeta(item) {
   const sourceType = getSourceType(item);
-  if (sourceType === 'tv') return [item.subtitle, 'Not started'].filter(Boolean).join(' · ');
-  if (sourceType === 'book') return [item.subtitle, 'To be read'].filter(Boolean).join(' · ');
+  const paused = libraryDnfState(item) === 'paused';
+  if (sourceType === 'tv') return [item.subtitle, paused ? 'Paused' : 'Not started'].filter(Boolean).join(' · ');
+  if (sourceType === 'book') return [item.subtitle, paused ? 'Paused' : 'To be read'].filter(Boolean).join(' · ');
   if (sourceType === 'youtube') return isYouTubePlaylistItem(item) ? [item.subtitle, 'Playlist'].filter(Boolean).join(' · ') : (item.subtitle || 'YouTube');
-  if (itemHasReminder(item)) return reminderScheduleLabel(item);
+  if (sourceType === 'reminder') return reminderScheduleLabel(item);
   if (['event', 'concert'].includes(sourceType)) return eventQueueMeta(item);
   return item.subtitle || 'Saved for later';
 }
@@ -4023,7 +3931,7 @@ async function getUpNextInfo(item) {
     };
   }
 
-  if (itemHasReminder(item)) {
+  if (getSourceType(item) === 'reminder') {
     const dueDate = getNextReminderDueDate(item);
     return {
       title: item.title,
@@ -4107,14 +4015,14 @@ async function handleUpNextClick(event) {
       let completed = null;
       if (getSourceType(item) === 'tv') completed = await advanceTV(item);
       else if (getSourceType(item) === 'youtube') completed = isYouTubePlaylistItem(item) ? await advanceWorkout(item) : genericCompletionRecord(item, true);
-      else if (itemHasReminder(item)) completed = reminderCompletionRecord(item);
+      else if (getSourceType(item) === 'reminder') completed = reminderCompletionRecord(item);
       else completed = genericCompletionRecord(item, true);
       if (completed) addHistoryRecord(completed);
-      if (!itemHasReminder(item) && (!['tv','youtube'].includes(getSourceType(item)) || (getSourceType(item) === 'youtube' && !isYouTubePlaylistItem(item)))) {
+      if (!['tv','youtube','reminder'].includes(getSourceType(item)) || (getSourceType(item) === 'youtube' && !isYouTubePlaylistItem(item))) {
         item.completedAt = todayString();
         setItemQueueStatus(item, 'library');
       }
-      if (itemHasReminder(item)) {
+      if (getSourceType(item) === 'reminder') {
         item.lastCompletedAt = new Date().toISOString();
         if (isOneTimeReminder(item)) {
           state.items = state.items.filter(existing => existing.id !== item.id);
@@ -4135,7 +4043,7 @@ async function handleUpNextClick(event) {
 }
 
 function queueSortKey(item, view = 'upnext') {
-  if (view === 'upnext' && itemHasReminder(item)) return `0:${getNextReminderDueDate(item) || '9999-12-31'}:${item.createdAt || ''}`;
+  if (view === 'upnext' && getSourceType(item) === 'reminder') return `0:${getNextReminderDueDate(item) || '9999-12-31'}:${item.createdAt || ''}`;
   if (['event', 'concert'].includes(getSourceType(item))) return `0:${item.date || item.eventMeta?.eventDate || '9999-12-31'}:${item.createdAt || ''}`;
   return `1:${item.createdAt || ''}`;
 }
@@ -4158,19 +4066,6 @@ function formatEventClock(value) {
   const suffix = hour >= 12 ? 'PM' : 'AM';
   const displayHour = hour % 12 || 12;
   return `${displayHour}:${minute} ${suffix}`;
-}
-
-function reminderFunctionalityMarkup(item) {
-  if (!itemHasReminder(item)) return '';
-  const due = getNextReminderDueDate(item);
-  const dueNow = !due || due <= todayString();
-  return `<section class="detail-section reminder-functionality-section"><div class="detail-section-heading"><h3>Reminder</h3></div><p class="detail-meta">${escapeHtml([reminderScheduleLabel(item), due ? reminderDueLabel(due) : ''].filter(Boolean).join(' · '))}</p><button class="secondary-button" type="button" data-reminder-complete="${escapeAttr(item.id)}" ${dueNow ? '' : 'disabled'}>✓ ${dueNow ? 'Mark complete' : 'Not due yet'}</button></section>`;
-}
-
-function appendReminderFunctionality(item) {
-  if (!els.detailBody || !itemHasReminder(item) || getSourceType(item) === 'reminder') return;
-  if (els.detailBody.querySelector('.reminder-functionality-section')) return;
-  els.detailBody.insertAdjacentHTML('beforeend', reminderFunctionalityMarkup(item));
 }
 
 function reminderCompletionRecord(item) {
@@ -4212,7 +4107,7 @@ function reminderRecurrence(item) {
 }
 
 function isOneTimeReminder(item) {
-  return itemHasReminder(item) && reminderFrequency(item) === 'none';
+  return getSourceType(item) === 'reminder' && reminderFrequency(item) === 'none';
 }
 
 function getReminderScheduleStart(item) {
@@ -4220,7 +4115,7 @@ function getReminderScheduleStart(item) {
 }
 
 function getNextReminderDueDate(item) {
-  if (!itemHasReminder(item)) return '';
+  if (getSourceType(item) !== 'reminder') return '';
   const frequency = reminderFrequency(item);
   const scheduleStart = getReminderScheduleStart(item);
 
@@ -4320,6 +4215,20 @@ function formatLongDate(dateString) {
   return new Intl.DateTimeFormat('en-CA', { weekday: 'short', month: 'short', day: 'numeric' }).format(parseLocalDateString(dateString));
 }
 
+function moveProgressedTbrItemToUpNext(item) {
+  if (!item || item.completedAt || getQueueStatus(item) !== 'tbr') return false;
+  const sourceType = getSourceType(item);
+  if (sourceType === 'tv') {
+    item.watchDisposition = 'following';
+  } else if (sourceType === 'book') {
+    if (item.bookDisposition === 'paused') item.bookDisposition = '';
+  } else if (sourceType === 'movie' && item.mediaDisposition === 'paused') {
+    item.mediaDisposition = '';
+  }
+  setItemQueueStatus(item, 'upnext');
+  return true;
+}
+
 function genericCompletionRecord(item, showOnCalendar = true) {
   return {
     sourceItemId: item.id,
@@ -4351,6 +4260,7 @@ async function advanceTV(item) {
   if (next) {
     item.progress = { ...item.progress, nextSeason: next.seasonNumber, nextEpisode: next.episodeNumber };
     item.completedAt = '';
+    moveProgressedTbrItemToUpNext(item);
   } else {
     setItemQueueStatus(item, 'library');
     item.completedAt = todayString();
@@ -4428,6 +4338,7 @@ async function recalculateTVProgress(item) {
   if (next) {
     item.progress = { ...item.progress, nextSeason: next.seasonNumber, nextEpisode: next.episodeNumber };
     item.completedAt = '';
+    if (tvHasProgress(item)) moveProgressedTbrItemToUpNext(item);
   } else {
     item.completedAt = item.completedAt || todayString();
   }
@@ -4502,7 +4413,9 @@ async function reconcileSingleTVItem(item, prefetchedDetails = null) {
     item.completedAt = '';
   }
 
-  if (['paused', 'stopped'].includes(disposition)) {
+  if (disposition === 'paused') {
+    setItemQueueStatus(item, 'tbr');
+  } else if (disposition === 'stopped') {
     setItemQueueStatus(item, 'library');
   } else if (disposition === 'watch-later') {
     setItemQueueStatus(item, 'tbr');
@@ -4761,7 +4674,7 @@ async function toggleSpecificTVEpisode(item, seasonNumber, episodeNumber) {
     // A single episode checked from the normal show detail is something watched now,
     // so it is eligible for today's calendar. Whole-season/import actions are not.
     addHistoryRecord(tvHistoryRecord(item, episode, seasonNumber, episodeNumber));
-    if (getTVWatchDisposition(item) === 'watch-later') item.watchDisposition = 'following';
+    if (getQueueStatus(item) === 'tbr' && getTVWatchDisposition(item) !== 'stopped') item.watchDisposition = 'following';
     await recalculateTVProgress(item);
   }
 
@@ -4992,7 +4905,7 @@ async function trackLibraryItem(item, button = null) {
   }
 }
 
-const RELEASE_QUEUE_SOURCE_TYPES = new Set(['tv', 'movie', 'book', 'video-game']);
+const RELEASE_QUEUE_SOURCE_TYPES = new Set(['tv', 'movie', 'book']);
 
 function normalizedReleaseDate(value) {
   const date = String(value || '').trim().slice(0, 10);
@@ -5152,10 +5065,10 @@ async function moveItemToQueue(item, status) {
     else if (sourceType === 'youtube') { if (isYouTubePlaylistItem(item)) await renderWorkoutDetails(item); else await renderStandaloneYouTubeDetails(item); }
     else if (sourceType === 'book') await renderBookDetails(item);
     else if (sourceType === 'movie') await renderMovieDetails(item);
-    else if (['video-game','board-game'].includes(sourceType)) await renderGameDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
     else if (sourceType === 'artist') await renderArtistDetails(item);
     else if (sourceType === 'song') await renderSongDetails(item);
+    else if (['video-game','board-game'].includes(sourceType)) await renderGameDetails(item);
     else if (sourceType === 'reminder') renderReminderDetails(item);
     else if (['event', 'concert'].includes(sourceType)) await renderEventDetails(item);
     else if (sourceType === 'restaurant') await renderRestaurantDetails(item);
@@ -5176,7 +5089,7 @@ function queueMoveControls(item) {
     </div>`;
   }
 
-  if (!['tv', 'movie', 'book', 'video-game', 'board-game'].includes(sourceType)) return '';
+  if (!['tv', 'movie', 'book'].includes(sourceType)) return '';
   const dnfState = libraryDnfState(item);
   const trackSelected = sourceType === 'movie' ? Boolean(item.completedAt) : current === 'upnext';
   const unreleased = isItemNotReleased(item);
@@ -5256,6 +5169,8 @@ async function advanceWorkout(item) {
   if (nextIndex >= playlist.items.length) {
     setItemQueueStatus(item, 'library');
     item.completedAt = todayString();
+  } else {
+    moveProgressedTbrItemToUpNext(item);
   }
   return completed;
 }
@@ -5336,23 +5251,9 @@ async function toggleSpecificYouTubeVideo(item, videoId) {
 // ---------------------------
 const BASE_ITEM_TYPE_OPTIONS = [
   ['workout','Workouts'], ['movie','Movies'], ['tv','TV'], ['book','Books'], ['music','Music'],
-  ['food','Food'], ['game','Games'], ['event','Events'], ['other','Create New'],
-  // Legacy internal types remain loadable/editable but are no longer offered as top-level defaults.
-  ['activity','Activity'], ['class','Class'], ['shopping','Shopping'], ['youtube','YouTube'], ['reminder','Reminder']
+  ['food','Food'], ['game','Games'], ['event','Events'], ['activity','Activity'], ['class','Class'],
+  ['shopping','Shopping'], ['youtube','YouTube'], ['reminder','Reminder'], ['other','Create new…']
 ];
-
-// Fixed overall Types. Behaviour such as classes, reminders, YouTube and Places
-// is added separately through Add features and never becomes another default Type.
-const OVERALL_ADD_KIND_OPTIONS = Object.freeze([
-  { value: 'workout', label: 'Workouts', parent: 'workout', actionCategory: 'completed' },
-  { value: 'movie', label: 'Movies', parent: 'movie', actionCategory: 'watched' },
-  { value: 'tv', label: 'TV', parent: 'tv', actionCategory: 'watched' },
-  { value: 'book', label: 'Books', parent: 'book', actionCategory: 'read' },
-  { value: 'music', label: 'Music', parent: 'music', actionCategory: 'listened' },
-  { value: 'food', label: 'Food', parent: 'food', actionCategory: 'ate' },
-  { value: 'game', label: 'Games', parent: 'game', actionCategory: 'played' },
-  { value: 'event', label: 'Events', parent: 'event', actionCategory: 'went' }
-]);
 
 function itemTypeOptionUsageKey(value) {
   return String(value || '').startsWith('custom:') ? String(value) : `builtin:${value}`;
@@ -5362,7 +5263,49 @@ function typeUsageCount(value) {
   return Number(state.typeUsage?.[itemTypeOptionUsageKey(value)]?.count || 0);
 }
 
-const ADD_ACTION_CATEGORIES = Object.freeze(['watched','read','played','went','listened','ate','made','completed','other']);
+
+const ADD_ACTION_KIND_OPTIONS = Object.freeze({
+  watched: [
+    { value: 'movie', label: 'Movie', parent: 'movie' },
+    { value: 'tv', label: 'TV', parent: 'tv' },
+    { value: 'youtube', label: 'YouTube', parent: 'youtube' }
+  ],
+  read: [
+    { value: 'book', label: 'Book', parent: 'book' }
+  ],
+  went: [
+    { value: 'restaurant', label: 'Restaurant', parent: 'food', subtype: 'restaurant' },
+    { value: 'shopping', label: 'Shopping / store', parent: 'shopping' }
+  ],
+  completed: [
+    { value: 'workout', label: 'Workout', parent: 'workout' },
+    { value: 'activity', label: 'Activity', parent: 'activity' },
+    { value: 'class', label: 'Class', parent: 'class' }
+  ],
+  other: [
+    { value: 'event', label: 'Event', parent: 'event' },
+    { value: 'concert', label: 'Concert', parent: 'music', subtype: 'concert' },
+    { value: 'music', label: 'Music album', parent: 'music', subtype: 'album' },
+    { value: 'artist', label: 'Artist', parent: 'music', subtype: 'artist' },
+    { value: 'song', label: 'Song', parent: 'music', subtype: 'song' },
+    { value: 'recipe', label: 'Recipe', parent: 'food', subtype: 'recipe' },
+    { value: 'food', label: 'Food', parent: 'food', subtype: 'manual' },
+    { value: 'reminder', label: 'Reminder', parent: 'reminder' }
+  ]
+});
+
+const UNIVERSAL_ADD_KIND_OPTIONS = Object.freeze([
+  { value: 'other-item', label: 'Other', parent: 'other', generic: true },
+  { value: 'new-type', label: 'Create new…', parent: 'other', createNew: true }
+]);
+
+function addKindUsageValue(option) {
+  if (!option) return '';
+  if (String(option.value || '').startsWith('custom:')) return option.value;
+  return option.parent || option.value || '';
+}
+
+const ADD_ACTION_CATEGORIES = Object.freeze(['watched','read','went','completed','other']);
 
 function normalizeAddActionCategory(value, fallback = 'other') {
   const clean = String(value || '').trim().toLowerCase();
@@ -5371,7 +5314,8 @@ function normalizeAddActionCategory(value, fallback = 'other') {
 
 function inferCustomTypeActionCategory(entry) {
   if (!entry) return 'other';
-  if (ADD_ACTION_CATEGORIES.includes(String(entry.actionCategory || '')) && String(entry.actionCategory || '') !== 'other') return entry.actionCategory;
+  if (ADD_ACTION_CATEGORIES.includes(String(entry.actionCategory || ''))) return entry.actionCategory;
+
   const matchingItems = (state.items || []).filter(item => String(item?.type || '') === String(entry.type || ''));
   const explicitCounts = new Map();
   for (const item of matchingItems) {
@@ -5379,87 +5323,124 @@ function inferCustomTypeActionCategory(entry) {
     if (!ADD_ACTION_CATEGORIES.includes(action)) continue;
     explicitCounts.set(action, (explicitCounts.get(action) || 0) + 1);
   }
-  if (explicitCounts.size) return [...explicitCounts.entries()].sort((a,b) => b[1] - a[1])[0][0];
+  if (explicitCounts.size) {
+    return [...explicitCounts.entries()].sort((a,b) => b[1] - a[1])[0][0];
+  }
+
+  // Older custom Types predate the I… category field. Use the content backend as
+  // a best-effort migration so existing Types land somewhere useful instead of
+  // disappearing into Other forever. Users can still create the same Type under a
+  // different I… category later, which updates the saved category.
   for (const item of matchingItems) {
     const source = String(getSourceType(item) || '');
     const findSource = String(item?.featureConfig?.findSource || '');
     if (['tv','movie','youtube'].includes(source) || /tmdb|youtube/.test(findSource)) return 'watched';
     if (source === 'book' || findSource === 'google-books') return 'read';
-    if (['video-game','board-game'].includes(source) || /igdb|boardgamegeek|bgg/.test(findSource)) return 'played';
-    if (['restaurant','place','shopping','event','concert','activity'].includes(source) || /google-places|ticketmaster/.test(findSource)) return 'went';
-    if (['music','artist','song'].includes(source)) return 'listened';
-    if (source === 'recipe' || source === 'food') return 'ate';
-    if (source === 'workout' || source === 'class') return 'completed';
+    if (['restaurant','place','shopping','event','concert'].includes(source) || /google-places|ticketmaster/.test(findSource)) return 'went';
+    if (source === 'workout') return 'completed';
   }
-  return 'completed';
+  return 'other';
 }
 
-function customAddKindOptions() {
-  return (state.customTypes || []).map(entry => ({
-    value: `custom:${entry.type}`,
-    label: entry.label || getTypeLabel(entry.type),
-    parent: `custom:${entry.type}`,
-    actionCategory: inferCustomTypeActionCategory(entry),
-    custom: true
-  })).sort((a,b) => {
-    const delta = typeUsageCount(b.value) - typeUsageCount(a.value);
-    return delta || a.label.localeCompare(b.label);
-  });
+function customAddKindOptions(action = '') {
+  const requestedAction = action ? normalizeAddActionCategory(action) : '';
+  return (state.customTypes || [])
+    .filter(entry => !requestedAction || inferCustomTypeActionCategory(entry) === requestedAction)
+    .map(entry => ({
+      value: `custom:${entry.type}`,
+      label: entry.label || getTypeLabel(entry.type),
+      parent: `custom:${entry.type}`,
+      actionCategory: inferCustomTypeActionCategory(entry),
+      custom: true
+    })).sort((a,b) => {
+      const delta = typeUsageCount(addKindUsageValue(b)) - typeUsageCount(addKindUsageValue(a));
+      return delta || a.label.localeCompare(b.label);
+    });
 }
 
 function addActionForKind(kind) {
-  const builtin = OVERALL_ADD_KIND_OPTIONS.find(option => option.value === kind);
-  if (builtin) return builtin.actionCategory;
+  for (const [action, options] of Object.entries(ADD_ACTION_KIND_OPTIONS)) {
+    if (options.some(option => option.value === kind)) return action;
+  }
+  if (UNIVERSAL_ADD_KIND_OPTIONS.some(option => option.value === kind)) return 'other';
   if (String(kind || '').startsWith('custom:')) {
     const type = String(kind).slice(7);
     const entry = (state.customTypes || []).find(candidate => candidate.type === type);
     return inferCustomTypeActionCategory(entry);
   }
-  return 'completed';
+  return 'other';
 }
 
 function kindForCurrentForm(item = null) {
   const raw = String(els.itemSourceType?.value || '');
   if (raw.startsWith('custom:')) return raw;
   const parent = formParentType();
-  if (parent === 'other') return 'new-type';
-  if (OVERALL_ADD_KIND_OPTIONS.some(option => option.parent === parent)) return parent;
-  // Legacy items that used to be first-class Types are presented through Create New when edited.
-  if (['activity','class','shopping','youtube','reminder'].includes(parent)) return 'new-type';
-  return parent || 'workout';
+  const subtype = els.itemSubtype?.value || formSubtypeForItem(getSourceType(item), item);
+  if (parent === 'food' && subtype === 'restaurant') return 'restaurant';
+  if (parent === 'food' && subtype === 'recipe') return 'recipe';
+  if (parent === 'game') return 'game';
+  if (parent === 'music' && ['artist','song','concert'].includes(subtype)) return subtype;
+  if (parent === 'music' && subtype === 'album') return 'music';
+  if (parent === 'other') {
+    if (els.itemKindChoice?.value === 'other-item') return 'other-item';
+    return 'new-type';
+  }
+  return parent;
 }
 
-function refreshItemKindChoices(preferredKind = '', preferredAction = '') {
+function loggingAddTypeKeys() {
+  const prefs = normalizeLibraryPrefs(state.libraryPrefs);
+  // null = the user has never chosen, so show all defaults. An explicit empty
+  // array is meaningful: the user may want Add to contain only custom Types.
+  if (!Array.isArray(prefs.addTypeKeys)) return CORE_LOG_TYPE_OPTIONS.map(([key]) => key);
+  return [...new Set(prefs.addTypeKeys.filter(key => CORE_LOG_TYPE_KEYS.has(key)))];
+}
+
+function saveLoggingAddTypeKeys(keys = []) {
+  const clean = [...new Set((keys || []).filter(key => CORE_LOG_TYPE_KEYS.has(key)))];
+  state.libraryPrefs = { ...normalizeLibraryPrefs(state.libraryPrefs), addTypeKeys: clean };
+  safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
+  refreshItemKindChoices();
+  scheduleCloudSync();
+}
+
+function loggingTypeChoicesMarkup(selectedKeys = loggingAddTypeKeys()) {
+  const selected = new Set(selectedKeys);
+  return CORE_LOG_TYPE_OPTIONS.map(([key,label]) => `<label class="social-type-choice log-type-choice"><input type="checkbox" value="${escapeAttr(key)}" ${selected.has(key) ? 'checked' : ''} /><span>${escapeHtml(label)}</span></label>`).join('');
+}
+
+function refreshItemKindChoices(preferredKind = '', actionOverride = '') {
   if (!els.itemKindChoice) return;
-  const requestedKind = preferredKind || els.itemKindChoice.value || '';
-  const fixed = [...OVERALL_ADD_KIND_OPTIONS];
-  const custom = customAddKindOptions();
-  const options = [
-    ...fixed,
-    ...custom,
-    { value: 'new-type', label: 'Create your own…', parent: 'other', createNew: true }
-  ];
-  const fixedMarkup = fixed
-    .map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`)
-    .join('');
-  const customMarkup = custom.length
-    ? `<optgroup label="Your types">${custom.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('')}</optgroup>`
-    : '';
-  els.itemKindChoice.innerHTML = `${fixedMarkup}${customMarkup}<option value="new-type">Create your own…</option>`;
-  const fallback = fixed[0]?.value || custom[0]?.value || 'new-type';
-  els.itemKindChoice.value = options.some(option => option.value === requestedKind) ? requestedKind : fallback;
+  const selected = new Set(loggingAddTypeKeys());
+  const core = CORE_LOG_TYPE_OPTIONS.filter(([key]) => selected.has(key)).map(([value,label]) => ({ value, label, parent: value }));
+  const custom = (state.customTypes || []).map(entry => ({ value: `custom:${entry.type}`, label: entry.label || getTypeLabel(entry.type), parent: `custom:${entry.type}`, custom: true }));
+  const options = [...core, ...custom.sort((a,b) => a.label.localeCompare(b.label)), { value:'new-type', label:'Create your own…', parent:'other', createNew:true }];
+  const current = preferredKind || els.itemKindChoice.value || preferredAddKindFromUsage().kind || core[0]?.value || 'movie';
+  // Preserve a legacy/editing kind even if it is not part of the simplified new-item menu.
+  if (current && !options.some(option => option.value === current)) {
+    const legacy = BASE_ITEM_TYPE_OPTIONS.find(([value]) => value === current);
+    if (legacy) options.unshift({ value: current, label: legacy[1], parent: current, legacy: true });
+  }
+  els.itemKindChoice.innerHTML = options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
+  els.itemKindChoice.value = options.some(option => option.value === current) ? current : (options[0]?.value || 'movie');
 }
 
 function setUnderlyingFormTypeForKind(kind) {
   if (!els.itemSourceType) return;
-  let parent = kind;
-  if (String(kind || '').startsWith('custom:')) parent = kind;
-  else if (kind === 'new-type') parent = 'other';
-  else parent = OVERALL_ADD_KIND_OPTIONS.find(option => option.value === kind)?.parent || 'other';
+  const raw = String(kind || '');
+  let parent = raw;
+  let subtype = '';
+  if (raw.startsWith('custom:')) parent = raw;
+  else if (raw === 'new-type' || raw === 'other-item') parent = 'other';
+  else if (raw === 'restaurant' || raw === 'recipe') { parent = 'food'; subtype = raw; }
+  else if (['artist','song','concert'].includes(raw)) { parent = 'music'; subtype = raw; }
+  else if (!BASE_ITEM_TYPE_OPTIONS.some(([value]) => value === raw)) parent = 'other';
   refreshItemTypeOptions(parent);
   els.itemSourceType.value = parent;
   configureItemSubtype(true);
-  if (els.itemActionChoice && kind !== 'new-type') els.itemActionChoice.value = addActionForKind(kind);
+  // New Music items are artist cards. Albums and songs live inside the artist.
+  if (parent === 'music') subtype = subtype || 'artist';
+  if (subtype && els.itemSubtype) els.itemSubtype.value = subtype;
 }
 
 function applyItemKindChoice(clearSource = false) {
@@ -5471,20 +5452,22 @@ function applyItemKindChoice(clearSource = false) {
 
 function syncAddActionControls(item = null) {
   if (!els.itemKindChoice) return;
-  const kind = kindForCurrentForm(item);
-  const stored = String(item?.actionCategory || '');
-  const action = ADD_ACTION_CATEGORIES.includes(stored) && stored !== 'other' ? stored : addActionForKind(kind);
-  if (els.itemActionChoice) els.itemActionChoice.value = action === 'other' ? 'completed' : action;
-  refreshItemKindChoices(kind, els.itemActionChoice?.value || action);
+  let kind = kindForCurrentForm(item);
+  if (item?.type && !isBuiltInType(item.type) && state.customTypes.some(entry => entry.type === item.type)) kind = `custom:${item.type}`;
+  else if (item?.type === 'game' || ['video-game','board-game'].includes(getSourceType(item))) kind = 'game';
+  else if (item?.type === 'music' || ['music','artist','song','concert'].includes(getSourceType(item))) kind = 'music';
+  else if (item?.type && CORE_LOG_TYPE_KEYS.has(item.type)) kind = item.type;
+  refreshItemKindChoices(kind);
+  if ([...els.itemKindChoice.options].some(option => option.value === kind)) els.itemKindChoice.value = kind;
 }
 
 function preferredAddKindFromUsage() {
+  const available = loggingAddTypeKeys();
   const candidates = [
-    ...OVERALL_ADD_KIND_OPTIONS.map(option => ({ option, usage: typeUsageCount(option.parent) })),
-    ...customAddKindOptions().map(option => ({ option, usage: typeUsageCount(option.value) }))
-  ].sort((a,b) => b.usage - a.usage || a.option.label.localeCompare(b.option.label));
-  const best = candidates[0];
-  return best && best.usage > 0 ? { action: addActionForKind(best.option.value), kind: best.option.value } : { action: 'completed', kind: 'workout' };
+    ...available.map(key => ({ kind:key, count:typeUsageCount(key) })),
+    ...(state.customTypes || []).map(entry => ({ kind:`custom:${entry.type}`, count:typeUsageCount(`custom:${entry.type}`) }))
+  ].sort((a,b) => b.count - a.count);
+  return { action:'other', kind:(candidates[0]?.count > 0 ? candidates[0].kind : (available[0] || 'movie')) };
 }
 
 function selectedSavedTypeEntry() {
@@ -5593,16 +5576,15 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     const sourceType = getSourceType(item);
     if (els.itemForm) els.itemForm.dataset.sourceTypeHint = sourceType;
     setItemFormSourceType(sourceType, item);
-    if (els.itemFindSource) els.itemFindSource.value = item.featureConfig?.findSource
-      || (['place','shopping'].includes(sourceType) ? 'google-places'
-        : sourceType === 'youtube' ? 'youtube-videos'
-          : 'auto');
+    if (els.itemFindSource) els.itemFindSource.value = item.featureConfig?.findSource || (sourceType === 'place' ? 'google-places' : 'auto');
     if (els.itemProgressMode) els.itemProgressMode.value = item.featureConfig?.progressMode || 'auto';
     if (els.itemUseDateRange) els.itemUseDateRange.checked = Boolean(item.featureConfig?.dateRange || (item.activityMeta && sourceType !== 'activity'));
+    if (els.itemUseRepeatLog) {
+      els.itemUseRepeatLog.checked = Boolean(item.featureConfig?.repeatableLog);
+      els.itemUseRepeatLog.disabled = Boolean(item.featureConfig?.repeatableLog && repeatLogHistoryEntries(item).length);
+    }
     if (els.itemUsePlaylist) els.itemUsePlaylist.checked = Boolean(item.featureConfig?.youtubePlaylist || (sourceType === 'youtube' && (item.type === 'workout' || item.playlistItems)));
-    if (els.itemUseReminder) els.itemUseReminder.checked = itemHasReminder(item);
-    if (els.itemUseRepeatLog) els.itemUseRepeatLog.checked = itemHasRepeatLog(item);
-    if (['youtube', 'reminder', 'class', 'shopping', 'other', 'place'].includes(sourceType) || selectedSavedTypeEntry()) els.itemDisplayType.value = getItemTypeLabel(item);
+    if (['youtube', 'reminder', 'other', 'place'].includes(sourceType) || selectedSavedTypeEntry()) els.itemDisplayType.value = getItemTypeLabel(item);
     els.provider.value = item.provider || 'manual';
     els.providerId.value = item.providerId || '';
     els.providerImage.value = item.image || '';
@@ -5623,6 +5605,14 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
     syncItemRecommendHeart();
     els.itemQueueStatus.value = getQueueStatus(item);
     setRating(Number(item.rating || 0));
+    if (itemHasRepeatLog(item)) {
+      // Editing the aggregate card must not overwrite any individual log.
+      setRating(0);
+      if (els.itemDate) els.itemDate.value = '';
+      if (els.itemNote) els.itemNote.value = '';
+      if (els.itemComment) els.itemComment.value = '';
+      if (els.itemPeople) els.itemPeople.value = '';
+    }
 
     const itemProgressMode = item.featureConfig?.progressMode || (sourceType === 'tv' ? 'tv' : sourceType === 'book' ? 'book' : 'none');
     if (itemProgressMode === 'tv') {
@@ -5641,7 +5631,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
       els.playlistInput.value = item.providerId || '';
       state.loadedPlaylist = null;
       showSelectedSource({ title: item.title, subtitle: item.subtitle, image: item.image }, true);
-    } else if (itemHasReminder(item)) {
+    } else if (sourceType === 'reminder') {
       if (els.reminderFrequency) els.reminderFrequency.value = reminderFrequency(item);
       if (els.reminderDueDate) els.reminderDueDate.value = (reminderFrequency(item) === 'weekly' && !item.reminder?.intervalUnit && Number.isInteger(Number(item.reminder?.weekday))) ? (getNextReminderDueDate(item) || todayString()) : (item.reminder?.dueDate || item.reminder?.scheduleStart || getNextReminderDueDate(item) || todayString());
       if (els.reminderInterval) els.reminderInterval.value = String(Math.max(1, Number(item.reminder?.interval || 2)));
@@ -5676,10 +5666,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
 
 function resetItemForm(defaultQueueStatus = 'library') {
   els.itemForm.reset();
-  els.itemForm.classList.remove('is-repeat-log-entry', 'is-repeat-group-create');
-  resetRepeatSetupEditor();
   delete els.itemForm.dataset.sourceTypeHint;
-  delete els.itemForm.dataset.repeatGroupId;
   els.editingId.value = '';
   refreshItemTypeOptions();
   const preferredAdd = preferredAddKindFromUsage();
@@ -5687,20 +5674,18 @@ function resetItemForm(defaultQueueStatus = 'library') {
   refreshItemKindChoices(preferredAdd.kind, preferredAdd.action);
   setUnderlyingFormTypeForKind(preferredAdd.kind);
   els.itemDisplayType.value = 'Workout';
-  if (els.manualTitle) els.manualTitle.required = true;
   if (els.itemSubcategory) els.itemSubcategory.value = '';
   if (els.itemSubcategoryDisclosure) els.itemSubcategoryDisclosure.open = false;
   if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.open = false;
   if (els.itemAttachmentsDisclosure) els.itemAttachmentsDisclosure.open = false;
-  if (els.itemFindSourceDisclosure) els.itemFindSourceDisclosure.open = false;
+  if (els.itemFindSettingsDisclosure) els.itemFindSettingsDisclosure.open = false;
   if (els.itemNoteDisclosure) els.itemNoteDisclosure.open = false;
   if (els.itemBuddyWatchToggle) els.itemBuddyWatchToggle.checked = false;
   if (els.itemFindSource) els.itemFindSource.value = 'auto';
   if (els.itemProgressMode) els.itemProgressMode.value = 'auto';
   if (els.itemUseDateRange) els.itemUseDateRange.checked = false;
+  if (els.itemUseRepeatLog) { els.itemUseRepeatLog.checked = false; els.itemUseRepeatLog.disabled = false; }
   if (els.itemUsePlaylist) els.itemUsePlaylist.checked = false;
-  if (els.itemUseReminder) els.itemUseReminder.checked = false;
-  if (els.itemUseRepeatLog) els.itemUseRepeatLog.checked = false;
   if (els.itemFeaturesDisclosure) els.itemFeaturesDisclosure.open = false;
   if (els.itemBuddyWatchPerson) els.itemBuddyWatchPerson.innerHTML = '';
   if (els.itemBuddyWatchPersonField) els.itemBuddyWatchPersonField.hidden = true;
@@ -5726,7 +5711,6 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.providerImage.value = '';
   els.providerSubtitle.value = '';
   els.itemModalEyebrow.textContent = 'ADD';
-  els.itemModalEyebrow.hidden = true;
   els.itemModalTitle.textContent = 'Add';
   if (els.itemRecommended) els.itemRecommended.checked = false;
   syncItemRecommendHeart();
@@ -5756,103 +5740,24 @@ function resetItemForm(defaultQueueStatus = 'library') {
   updateItemFormForType();
 }
 
-const FORM_SUBTYPE_CUSTOM_VALUE = '__custom__';
 const FORM_SUBTYPE_OPTIONS = {
   music: [
-    { value: 'album', label: 'Album' },
-    { value: 'artist', label: 'Artist' },
-    { value: 'song', label: 'Song' },
-    { value: 'concert', label: 'Concert' }
+    { value: 'artist', label: 'Artist' }
   ],
   food: [
-    { value: 'food', label: 'Meal / Food' },
+    { value: 'manual', label: 'Manual' },
     { value: 'restaurant', label: 'Restaurant' },
     { value: 'recipe', label: 'Recipe' }
-  ],
-  game: [
-    { value: 'video-game', label: 'Video Game' },
-    { value: 'board-game', label: 'Board Game' }
-  ],
-  event: [
-    { value: 'live-event', label: 'Live Event' },
-    { value: 'personal-event', label: 'Personal Event / Occasion' }
   ]
 };
 
-function subtypeOptionLabel(parent, value) {
-  return FORM_SUBTYPE_OPTIONS[parent]?.find(option => option.value === value)?.label || '';
-}
-
-const FORM_SAVED_SUBTYPE_PREFIX = '__saved_subtype__:';
-
-function subtypeScopeType() {
-  return selectedSavedTypeEntry()?.type || formParentType();
-}
-
-function knownSubtypeLabelsForCurrentType() {
-  const type = subtypeScopeType();
-  const labels = new Map();
-  const add = value => {
-    const label = cleanTypeLabel(value || '');
-    if (!label) return;
-    const key = label.toLowerCase();
-    if (!labels.has(key)) labels.set(key, label);
-  };
-  for (const item of state.items || []) if (String(item?.type || '') === String(type)) add(item.subcategory);
-  for (const entry of state.history || []) if (String(entry?.type || '') === String(type)) add(entry.subcategory);
-  return [...labels.values()].sort((a,b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-}
-
-function savedSubtypeValue(label) {
-  return `${FORM_SAVED_SUBTYPE_PREFIX}${encodeURIComponent(label)}`;
-}
-
-function savedSubtypeLabel(value = els.itemSubtype?.value || '') {
-  const raw = String(value || '');
-  if (!raw.startsWith(FORM_SAVED_SUBTYPE_PREFIX)) return '';
-  try { return cleanTypeLabel(decodeURIComponent(raw.slice(FORM_SAVED_SUBTYPE_PREFIX.length))); }
-  catch { return cleanTypeLabel(raw.slice(FORM_SAVED_SUBTYPE_PREFIX.length)); }
-}
-
-function isCustomFormSubtype(parent = formParentType()) {
-  return Boolean(FORM_SUBTYPE_OPTIONS[parent]) && els.itemSubtype?.value === FORM_SUBTYPE_CUSTOM_VALUE;
-}
-
-function subtypeBehaviorValue(parent = formParentType()) {
-  if (!FORM_SUBTYPE_OPTIONS[parent] || !els.itemSubtype) return '';
-  const selected = els.itemSubtype.value || '';
-  if (FORM_SUBTYPE_OPTIONS[parent].some(option => option.value === selected)) return selected;
-
-  const savedLabel = savedSubtypeLabel(selected);
-  if (savedLabel) {
-    const scopeType = subtypeScopeType();
-    const representative = (state.items || []).find(item => String(item?.type || '') === String(scopeType)
-      && cleanTypeLabel(item?.subcategory || '').toLowerCase() === savedLabel.toLowerCase());
-    const inferred = representative ? formSubtypeForItem(getSourceType(representative), representative) : '';
-    if (inferred && FORM_SUBTYPE_OPTIONS[parent].some(option => option.value === inferred)) return inferred;
-  }
-
-  const remembered = String(els.itemSubtype.dataset.behaviorSubtype || '');
-  if (FORM_SUBTYPE_OPTIONS[parent].some(option => option.value === remembered)) return remembered;
-  return FORM_SUBTYPE_OPTIONS[parent][0]?.value || '';
-}
-
-function refreshSubtypeSuggestions() {
-  const list = document.getElementById('itemSubtypeSuggestions');
-  if (!list) return;
-  list.innerHTML = knownSubtypeLabelsForCurrentType().map(label => `<option value="${escapeAttr(label)}"></option>`).join('');
-}
-
 function formSubtypeForItem(sourceType, item = null) {
   if (sourceType === 'artist' || sourceType === 'song' || sourceType === 'concert' || sourceType === 'restaurant' || sourceType === 'recipe') return sourceType;
-  if (sourceType === 'video-game' || sourceType === 'board-game') return sourceType;
-  if (sourceType === 'music') return (item?.provider === 'itunes' || cleanTypeLabel(item?.subcategory || '') === 'Album') ? 'album' : 'album';
-  if (sourceType === 'food') return 'food';
-  if (sourceType === 'event') {
-    const sub = cleanTypeLabel(item?.subcategory || '').toLowerCase();
-    return item?.provider === 'ticketmaster' || sub === 'live event' ? 'live-event' : 'personal-event';
+  if (sourceType === 'music') {
+    if (item?.provider === 'itunes' || cleanTypeLabel(item?.subcategory || '') === 'Album') return 'album';
+    return 'manual';
   }
-  if (sourceType === 'activity') return 'personal-event';
+  if (sourceType === 'food') return 'manual';
   return '';
 }
 
@@ -5860,93 +5765,63 @@ function configureItemSubtype(reset = false, sourceTypeHint = '', item = null) {
   if (!els.itemSubtypeBlock || !els.itemSubtype) return;
   const parent = formParentType();
   const options = FORM_SUBTYPE_OPTIONS[parent] || null;
-  els.itemSubtypeBlock.hidden = !options;
+  // The visible free-form Subtype field owns the user's label. Keep this
+  // internal select only for backend behavior such as Artist vs Restaurant.
+  els.itemSubtypeBlock.hidden = true;
   if (!options) {
     els.itemSubtype.innerHTML = '';
     return;
   }
 
   const previous = reset ? '' : els.itemSubtype.value;
-  const previousCustom = previous === FORM_SUBTYPE_CUSTOM_VALUE;
-  const previousSavedLabel = savedSubtypeLabel(previous);
-  const existingSubtype = cleanTypeLabel(item?.subcategory || (previousCustom ? els.itemSubcategory?.value : '') || previousSavedLabel || '');
-  const existingKey = existingSubtype.toLowerCase();
-  const optionForExisting = existingSubtype
-    ? options.find(option => {
-        const labelKey = cleanTypeLabel(option.label).toLowerCase();
-        if (labelKey === existingKey) return true;
-        if (parent === 'event' && option.value === 'personal-event' && ['personal event', 'personal event / occasion', 'occasion'].includes(existingKey)) return true;
-        if (parent === 'food' && option.value === 'food' && ['food', 'meal', 'meal / food'].includes(existingKey)) return true;
-        return false;
-      })
-    : null;
-  const canonicalKeys = new Set(options.map(option => cleanTypeLabel(option.label).toLowerCase()));
-  const savedLabels = knownSubtypeLabelsForCurrentType().filter(label => !canonicalKeys.has(cleanTypeLabel(label).toLowerCase()));
-  const savedExisting = existingSubtype ? savedLabels.find(label => cleanTypeLabel(label).toLowerCase() === existingKey) : '';
+  els.itemSubtype.innerHTML = options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('');
   const hinted = formSubtypeForItem(sourceTypeHint, item);
-  const hintedLabel = subtypeOptionLabel(parent, hinted);
-  const hasCustomExisting = Boolean(existingSubtype && !optionForExisting && (!hintedLabel || existingSubtype.toLowerCase() !== cleanTypeLabel(hintedLabel).toLowerCase()));
-
-  els.itemSubtype.innerHTML = `${options.map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`).join('')}${savedLabels.map(label => `<option value="${escapeAttr(savedSubtypeValue(label))}">${escapeHtml(label)}</option>`).join('')}<option value="${FORM_SUBTYPE_CUSTOM_VALUE}">Create subtype…</option>`;
-
-  let preferred = options[0].value;
-  if (savedExisting) preferred = savedSubtypeValue(savedExisting);
-  else if (hasCustomExisting || previousCustom) preferred = FORM_SUBTYPE_CUSTOM_VALUE;
-  else if (optionForExisting) preferred = optionForExisting.value;
-  else if (hinted && options.some(option => option.value === hinted)) preferred = hinted;
-  else if (options.some(option => option.value === previous) || savedSubtypeLabel(previous)) preferred = previous;
-  els.itemSubtype.value = preferred;
-  const preferredBehavior = options.some(option => option.value === preferred)
-    ? preferred
-    : (hinted && options.some(option => option.value === hinted) ? hinted : String(els.itemSubtype.dataset.behaviorSubtype || options[0].value));
-  els.itemSubtype.dataset.behaviorSubtype = preferredBehavior;
-
-  if (els.itemSubtypeLabel) els.itemSubtypeLabel.textContent = 'Subtype';
+  const fallback = options[0]?.value || '';
+  const preferred = (hinted && options.some(option => option.value === hinted)) ? hinted : (options.some(option => option.value === previous) ? previous : fallback);
+  els.itemSubtype.value = options.some(option => option.value === preferred) ? preferred : fallback;
+  if (els.itemSubtypeLabel) els.itemSubtypeLabel.textContent = parent === 'music' ? 'Music type' : 'Food type';
 }
 
 const FIND_SOURCE_CONFIG = Object.freeze({
   'tmdb-tv': { sourceType: 'tv', label: 'TV' },
   'tmdb-movie': { sourceType: 'movie', label: 'Movies' },
   'google-books': { sourceType: 'book', label: 'Books' },
-  'igdb-games': { sourceType: 'video-game', label: 'Video games · IGDB' },
-  'bgg-games': { sourceType: 'board-game', label: 'Board games · BoardGameGeek' },
+  'igdb-games': { sourceType: 'video-game', label: 'Video games' },
+  'bgg-games': { sourceType: 'board-game', label: 'Board games' },
   'apple-albums': { sourceType: 'music', label: 'Albums' },
   'lastfm-artists': { sourceType: 'artist', label: 'Artists' },
   'apple-songs': { sourceType: 'song', label: 'Songs' },
-  'youtube-videos': { sourceType: 'youtube', label: 'YouTube' },
-  'google-places': { sourceType: 'place', label: 'Google Maps / Places' },
+  'youtube-videos': { sourceType: 'youtube', label: 'YouTube videos' },
+  'google-places': { sourceType: 'place', label: 'Places' },
   'ticketmaster-events': { sourceType: 'event', label: 'Events' },
   'ticketmaster-concerts': { sourceType: 'concert', label: 'Concerts' },
-  'manual': { sourceType: 'other', label: 'No linked source' }
+  'manual': { sourceType: 'other', label: 'No lookup' }
 });
 
 function automaticFormSourceType() {
   const parent = formParentType();
+  if (parent === 'shopping') return 'place';
   if (parent === 'workout') return 'workout';
-  if (parent === 'game') return subtypeBehaviorValue(parent) === 'board-game' ? 'board-game' : 'video-game';
-  if (parent === 'event') return 'event';
+  if (parent === 'game') return 'video-game';
   if (parent === 'music') {
-    const subtype = subtypeBehaviorValue(parent) || 'album';
+    const subtype = els.itemSubtype?.value || 'artist';
     if (['artist','song','concert'].includes(subtype)) return subtype;
-    return 'music';
+    return 'artist';
   }
   if (parent === 'food') {
-    const subtype = subtypeBehaviorValue(parent) || 'food';
+    const subtype = els.itemSubtype?.value || 'manual';
     if (['restaurant','recipe'].includes(subtype)) return subtype;
     return 'food';
   }
-  if (parent === 'shopping') return 'place';
   return parent;
 }
 
 function defaultFindSourceForType(sourceType = automaticFormSourceType()) {
-  if (formParentType() === 'event' && subtypeBehaviorValue('event') === 'personal-event') return 'manual';
   return ({
-    tv: 'tmdb-tv', movie: 'tmdb-movie', book: 'google-books',
-    'video-game': 'igdb-games', 'board-game': 'bgg-games',
-    music: 'apple-albums', artist: 'lastfm-artists', song: 'apple-songs', concert: 'ticketmaster-concerts',
-    event: 'ticketmaster-events', restaurant: 'google-places', place: 'google-places', shopping: 'google-places', youtube: 'youtube-videos',
-    workout: 'manual', food: 'manual', recipe: 'manual', other: 'manual'
+    tv: 'tmdb-tv', movie: 'tmdb-movie', book: 'google-books', music: 'lastfm-artists',
+    artist: 'lastfm-artists', song: 'apple-songs', concert: 'ticketmaster-concerts',
+    'video-game': 'igdb-games', 'board-game': 'bgg-games', game: 'igdb-games',
+    event: 'ticketmaster-events', restaurant: 'google-places', place: 'google-places', shopping: 'google-places', youtube: 'youtube-videos'
   })[sourceType] || 'manual';
 }
 
@@ -5982,182 +5857,17 @@ function syncItemFindSourceSummary() {
   els.itemFindSourceSummary.textContent = els.itemFindSource.value === 'auto' ? 'Automatic' : (option?.textContent || 'Changed');
 }
 
-function formUsesReminder() {
-  return Boolean(els.itemUseReminder?.checked);
-}
-
-function formUsesRepeatLog() {
-  return Boolean(els.itemUseRepeatLog?.checked);
-}
-
-function itemHasReminder(item) {
-  return Boolean(item?.featureConfig?.reminder) || getSourceType(item) === 'reminder';
-}
-
-function itemHasRepeatLog(item) {
-  return Boolean(item?.featureConfig?.repeatableLog) || getSourceType(item) === 'class' || item?.groupedClass === true;
-}
-
-function syncRepeatLogGroupRating(sourceItemId) {
-  const group = sourceItemId ? findItem(sourceItemId) : null;
-  if (!group || !itemHasRepeatLog(group)) return;
-  const ratings = repeatLogHistoryEntries(group).map(entry => Number(entry.rating || 0)).filter(value => value > 0);
-  group.rating = ratings.length
-    ? Math.round((ratings.reduce((sum, value) => sum + value, 0) / ratings.length) * 2) / 2
-    : 0;
-  group.updatedAt = new Date().toISOString();
-}
-
 function syncItemFeatureSummary() {
   if (!els.itemFeaturesSummary) return;
   const bits = [];
-  const progress = els.itemProgressMode?.value || 'auto';
+  const progress = effectiveItemProgressMode();
   if (progress === 'tv') bits.push('episodes');
   if (progress === 'book') bits.push('pages');
-  if (els.itemUseReminder?.checked) bits.push('reminder');
-  if (els.itemUseRepeatLog?.checked) bits.push('repeat logs');
-  if (els.itemUseDateRange?.checked) bits.push('dates');
+  if (els.itemUseDateRange?.checked) bits.push('date range');
   if (els.itemUsePlaylist?.checked) bits.push('playlist');
-  const linked = els.itemFindSource?.value || 'auto';
-  if (linked !== 'auto' && linked !== 'manual') {
-    const sourceLabel = els.itemFindSource?.options?.[els.itemFindSource.selectedIndex]?.textContent || 'search';
-    bits.push(String(sourceLabel).replace(/\s*·.*$/, ''));
-  }
-  els.itemFeaturesSummary.textContent = bits.length ? bits.join(' · ') : 'None';
+  els.itemFeaturesSummary.textContent = bits.length ? bits.join(' · ') : 'automatic';
 }
 
-
-
-function repeatDraftEntryElement(values = {}, index = 0) {
-  const row = document.createElement('article');
-  const initialRating = normalizeStarRating(values.rating || 0);
-  row.className = 'repeat-draft-entry';
-  row.dataset.repeatDraftEntry = '';
-  row.innerHTML = `
-    <div class="repeat-draft-entry-heading">
-      <strong>Entry ${index + 1}</strong>
-      ${index > 0 ? '<button class="quiet-button repeat-draft-remove" type="button" data-repeat-remove-entry>Remove</button>' : ''}
-    </div>
-    <div class="repeat-draft-entry-grid">
-      <label class="field compact-field repeat-draft-title"><span>Entry name <em>optional</em></span><input type="text" data-repeat-entry-title placeholder="e.g. Evening spin" value="${escapeAttr(values.title || '')}" /></label>
-      <label class="field compact-field repeat-draft-date"><span>Date</span><input type="date" data-repeat-entry-date value="${escapeAttr(values.date || '')}" required /></label>
-      <fieldset class="rating-fieldset repeat-draft-rating">
-        <legend>Rating <span>optional</span></legend>
-        <input type="hidden" data-repeat-entry-rating value="${escapeAttr(String(initialRating))}" />
-        <div class="star-picker repeat-draft-star-picker" aria-label="Rating out of five stars">
-          ${[1,2,3,4,5].map(value => `<button type="button" data-repeat-entry-rating-star="${value}" class="${starFillClass(value, initialRating)}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
-          <button class="clear-rating" type="button" data-repeat-entry-rating-clear${initialRating ? '' : ' hidden'}>clear</button>
-        </div>
-      </fieldset>
-      <label class="field compact-field repeat-draft-note"><span>Note <em>optional</em></span><textarea rows="2" data-repeat-entry-note placeholder="Anything about this entry">${escapeHtml(values.note || '')}</textarea></label>
-    </div>`;
-  const ratingInput = row.querySelector('[data-repeat-entry-rating]');
-  const ratingRoot = row.querySelector('.repeat-draft-star-picker');
-  const clearRating = row.querySelector('[data-repeat-entry-rating-clear]');
-  const setEntryRating = value => {
-    const rating = normalizeStarRating(value);
-    if (ratingInput) ratingInput.value = String(rating);
-    syncStarPicker(ratingRoot, '[data-repeat-entry-rating-star]', 'data-repeat-entry-rating-star', rating);
-    if (clearRating) clearRating.hidden = rating <= 0;
-  };
-  ratingRoot?.addEventListener('click', event => {
-    const button = event.target.closest('[data-repeat-entry-rating-star]');
-    if (!button) return;
-    const selected = ratingFromStarPointer(event, button, 'data-repeat-entry-rating-star');
-    setEntryRating(toggledStarRating(ratingInput?.value, selected));
-  });
-  clearRating?.addEventListener('click', () => setEntryRating(0));
-  row.querySelector('[data-repeat-remove-entry]')?.addEventListener('click', () => {
-    row.remove();
-    renumberRepeatDraftEntries();
-  });
-  return row;
-}
-
-function renumberRepeatDraftEntries() {
-  $$('#repeatSetupEntries [data-repeat-draft-entry]').forEach((row, index) => {
-    const heading = row.querySelector('.repeat-draft-entry-heading strong');
-    if (heading) heading.textContent = `Entry ${index + 1}`;
-  });
-}
-
-function addRepeatDraftEntry(values = {}) {
-  const list = $('#repeatSetupEntries');
-  if (!list) return;
-  const index = list.querySelectorAll('[data-repeat-draft-entry]').length;
-  list.appendChild(repeatDraftEntryElement({ date: index === 0 ? (values.date || todayString()) : (values.date || ''), ...values }, index));
-}
-
-function ensureRepeatSetupEditor() {
-  let block = $('#repeatSetupEditor');
-  if (block) return block;
-  if (!els.itemFeaturesDisclosure || !els.itemForm) return null;
-  block = document.createElement('section');
-  block.id = 'repeatSetupEditor';
-  block.className = 'repeat-setup-editor';
-  block.hidden = true;
-  block.innerHTML = `
-    <label class="field repeat-overall-title-field">
-      <span>Overall title</span>
-      <input id="repeatOverallTitle" type="text" autocomplete="off" placeholder="e.g. Spin class" />
-    </label>
-    <div class="repeat-entry-editor-heading">
-      <div><strong>Entries</strong><small>Log the first session now, or add several at once.</small></div>
-      <button class="secondary-button" type="button" data-repeat-add-entry>+ Add entry</button>
-    </div>
-    <div id="repeatSetupEntries" class="repeat-setup-entries"></div>`;
-  els.itemFeaturesDisclosure.insertAdjacentElement('afterend', block);
-  block.querySelector('[data-repeat-add-entry]')?.addEventListener('click', () => addRepeatDraftEntry());
-  addRepeatDraftEntry({ date: todayString() });
-  return block;
-}
-
-function resetRepeatSetupEditor() {
-  const block = ensureRepeatSetupEditor();
-  if (!block) return;
-  const overall = block.querySelector('#repeatOverallTitle');
-  const list = block.querySelector('#repeatSetupEntries');
-  if (overall) overall.value = '';
-  if (list) list.innerHTML = '';
-  addRepeatDraftEntry({ date: todayString() });
-}
-
-function collectRepeatDraftEntries() {
-  return $$('#repeatSetupEntries [data-repeat-draft-entry]').map(row => ({
-    title: String(row.querySelector('[data-repeat-entry-title]')?.value || '').trim(),
-    date: String(row.querySelector('[data-repeat-entry-date]')?.value || '').trim(),
-    rating: Math.max(0, Math.min(5, Number(row.querySelector('[data-repeat-entry-rating]')?.value || 0))),
-    note: String(row.querySelector('[data-repeat-entry-note]')?.value || '').trim()
-  }));
-}
-
-function isCreatingRepeatGroup() {
-  return Boolean(formUsesRepeatLog() && !els.editingId?.value && !els.itemForm?.dataset?.repeatGroupId);
-}
-
-function syncRepeatSetupEditor() {
-  const block = ensureRepeatSetupEditor();
-  if (!block || !els.itemForm) return;
-  const creating = isCreatingRepeatGroup();
-  block.hidden = !creating;
-  els.itemForm.classList.toggle('is-repeat-group-create', creating);
-  if (els.manualTitle) els.manualTitle.required = !creating && !Boolean(els.itemForm?.dataset?.repeatGroupId);
-  if (creating) {
-    const overall = $('#repeatOverallTitle');
-    if (overall && !overall.value.trim() && els.manualTitle?.value.trim()) overall.value = els.manualTitle.value.trim();
-  }
-}
-
-function setFormTitleValue(value = '') {
-  const clean = String(value || '');
-  if (isCreatingRepeatGroup()) {
-    ensureRepeatSetupEditor();
-    const overall = $('#repeatOverallTitle');
-    if (overall) overall.value = clean;
-  } else if (els.manualTitle) {
-    els.manualTitle.value = clean;
-  }
-}
 
 function setItemFormSourceType(sourceType, item = null) {
   if (!els.itemSourceType) return;
@@ -6166,21 +5876,12 @@ function setItemFormSourceType(sourceType, item = null) {
   // saved display Type first even if that item was found through another API.
   if (item?.type && !isBuiltInType(item.type) && state.customTypes.some(entry => entry.type === item.type)) {
     els.itemSourceType.value = `custom:${item.type}`;
-  } else if (item?.type === 'activity') {
-    // Activity is now represented by Events → Personal Event.
-    els.itemSourceType.value = 'event';
-  } else if (item?.type && ['class','reminder','youtube','shopping','other'].includes(item.type)) {
-    // These are no longer built-in Types. Preserve old records through Create New
-    // while their former behavior is restored through Customize below.
-    els.itemSourceType.value = 'other';
   } else if (item?.type && BASE_ITEM_TYPE_OPTIONS.some(([value]) => value === item.type)) {
     els.itemSourceType.value = item.type;
-  } else if (['video-game','board-game'].includes(sourceType)) els.itemSourceType.value = 'game';
-  else if (['music','artist','song','concert'].includes(sourceType)) els.itemSourceType.value = 'music';
+  } else if (['music','artist','song','concert'].includes(sourceType)) els.itemSourceType.value = 'music';
+  else if (['video-game','board-game'].includes(sourceType)) els.itemSourceType.value = 'game';
   else if (['food','restaurant','recipe'].includes(sourceType)) els.itemSourceType.value = 'food';
-  else if (sourceType === 'place') els.itemSourceType.value = 'other';
-  else if (sourceType === 'activity') els.itemSourceType.value = 'event';
-  else if (sourceType === 'class' || sourceType === 'reminder' || sourceType === 'youtube' || sourceType === 'shopping') els.itemSourceType.value = 'other';
+  else if (sourceType === 'place') els.itemSourceType.value = 'shopping';
   else if (BASE_ITEM_TYPE_OPTIONS.some(([value]) => value === sourceType)) els.itemSourceType.value = sourceType;
   else els.itemSourceType.value = 'other';
   configureItemSubtype(true, sourceType, item);
@@ -6312,8 +6013,6 @@ function syncTVDraftHistoryVisibility(sourceType = selectedFormSourceType()) {
 
 function updateItemFormForType() {
   configureItemSubtype(false);
-  refreshSubtypeSuggestions();
-  const repeatEntryMode = Boolean(els.itemForm?.dataset?.repeatGroupId);
   const savedType = selectedSavedTypeEntry();
   const parentType = formParentType();
   const subtype = els.itemSubtype?.value || '';
@@ -6321,17 +6020,19 @@ function updateItemFormForType() {
   if (els.itemFindSource && els.itemFindSource.value === 'auto') {
     els.itemFindSource.dataset.defaultSource = defaultFindSourceForType(automaticFormSourceType());
   }
+  const musicManual = parentType === 'music' && subtype === 'manual';
   const musicAlbum = parentType === 'music' && subtype === 'album';
+  const foodManual = parentType === 'food' && subtype === 'manual';
   const findSource = els.itemFindSource?.value || 'auto';
-  const effectiveFindSource = findSource === 'auto' ? defaultFindSourceForType(automaticFormSourceType()) : findSource;
-  const isCatalogue = effectiveFindSource !== 'manual';
+  const isCatalogue = findSource !== 'manual';
   const isYouTube = sourceType === 'youtube';
-  const isReminder = formUsesReminder();
+  const isReminder = sourceType === 'reminder';
   const isActivity = sourceType === 'activity';
-  const isRepeatLog = formUsesRepeatLog();
+  const isClass = sourceType === 'class';
   const isManual = sourceType === 'other' || Boolean(savedType);
   const isFoodManual = sourceType === 'food' || sourceType === 'recipe';
 
+  syncFindItInputUI();
   els.catalogueSearchBlock.hidden = false;
   if (els.catalogueQuery) els.catalogueQuery.disabled = !isCatalogue;
   if (els.catalogueSearchButton) els.catalogueSearchButton.disabled = !isCatalogue;
@@ -6344,7 +6045,7 @@ function updateItemFormForType() {
   if (els.itemPeopleSuggestions && bookDisplay) els.itemPeopleSuggestions.hidden = true;
   else if (els.itemPeopleSuggestions && els.itemModal?.open) refreshItemPeopleSuggestions().catch(() => {});
   const creatingNewType = parentType === 'other' && !savedType && els.itemKindChoice?.value === 'new-type';
-  const showDisplayType = creatingNewType;
+  const showDisplayType = parentType === 'reminder' || creatingNewType;
   els.displayTypeBlock.hidden = !showDisplayType;
   els.manualTitleBlock.hidden = false;
   const progressMode = effectiveItemProgressMode(sourceType);
@@ -6353,50 +6054,33 @@ function updateItemFormForType() {
   syncFlexibleEpisodeProgressFields(sourceType, progressMode);
   els.bookProgressFields.hidden = progressMode !== 'book';
   if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder || isActivity;
-  if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = !['tv','movie','book','video-game','board-game','music','artist','song'].includes(sourceType);
+  if (els.itemUseRepeatLog?.checked && !els.editingId.value && els.itemDate && !els.itemDate.value) els.itemDate.value = todayString();
+  const simpleDateField = $('#itemDateInputField');
+  if (simpleDateField) simpleDateField.hidden = Boolean(els.itemUseDateRange?.checked);
+  if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = !['tv','movie','book','music','artist','song'].includes(sourceType);
   if (progressMode === 'book' && !els.editingId.value && els.bookStartDate && !els.bookStartDate.value) {
     els.bookStartDate.value = todayString();
   }
   if (isActivity && !els.editingId.value && els.activityStartDate && !els.activityStartDate.value) {
     els.activityStartDate.value = todayString();
   }
-  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || isActivity || isRepeatLog || ['music','artist','song','concert','food','recipe'].includes(sourceType);
+  if (els.queueStatusField) els.queueStatusField.hidden = isReminder || isActivity || isClass;
   refreshItemBuddyWatchOptions().catch(() => {});
   if (isActivity && els.itemQueueStatus) els.itemQueueStatus.value = 'library';
 
-  const upNextOption = els.itemQueueStatus?.querySelector('option[value="upnext"]');
-  if (upNextOption) {
-    upNextOption.hidden = sourceType === 'restaurant';
-    upNextOption.disabled = sourceType === 'restaurant';
-    if (sourceType === 'restaurant' && els.itemQueueStatus.value === 'upnext') els.itemQueueStatus.value = 'library';
-  }
 
-  const hasPresetSubtypes = Boolean(FORM_SUBTYPE_OPTIONS[parentType]);
-  const customSubtype = isCustomFormSubtype(parentType);
-  if (els.itemSubcategoryDisclosure) {
-    // Every Type can have a user-created subtype. Types with built-in subtypes
-    // expose "Create subtype…" in the selector and reveal this field when chosen.
-    els.itemSubcategoryDisclosure.hidden = hasPresetSubtypes && !customSubtype;
-  }
-
-  const presetSubtype = hasPresetSubtypes && !customSubtype
-    ? (subtypeOptionLabel(parentType, els.itemSubtype?.value || '') || savedSubtypeLabel())
-    : '';
+  const fixedSubcategory = musicAlbum
+    ? 'Album'
+    : musicSubcategoryForSourceType(sourceType) || foodSubcategoryForSourceType(sourceType) || '';
   if (els.itemSubcategory) {
-    const previousAuto = cleanTypeLabel(els.itemSubcategory.dataset.autoSubtype || '');
-    const current = cleanTypeLabel(els.itemSubcategory.value || '');
-    if (presetSubtype) {
-      if (!current || current === previousAuto || (!els.editingId.value && current !== presetSubtype)) {
-        els.itemSubcategory.value = presetSubtype;
-      }
-      els.itemSubcategory.dataset.autoSubtype = presetSubtype;
+    if (fixedSubcategory) {
+      els.itemSubcategory.value = fixedSubcategory;
       els.itemSubcategory.readOnly = true;
-      els.itemSubcategory.placeholder = presetSubtype;
+      els.itemSubcategory.placeholder = fixedSubcategory;
     } else {
       els.itemSubcategory.readOnly = false;
-      delete els.itemSubcategory.dataset.autoSubtype;
-      if (!els.editingId.value && !customSubtype && !els.itemSubcategory.value) els.itemSubcategory.value = '';
-      els.itemSubcategory.placeholder = customSubtype ? 'Name subtype' : (isActivity ? 'e.g. Trip, Outing, Social' : 'e.g. Documentary, Lecture, Gym');
+      if (!els.editingId.value && !els.itemSubcategory.value) els.itemSubcategory.value = '';
+      els.itemSubcategory.placeholder = isActivity ? 'e.g. Trip, Outing, Social' : 'e.g. Documentary, Lecture, Gym';
     }
   }
   syncItemSubcategoryDisclosure();
@@ -6418,24 +6102,22 @@ function updateItemFormForType() {
     if (!els.editingId.value) els.itemDisplayType.value = '';
   }
 
-  if (!els.editingId.value) {
-    state.selectedSource = null;
-    state.loadedPlaylist = null;
-    const manualProvider = isManual || isFoodManual || isActivity || isRepeatLog || effectiveFindSource === 'manual' || sourceType === 'concert' || sourceType === 'workout';
-    els.provider.value = isYouTube ? 'youtube' : isReminder ? 'reminder' : manualProvider ? 'manual' : '';
-    els.providerId.value = '';
-    els.providerImage.value = '';
-    els.providerSubtitle.value = '';
-    els.searchResults.hidden = true;
-    els.selectedSource.hidden = true;
-    els.playlistPreview.hidden = true;
+  if (!els.editingId.value && !state.selectedSource && !state.loadedPlaylist) {
+    // Explicit Type changes/reset clear the selection. Lightweight edits such as
+    // Repeat or Multi-day must not throw away a Find it result.
+    const manualProvider = isManual || isFoodManual || musicManual || isActivity || isClass || sourceType === 'concert';
+    if (!els.providerId.value) {
+      els.provider.value = isYouTube ? 'youtube' : isReminder ? 'reminder' : manualProvider ? 'manual' : '';
+      els.providerImage.value = '';
+      els.providerSubtitle.value = '';
+    }
   }
 
-  syncRepeatSetupEditor();
   updateReminderFormFields();
 
-  const placeholders = { tv: 'Search TV', movie: 'Search movies', book: 'Search books', 'video-game': 'Search video games', 'board-game': 'Search board games', music: 'Search albums', artist: 'Search artists', song: 'Search songs', concert: 'Search concerts', event: 'Search events', restaurant: 'Search restaurants', place: 'Search places', youtube: 'Search YouTube' };
-  els.catalogueQuery.placeholder = isCatalogue ? (placeholders[sourceType] || 'Search') : 'Manual';
+  const placeholders = { tv: 'Search TV', movie: 'Search movies', book: 'Search books', artist: 'Search artists', concert: 'Search concerts', event: 'Search events', restaurant: 'Search restaurants', place: 'Search places', 'video-game': 'Search video games', 'board-game': 'Search board games', youtube: 'Paste YouTube URL' };
+  els.catalogueQuery.placeholder = isCatalogue ? (placeholders[sourceType] || 'Search') : 'Use title';
+  if (els.catalogueSearchButton) els.catalogueSearchButton.textContent = sourceType === 'youtube' ? 'Load' : 'Find';
   syncItemFeatureSummary();
   syncItemFindSourceSummary();
 
@@ -6446,9 +6128,11 @@ function updateItemFormForType() {
         ? 'Name this restaurant in your tracker'
         : sourceType === 'activity'
           ? 'What did you do?'
-          : isRepeatLog
-            ? 'Title for this repeatable item'
-            : 'Title';
+          : sourceType === 'class'
+            ? 'Class title (e.g. Spin, Pottery)'
+            : sourceType === 'artist'
+              ? 'Artist name'
+              : 'Title';
   }
   if (els.itemNote) {
     els.itemNote.placeholder = sourceType === 'restaurant'
@@ -6460,20 +6144,6 @@ function updateItemFormForType() {
           : 'Anything you want to remember';
   }
   if (els.itemLinkLabel) els.itemLinkLabel.placeholder = sourceType === 'recipe' ? 'Recipe source (optional)' : 'Link label (optional)';
-
-  if (repeatEntryMode) {
-    // Adding one occurrence to an existing repeatable item is intentionally a
-    // small log form, not a second chance to reconfigure the Library item.
-    if (els.itemDateField) els.itemDateField.hidden = false;
-    if (els.itemReleaseDateField) els.itemReleaseDateField.hidden = true;
-    if (els.queueStatusField) els.queueStatusField.hidden = true;
-    if (els.tvProgressFields) els.tvProgressFields.hidden = true;
-    if (els.bookProgressFields) els.bookProgressFields.hidden = true;
-    if (els.workoutBlock) els.workoutBlock.hidden = true;
-    if (els.reminderBlock) els.reminderBlock.hidden = true;
-    if (els.activityFields) els.activityFields.hidden = true;
-    if (els.manualTitle) els.manualTitle.placeholder = 'Log title (optional)';
-  }
 }
 
 function updateReminderFormFields() {
@@ -6488,13 +6158,74 @@ function updateReminderFormFields() {
   if (custom && els.reminderInterval && Number(els.reminderInterval.value || 0) < 1) els.reminderInterval.value = '1';
 }
 
+function syncFindItInputUI() {
+  if (!els.catalogueQuery || !els.catalogueSearchButton) return;
+  const requested = els.itemFindSource?.value || 'auto';
+  const sourceKey = requested === 'auto' ? defaultFindSourceForType(automaticFormSourceType()) : requested;
+  const customManual = (Boolean(selectedSavedTypeEntry()) || formParentType() === 'other') && sourceKey === 'manual';
+
+  if (sourceKey === 'youtube-videos') {
+    els.catalogueQuery.placeholder = 'Paste YouTube URL';
+    els.catalogueSearchButton.textContent = 'Load';
+    els.catalogueQuery.setAttribute('inputmode', 'url');
+    return;
+  }
+
+  els.catalogueQuery.removeAttribute('inputmode');
+  els.catalogueSearchButton.textContent = 'Find';
+  if (customManual) els.catalogueQuery.placeholder = 'Choose a search with ⚙︎';
+  else if (sourceKey === 'google-places') els.catalogueQuery.placeholder = 'Search places';
+  else if (sourceKey === 'ticketmaster-events' || sourceKey === 'ticketmaster-concerts') els.catalogueQuery.placeholder = 'Search events';
+  else if (sourceKey === 'lastfm-artists') els.catalogueQuery.placeholder = 'Search artists';
+  else if (sourceKey === 'igdb-games' || sourceKey === 'bgg-games') els.catalogueQuery.placeholder = 'Search games';
+  else els.catalogueQuery.placeholder = 'Search';
+}
+
+function promptForCustomFindSource() {
+  if (!selectedSavedTypeEntry() && formParentType() !== 'other') return false;
+  const requested = els.itemFindSource?.value || 'auto';
+  const sourceKey = requested === 'auto' ? defaultFindSourceForType(automaticFormSourceType()) : requested;
+  if (sourceKey !== 'manual') return false;
+  if (els.itemFindSettingsDisclosure) els.itemFindSettingsDisclosure.open = true;
+  syncFindItInputUI();
+  showFormMessage('Choose what Find it searches using the gear.', false);
+  return true;
+}
+
+function youtubeVideoIdFromInput(value) {
+  const raw = String(value || '').trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(raw)) return raw;
+  try {
+    const url = new URL(raw);
+    if (url.hostname === 'youtu.be') return url.pathname.split('/').filter(Boolean)[0] || '';
+    if (url.hostname.includes('youtube.com')) {
+      if (url.pathname === '/watch') return url.searchParams.get('v') || '';
+      const parts = url.pathname.split('/').filter(Boolean);
+      const markerIndex = parts.findIndex(part => ['shorts','embed','live'].includes(part));
+      if (markerIndex >= 0) return parts[markerIndex + 1] || '';
+    }
+  } catch {}
+  return '';
+}
+
+function youtubeResultFromVideo(video) {
+  const snippet = video?.snippet || {};
+  return {
+    sourceType: 'youtube', provider: 'youtube', providerId: String(video?.id || ''),
+    title: snippet.title || 'YouTube video', subtitle: snippet.channelTitle || '',
+    image: snippet.thumbnails?.high?.url || snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || '',
+    description: snippet.description || '', raw: video
+  };
+}
+
 async function searchCatalogue() {
   const query = els.catalogueQuery.value.trim();
   if (!query) return;
   const requested = els.itemFindSource?.value || 'auto';
   const sourceKey = requested === 'auto' ? defaultFindSourceForType(automaticFormSourceType()) : requested;
   if (sourceKey === 'manual') {
-    showFormMessage('Enter it manually.', false);
+    if (promptForCustomFindSource()) return;
+    showFormMessage('Type the title manually, or use the gear to choose a search.', false);
     return;
   }
   const sourceType = sourceKey === 'google-places' && automaticFormSourceType() === 'restaurant'
@@ -6514,8 +6245,6 @@ async function searchCatalogue() {
     if (sourceKey === 'tmdb-tv') results = await TrackerAPI.searchCatalogue(query, 'tv', state.settings);
     else if (sourceKey === 'tmdb-movie') results = await TrackerAPI.searchCatalogue(query, 'movie', state.settings);
     else if (sourceKey === 'google-books') results = await TrackerAPI.searchCatalogue(query, 'book', state.settings);
-    else if (sourceKey === 'igdb-games') results = await TrackerAPI.searchCatalogue(query, 'video-game', state.settings, { maxResults: 20 });
-    else if (sourceKey === 'bgg-games') results = await TrackerAPI.searchCatalogue(query, 'board-game', state.settings, { maxResults: 20 });
     else if (sourceKey === 'apple-albums') results = await TrackerAPI.searchCatalogue(query, 'music', state.settings);
     else if (sourceKey === 'lastfm-artists') {
       try {
@@ -6526,7 +6255,21 @@ async function searchCatalogue() {
       }
     }
     else if (sourceKey === 'apple-songs') results = await TrackerAPI.searchCatalogue(query, 'song', state.settings);
-    else if (sourceKey === 'youtube-videos') results = await TrackerAPI.searchCatalogue(query, 'youtube', state.settings, { maxResults: 20 });
+    else if (sourceKey === 'igdb-games') results = await TrackerAPI.searchCatalogue(query, 'video-game', state.settings, { maxResults: 20 });
+    else if (sourceKey === 'bgg-games') results = await TrackerAPI.searchCatalogue(query, 'board-game', state.settings, { maxResults: 20 });
+    else if (sourceKey === 'youtube-videos') {
+      if (/list=/.test(query)) {
+        if (els.itemUsePlaylist) els.itemUsePlaylist.checked = true;
+        if (els.playlistInput) els.playlistInput.value = query;
+        updateItemFormForType();
+        await loadPlaylistPreview();
+        return;
+      }
+      const videoId = youtubeVideoIdFromInput(query);
+      if (!videoId) throw new Error('Paste a YouTube video URL.');
+      const video = await TrackerAPI.getYouTubeVideo(videoId, state.settings);
+      results = [youtubeResultFromVideo(video)];
+    }
     else if (sourceKey === 'google-places') results = sourceType === 'restaurant'
       ? await TrackerAPI.searchRestaurants(query, state.settings, options)
       : await TrackerAPI.searchPlaces(query, state.settings, options);
@@ -6569,7 +6312,6 @@ function renderSearchResults(results) {
         <div class="search-result-title">${escapeHtml(result.title)}</div>
         <div class="search-result-meta">${escapeHtml([
           result.eventDate && result.eventDate < todayString() ? 'Past' : '',
-          result.gameKind === 'video-game' ? 'Video Game' : result.gameKind === 'board-game' ? 'Board Game' : '',
           result.subtitle || ''
         ].filter(Boolean).join(' · '))}</div>
       </div>`;
@@ -6586,11 +6328,7 @@ function renderSearchResults(results) {
   els.searchResults.hidden = false;
 }
 
-async function selectCatalogueResult(result) {
-  if (result?.provider === 'bgg' && result?.providerId && !result.description && TrackerAPI.getBoardGameDetails) {
-    try { const detailed = await TrackerAPI.getBoardGameDetails(result.providerId, state.settings); if (detailed) result = { ...result, ...detailed }; }
-    catch (error) { console.warn('[Games][BGG] details unavailable during selection:', error?.message || error); }
-  }
+function selectCatalogueResult(result) {
   const formSourceType = selectedFormSourceType();
   const existingMatch = findCanonicalLibraryItem({ ...result, sourceType: formSourceType }, els.editingId?.value || '');
   if (existingMatch) {
@@ -6604,10 +6342,10 @@ async function selectCatalogueResult(result) {
   // Selecting a restaurant should behave like selecting a movie: use the
   // catalogue result's actual display name as the prefilled tracker title.
   if (selectingRestaurant || selectingPlace) {
-    setFormTitleValue(result.title || String(els.catalogueQuery?.value || '').trim());
+    els.manualTitle.value = result.title || String(els.catalogueQuery?.value || '').trim();
     els.manualTitle.placeholder = 'Restaurant name';
   } else {
-    setFormTitleValue(result.title || '');
+    els.manualTitle.value = result.title || '';
   }
   els.provider.value = result.provider;
   els.providerId.value = result.providerId;
@@ -6622,13 +6360,12 @@ async function selectCatalogueResult(result) {
   if (['event', 'concert'].includes(formSourceType) && result.eventDate && els.itemDate) {
     els.itemDate.value = result.eventDate;
   }
-  if (els.itemReleaseDate && ['tv','movie','book','video-game','board-game','music','artist','song'].includes(formSourceType)) {
+  if (els.itemReleaseDate && ['tv','movie','book','music','artist','song'].includes(formSourceType)) {
     const releaseDate = normalizedReleaseDate(extractItemReleaseDate(formSourceType, result, null));
     if (releaseDate) els.itemReleaseDate.value = releaseDate;
   }
-  if (formSourceType === 'music' && result.provider === 'itunes' && els.itemSubcategory && !isCustomFormSubtype()) {
+  if (formSourceType === 'music' && result.provider === 'itunes' && els.itemSubcategory) {
     els.itemSubcategory.value = 'Album';
-    els.itemSubcategory.dataset.autoSubtype = 'Album';
     els.itemSubcategory.readOnly = true;
     els.itemSubcategory.placeholder = 'Album';
     syncItemSubcategoryDisclosure();
@@ -6888,7 +6625,7 @@ async function loadPlaylistPreview() {
     els.providerId.value = playlist.providerId;
     els.providerImage.value = playlist.image || '';
     els.providerSubtitle.value = playlist.subtitle || '';
-    setFormTitleValue(playlist.title || '');
+    els.manualTitle.value = playlist.title || '';
     showSelectedSource({ title: playlist.title, subtitle: `${playlist.items.length} videos · ${playlist.subtitle || ''}`, image: playlist.image }, true);
     showFormMessage('', false);
     cachePut(`playlist:${playlist.providerId}`, playlist);
@@ -6905,15 +6642,8 @@ async function saveItemFromForm(event) {
   const buddyFriendId = startBuddyAfterSave ? (els.itemBuddyWatchPerson?.value || '') : '';
   const sourceType = selectedFormSourceType();
   const editing = findItem(els.editingId.value);
-  const selectedActionCategory = normalizeAddActionCategory(els.itemActionChoice?.value || editing?.actionCategory || addActionForKind(els.itemKindChoice?.value || kindForCurrentForm(editing)) || 'completed', 'completed');
-  const reminderFeature = formUsesReminder();
-  const repeatLogFeature = formUsesRepeatLog();
-  const repeatGroupId = String(els.itemForm?.dataset?.repeatGroupId || '');
-  const repeatGroup = repeatGroupId ? findItem(repeatGroupId) : null;
-  const creatingRepeatGroup = Boolean(repeatLogFeature && !repeatGroup && !editing);
-  const repeatDraftEntries = creatingRepeatGroup ? collectRepeatDraftEntries() : [];
-  let title = creatingRepeatGroup ? String($('#repeatOverallTitle')?.value || '').trim() : els.manualTitle.value.trim();
-  if (!title && repeatGroup) title = repeatGroup.title || 'Log';
+  const selectedActionCategory = normalizeAddActionCategory(els.itemActionChoice?.value || editing?.actionCategory || addActionForKind(kindForCurrentForm()) || 'other');
+  let title = els.manualTitle.value.trim();
   let provider = els.provider.value;
   let providerId = els.providerId.value;
   let image = els.providerImage.value;
@@ -6929,24 +6659,22 @@ async function saveItemFromForm(event) {
   if (savedDisplayType) {
     type = savedDisplayType.type;
     typeLabel = savedDisplayType.label || getTypeLabel(savedDisplayType.type);
-    // Preserve the custom Type's internal action category for older synced data.
+    // If the user changes I… while editing a custom Type, remember the new home
+    // category so that Type appears under the same choice next time.
     registerCustomType(type, typeLabel, selectedActionCategory);
-  } else if (displayParent === 'game') {
-    type = 'game';
-    typeLabel = 'Games';
-    fixedSubcategory = isCustomFormSubtype(displayParent) ? '' : (subtypeOptionLabel(displayParent, els.itemSubtype?.value || '') || savedSubtypeLabel());
-  } else if (displayParent === 'event') {
-    type = 'event';
-    typeLabel = 'Events';
-    fixedSubcategory = isCustomFormSubtype(displayParent) ? '' : (subtypeOptionLabel(displayParent, els.itemSubtype?.value || '') || savedSubtypeLabel());
   } else if (displayParent === 'music') {
     type = 'music';
     typeLabel = 'Music';
-    fixedSubcategory = isCustomFormSubtype(displayParent) ? '' : (subtypeOptionLabel(displayParent, els.itemSubtype?.value || '') || savedSubtypeLabel());
+    fixedSubcategory = musicSubcategoryForSourceType(automaticSourceType);
+    if (automaticSourceType === 'music' && (state.selectedSource?.provider === 'itunes' || (editing?.provider === 'itunes' && editing?.providerId))) fixedSubcategory = 'Album';
   } else if (displayParent === 'food') {
     type = 'food';
     typeLabel = 'Food';
-    fixedSubcategory = isCustomFormSubtype(displayParent) ? '' : (subtypeOptionLabel(displayParent, els.itemSubtype?.value || '') || savedSubtypeLabel());
+    fixedSubcategory = foodSubcategoryForSourceType(automaticSourceType);
+  } else if (displayParent === 'game') {
+    type = 'game';
+    typeLabel = 'Games';
+    fixedSubcategory = cleanTypeLabel(els.itemSubcategory?.value || '') || (sourceType === 'board-game' ? 'Board Game' : sourceType === 'video-game' ? 'Video Game' : '');
   } else if (displayParent === 'youtube') {
     type = 'youtube';
     typeLabel = 'YouTube';
@@ -6955,20 +6683,28 @@ async function saveItemFromForm(event) {
     type = displayTypeSlug(typeLabel, 'other');
     registerCustomType(type, typeLabel, selectedActionCategory);
   } else if (displayParent === 'other') {
-    typeLabel = cleanTypeLabel(els.itemDisplayType.value);
-    if (!typeLabel) {
-      showFormMessage('Name the type.', true);
-      return;
+    const genericOther = els.itemKindChoice?.value === 'other-item';
+    if (genericOther) {
+      type = 'other';
+      typeLabel = 'Other';
+    } else {
+      typeLabel = cleanTypeLabel(els.itemDisplayType.value);
+      if (!typeLabel) {
+        showFormMessage('Name the type.', true);
+        return;
+      }
+      type = displayTypeSlug(typeLabel, 'other');
+      registerCustomType(type, typeLabel, selectedActionCategory);
     }
-    type = displayTypeSlug(typeLabel, 'other');
-    registerCustomType(type, typeLabel, selectedActionCategory);
   }
 
   const selectedSource = state.selectedSource;
-  if (sourceType === 'reminder' && !reminderFeature) {
-    provider = editing?.provider || 'manual';
-    providerId = editing?.providerId || '';
-  } else if (sourceType === 'activity' || sourceType === 'class' || sourceType === 'workout' || sourceType === 'food' || sourceType === 'recipe' || sourceType === 'other') {
+  if (sourceType === 'reminder') {
+    provider = 'reminder';
+    providerId = '';
+    image = '';
+    subtitle = '';
+  } else if (sourceType === 'activity' || sourceType === 'class' || sourceType === 'food' || sourceType === 'recipe' || sourceType === 'other') {
     provider = selectedSource?.provider || editing?.provider || 'manual';
     providerId = selectedSource?.providerId || editing?.providerId || '';
     image = selectedSource?.image || editing?.image || image || '';
@@ -6992,49 +6728,27 @@ async function saveItemFromForm(event) {
 
   // Music and Concert can be entered manually. Search is optional for these
   // types; selecting a catalogue result simply enriches metadata.
-  if (['music', 'concert', 'workout', 'food', 'recipe', 'event'].includes(sourceType) && !providerId) {
+  if (['music', 'concert'].includes(sourceType) && !providerId) {
     provider = 'manual';
     image = editing?.image || image || '';
     subtitle = editing?.subtitle || subtitle || '';
   }
 
   if (!title) {
-    showFormMessage(creatingRepeatGroup ? 'Add an overall title.' : 'Add a title.', true);
+    showFormMessage('Add a title.', true);
     return;
   }
-  if (isCustomFormSubtype(displayParent) && !cleanTypeLabel(els.itemSubcategory?.value || '')) {
-    showFormMessage('Name the subtype.', true);
-    els.itemSubcategoryDisclosure.hidden = false;
-    els.itemSubcategoryDisclosure.open = true;
-    els.itemSubcategory?.focus();
-    return;
-  }
-  if (creatingRepeatGroup) {
-    if (!repeatDraftEntries.length) {
-      showFormMessage('Add at least one entry.', true);
-      return;
-    }
-    if (repeatDraftEntries.some(entry => !entry.date)) {
-      showFormMessage('Choose a date for each entry.', true);
-      return;
-    }
-  }
-  if (!repeatGroup && sourceType === 'youtube' && (provider !== 'youtube' || !providerId)) {
+  if (sourceType === 'youtube' && (provider !== 'youtube' || !providerId)) {
     showFormMessage(els.itemUsePlaylist?.checked ? 'Load a playlist first.' : 'Choose a YouTube video first.', true);
     return;
   }
   const requestedFindSource = els.itemFindSource?.value || 'auto';
-  const effectiveFindSource = requestedFindSource === 'auto' ? defaultFindSourceForType(automaticFormSourceType()) : requestedFindSource;
-  const manualLookup = effectiveFindSource === 'manual';
+  const manualLookup = requestedFindSource === 'manual';
   const validProvider = manualLookup
     ? true
     : sourceType === 'book'
       ? provider === 'googleBooks'
-      : sourceType === 'video-game'
-        ? provider === 'igdb'
-        : sourceType === 'board-game'
-          ? provider === 'bgg'
-          : sourceType === 'music'
+      : sourceType === 'music'
         ? ['itunes', 'manual'].includes(provider)
         : ['artist', 'song'].includes(sourceType)
           ? ['itunes', 'lastfm'].includes(provider)
@@ -7048,24 +6762,23 @@ async function saveItemFromForm(event) {
                   ? provider === 'tmdb'
                   : sourceType === 'youtube'
                     ? provider === 'youtube'
-                    : true;
-  const requiresCatalogueSelection = !repeatGroup && !manualLookup && ['tv','book','movie','video-game','board-game','artist','song','event','restaurant','place','youtube'].includes(sourceType);
-  if (!repeatGroup && ((requiresCatalogueSelection && !providerId) || !validProvider)) {
+                    : ['video-game','board-game'].includes(sourceType)
+                      ? provider === (sourceType === 'video-game' ? 'igdb' : 'bgg')
+                      : true;
+  const requiresCatalogueSelection = !manualLookup && ['tv','book','movie','artist','song','event','restaurant','place','youtube','video-game','board-game'].includes(sourceType);
+  if ((requiresCatalogueSelection && !providerId) || !validProvider) {
     showFormMessage('Choose a Find it result first, or switch Find it to Manual.', true);
     return;
   }
-  const repeatLogDate = repeatLogFeature
-    ? (creatingRepeatGroup ? (repeatDraftEntries[0]?.date || '') : (els.itemDate?.value || els.activityStartDate?.value || (reminderFeature ? els.reminderDueDate?.value : '') || ''))
-    : '';
-  if (repeatLogFeature && !creatingRepeatGroup && !repeatLogDate) {
-    showFormMessage('Choose a date for this log.', true);
+  if (sourceType === 'class' && !els.itemDate?.value) {
+    showFormMessage('Choose the date for this class.', true);
     return;
   }
-  if (reminderFeature && !els.reminderDueDate?.value) {
+  if (sourceType === 'reminder' && !els.reminderDueDate?.value) {
     showFormMessage(els.reminderFrequency?.value === 'none' ? 'Choose a date for the reminder.' : 'Choose a start date for the repeating reminder.', true);
     return;
   }
-  if (reminderFeature && els.reminderFrequency?.value === 'custom' && Number(els.reminderInterval?.value || 0) < 1) {
+  if (sourceType === 'reminder' && els.reminderFrequency?.value === 'custom' && Number(els.reminderInterval?.value || 0) < 1) {
     showFormMessage('Custom repeats must be at least every 1 day, week, or month.', true);
     return;
   }
@@ -7093,7 +6806,7 @@ async function saveItemFromForm(event) {
     venueName: state.selectedSource?.venueName || editing?.eventMeta?.venueName || '',
     raw: state.selectedSource?.raw || editing?.raw || {}
   };
-  const libraryCollision = repeatLogFeature ? null : findCanonicalLibraryItem(collisionCandidate, editing?.id || '');
+  const libraryCollision = findCanonicalLibraryItem(collisionCandidate, editing?.id || '');
   if (libraryCollision) {
     if (editing) {
       showFormMessage(`“${libraryCollision.title}” is already the Library item for this content.`, true);
@@ -7125,49 +6838,33 @@ async function saveItemFromForm(event) {
     providerId,
     image,
     subtitle,
-    rating: creatingRepeatGroup ? 0 : Number(els.itemRating.value || 0),
+    rating: Number(els.itemRating.value || 0),
     actionCategory: selectedActionCategory,
-    notes: creatingRepeatGroup ? '' : els.itemNote.value.trim(),
-    comment: creatingRepeatGroup ? '' : String(els.itemComment?.value || '').trim(),
-    people: creatingRepeatGroup ? [] : people,
+    notes: els.itemNote.value.trim(),
+    comment: String(els.itemComment?.value || '').trim(),
+    people,
     recommended: Boolean(els.itemRecommended?.checked),
     genres: extractItemGenres(sourceType, state.selectedSource, editing),
-    releaseDate: ['tv','movie','book','video-game','board-game','music','artist','song'].includes(sourceType)
+    releaseDate: ['tv','movie','book','music','artist','song'].includes(sourceType)
       ? (normalizedReleaseDate(els.itemReleaseDate?.value) || normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)))
       : normalizedReleaseDate(extractItemReleaseDate(sourceType, state.selectedSource, editing)),
     attachments: attachmentFiles,
     coverAttachmentId: '',
     links: state.attachmentDraft.links.map(link => ({ ...link })),
-    date: reminderFeature || repeatLogFeature ? '' : (sourceType === 'activity' || els.itemUseDateRange?.checked) ? (els.activityStartDate?.value || '') : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
-    queueStatus: reminderFeature ? 'upnext' : (repeatLogFeature || ['activity','class'].includes(sourceType)) ? 'library' : (sourceType === 'restaurant' ? (els.itemQueueStatus.value === 'tbr' ? 'tbr' : 'library') : (['music','artist','song','concert','food','recipe'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'))),
-    active: reminderFeature || (!repeatLogFeature && !['activity','class'].includes(sourceType) && !['restaurant','place'].includes(sourceType) && !['music','artist','song','concert','food','recipe'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
+    date: sourceType === 'reminder' ? '' : (sourceType === 'activity' || els.itemUseDateRange?.checked) ? (els.activityStartDate?.value || '') : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
+    queueStatus: sourceType === 'reminder' ? 'upnext' : ['activity','class'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'),
+    active: sourceType === 'reminder' || (!['activity','class'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
     featureConfig: {
       findSource: requestedFindSource,
       progressMode: effectiveItemProgressMode(sourceType),
       dateRange: Boolean(els.itemUseDateRange?.checked),
-      youtubePlaylist: Boolean(els.itemUsePlaylist?.checked),
-      reminder: reminderFeature,
-      repeatableLog: repeatLogFeature
+      repeatableLog: Boolean(els.itemUseRepeatLog?.checked || (editing && repeatLogHistoryEntries(editing).length)),
+      youtubePlaylist: Boolean(els.itemUsePlaylist?.checked)
     },
     createdAt: editing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     completedAt: editing?.completedAt || '',
     progress: { ...(editing?.progress || {}) },
-    ...(['video-game','board-game'].includes(sourceType) ? {
-      gameMeta: {
-        ...(editing?.gameMeta || {}),
-        kind: sourceType,
-        description: state.selectedSource?.description || editing?.gameMeta?.description || '',
-        platforms: state.selectedSource?.platforms || editing?.gameMeta?.platforms || [],
-        designers: state.selectedSource?.designers || editing?.gameMeta?.designers || [],
-        mechanics: state.selectedSource?.mechanics || editing?.gameMeta?.mechanics || [],
-        minPlayers: Number(state.selectedSource?.minPlayers || editing?.gameMeta?.minPlayers || 0),
-        maxPlayers: Number(state.selectedSource?.maxPlayers || editing?.gameMeta?.maxPlayers || 0),
-        playTime: Number(state.selectedSource?.playTime || editing?.gameMeta?.playTime || 0),
-        catalogueRating: Number(state.selectedSource?.catalogueRating || editing?.gameMeta?.catalogueRating || 0),
-        catalogueUrl: state.selectedSource?.catalogueUrl || editing?.gameMeta?.catalogueUrl || ''
-      }
-    } : {}),
     ...(sourceType === 'tv' ? {
       watchDisposition: editing?.watchDisposition || ((els.itemQueueStatus.value || 'library') === 'tbr' ? 'watch-later' : 'following'),
       tvMeta: { ...(editing?.tvMeta || {}) }
@@ -7199,7 +6896,7 @@ async function saveItemFromForm(event) {
 
   };
 
-  if (reminderFeature) {
+  if (sourceType === 'reminder') {
     const frequency = ['none','daily','weekly','biweekly','monthly','custom'].includes(els.reminderFrequency?.value)
       ? els.reminderFrequency.value
       : 'none';
@@ -7244,9 +6941,7 @@ async function saveItemFromForm(event) {
       if (latest && !latest.endDate) latest.endDate = todayString();
     } else {
       item.completedAt = '';
-      if (editing && getQueueStatus(editing) === 'tbr' && item.progress.currentPage > 0) {
-        setItemQueueStatus(item, 'upnext');
-      }
+      if (item.progress.currentPage > 0) moveProgressedTbrItemToUpNext(item);
     }
   }
   if (sourceType === 'youtube' && item.featureConfig.youtubePlaylist) {
@@ -7254,98 +6949,6 @@ async function saveItemFromForm(event) {
     if (state.loadedPlaylist && editing?.providerId !== state.loadedPlaylist.providerId) item.progress.currentIndex = 0;
   } else if (sourceType === 'youtube') {
     delete item.progress.currentIndex;
-  }
-
-  if (repeatLogFeature) {
-    const normalizeRepeatIdentity = value => normalizeSearchText([value?.type || '', value?.title || '', value?.providerId || ''].join(' '));
-    let group = repeatGroup || editing;
-    if (!group) {
-      const identity = normalizeRepeatIdentity(item);
-      group = state.items.find(existing => itemHasRepeatLog(existing) && normalizeRepeatIdentity(existing) === identity) || null;
-    }
-
-    const addingEntryToExistingGroup = Boolean(repeatGroup && group);
-    const wasRepeatable = Boolean(editing && itemHasRepeatLog(editing));
-    const shouldCreateLog = addingEntryToExistingGroup || !editing || !wasRepeatable;
-
-    if (!group) {
-      group = { ...item, id: item.id, date: '', completedAt: '', featureConfig: { ...(item.featureConfig || {}), repeatableLog: true } };
-      state.items.push(group);
-    } else if (!addingEntryToExistingGroup) {
-      // Editing the repeatable Library item may update the group itself. Adding a
-      // new log must never rename or otherwise overwrite that group.
-      const preservedReminder = group.reminder;
-      Object.assign(group, {
-        ...group,
-        ...item,
-        id: group.id,
-        createdAt: group.createdAt || item.createdAt,
-        date: '',
-        completedAt: '',
-        featureConfig: {
-          ...(group.featureConfig || {}),
-          ...(item.featureConfig || {}),
-          repeatableLog: true,
-          reminder: Boolean(group.featureConfig?.reminder || item.featureConfig?.reminder)
-        }
-      });
-      if (preservedReminder && !item.reminder) group.reminder = preservedReminder;
-    }
-
-    if (creatingRepeatGroup) {
-      for (const draft of repeatDraftEntries) {
-        addHistoryRecord({
-          sourceItemId: group.id,
-          sourceType: getSourceType(group),
-          type: group.type,
-          typeLabel: getItemTypeLabel(group),
-          subcategory: group.subcategory || '',
-          date: draft.date || todayString(),
-          showOnCalendar: true,
-          kind: 'repeat-log',
-          title: draft.title || group.title || 'Log',
-          subtitle: group.subcategory || 'Log',
-          notes: draft.note || '',
-          comment: '',
-          people: [],
-          rating: Number(draft.rating || 0),
-          image: group.image || '',
-          provider: group.provider || 'manual',
-          providerId: group.providerId || ''
-        });
-      }
-    } else if (shouldCreateLog) {
-      addHistoryRecord({
-        sourceItemId: group.id,
-        sourceType: getSourceType(group),
-        type: group.type,
-        typeLabel: getItemTypeLabel(group),
-        subcategory: group.subcategory || '',
-        date: repeatLogDate || todayString(),
-        showOnCalendar: true,
-        kind: 'repeat-log',
-        title: els.manualTitle.value.trim() || group.title || 'Log',
-        subtitle: group.subcategory || 'Log',
-        notes: item.notes || '',
-        comment: item.comment || '',
-        people: item.people || [],
-        rating: Number(item.rating || 0),
-        image: item.image || group.image || '',
-        provider: item.providerId ? (item.provider || 'manual') : (group.provider || 'manual'),
-        providerId: item.providerId || group.providerId || ''
-      });
-    }
-
-    syncRepeatLogGroupRating(group.id);
-    if (itemHasReminder(group)) setItemQueueStatus(group, 'upnext');
-    else setItemQueueStatus(group, 'library');
-    recordTypeUse(group);
-    saveItems();
-    saveHistory();
-    await deleteRemovedDraftAttachments();
-    els.itemModal.close();
-    renderAll();
-    return;
   }
 
   // Food history is event-like: the Library keeps the place/recipe while each
@@ -7371,8 +6974,7 @@ async function saveItemFromForm(event) {
     if (els.itemRecommended?.checked) existingRestaurant.recommended = true;
     if (formNotes && !String(existingRestaurant.notes || '').trim()) existingRestaurant.notes = formNotes;
     if (formComment) existingRestaurant.comment = formComment;
-    if (els.itemQueueStatus?.value === 'tbr') setItemQueueStatus(existingRestaurant, 'tbr');
-    else setItemQueueStatus(existingRestaurant, 'library');
+    setItemQueueStatus(existingRestaurant, els.itemQueueStatus?.value || 'library');
     existingRestaurant.updatedAt = new Date().toISOString();
     existingRestaurant.attachments = [
       ...(existingRestaurant.attachments || []),
@@ -7477,6 +7079,42 @@ async function saveItemFromForm(event) {
     state.items.push(item);
   }
 
+  if (itemHasRepeatLog(item) && sourceType !== 'class') {
+    const priorLogs = repeatLogHistoryEntries(item);
+    const occurrenceDate = String(item.date || '').slice(0, 10);
+    // On creation (or when converting an ordinary card to Repeat), the normal
+    // Rating/Date/Note fields are the first occurrence. The aggregate title is
+    // kept on the Library card and is never changed by later entry edits.
+    if (!priorLogs.length && occurrenceDate) {
+      addHistoryRecord({
+        sourceItemId: item.id,
+        sourceType,
+        type: item.type,
+        typeLabel: getItemTypeLabel(item),
+        subcategory: item.subcategory || '',
+        date: occurrenceDate,
+        showOnCalendar: true,
+        kind: 'repeatable-log',
+        title: item.title,
+        subtitle: '',
+        notes: item.notes || '',
+        comment: item.comment || '',
+        people: [...(item.people || [])],
+        rating: Number(item.rating || 0),
+        image: item.image || '',
+        provider: item.provider || 'manual',
+        providerId: item.providerId || ''
+      });
+    }
+    // Entry-specific values live in history; the aggregate card only owns the
+    // overall title/source/subtype and an average rating.
+    item.date = '';
+    item.notes = '';
+    item.comment = '';
+    item.people = [];
+    recalculateRepeatableItemRating(item);
+  }
+
   if (foodHistoryDate && ['restaurant', 'recipe'].includes(sourceType)) {
     const historyKind = sourceType === 'restaurant' ? 'restaurant-visit' : 'recipe-tried';
     const duplicate = state.history.some(entry =>
@@ -7551,7 +7189,9 @@ async function deleteEditingItem() {
   if (!confirm(`Delete “${item.title}”?`)) return;
   await Promise.all((item.attachments || []).map(file => deleteAttachmentBlob(file.id).catch(() => {})));
   state.items = state.items.filter(existing => existing.id !== id);
+  state.history = state.history.filter(entry => entry.sourceItemId !== id);
   saveItems();
+  saveHistory();
   els.itemModal.close();
   renderAll();
 }
@@ -7653,24 +7293,12 @@ function showFormMessage(message, error = false) {
 }
 
 function attachmentCoverIdForItem(item) {
-  // Attachments are detail content, not poster art. Only catalogue/provider images
-  // are allowed to become the Library/detail cover.
+  // User attachments are resources shown inside details, never implicit poster art.
   return '';
 }
 
 function displayImageForItem(item) {
   return String(item?.image || '').trim();
-}
-
-async function ensureAttachmentObjectUrl(id) {
-  const key = String(id || '');
-  if (!key) return '';
-  if (attachmentCoverObjectUrls.has(key)) return attachmentCoverObjectUrls.get(key);
-  const record = await getAttachmentBlob(key);
-  if (!record?.blob) return '';
-  const url = URL.createObjectURL(record.blob);
-  attachmentCoverObjectUrls.set(key, url);
-  return url;
 }
 
 async function ensureAttachmentCoverUrl(item) {
@@ -7717,7 +7345,7 @@ function loadingTipText() {
 }
 
 function loadingMarkup(label = 'Loading…') {
-  return `<div class=\"loading-with-tip\"><p class=\"loading-detail\">${escapeHtml(label)}</p><p class=\"loading-tip\"><strong>Tip</strong> ${escapeHtml(loadingTipText())}</p></div>`;
+  return `<div class=\"loading-with-tip\"><p class=\"loading-tip\"><strong>Tip</strong> ${escapeHtml(loadingTipText())}</p></div>`;
 }
 
 // ---------------------------
@@ -7737,10 +7365,10 @@ async function openDetails(id) {
     else if (sourceType === 'youtube') { if (isYouTubePlaylistItem(item)) await renderWorkoutDetails(item); else await renderStandaloneYouTubeDetails(item); }
     else if (sourceType === 'book') await renderBookDetails(item);
     else if (sourceType === 'movie') await renderMovieDetails(item);
-    else if (['video-game','board-game'].includes(sourceType)) await renderGameDetails(item);
     else if (sourceType === 'music') await renderMusicDetails(item);
     else if (sourceType === 'artist') await renderArtistDetails(item);
     else if (sourceType === 'song') await renderSongDetails(item);
+    else if (['video-game','board-game'].includes(sourceType)) await renderGameDetails(item);
     else if (sourceType === 'reminder') renderReminderDetails(item);
     else if (['event', 'concert'].includes(sourceType)) await renderEventDetails(item);
     else if (sourceType === 'restaurant') await renderRestaurantDetails(item);
@@ -7752,12 +7380,11 @@ async function openDetails(id) {
     appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
     appendLibraryPeopleSummary(item);
-    appendRepeatLogFunctionality(item);
     appendLibraryPersonalMetadata(item);
-    appendReminderFunctionality(item);
+    appendRepeatLogSection(item);
     await appendSocialFollowerContext(item, () => state.openDetailId === item.id && Boolean(els.detailModal?.open));
     await appendLibrarySimilarRecommendations(item);
-    await appendItemResources(item);
+    appendItemResources(item);
   } catch (error) {
     els.detailBody.innerHTML = `${basicDetailHero(item)}<div class="api-error">${escapeHtml(error.message)}</div>${detailEditButton(item)}`;
     appendFlexibleFeatureProgress(item);
@@ -7765,9 +7392,9 @@ async function openDetails(id) {
     appendLibraryDateSummary(item);
     appendLibraryPeopleSummary(item);
     appendLibraryPersonalMetadata(item);
-    appendReminderFunctionality(item);
+    appendRepeatLogSection(item);
     await appendSocialFollowerContext(item, () => state.openDetailId === item.id && Boolean(els.detailModal?.open));
-    await appendItemResources(item);
+    appendItemResources(item);
   }
 }
 
@@ -8012,49 +7639,30 @@ async function renderMovieDetails(item) {
 
 async function renderGameDetails(item) {
   const sourceType = getSourceType(item);
-  let catalogue = null;
-  if (item.providerId && state.settings.gameCatalogueProxyUrl) {
-    try {
-      catalogue = sourceType === 'video-game'
-        ? await getCached(`game:igdb:${item.providerId}`, () => TrackerAPI.getVideoGameDetails(item.providerId, state.settings))
-        : await getCached(`game:bgg:${item.providerId}`, () => TrackerAPI.getBoardGameDetails(item.providerId, state.settings));
-    } catch (error) {
-      console.warn('[Games] catalogue details unavailable:', error?.message || error);
-    }
-  }
-  if (catalogue) {
-    let changed = false;
-    if (catalogue.image && catalogue.image !== item.image) { item.image = catalogue.image; changed = true; }
-    if (catalogue.subtitle && catalogue.subtitle !== item.subtitle) { item.subtitle = catalogue.subtitle; changed = true; }
-    if (catalogue.releaseDate && catalogue.releaseDate !== item.releaseDate) { item.releaseDate = catalogue.releaseDate; changed = true; }
-    if (catalogue.genres?.length && JSON.stringify(catalogue.genres) !== JSON.stringify(item.genres || [])) { item.genres = [...catalogue.genres]; changed = true; }
-    const nextMeta = {
-      ...(item.gameMeta || {}), kind: sourceType,
-      description: catalogue.description || item.gameMeta?.description || '',
-      platforms: catalogue.platforms || item.gameMeta?.platforms || [],
-      designers: catalogue.designers || item.gameMeta?.designers || [],
-      mechanics: catalogue.mechanics || item.gameMeta?.mechanics || [],
-      minPlayers: Number(catalogue.minPlayers || item.gameMeta?.minPlayers || 0),
-      maxPlayers: Number(catalogue.maxPlayers || item.gameMeta?.maxPlayers || 0),
-      playTime: Number(catalogue.playTime || item.gameMeta?.playTime || 0),
-      catalogueRating: Number(catalogue.catalogueRating || item.gameMeta?.catalogueRating || 0),
-      catalogueUrl: catalogue.catalogueUrl || item.gameMeta?.catalogueUrl || ''
-    };
-    if (JSON.stringify(nextMeta) !== JSON.stringify(item.gameMeta || {})) { item.gameMeta = nextMeta; changed = true; }
-    if (changed) saveItems();
-  }
-  const meta = item.gameMeta || {};
-  const year = String(item.releaseDate || '').slice(0,4);
-  const players = meta.minPlayers && meta.maxPlayers ? (meta.minPlayers === meta.maxPlayers ? `${meta.minPlayers} player${meta.minPlayers === 1 ? '' : 's'}` : `${meta.minPlayers}–${meta.maxPlayers} players`) : '';
-  const subtitle = sourceType === 'video-game'
-    ? [year, ...(meta.platforms || []).slice(0,4)].filter(Boolean).join(' · ')
-    : [year, players, meta.playTime ? `${meta.playTime} min` : ''].filter(Boolean).join(' · ');
-  const fallbackUrl = sourceType === 'video-game'
-    ? (item.providerId ? `https://www.igdb.com/games/${encodeURIComponent(String(item.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''))}` : '')
-    : (item.providerId ? `https://boardgamegeek.com/boardgame/${encodeURIComponent(item.providerId)}` : '');
-  const catalogueUrl = meta.catalogueUrl || fallbackUrl;
-  const sourceLabel = sourceType === 'video-game' ? 'IGDB' : 'BoardGameGeek';
-  els.detailBody.innerHTML = `${libraryDetailHero({ type: sourceType === 'video-game' ? 'VIDEO GAME' : 'BOARD GAME', title:item.title, image:displayImageForItem(item), subtitle:subtitle || item.subtitle || '', overview:meta.description || '' })}${libraryDetailActions(item,{ leading: catalogueUrl ? `<a class="secondary-button detail-link-button" href="${escapeAttr(catalogueUrl)}" target="_blank" rel="noopener">${escapeHtml(sourceLabel)} ↗</a>` : '' })}`;
+  const details = sourceType === 'board-game'
+    ? await getCached(`bgg:game:${item.providerId}`, () => TrackerAPI.getBoardGameDetails(item.providerId, state.settings))
+    : await getCached(`igdb:game:${item.providerId}`, () => TrackerAPI.getVideoGameDetails(item.providerId, state.settings));
+  const game = details || {
+    title: item.title, image: item.image, subtitle: item.subtitle, description: '', genres: item.genres || [], releaseDate: item.releaseDate || ''
+  };
+  if (game.image) item.image = game.image;
+  if (game.subtitle) item.subtitle = game.subtitle;
+  if (game.releaseDate) item.releaseDate = game.releaseDate;
+  if (game.genres?.length) item.genres = [...new Set(game.genres)];
+  item.raw = { ...(item.raw || {}), ...(game.raw || {}) };
+  saveItems();
+
+  const info = sourceType === 'board-game'
+    ? [game.minPlayers && game.maxPlayers ? `${game.minPlayers}${game.maxPlayers !== game.minPlayers ? `–${game.maxPlayers}` : ''} players` : '', game.playTime ? `${game.playTime} min` : '', ...(game.mechanics || []).slice(0,3)].filter(Boolean).join(' · ')
+    : [...(game.platforms || []).slice(0,4), ...(game.genres || []).slice(0,3)].filter(Boolean).join(' · ');
+  const rating = Number(game.catalogueRating || 0);
+  const ratingText = rating ? (rating > 10 ? `${(rating/10).toFixed(1)}/10` : `${rating.toFixed(1)}/10`) : '';
+  const url = game.catalogueUrl || '';
+  els.detailBody.innerHTML = `
+    ${libraryDetailHero({ type: sourceType === 'board-game' ? 'BOARD GAME' : 'VIDEO GAME', title: game.title || item.title, image: game.image || item.image, subtitle: [game.releaseDate?.slice(0,4) || '', ratingText, info].filter(Boolean).join(' · '), overview: game.description || '' })}
+    ${detailEditButton(item)}
+    ${url ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(url)}" target="_blank" rel="noopener">Open catalogue page ↗</a></section>` : ''}
+  `;
 }
 
 async function renderEventDetails(item) {
@@ -8177,7 +7785,28 @@ function artistFavoriteButtonMarkup(item, payload) {
 }
 
 async function renderArtistDetails(item) {
-  const data = await getCached(`artist:v2:${item.providerId}`, () => TrackerAPI.getArtistDetails(item.providerId, state.settings));
+  // Discover/Add now treats Music as artist-first and may save a Last.fm-backed
+  // artist. Resolve that artist to Apple's catalogue only for its album/song
+  // catalogue; keep the Omni item itself attached to the original artist source.
+  let appleArtistId = String(item.musicMeta?.itunesArtistId || (item.provider === 'itunes' ? item.providerId : '') || '');
+  if (!appleArtistId) {
+    try {
+      const matches = await TrackerAPI.searchCatalogue(item.title || item.artistName || '', 'artist', state.settings);
+      const wanted = normalizeSearchText(item.title || item.artistName || '');
+      const exact = (matches || []).find(match => normalizeSearchText(match.title || match.artistName || '') === wanted) || matches?.[0];
+      if (exact?.providerId) {
+        appleArtistId = String(exact.providerId);
+        item.musicMeta = { ...(item.musicMeta || {}), itunesArtistId: appleArtistId };
+        if (!item.image && exact.image) item.image = exact.image;
+        saveItems();
+      }
+    } catch (error) {
+      console.warn('[Music] Could not resolve artist catalogue:', error?.message || error);
+    }
+  }
+  const data = appleArtistId
+    ? await getCached(`artist:v3:${appleArtistId}`, () => TrackerAPI.getArtistDetails(appleArtistId, state.settings))
+    : { results: [] };
   const artist = (data.results || []).find(result => result.wrapperType === 'artist') || {};
   const liveAlbums = (data.results || []).filter(result => result.wrapperType === 'collection');
   const liveSongs = (data.results || []).filter(result => result.wrapperType === 'track');
@@ -8285,37 +7914,159 @@ function renderActivityDetails(item) {
   `;
 }
 
+function itemHasRepeatLog(item) {
+  return Boolean(item && getSourceType(item) !== 'class' && item.featureConfig?.repeatableLog);
+}
+
 function repeatLogHistoryEntries(item) {
+  if (!item) return [];
+  const kind = getSourceType(item) === 'class' ? 'class-attended' : 'repeatable-log';
   return state.history
-    .filter(entry => entry.sourceItemId === item.id && ['repeat-log','class-attended'].includes(entry.kind))
+    .filter(entry => entry.sourceItemId === item.id && entry.kind === kind)
     .sort((a, b) => String(b.date || b.createdAt || '').localeCompare(String(a.date || a.createdAt || '')));
 }
 
-function classHistoryEntries(item) {
-  return repeatLogHistoryEntries(item);
+function recalculateRepeatableItemRating(item) {
+  if (!item || (!itemHasRepeatLog(item) && getSourceType(item) !== 'class')) return;
+  const ratings = repeatLogHistoryEntries(item).map(entry => Number(entry.rating || 0)).filter(value => value > 0);
+  item.rating = ratings.length ? Math.round((ratings.reduce((sum, value) => sum + value, 0) / ratings.length) * 2) / 2 : 0;
+  item.updatedAt = new Date().toISOString();
 }
 
-function repeatLogFunctionalityMarkup(item) {
-  if (!itemHasRepeatLog(item) || getSourceType(item) === 'class') return '';
+let repeatLogDraftRating = 0;
+
+function ensureRepeatLogModal() {
+  let modal = $('#repeatLogModal');
+  if (modal) return modal;
+  modal = document.createElement('dialog');
+  modal.id = 'repeatLogModal';
+  modal.className = 'modal small-modal repeat-log-modal';
+  modal.innerHTML = `
+    <button class="modal-x" type="button" data-close="repeatLogModal" aria-label="Close">×</button>
+    <div class="modal-heading"><p class="modal-eyebrow">LOG</p><h2 id="repeatLogModalTitle">Add log</h2></div>
+    <form id="repeatLogForm" class="item-form">
+      <input id="repeatLogItemId" type="hidden" />
+      <label class="field"><span>Entry name <em>optional</em></span><input id="repeatLogTitle" type="text" autocomplete="off" placeholder="Leave blank to use the main title" /></label>
+      <fieldset class="rating-fieldset repeat-log-rating-field"><legend>Rating</legend><div id="repeatLogRatingPicker" class="star-picker" aria-label="Rating out of five stars">${[1,2,3,4,5].map(value => `<button type="button" data-repeat-log-rating="${value}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}<button id="repeatLogClearRating" class="clear-rating" type="button">clear</button></div></fieldset>
+      <label class="field"><span>Date</span><input id="repeatLogDate" type="date" required /></label>
+      <label class="field"><span>Note <em>optional</em></span><textarea id="repeatLogNote" rows="3" placeholder="Anything you want to remember"></textarea></label>
+      <div class="modal-actions end-only"><div class="actions-right"><button class="quiet-button" type="button" data-close="repeatLogModal">Cancel</button><button class="primary-button" type="submit">Save log</button></div></div>
+    </form>`;
+  document.body.appendChild(modal);
+  modal.querySelector('#repeatLogForm')?.addEventListener('submit', saveRepeatLogForm);
+  modal.querySelector('#repeatLogRatingPicker')?.addEventListener('click', event => {
+    const button = event.target.closest('[data-repeat-log-rating]');
+    if (!button) return;
+    const selected = ratingFromStarPointer(event, button, 'data-repeat-log-rating');
+    setRepeatLogDraftRating(toggledStarRating(repeatLogDraftRating, selected));
+  });
+  modal.querySelector('#repeatLogClearRating')?.addEventListener('click', () => setRepeatLogDraftRating(0));
+  return modal;
+}
+
+function setRepeatLogDraftRating(value) {
+  repeatLogDraftRating = normalizeStarRating(value);
+  syncStarPicker($('#repeatLogRatingPicker'), '[data-repeat-log-rating]', 'data-repeat-log-rating', repeatLogDraftRating);
+}
+
+function openRepeatLogModal(item) {
+  if (!item) return;
+  const modal = ensureRepeatLogModal();
+  $('#repeatLogItemId').value = item.id;
+  $('#repeatLogModalTitle').textContent = `Add log · ${item.title}`;
+  $('#repeatLogTitle').value = '';
+  $('#repeatLogDate').value = todayString();
+  $('#repeatLogNote').value = '';
+  setRepeatLogDraftRating(0);
+  showDialogAtTop(modal);
+}
+
+function saveRepeatLogForm(event) {
+  event.preventDefault();
+  const item = findItem($('#repeatLogItemId')?.value || '');
+  if (!item) return;
+  const date = $('#repeatLogDate')?.value || '';
+  if (!date) return;
+  const entryTitle = String($('#repeatLogTitle')?.value || '').trim() || item.title;
+  addHistoryRecord({
+    sourceItemId: item.id,
+    sourceType: getSourceType(item),
+    type: item.type,
+    typeLabel: getItemTypeLabel(item),
+    subcategory: item.subcategory || '',
+    date,
+    showOnCalendar: true,
+    kind: getSourceType(item) === 'class' ? 'class-attended' : 'repeatable-log',
+    title: entryTitle,
+    subtitle: '',
+    notes: String($('#repeatLogNote')?.value || '').trim(),
+    rating: repeatLogDraftRating,
+    image: item.image || '',
+    provider: item.provider || 'manual',
+    providerId: item.providerId || ''
+  });
+  recalculateRepeatableItemRating(item);
+  saveHistory();
+  saveItems();
+  $('#repeatLogModal')?.close();
+  renderAll();
+  openDetails(item.id);
+}
+
+function deleteRepeatLogEntry(id, itemId) {
+  const entry = state.history.find(record => record.id === id && record.sourceItemId === itemId);
+  const item = findItem(itemId);
+  if (!entry || !item) return;
+  if (!confirm(`Delete log “${entry.title || item.title}”?`)) return;
+  state.history = state.history.filter(record => record.id !== id);
+  recalculateRepeatableItemRating(item);
+  saveHistory();
+  saveItems();
+  renderAll();
+  openDetails(item.id);
+}
+
+function repeatLogSectionMarkup(item) {
   const entries = repeatLogHistoryEntries(item);
-  const rows = entries.length
-    ? entries.map(entry => `<article class="class-history-row"><div class="class-history-date">${escapeHtml(entry.date ? formatShortCalendarDate(entry.date) : 'Undated')}</div><div class="class-history-copy"><strong>${escapeHtml(entry.title || item.title || 'Log')}</strong>${entry.notes ? `<span>${escapeHtml(entry.notes)}</span>` : ''}</div><div class="class-history-actions"><span class="class-history-rating">${Number(entry.rating || 0) ? `★ ${escapeHtml(formatPersonalRating(entry.rating))}` : ''}</span><button class="quiet-button class-history-edit" type="button" data-edit-repeat-log="${escapeAttr(entry.id)}">Edit</button><button class="quiet-button class-history-delete" type="button" data-delete-repeat-log="${escapeAttr(entry.id)}">Delete</button></div></article>`).join('')
-    : '<p class="detail-meta">No logs yet.</p>';
-  return `<section class="detail-section class-history-section repeat-log-section"><div class="detail-section-heading"><h3>History</h3><button class="secondary-button" type="button" data-add-repeat-log="${escapeAttr(item.id)}">+ Add log</button></div><div class="class-history-list">${rows}</div></section>`;
+  const rows = entries.length ? entries.map(entry => `
+    <article class="repeat-log-history-row">
+      <div class="repeat-log-history-main">
+        <span class="repeat-log-history-date">${escapeHtml(entry.date ? formatShortCalendarDate(entry.date) : 'Undated')}</span>
+        <strong>${escapeHtml(entry.title || item.title)}</strong>
+        ${Number(entry.rating || 0) ? `<span class="repeat-log-history-stars">★ ${escapeHtml(formatPersonalRating(entry.rating))}</span>` : ''}
+        ${entry.notes ? `<p>${escapeHtml(entry.notes)}</p>` : ''}
+      </div>
+      <div class="repeat-log-history-actions">
+        <button class="secondary-button" type="button" data-edit-repeat-log="${escapeAttr(entry.id)}">Edit</button>
+        <button class="quiet-button" type="button" data-delete-repeat-log="${escapeAttr(entry.id)}" data-repeat-item-id="${escapeAttr(item.id)}">Delete</button>
+      </div>
+    </article>`).join('') : '<p class="detail-meta">No logs yet.</p>';
+  return `<section class="detail-section repeat-log-section" data-repeat-log-section="${escapeAttr(item.id)}"><div class="detail-section-heading"><h3>History</h3><button class="secondary-button repeat-log-add-button" type="button" data-add-repeat-log="${escapeAttr(item.id)}">+ Add log</button></div><div class="repeat-log-history-list">${rows}</div></section>`;
 }
 
-function appendRepeatLogFunctionality(item) {
-  if (!els.detailBody || !itemHasRepeatLog(item) || getSourceType(item) === 'class') return;
-  if (els.detailBody.querySelector('.repeat-log-section')) return;
-  els.detailBody.insertAdjacentHTML('beforeend', repeatLogFunctionalityMarkup(item));
+function appendRepeatLogSection(item) {
+  if (!itemHasRepeatLog(item) || !els.detailBody || els.detailBody.querySelector(`[data-repeat-log-section="${CSS.escape(item.id)}"]`)) return;
+  els.detailBody.insertAdjacentHTML('beforeend', repeatLogSectionMarkup(item));
+}
+
+function classHistoryEntries(item) {
+  return state.history
+    .filter(entry => entry.sourceItemId === item.id && entry.kind === 'class-attended')
+    .sort((a, b) => String(b.date || b.createdAt || '').localeCompare(String(a.date || a.createdAt || '')));
 }
 
 function renderClassDetails(item) {
-  const entries = repeatLogHistoryEntries(item);
+  const entries = classHistoryEntries(item);
   const rows = entries.length
-    ? entries.map(entry => `<article class="class-history-row"><div class="class-history-date">${escapeHtml(entry.date ? formatShortCalendarDate(entry.date) : 'Undated')}</div><div class="class-history-copy"><strong>${escapeHtml(entry.title || item.title || 'Log')}</strong>${entry.notes ? `<span>${escapeHtml(entry.notes)}</span>` : ''}</div><div class="class-history-actions"><span class="class-history-rating">${Number(entry.rating || 0) ? `★ ${escapeHtml(formatPersonalRating(entry.rating))}` : ''}</span><button class="quiet-button class-history-edit" type="button" data-edit-repeat-log="${escapeAttr(entry.id)}">Edit</button><button class="quiet-button class-history-delete" type="button" data-delete-repeat-log="${escapeAttr(entry.id)}">Delete</button></div></article>`).join('')
-    : '<p class="detail-meta">No logs yet.</p>';
-  els.detailBody.innerHTML = `${libraryDetailHero({ type:getItemTypeLabel(item).toUpperCase(), title:item.title || 'Classes', image:displayImageForItem(item), subtitle:`${entries.length} ${entries.length === 1 ? 'log' : 'logs'}`, overview:'' })}<section class="detail-section class-history-section"><div class="detail-section-heading"><h3>History</h3><button class="secondary-button" type="button" data-add-repeat-log="${escapeAttr(item.id)}">+ Add log</button></div><div class="class-history-list">${rows}</div></section>`;
+    ? entries.map(entry => `<article class=\"class-history-row\">
+        <div class=\"class-history-date\">${escapeHtml(entry.date ? formatShortCalendarDate(entry.date) : 'Undated')}</div>
+        <div class=\"class-history-copy\"><strong>${escapeHtml(entry.title || 'Class')}</strong>${entry.notes ? `<span>${escapeHtml(entry.notes)}</span>` : ''}</div>
+        <div class=\"class-history-rating\">${Number(entry.rating || 0) ? `★ ${escapeHtml(formatPersonalRating(entry.rating))}` : ''}</div>
+      </article>`).join('')
+    : '<p class=\"detail-meta\">No classes logged yet.</p>';
+  els.detailBody.innerHTML = `
+    ${libraryDetailHero({ type:'CLASSES', title:'Classes', image:displayImageForItem(item), subtitle:`${entries.length} ${entries.length === 1 ? 'class' : 'classes'} logged`, overview:'' })}
+    <section class=\"detail-section class-history-section\"><div class=\"detail-section-heading\"><h3>Class history</h3><button class=\"secondary-button\" type=\"button\" data-add-class-log>+ Add class</button></div><div class=\"class-history-list\">${rows}</div></section>`;
 }
 
 function libraryRecommendationIdentity(result) {
@@ -8593,7 +8344,12 @@ function formatPersonalRating(value) {
 function libraryPersonalMetadataMarkup(item) {
   if (itemHasRepeatLog(item)) {
     const count = repeatLogHistoryEntries(item).length;
-    return `<div class="library-personal-meta library-class-meta" data-library-personal-meta="${escapeAttr(item.id)}"><div class="library-personal-meta-row"><span class="library-class-meta-count">${count} ${count === 1 ? 'log' : 'logs'}</span><div class="library-personal-repeat-actions"><button class="secondary-button" type="button" data-add-repeat-log="${escapeAttr(item.id)}">+ Add log</button><button class="secondary-button library-personal-edit" type="button" data-edit-id="${escapeAttr(item.id)}">Edit</button></div></div></div>`;
+    const avg = Number(item.rating || 0) > 0 ? ` · ${formatPersonalRating(item.rating)}★ avg` : '';
+    return `<div class="library-personal-meta library-repeat-meta" data-library-personal-meta="${escapeAttr(item.id)}"><div class="library-personal-meta-row repeat-log-summary-actions"><span>${count} ${count === 1 ? 'log' : 'logs'}${escapeHtml(avg)}</span><div><button class="secondary-button repeat-summary-button" type="button" data-add-repeat-log="${escapeAttr(item.id)}">+ Add log</button><button class="secondary-button repeat-summary-button" type="button" data-edit-id="${escapeAttr(item.id)}">Edit</button></div></div></div>`;
+  }
+  if (getSourceType(item) === 'class') {
+    const count = classHistoryEntries(item).length;
+    return `<div class="library-personal-meta library-class-meta" data-library-personal-meta="${escapeAttr(item.id)}"><div class="library-personal-meta-row"><span class="library-class-meta-count">${count} ${count === 1 ? 'class' : 'classes'} logged</span><button class="secondary-button library-personal-edit" type="button" data-add-class-log>+ Add class</button></div></div>`;
   }
   const rating = Math.max(0, Math.min(5, Number(item.rating || 0)));
   const calendarFootnote = libraryCalendarToggleButton(item);
@@ -8813,43 +8569,47 @@ async function deleteRemovedDraftAttachments() {
   state.attachmentDraft.removedFileIds.clear();
 }
 
-async function appendItemResources(item) {
+function appendItemResources(item) {
   const attachments = item.attachments || [];
   const links = item.links || [];
   if (!attachments.length && !links.length) return;
 
-  const imageFiles = attachments.filter(file => String(file.mime || '').startsWith('image/'));
-  const otherFiles = attachments.filter(file => !String(file.mime || '').startsWith('image/'));
-  const imagePreviews = await Promise.all(imageFiles.map(async file => ({
-    file,
-    url: await ensureAttachmentObjectUrl(file.id).catch(() => '')
-  })));
-
+  const images = attachments.filter(file => String(file.mime || '').startsWith('image/'));
+  const files = attachments.filter(file => !String(file.mime || '').startsWith('image/'));
   const section = document.createElement('section');
-  section.className = 'detail-section resources-section';
+  section.className = 'detail-section resources-section compact-resources-section';
   section.innerHTML = `
-    <h3>${imageFiles.length && !otherFiles.length && !links.length ? 'Photos' : 'Files & links'}</h3>
-    ${imagePreviews.length ? `<div class="resource-image-grid">${imagePreviews.map(({ file, url }) => url ? `
-      <button class="resource-image-card" type="button" data-attachment-id="${escapeAttr(file.id)}" aria-label="Open ${escapeAttr(file.name || 'photo')}">
-        <img src="${escapeAttr(url)}" alt="${escapeAttr(file.name || '')}" loading="lazy" />
-        <span>${escapeHtml(file.name || 'Photo')}</span>
-      </button>` : `
-      <button class="resource-card" type="button" data-attachment-id="${escapeAttr(file.id)}">
-        <span class="resource-icon">${attachmentKindIcon(file.mime)}</span>
-        <span><strong>${escapeHtml(file.name)}</strong><small>IMAGE · ${formatBytes(file.size)}</small></span>
-        <span class="resource-arrow">↗</span>
+    <h3>Files & links</h3>
+    ${images.length ? `<div class="resource-image-grid">${images.map(file => `
+      <button class="resource-image-card" type="button" data-inline-attachment-id="${escapeAttr(file.id)}" data-attachment-id="${escapeAttr(file.id)}" aria-label="Open ${escapeAttr(file.name || 'image')}">
+        <span class="resource-image-loading">Image</span>
       </button>`).join('')}</div>` : ''}
-    ${otherFiles.length ? `<div class="resource-grid">${otherFiles.map(file => `
+    ${files.length ? `<div class="resource-grid compact-resource-grid">${files.map(file => `
       <button class="resource-card" type="button" data-attachment-id="${escapeAttr(file.id)}">
         <span class="resource-icon">${attachmentKindIcon(file.mime)}</span>
         <span><strong>${escapeHtml(file.name)}</strong><small>${escapeHtml(attachmentKindLabel(file.mime))} · ${formatBytes(file.size)}</small></span>
         <span class="resource-arrow">↗</span>
       </button>`).join('')}</div>` : ''}
-    ${links.length ? `<div class="external-links">${links.map(link => `
+    ${links.length ? `<div class="external-links compact-external-links">${links.map(link => `
       <a class="external-link-button" href="${escapeAttr(link.url)}" target="_blank" rel="noopener noreferrer">
         <span>${escapeHtml(link.label)}</span><span>↗</span>
       </a>`).join('')}</div>` : ''}`;
   els.detailBody.appendChild(section);
+
+  for (const file of images) {
+    getAttachmentBlob(file.id).then(record => {
+      const button = section.querySelector(`[data-inline-attachment-id="${CSS.escape(file.id)}"]`);
+      if (!button || !record?.blob) return;
+      const url = URL.createObjectURL(record.blob);
+      const image = document.createElement('img');
+      image.className = 'resource-inline-image';
+      image.alt = file.name || '';
+      image.src = url;
+      image.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+      image.addEventListener('error', () => URL.revokeObjectURL(url), { once: true });
+      button.replaceChildren(image);
+    }).catch(() => {});
+  }
 }
 
 async function openAttachmentViewer(id) {
@@ -9144,7 +8904,8 @@ function saveBookProgress(event) {
   event.preventDefault();
   const item = findItem(els.bookProgressId.value);
   if (!item) return;
-  const wasFinished = Boolean(item.completedAt) && Number(item.progress?.totalPages || 0) > 0 && Number(item.progress?.currentPage || 0) >= Number(item.progress?.totalPages || 0);
+  const previousCurrent = Math.max(0, Number(item.progress?.currentPage || 0));
+  const wasFinished = Boolean(item.completedAt) && Number(item.progress?.totalPages || 0) > 0 && previousCurrent >= Number(item.progress?.totalPages || 0);
   const current = Math.max(0, Number(els.progressCurrentPage.value || 0));
   const total = Math.max(0, Number(els.progressTotalPages.value || 0));
 
@@ -9161,10 +8922,14 @@ function saveBookProgress(event) {
 
   const latestDraftPeriod = periods.at(-1);
   const readingPaused = Boolean(latestDraftPeriod?.startDate && latestDraftPeriod.endDate);
+  const resumedByProgress = current > previousCurrent;
   if (current > 0 && !(total && current >= total)) {
-    if (readingPaused) {
+    if (resumedByProgress) {
+      item.bookDisposition = '';
+      setItemQueueStatus(item, 'upnext');
+    } else if (readingPaused) {
       item.bookDisposition = 'paused';
-      setItemQueueStatus(item, 'library');
+      setItemQueueStatus(item, 'tbr');
     } else if (!['paused', 'dnf'].includes(item.bookDisposition)) {
       item.bookDisposition = '';
       setItemQueueStatus(item, 'upnext');
@@ -9857,16 +9622,6 @@ function openHistoryEdit(id) {
   const entry = state.history.find(record => record.id === id);
   if (!entry || !els.historyEditModal) return;
   const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
-  const repeatEntry = ['repeat-log','class-attended'].includes(entry.kind);
-  els.historyEditModal.classList.toggle('is-repeat-entry-edit', repeatEntry);
-  const typeField = els.historyEditType?.closest('label');
-  const subcategoryField = els.historyEditSubcategory?.closest('label');
-  const subtitleField = els.historyEditSubtitle?.closest('label');
-  if (typeField) typeField.hidden = repeatEntry;
-  if (subcategoryField) subcategoryField.hidden = repeatEntry;
-  if (subtitleField) subtitleField.hidden = repeatEntry;
-  const typeDateRow = els.historyEditType?.closest('.two-column-fields');
-  typeDateRow?.classList.toggle('is-single-field', repeatEntry);
   els.historyEditId.value = entry.id;
   els.historyEditTitle.value = entry.title || '';
   els.historyEditType.value = entry.typeLabel || getTypeLabel(entry.type) || '';
@@ -9924,27 +9679,25 @@ function saveHistoryEdit(event) {
   const entry = state.history.find(record => record.id === id);
   if (!entry) return;
 
-  const repeatEntry = ['repeat-log','class-attended'].includes(entry.kind);
-  if (!repeatEntry) {
-    const typeLabel = cleanTypeLabel(els.historyEditType.value) || entry.typeLabel || getTypeLabel(entry.type);
-    const type = editableTypeFromLabel(typeLabel, entry.type);
-    registerCustomType(type, typeLabel);
-    entry.type = type;
-    entry.typeLabel = typeLabel;
-    entry.subcategory = cleanTypeLabel(els.historyEditSubcategory?.value || '');
-    entry.subtitle = els.historyEditSubtitle.value.trim();
-  }
+  const typeLabel = cleanTypeLabel(els.historyEditType.value) || entry.typeLabel || getTypeLabel(entry.type);
+  const type = editableTypeFromLabel(typeLabel, entry.type);
+  registerCustomType(type, typeLabel);
 
   entry.title = els.historyEditTitle.value.trim() || entry.title;
+  entry.type = type;
+  entry.typeLabel = typeLabel;
+  entry.subcategory = cleanTypeLabel(els.historyEditSubcategory?.value || '');
+  entry.subtitle = els.historyEditSubtitle.value.trim();
   entry.date = els.historyEditDate.value || '';
   entry.rating = Number(els.historyEditRating.value || 0);
   entry.notes = els.historyEditNote.value.trim();
   entry.showOnCalendar = Boolean(els.historyEditShowCalendar.checked && entry.date);
   entry.updatedAt = new Date().toISOString();
-  if (repeatEntry) syncRepeatLogGroupRating(entry.sourceItemId);
+  const sourceItem = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
+  if (sourceItem && (itemHasRepeatLog(sourceItem) || getSourceType(sourceItem) === 'class')) recalculateRepeatableItemRating(sourceItem);
 
   saveHistory();
-  if (repeatEntry) saveItems();
+  if (sourceItem) saveItems();
   els.historyEditModal.close();
   renderAll();
 }
@@ -9970,11 +9723,11 @@ function deleteHistoryEdit() {
   const entry = state.history.find(record => record.id === id);
   if (!entry) return;
   if (!confirm(`Delete tracked entry “${entry.title}”?`)) return;
-  const repeatEntry = ['repeat-log','class-attended'].includes(entry.kind);
+  const sourceItem = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
   state.history = state.history.filter(record => record.id !== id);
-  if (repeatEntry) syncRepeatLogGroupRating(entry.sourceItemId);
+  if (sourceItem && (itemHasRepeatLog(sourceItem) || getSourceType(sourceItem) === 'class')) recalculateRepeatableItemRating(sourceItem);
   saveHistory();
-  if (repeatEntry) saveItems();
+  if (sourceItem) saveItems();
   els.historyEditModal.close();
   renderAll();
 }
@@ -10000,10 +9753,10 @@ const DISCOVER_GENRES = [
   { value: 'philosophy', label: 'Philosophy', tmdb: [], keywords: ['philosophy'], book: ['philosophy'] },
   { value: 'psychology', label: 'Psychology', tmdb: [], keywords: ['psychology'], book: ['psychology'] },
   { value: 'romance', label: 'Romance', tmdb: ['Romance'], keywords: ['romance'], book: ['romance'] },
-  { value: 'reality', label: 'Reality', tmdb: ['Reality'], keywords: ['reality television', 'reality tv'], book: [] },
   { value: 'science', label: 'Science', tmdb: [], keywords: ['science'], book: ['science'] },
   { value: 'science-fiction', label: 'Science Fiction', tmdb: ['Science Fiction', 'Sci-Fi & Fantasy'], keywords: ['science fiction'], book: ['science fiction'] },
-  { value: 'thriller', label: 'Thriller', tmdb: ['Thriller'], keywords: ['thriller', 'suspense', 'psychological thriller', 'crime thriller'], book: ['thriller', 'suspense'] }
+  { value: 'thriller', label: 'Thriller', tmdb: ['Thriller'], keywords: ['thriller', 'suspense', 'psychological thriller', 'crime thriller'], book: ['thriller', 'suspense'] },
+  { value: 'reality', label: 'Reality', tmdb: ['Reality'], keywords: ['reality television', 'reality tv', 'reality'], book: [] }
 ]
 
 function selectedDiscoverGenre() {
@@ -10080,7 +9833,7 @@ function discoverResultMatchesGenre(result) {
     const resultKeywordIds = new Set((result._tmdbKeywordIds || []).map(String));
     return keywordIds.size ? [...keywordIds].some(id => resultKeywordIds.has(id)) : false;
   }
-  if (result.sourceType === 'event' || result.sourceType === 'concert' || result.sourceType === 'restaurant' || ['music','artist','song','video-game','board-game'].includes(result.sourceType)) {
+  if (result.sourceType === 'event' || result.sourceType === 'concert' || result.sourceType === 'restaurant' || ['music','artist','song'].includes(result.sourceType)) {
     // Live, food, and music have their own category/taste controls. The shared
     // Genre dropdown is built for TV, movies, and books; applying it here can
     // accidentally collapse an Events feed to only one or two cards.
@@ -10156,12 +9909,10 @@ async function runDiscoverSearch(forcedQuery = '') {
   try {
     const types = normalizedDiscoverContentTypes();
     const settled = await Promise.allSettled(types.map(type => {
-      if (type === 'game') {
-        return Promise.all([
-          TrackerAPI.searchCatalogue(query, 'video-game', state.settings, { maxResults: 20 }),
-          TrackerAPI.searchCatalogue(query, 'board-game', state.settings, { maxResults: 20 })
-        ]).then(groups => groups.flat());
-      }
+      if (type === 'game') return Promise.allSettled([
+        TrackerAPI.searchCatalogue(query, 'video-game', state.settings, { maxResults: 20 }),
+        TrackerAPI.searchCatalogue(query, 'board-game', state.settings, { maxResults: 20 })
+      ]).then(entries => entries.flatMap(entry => entry.status === 'fulfilled' ? entry.value : []));
       if (type === 'concert') return TrackerAPI.searchCatalogue(query, 'concert', state.settings, {
         city: state.discoverPrefs.eventCity || state.settings.homeCity || '',
         countryCode: state.discoverPrefs.eventCountry || state.settings.homeCountry || state.settings.tmdbWatchRegion || 'CA'
@@ -10182,10 +9933,11 @@ async function runDiscoverSearch(forcedQuery = '') {
     for (let index = 0; index < settled.length; index += 1) {
       const entry = settled[index];
       if (entry.status !== 'fulfilled') continue;
-      const selectedType = types[index];
-      for (const result of entry.value || []) {
-        const sourceType = result.sourceType || selectedType;
-        if (!filterAlreadyKnown([result], sourceType).length) continue;
+      const requestedType = types[index];
+      const rawResults = entry.value || [];
+      for (const result of rawResults) {
+        const sourceType = requestedType === 'game' ? (result.sourceType || result.gameKind || 'video-game') : requestedType;
+        if (findDiscoverItem({ ...result, sourceType })) continue;
         const normalized = { ...result, sourceType, categories: result.raw?.volumeInfo?.categories || result.categories || [] };
         if (state.discoverPrefs.englishTVOnly === true && sourceType === 'tv' && String(normalized.raw?.original_language || '').toLowerCase() !== 'en') continue;
         if (!(await discoverSearchResultMatchesGenre(normalized))) continue;
@@ -10688,7 +10440,7 @@ async function loadMoreDiscoverFeed() {
   try {
     const candidates = await collectDiscoverFeedCandidates(batchNumber);
     const requestedContentTypes = normalizedDiscoverContentTypes();
-    const selectedContentTypes = expandedDiscoverSourceTypes(requestedContentTypes);
+    const selectedContentTypes = new Set(requestedContentTypes);
     musicDiscoverDebug('feed candidates collected', {
       mode: state.discoverMode,
       batchNumber,
@@ -10819,34 +10571,66 @@ function asLiveDiscoverCandidate(result, source, boost = 0, exploration = false)
   };
 }
 
+async function collectGameDiscoverCandidates(batchNumber, mode = 'for-you') {
+  const page = Math.max(1, Number(batchNumber || 1));
+  const settled = await Promise.allSettled([
+    TrackerAPI.discoverVideoGames(mode, page, state.settings, 24),
+    TrackerAPI.discoverBoardGames(mode, page, state.settings, 24)
+  ]);
+  const video = settled[0].status === 'fulfilled'
+    ? filterAlreadyKnown(settled[0].value || [], 'video-game').map((result, index) => ({
+        ...result, sourceType: 'video-game', _discoverSource: `igdb-${mode}`,
+        _discoverBoost: mode === 'popular' ? 7 - index * .03 : mode === 'new' ? 5 - index * .03 : 4 - index * .03,
+        _discoverExploration: mode === 'for-you'
+      }))
+    : [];
+  const board = settled[1].status === 'fulfilled'
+    ? filterAlreadyKnown(settled[1].value || [], 'board-game').map((result, index) => ({
+        ...result, sourceType: 'board-game', _discoverSource: `bgg-${mode}`,
+        _discoverBoost: mode === 'popular' ? 7 - index * .03 : mode === 'new' ? 5 - index * .03 : 4 - index * .03,
+        _discoverExploration: mode === 'for-you'
+      }))
+    : [];
+
+  if (settled[0].status === 'rejected') console.warn('[Discover][Video games] catalogue request failed:', settled[0].reason?.message || settled[0].reason);
+  if (settled[1].status === 'rejected') console.warn('[Discover][Board games] catalogue request failed:', settled[1].reason?.message || settled[1].reason);
+
+  // Keep both game catalogues visible. IGDB has much richer popularity signals,
+  // so a simple combined ranking can otherwise crowd BoardGameGeek out entirely.
+  const mixed = [];
+  const max = Math.max(video.length, board.length);
+  for (let index = 0; index < max; index += 1) {
+    if (video[index]) mixed.push(video[index]);
+    if (board[index]) mixed.push(board[index]);
+  }
+  return dedupeDiscoverCandidatesByBoost(mixed);
+}
+
 async function collectDiscoverFeedCandidates(batchNumber) {
   const selectedTypes = normalizedDiscoverContentTypes();
   const selected = new Set(selectedTypes);
-  const selectedSources = expandedDiscoverSourceTypes(selectedTypes);
-  const musicOnly = selectedTypes.length > 0 && selectedTypes.every(type => ['music', 'artist', 'song'].includes(type));
+  const mode = state.discoverMode === 'new' ? 'new' : state.discoverMode === 'popular' ? 'popular' : 'for-you';
+  const matchesSelectedType = result => selected.has(result.sourceType)
+    || (selected.has('game') && ['video-game','board-game'].includes(result.sourceType));
+  const musicOnly = selectedTypes.length === 1 && selected.has('artist');
 
-  // When every selected category is music-related, bypass unrelated catalogue
-  // collectors and use the richer Last.fm/iTunes music engine directly.
+  // Music is artist-first now. Albums and songs are favorited inside an Artist
+  // card instead of occupying their own Discover categories.
   if (musicOnly) {
-    const mode = state.discoverMode === 'new' ? 'new' : state.discoverMode === 'popular' ? 'popular' : 'for-you';
     const music = await collectMusicDiscoverCandidates(batchNumber, mode);
-    const filtered = music.filter(result => selected.has(result.sourceType));
-    musicDiscoverDebug('dedicated music view candidates', {
-      mode,
-      batchNumber,
-      selectedTypes,
-      totalMusicPool: music.length,
-      matchingType: filtered.length
+    const filtered = music.filter(result => result.sourceType === 'artist');
+    musicDiscoverDebug('dedicated artist view candidates', {
+      mode, batchNumber, selectedTypes, totalMusicPool: music.length, matchingType: filtered.length
     });
     return dedupeDiscoverCandidatesByBoost(filtered);
   }
 
-  if (selectedTypes.length === 1 && selected.has('restaurant')) {
-    return collectRestaurantDiscoverCandidates(batchNumber, state.discoverMode);
+  if (selectedTypes.length === 1 && selected.has('game')) {
+    return collectGameDiscoverCandidates(batchNumber, mode);
   }
 
-  if (selectedTypes.length === 1 && selected.has('game')) {
-    return collectGameDiscoverCandidates(batchNumber, state.discoverMode);
+  if (selectedTypes.length === 1 && selected.has('restaurant')) {
+    return collectRestaurantDiscoverCandidates(batchNumber, state.discoverMode);
   }
 
   const liveOnly = selectedTypes.length > 0 && selectedTypes.every(type => ['concert','event'].includes(type));
@@ -10860,10 +10644,11 @@ async function collectDiscoverFeedCandidates(batchNumber) {
   else candidates = await collectForYouDiscoverCandidates(batchNumber);
 
   if (selected.has('game')) {
-    try { candidates.push(...await collectGameDiscoverCandidates(batchNumber, state.discoverMode)); } catch (error) { console.warn('[Discover][Games] collector failed', error?.message || error); }
+    try { candidates.push(...await collectGameDiscoverCandidates(batchNumber, mode)); }
+    catch (error) { console.warn('[Discover][Games] collector failed:', error?.message || error); }
   }
 
-  return dedupeDiscoverCandidatesByBoost(candidates.filter(result => selectedSources.has(result.sourceType)));
+  return dedupeDiscoverCandidatesByBoost(candidates.filter(matchesSelectedType));
 }
 
 function musicRecommendationSeedScore(item) {
@@ -11064,7 +10849,7 @@ async function collectLastFmResolvedTracks(lastfmTracks, limit = 7) {
 
 async function collectMusicDiscoverCandidates(batchNumber, mode = 'for-you') {
   const personalized = mode === 'for-you';
-  const includeArtists = mode !== 'new';
+  const includeArtists = true;
   const requestedContentTypes = normalizedDiscoverContentTypes();
   const dedicatedArtistView = requestedContentTypes.length === 1 && requestedContentTypes[0] === 'artist';
   const dedicatedSongView = requestedContentTypes.length === 1 && requestedContentTypes[0] === 'song';
@@ -11534,7 +11319,7 @@ async function collectNewDiscoverCandidates(batchNumber) {
     try {
       const music = await collectMusicDiscoverCandidates(batchNumber, 'new');
       musicDiscoverDebug('New music candidates', { batchNumber, total: music.length, byType: musicDiscoverTypeCounts(music) });
-      annotated.push(...music.filter(result => ['music','song'].includes(result.sourceType)));
+      annotated.push(...music.filter(result => result.sourceType === 'artist'));
     } catch {}
   }
 
@@ -11556,6 +11341,7 @@ async function collectNewDiscoverCandidates(batchNumber) {
 
   return dedupeDiscoverCandidatesByBoost(annotated).filter(result => {
     const date = discoverNewDate(result);
+    if (result.sourceType === 'artist') return true;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
     if (['event','concert'].includes(result.sourceType)) return date >= today && date <= upcomingEnd;
     return date >= windowStart && date <= windowEnd;
@@ -11610,43 +11396,6 @@ async function collectPopularDiscoverCandidates(batchNumber) {
     } catch {}
   }
 
-  return dedupeDiscoverCandidatesByBoost(candidates);
-}
-
-async function collectGameDiscoverCandidates(batchNumber, mode = 'for-you') {
-  if (!state.settings.gameCatalogueProxyUrl) return [];
-  const page = Math.max(1, Number(batchNumber || 1));
-  const tasks = [
-    TrackerAPI.discoverVideoGames(state.settings, { mode, page, limit: 28 }),
-    TrackerAPI.discoverBoardGames(state.settings, { mode, page, limit: 24 })
-  ];
-  const settled = await Promise.allSettled(tasks);
-  const candidates = [];
-  const add = (results, sourceType, boost) => {
-    for (const result of filterAlreadyKnown(results || [], sourceType)) {
-      candidates.push({
-        ...result,
-        sourceType,
-        _discoverSource: mode === 'new' ? 'new-games' : mode === 'popular' ? 'popular-games' : 'games',
-        _discoverBoost: boost,
-        _discoverExploration: mode === 'for-you'
-      });
-    }
-  };
-  if (settled[0].status === 'fulfilled') add(settled[0].value, 'video-game', mode === 'popular' ? 7 : mode === 'new' ? 5 : 3);
-  else console.warn('[Discover][Video games] catalogue request failed:', settled[0].reason?.message || settled[0].reason || 'Unknown error');
-  if (settled[1].status === 'fulfilled') add(settled[1].value, 'board-game', mode === 'popular' ? 7 : mode === 'new' ? 4 : 3);
-  else console.warn('[Discover][Board games] catalogue request failed:', settled[1].reason?.message || settled[1].reason || 'Unknown error');
-
-  if (mode === 'new') {
-    const today = todayString();
-    const oldest = addDaysToDateString(today, -365);
-    const newest = addDaysToDateString(today, normalizedUpcomingHorizonDays());
-    return dedupeDiscoverCandidatesByBoost(candidates).filter(result => {
-      const date = discoverNewDate(result);
-      return /^\d{4}-\d{2}-\d{2}$/.test(date) && date >= oldest && date <= newest;
-    });
-  }
   return dedupeDiscoverCandidatesByBoost(candidates);
 }
 
@@ -11990,15 +11739,13 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
   const tasteProfiles = mode === 'for-you' ? {
     tv: discoverTasteProfile('tv'),
     movie: discoverTasteProfile('movie'),
-    book: discoverTasteProfile('book'),
-    'video-game': discoverTasteProfile('video-game'),
-    'board-game': discoverTasteProfile('board-game')
+    book: discoverTasteProfile('book')
   } : {};
   const prelim = (results || []).map(result => {
     let score = Number(result._discoverBoost || 0);
     const followerLoggedCount = socialFollowerLoggedCount(result);
     if (followerLoggedCount) score += Math.min(3.2, followerLoggedCount * 1.15);
-    const rating = Number(result.rating || result.catalogueRating || 0);
+    const rating = Number(result.rating || 0);
     if (rating) score += Math.min(3, rating / 3.5);
 
     if (mode === 'for-you' && result.sourceType === 'book' && authorSet.size) {
@@ -12034,12 +11781,8 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
   // Pick the batch first, then resolve watch-provider names only for TV/movies
   // that will actually be rendered. This matters for an endless feed: it avoids
   // dozens of unnecessary provider calls for cards the user never sees.
-  const requestedTypes = normalizedDiscoverContentTypes();
-  const dedicatedGameView = requestedTypes.length === 1 && requestedTypes[0] === 'game';
   let selected;
-  if (dedicatedGameView) {
-    selected = selectGameSubtypeMix(prelim, batchSize);
-  } else if (mode === 'new') {
+  if (mode === 'new') {
     const groupKeys = ['this-week', 'last-week', 'upcoming', 'recently-released'];
     const perGroup = Math.max(4, Math.floor(batchSize / groupKeys.length));
     const picked = [];
@@ -12100,9 +11843,9 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
 
 function discoverContentFamily(sourceType) {
   if (['music','artist','song'].includes(sourceType)) return 'music';
+  if (['video-game','board-game'].includes(sourceType)) return 'game';
   if (['concert','event'].includes(sourceType)) return 'live';
   if (sourceType === 'restaurant') return 'food';
-  if (['video-game','board-game'].includes(sourceType)) return 'games';
   return sourceType || 'other';
 }
 
@@ -12125,48 +11868,6 @@ function selectAcrossContentFamilies(results, limit) {
     round += 1;
   }
   return selected;
-}
-
-// Games is one Discover category, but video games and board games are distinct
-// catalogues. In a dedicated Games view, don't let IGDB's richer popularity/
-// rating metadata crowd BoardGameGeek out of the first visible batch.
-function selectGameSubtypeMix(results, limit) {
-  const ranked = [...(results || [])];
-  const videoGames = ranked.filter(result => result.sourceType === 'video-game');
-  const boardGames = ranked.filter(result => result.sourceType === 'board-game');
-  if (!videoGames.length || !boardGames.length) return ranked.slice(0, limit);
-
-  const selected = [];
-  let videoIndex = 0;
-  let boardIndex = 0;
-  let nextType = Number(videoGames[0]?._discoverScore || 0) >= Number(boardGames[0]?._discoverScore || 0)
-    ? 'video-game'
-    : 'board-game';
-
-  while (selected.length < limit && (videoIndex < videoGames.length || boardIndex < boardGames.length)) {
-    if (nextType === 'video-game' && videoIndex < videoGames.length) {
-      selected.push(videoGames[videoIndex++]);
-      nextType = 'board-game';
-      continue;
-    }
-    if (nextType === 'board-game' && boardIndex < boardGames.length) {
-      selected.push(boardGames[boardIndex++]);
-      nextType = 'video-game';
-      continue;
-    }
-    if (videoIndex < videoGames.length) selected.push(videoGames[videoIndex++]);
-    else if (boardIndex < boardGames.length) selected.push(boardGames[boardIndex++]);
-  }
-
-  const selectedIds = new Set(selected.map(discoverResultIdentity));
-  for (const result of ranked) {
-    if (selected.length >= limit) break;
-    const id = discoverResultIdentity(result);
-    if (!id || selectedIds.has(id)) continue;
-    selectedIds.add(id);
-    selected.push(result);
-  }
-  return selected.slice(0, limit);
 }
 
 function diversifyDiscoverFeed(results) {
@@ -12271,7 +11972,6 @@ function discoverNewDate(result) {
   if (result.sourceType === 'tv') return result.newReleaseDate || result.nextEpisodeDate || result.latestEpisodeDate || result._discoverLatestDate || result.raw?.first_air_date || '';
   if (result.sourceType === 'movie') return result.raw?.release_date || result.releaseDate || '';
   if (result.sourceType === 'music' || result.sourceType === 'song') return result.releaseDate || String(result.raw?.releaseDate || '').slice(0,10);
-  if (result.sourceType === 'video-game' || result.sourceType === 'board-game') return normalizedReleaseDate(result.releaseDate || '');
   return '';
 }
 
@@ -12908,17 +12608,18 @@ function discoverCardMarkup(result, key, fallbackType) {
           ? [result.rating ? `${Number(result.rating).toFixed(1)}★` : '', result.primaryTypeDisplayName || '', result.formattedAddress || result.subtitle || '', 'Google Maps'].filter(Boolean).join(' · ')
           : [year, rating, streaming].filter(Boolean).join(' · ');
   const queueStatus = item ? getQueueStatus(item) : '';
-  const plusLabel = queueStatus === 'upnext' ? '+ Queue' : queueStatus === 'tbr' ? '+ TBR' : '+ Add';
+  const plusLabel = queueStatus === 'upnext' ? 'In progress' : queueStatus === 'tbr' ? 'Not started' : 'Progress';
   const libraryOnly = ['music','artist','song','restaurant'].includes(type);
   const artworkUrl = String(result.image || '').trim();
   const isLastFmGenericArtwork = /2a96cbd8b46e442fc41c2b86b821562f/i.test(artworkUrl);
   // Last.fm currently supplies a generic star for many artists. It is a fallback
   // asset, not actual artist artwork, so render those results as no-image cards.
   const noImage = !artworkUrl || isLastFmGenericArtwork;
-  const completeAction = ['tv','movie','book'].includes(type)
-    ? `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo watched / read' : 'Mark watched / read'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>`
+  const progressCapable = ['tv','movie','book','video-game','board-game'].includes(type);
+  const completeAction = progressCapable
+    ? `<button class="discover-complete-button${completed ? ' is-complete' : ''}" type="button" data-discover-complete="${escapeAttr(key)}" aria-label="${type === 'tv' ? 'Choose watched seasons or episodes' : completed ? 'Undo completed' : 'Mark completed'}" title="${type === 'tv' ? 'Choose watched seasons / episodes' : completed ? 'Undo completed' : 'Mark completed'}">${completed && type !== 'tv' ? '↶' : '✓'}</button>`
     : '';
-  const queueAction = ['tv','movie','book','video-game','board-game'].includes(type)
+  const queueAction = progressCapable
     ? `<button class="discover-add-button" type="button" data-discover-add="${escapeAttr(key)}">${escapeHtml(plusLabel)}</button>`
     : '';
   const libraryAction = libraryOnly && type !== 'restaurant'
@@ -13275,9 +12976,9 @@ function renderDiscoverCardInPlace(key) {
 function openDiscoverQueueChoice(key) {
   const result = state.discoverResults.get(key);
   if (!result || !els.discoverQueueModal) return;
-  discoverBookSaveDebug('queue modal opened', result, { discoverKey: key });
+  discoverBookSaveDebug('progress modal opened', result, { discoverKey: key });
   state.pendingDiscoverKey = key;
-  els.discoverQueueTitle.textContent = result.title || 'Where should this go?';
+  els.discoverQueueTitle.textContent = 'Progress';
   showDialogAtTop(els.discoverQueueModal);
 }
 
@@ -13285,9 +12986,26 @@ async function handleDiscoverQueueChoice(event) {
   const button = event.target.closest('[data-discover-queue-choice]');
   if (!button || !state.pendingDiscoverKey) return;
   const key = state.pendingDiscoverKey;
-  const status = button.dataset.discoverQueueChoice === 'tbr' ? 'tbr' : 'upnext';
+  const choice = button.dataset.discoverQueueChoice || 'upnext';
   const result = state.discoverResults.get(key);
-  discoverBookSaveDebug('queue choice clicked', result, { discoverKey: key, target: status });
+  discoverBookSaveDebug('progress choice clicked', result, { discoverKey: key, target: choice });
+
+  if (choice === 'library') {
+    els.discoverQueueModal?.close();
+    state.pendingDiscoverKey = null;
+    if (!result) return;
+    if (result.sourceType === 'tv') {
+      await openDiscoverDetail(key);
+      requestAnimationFrame(() => els.detailBody?.querySelector('[data-tv-watch-picker]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+    } else if (['movie','book','video-game','board-game'].includes(result.sourceType)) {
+      openDiscoverRatingPrompt(key, { completionIntent: true });
+    } else {
+      await markDiscoverCompleted(key, { promptForRating: false });
+    }
+    return;
+  }
+
+  const status = choice === 'tbr' ? 'tbr' : 'upnext';
   try {
     if (!result) throw new Error('Discover result is no longer available.');
     const item = addDiscoverToQueue(key, status);
@@ -13402,14 +13120,15 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
   const isGameFamily = ['video-game', 'board-game'].includes(sourceType);
   const discoverMusicSubcategory = sourceType === 'music' ? 'Album' : musicSubcategoryForSourceType(sourceType);
   const discoverFoodSubcategory = foodSubcategoryForSourceType(sourceType);
+  const discoverGameSubcategory = sourceType === 'board-game' ? 'Board Game' : sourceType === 'video-game' ? 'Video Game' : '';
   item = {
     id: makeId(),
     sourceType,
     type: isMusicFamily ? 'music' : isFoodFamily ? 'food' : isGameFamily ? 'game' : sourceType,
     typeLabel: isMusicFamily ? 'Music' : isFoodFamily ? 'Food' : isGameFamily ? 'Games' : (SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType)),
-    subcategory: isMusicFamily ? discoverMusicSubcategory : isFoodFamily ? discoverFoodSubcategory : isGameFamily ? (sourceType === 'board-game' ? 'Board Game' : 'Video Game') : '',
+    subcategory: isMusicFamily ? discoverMusicSubcategory : isFoodFamily ? discoverFoodSubcategory : discoverGameSubcategory,
     title: result.title || 'Untitled',
-    provider: result.provider || (sourceType === 'book' ? 'googleBooks' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'restaurant' ? 'googlePlaces' : sourceType === 'concert' ? 'ticketmaster' : sourceType === 'event' ? 'ticketmaster' : 'tmdb'),
+    provider: result.provider || (sourceType === 'book' ? 'googleBooks' : ['music','artist','song'].includes(sourceType) ? 'itunes' : sourceType === 'restaurant' ? 'googlePlaces' : sourceType === 'concert' ? 'ticketmaster' : sourceType === 'event' ? 'ticketmaster' : sourceType === 'video-game' ? 'igdb' : sourceType === 'board-game' ? 'bgg' : 'tmdb'),
     providerId: String(result.providerId || ''),
     image: result.image || '',
     subtitle: result.subtitle || '',
@@ -13435,20 +13154,6 @@ function ensureDiscoverItem(result, queueStatus = 'library') {
 
   if (sourceType === 'tv') item.progress = { nextSeason: 1, nextEpisode: 1 };
   if (sourceType === 'book') item.progress = { currentPage: 0, totalPages: Number(result.pageCount || 0), readingPeriods: [] };
-  if (isGameFamily) {
-    item.gameMeta = {
-      kind: sourceType,
-      description: result.description || '',
-      platforms: result.platforms || [],
-      designers: result.designers || [],
-      mechanics: result.mechanics || [],
-      minPlayers: Number(result.minPlayers || 0),
-      maxPlayers: Number(result.maxPlayers || 0),
-      playTime: Number(result.playTime || 0),
-      catalogueRating: Number(result.catalogueRating || 0),
-      catalogueUrl: result.catalogueUrl || ''
-    };
-  }
   if (sourceType === 'event' || sourceType === 'concert') {
     item.eventMeta = {
       eventDate: result.eventDate || '', eventTime: result.eventTime || '', startDateTime: result.startDateTime || '', timezone: result.timezone || '',
@@ -13527,12 +13232,12 @@ async function markDiscoverCompleted(key, { promptForRating = false } = {}) {
   renderAll();
   renderDiscoverCardInPlace(key);
   if (els.detailModal?.open && state.openDiscoverKey === key) await openDiscoverDetail(key);
-  if (promptForRating && result.sourceType === 'movie') openDiscoverRatingPrompt(key, { completionIntent: false });
+  if (promptForRating && ['movie','video-game','board-game'].includes(result.sourceType)) openDiscoverRatingPrompt(key, { completionIntent: false });
 }
 
 function openDiscoverRatingPrompt(key, { allowTV = false, completionIntent = false, recommendIntent = null } = {}) {
   const result = state.discoverResults.get(key);
-  const allowed = ['movie','book'].includes(result?.sourceType) || (allowTV && result?.sourceType === 'tv');
+  const allowed = ['movie','book','video-game','board-game'].includes(result?.sourceType) || (allowTV && result?.sourceType === 'tv');
   if (!result || !allowed || !els.discoverRatingModal) return;
 
   // IMPORTANT: opening this modal must not mutate Library/history. Everything
@@ -13540,7 +13245,7 @@ function openDiscoverRatingPrompt(key, { allowTV = false, completionIntent = fal
   discoverBookSaveDebug('rating/date modal opened', result, { discoverKey: key, completionIntent: Boolean(completionIntent), recommendIntent });
   state.pendingDiscoverRatingKey = key;
   state.pendingDiscoverCompletionIntent = Boolean(completionIntent);
-  if (els.discoverRatingTitle) els.discoverRatingTitle.textContent = `Rate ${result.title || (result.sourceType === 'book' ? 'this book' : 'this movie')}`;
+  if (els.discoverRatingTitle) els.discoverRatingTitle.textContent = `Rate ${result.title || 'this item'}`;
   const existing = findDiscoverItem(result);
   const rating = Math.max(0, Math.min(5, Number(existing?.rating || 0)));
   state.pendingDiscoverRatingValue = rating;
@@ -13785,10 +13490,10 @@ async function openDiscoverDetail(key) {
     if (result.sourceType === 'tv') await renderDiscoverTVDetail(key);
     else if (result.sourceType === 'movie') await renderDiscoverMovieDetail(key);
     else if (result.sourceType === 'book') await renderDiscoverBookDetail(key);
-    else if (['video-game','board-game'].includes(result.sourceType)) await renderDiscoverGameDetail(key);
     else if (result.sourceType === 'music') await renderDiscoverAlbumDetail(key);
     else if (result.sourceType === 'artist') await renderDiscoverArtistDetail(key);
     else if (result.sourceType === 'song') await renderDiscoverSongDetail(key);
+    else if (['video-game','board-game'].includes(result.sourceType)) await renderDiscoverGameDetail(key);
     else if (result.sourceType === 'concert') await renderDiscoverConcertDetail(key);
     else if (result.sourceType === 'restaurant') await renderDiscoverRestaurantDetail(key);
     else if (result.sourceType === 'event') await renderDiscoverEventDetail(key);
@@ -13917,9 +13622,9 @@ function discoverQueueButtonsMarkup(result, key) {
   if (!result || !['tv','movie','book','video-game','board-game'].includes(result.sourceType)) return '';
   const item = findDiscoverItem(result);
   const current = item ? getQueueStatus(item) : 'library';
-  return `<div class="queue-toggle-buttons" aria-label="Queue placement">
-    <button class="secondary-button queue-toggle-button${current === 'upnext' ? ' is-selected' : ''}" type="button" data-discover-direct-queue="upnext" data-discover-key="${escapeAttr(key)}" aria-pressed="${current === 'upnext'}">Up Next</button>
-    <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-discover-direct-queue="tbr" data-discover-key="${escapeAttr(key)}" aria-pressed="${current === 'tbr'}">TBR</button>
+  return `<div class="queue-toggle-buttons" aria-label="Progress">
+    <button class="secondary-button queue-toggle-button${current === 'upnext' ? ' is-selected' : ''}" type="button" data-discover-direct-queue="upnext" data-discover-key="${escapeAttr(key)}" aria-pressed="${current === 'upnext'}">In progress</button>
+    <button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-discover-direct-queue="tbr" data-discover-key="${escapeAttr(key)}" aria-pressed="${current === 'tbr'}">Not started</button>
   </div>`;
 }
 
@@ -14143,6 +13848,30 @@ async function syncDiscoverTVProgress(item) {
   }
 }
 
+async function renderDiscoverGameDetail(key) {
+  const result = state.discoverResults.get(key);
+  if (!result) return;
+  const details = result.sourceType === 'board-game'
+    ? await getCached(`bgg:game:${result.providerId}`, () => TrackerAPI.getBoardGameDetails(result.providerId, state.settings))
+    : await getCached(`igdb:game:${result.providerId}`, () => TrackerAPI.getVideoGameDetails(result.providerId, state.settings));
+  const game = { ...result, ...(details || {}), sourceType: result.sourceType };
+  state.discoverResults.set(key, game);
+  const completed = isDiscoverCompleted(game);
+  const info = game.sourceType === 'board-game'
+    ? [game.minPlayers && game.maxPlayers ? `${game.minPlayers}${game.maxPlayers !== game.minPlayers ? `–${game.maxPlayers}` : ''} players` : '', game.playTime ? `${game.playTime} min` : '', ...(game.mechanics || []).slice(0,3)].filter(Boolean).join(' · ')
+    : [...(game.platforms || []).slice(0,4), ...(game.genres || []).slice(0,3)].filter(Boolean).join(' · ');
+  const rating = Number(game.catalogueRating || 0);
+  const ratingText = rating ? (rating > 10 ? `★ ${(rating/10).toFixed(1)}` : `★ ${rating.toFixed(1)}`) : '';
+  els.detailBody.innerHTML = `
+    ${detailHero({ type: game.sourceType === 'board-game' ? 'BOARD GAME' : 'VIDEO GAME', title: game.title || result.title, image: game.image || result.image, subtitle: [game.releaseDate?.slice(0,4) || '', ratingText, info].filter(Boolean).join(' · '), overview: game.description || result.description || '' })}
+    <div class="discover-detail-actions">
+      ${discoverQueueButtonsMarkup(game, key)}
+      <button class="secondary-button${completed ? ' is-complete' : ''}" type="button" data-discover-detail-complete="${escapeAttr(key)}">${completed ? '↶ Mark not played' : '✓ Mark played'}</button>
+    </div>
+    ${game.catalogueUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(game.catalogueUrl)}" target="_blank" rel="noopener">Open catalogue page ↗</a></section>` : ''}
+  `;
+}
+
 async function renderDiscoverMovieDetail(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
@@ -14332,61 +14061,6 @@ async function renderDiscoverEventDetail(key) {
   `;
 }
 
-async function renderDiscoverGameDetail(key) {
-  const result = state.discoverResults.get(key);
-  if (!result) return;
-  const sourceType = result.sourceType;
-  let details = result;
-  try {
-    details = sourceType === 'video-game'
-      ? await getCached(`discover:game:igdb:${result.providerId}`, () => TrackerAPI.getVideoGameDetails(result.providerId, state.settings))
-      : await getCached(`discover:game:bgg:${result.providerId}`, () => TrackerAPI.getBoardGameDetails(result.providerId, state.settings));
-  } catch {}
-  details ||= result;
-  Object.assign(result, {
-    ...details,
-    sourceType,
-    provider: result.provider || details.provider,
-    providerId: result.providerId || details.providerId
-  });
-  const existing = findDiscoverItem(result);
-  if (existing) {
-    existing.genres = details.genres?.length ? [...details.genres] : (existing.genres || []);
-    existing.releaseDate = details.releaseDate || existing.releaseDate || '';
-    existing.image = details.image || existing.image || '';
-    existing.gameMeta = {
-      ...(existing.gameMeta || {}),
-      kind: sourceType,
-      description: details.description || existing.gameMeta?.description || '',
-      platforms: details.platforms || existing.gameMeta?.platforms || [],
-      designers: details.designers || existing.gameMeta?.designers || [],
-      mechanics: details.mechanics || existing.gameMeta?.mechanics || [],
-      minPlayers: Number(details.minPlayers || existing.gameMeta?.minPlayers || 0),
-      maxPlayers: Number(details.maxPlayers || existing.gameMeta?.maxPlayers || 0),
-      playTime: Number(details.playTime || existing.gameMeta?.playTime || 0),
-      catalogueRating: Number(details.catalogueRating || existing.gameMeta?.catalogueRating || 0),
-      catalogueUrl: details.catalogueUrl || existing.gameMeta?.catalogueUrl || ''
-    };
-    saveItems();
-  }
-  const rating = Number(details.catalogueRating || 0);
-  const ratingText = rating ? `★ ${rating > 10 ? (rating / 10).toFixed(1) : rating.toFixed(1)}` : '';
-  const gameMeta = sourceType === 'video-game'
-    ? [details.releaseDate?.slice(0,4), ...(details.platforms || []).slice(0,3), ratingText].filter(Boolean).join(' · ')
-    : [details.releaseDate?.slice(0,4), details.minPlayers && details.maxPlayers ? `${details.minPlayers}${details.maxPlayers !== details.minPlayers ? `–${details.maxPlayers}` : ''} players` : '', details.playTime ? `${details.playTime} min` : '', ratingText].filter(Boolean).join(' · ');
-  const completed = isDiscoverCompleted(result);
-  const externalUrl = details.catalogueUrl || (sourceType === 'board-game' ? `https://boardgamegeek.com/boardgame/${encodeURIComponent(result.providerId)}` : '');
-  els.detailBody.innerHTML = `
-    ${detailHero({ type: sourceType === 'video-game' ? 'VIDEO GAME' : 'BOARD GAME', title:details.title || result.title, image:details.image || result.image || '', subtitle:gameMeta || details.subtitle || result.subtitle || '', overview:details.description || result.description || '' })}
-    <div class="discover-detail-actions">
-      ${discoverQueueButtonsMarkup(result, key)}
-      <button class="secondary-button${completed ? ' is-complete' : ''}" type="button" data-discover-detail-complete="${escapeAttr(key)}">${completed ? '↶ Mark not played' : '✓ Mark played'}</button>
-    </div>
-    ${details.genres?.length ? `<section class="detail-section"><h3>${sourceType === 'video-game' ? 'Genres' : 'Categories'}</h3><p>${escapeHtml(details.genres.join(' · '))}</p></section>` : ''}
-    ${sourceType === 'board-game' && details.mechanics?.length ? `<section class="detail-section"><h3>Mechanics</h3><p>${escapeHtml(details.mechanics.slice(0,10).join(' · '))}</p></section>` : ''}
-    ${externalUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(externalUrl)}" target="_blank" rel="noopener">Open on ${sourceType === 'video-game' ? 'IGDB' : 'BoardGameGeek'} ↗</a></section>` : ''}`;
-}
-
 async function renderDiscoverBookDetail(key) {
   const result = state.discoverResults.get(key);
   if (!result) return;
@@ -14541,15 +14215,7 @@ function renderStickerSettingsRows() {
         <label class="sticker-setting-field sticker-setting-shape-field">
           <span class="sticker-setting-mobile-label">Shape</span>
           <select data-sticker-field="shape">
-            <option value="square" ${config.shape === 'square' ? 'selected' : ''}>Square</option>
-            <option value="circle" ${config.shape === 'circle' ? 'selected' : ''}>Circle</option>
-            <option value="triangle" ${config.shape === 'triangle' ? 'selected' : ''}>Triangle</option>
-            <option value="diamond" ${config.shape === 'diamond' ? 'selected' : ''}>Diamond</option>
-            <option value="hexagon" ${config.shape === 'hexagon' ? 'selected' : ''}>Hexagon</option>
-            <option value="pentagon" ${config.shape === 'pentagon' ? 'selected' : ''}>Pentagon</option>
-            <option value="oval" ${config.shape === 'oval' ? 'selected' : ''}>Oval</option>
-            <option value="star" ${config.shape === 'star' ? 'selected' : ''}>Star</option>
-            <option value="heart" ${config.shape === 'heart' ? 'selected' : ''}>Heart</option>
+            ${STICKER_SHAPES.map(shape => `<option value="${shape}" ${config.shape === shape ? 'selected' : ''}>${shape[0].toUpperCase()+shape.slice(1)}</option>`).join('')}
           </select>
         </label>
         <label class="sticker-setting-field sticker-setting-color-field">
@@ -14560,7 +14226,7 @@ function renderStickerSettingsRows() {
         </label>
         <label class="sticker-setting-field sticker-setting-text-field sticker-setting-field-wide">
           <span class="sticker-setting-mobile-label">Sticker text</span>
-          <input data-sticker-field="label" type="text" maxlength="3" value="${escapeAttr(STICKER_SYMBOL_SHAPES.has(config.shape) ? '' : config.label)}" placeholder="Optional, up to 3 characters" ${STICKER_SYMBOL_SHAPES.has(config.shape) ? 'disabled' : ''} />
+          <input data-sticker-field="label" type="text" maxlength="3" value="${escapeAttr(['star','heart'].includes(config.shape) ? '' : config.label)}" placeholder="Optional, up to 3 characters" ${['star','heart'].includes(config.shape) ? 'disabled' : ''} />
         </label>
       </div>`;
     els.stickerSettingsRows.appendChild(row);
@@ -14573,8 +14239,8 @@ function previewStickerSettings(event) {
   const shape = row.querySelector('[data-sticker-field="shape"]')?.value || 'square';
   const color = row.querySelector('[data-sticker-field="color"]')?.value || 'cream';
   const labelInput = row.querySelector('[data-sticker-field="label"]');
-  if (labelInput) labelInput.disabled = STICKER_SYMBOL_SHAPES.has(shape);
-  const label = STICKER_SYMBOL_SHAPES.has(shape) ? '' : cleanStickerLabel(labelInput?.value ?? '');
+  if (labelInput) labelInput.disabled = ['star','heart'].includes(shape);
+  const label = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(labelInput?.value ?? '');
   const sampleEntry = { type: row.dataset.stickerType, subcategory: row.dataset.stickerSubcategory || '' };
   const defaults = getDefaultStickerConfig(row.dataset.stickerType, sampleEntry);
   const preview = row.querySelector('.sticker-setting-preview');
@@ -14592,7 +14258,7 @@ function saveStickerSettings(event) {
     const key = row.dataset.stickerKey || row.dataset.stickerType;
     const shape = row.querySelector('[data-sticker-field="shape"]')?.value || 'square';
     const color = row.querySelector('[data-sticker-field="color"]')?.value || 'cream';
-    const label = STICKER_SYMBOL_SHAPES.has(shape) ? '' : cleanStickerLabel(row.querySelector('[data-sticker-field="label"]')?.value ?? '');
+    const label = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(row.querySelector('[data-sticker-field="label"]')?.value ?? '');
     const existing = next[key] || {};
     const calendarInput = row.querySelector('[data-sticker-field="calendar-label"]');
     const calendarLabel = calendarInput ? cleanTypeLabel(calendarInput.value) : existing.calendarLabel;
@@ -15039,34 +14705,32 @@ function getBaseStreakGroups() {
     if (!groups.has(key)) {
       groups.set(key, {
         key,
-        baseKey: key,
-        scope: 'type',
         label: cleanLabel,
         memberTypes: [],
-        subcategories: [],
         representativeType: type,
-        representativeEntry: null
+        representativeEntry: null,
+        scope: 'type',
+        parentKey: key,
+        subcategories: []
       });
     }
     const group = groups.get(key);
     if (!group.memberTypes.includes(type)) group.memberTypes.push(type);
   }
 
-  // Calendar entries are the final authority for visible grouping. This also
-  // catches two different internal source types that share one displayed type.
   for (const entry of getCalendarEntries()) {
     const label = getStreakTypeGroupLabel(entry);
     const key = getStreakTypeGroupKey(entry);
     if (!groups.has(key)) {
       groups.set(key, {
         key,
-        baseKey: key,
-        scope: 'type',
         label,
         memberTypes: [],
-        subcategories: [],
         representativeType: entry.type,
-        representativeEntry: entry
+        representativeEntry: entry,
+        scope: 'type',
+        parentKey: key,
+        subcategories: []
       });
     }
     const group = groups.get(key);
@@ -15077,98 +14741,70 @@ function getBaseStreakGroups() {
   return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function normalizedStreakSubcategory(value) {
-  return cleanTypeLabel(value || '').trim();
-}
-
-function getStreakSubcategories(baseKey) {
-  const values = new Map();
-  for (const entry of getCalendarEntries()) {
-    if (getStreakTypeGroupKey(entry) !== baseKey) continue;
-    const label = normalizedStreakSubcategory(entry.subcategory);
-    if (!label) continue;
-    const normalized = label.toLocaleLowerCase();
-    if (!values.has(normalized)) values.set(normalized, label);
-  }
-  return [...values.values()].sort((a, b) => a.localeCompare(b));
-}
-
-function streakSubcategoryTargetKey(baseKey, subcategory) {
-  return `${baseKey}::sub::${slugifyType(subcategory)}`;
-}
-
-function configuredStreakGroupsForBase(baseKey) {
-  return Object.entries(state.streakPrefs || {})
-    .filter(([, config]) => config?.scope === 'group' && String(config.baseKey || '') === baseKey)
-    .map(([key, config]) => ({
-      key,
-      baseKey,
-      scope: 'group',
-      label: cleanTypeLabel(config.label || '') || 'Grouped subcategories',
-      memberTypes: [],
-      subcategories: Array.isArray(config.subcategories) ? config.subcategories.map(normalizedStreakSubcategory).filter(Boolean) : [],
-      representativeType: '',
-      representativeEntry: null
-    }))
-    .filter(group => group.subcategories.length);
+function streakSubcategoriesForParent(parentKey) {
+  return [...new Set(getCalendarEntries()
+    .filter(entry => getStreakTypeGroupKey(entry) === parentKey)
+    .map(entry => cleanTypeLabel(entry.subcategory || ''))
+    .filter(Boolean))]
+    .sort((a,b) => a.localeCompare(b));
 }
 
 function getRecognizedStreakGroups() {
-  const targets = [];
-  for (const base of getBaseStreakGroups()) {
-    targets.push(base);
-
-    for (const subcategory of getStreakSubcategories(base.key)) {
-      targets.push({
-        ...base,
-        key: streakSubcategoryTargetKey(base.key, subcategory),
-        baseKey: base.key,
+  const parents = getBaseStreakGroups();
+  const result = [];
+  for (const parent of parents) {
+    result.push(parent);
+    for (const subcategory of streakSubcategoriesForParent(parent.key)) {
+      result.push({
+        ...parent,
+        key: `${parent.key}::subcategory::${slugifyType(subcategory)}`,
+        label: `${parent.label} · ${subcategory}`,
+        shortLabel: subcategory,
         scope: 'subcategory',
-        label: `${base.label} · ${subcategory}`,
-        subcategoryLabel: subcategory,
+        parentKey: parent.key,
         subcategories: [subcategory]
       });
     }
-
-    for (const custom of configuredStreakGroupsForBase(base.key)) {
-      targets.push({
-        ...custom,
-        memberTypes: [...base.memberTypes],
-        representativeType: base.representativeType,
-        representativeEntry: base.representativeEntry
-      });
-    }
   }
-  return targets;
+
+  // User-created grouped-subcategory streaks are stored directly in streakPrefs,
+  // so they survive reloads and remain independent from the individual subcategory streaks.
+  for (const [key, saved] of Object.entries(state.streakPrefs || {})) {
+    if (!saved || saved.scope !== 'group' || !saved.parentKey || !Array.isArray(saved.subcategories) || saved.subcategories.length < 2) continue;
+    const parent = parents.find(group => group.key === saved.parentKey);
+    if (!parent || result.some(group => group.key === key)) continue;
+    const subcategories = [...new Set(saved.subcategories.map(cleanTypeLabel).filter(Boolean))];
+    if (subcategories.length < 2) continue;
+    result.push({
+      ...parent,
+      key,
+      label: cleanTypeLabel(saved.name || '') || `${parent.label} · ${subcategories.join(' + ')}`,
+      shortLabel: cleanTypeLabel(saved.name || '') || subcategories.join(' + '),
+      scope: 'group',
+      parentKey: parent.key,
+      subcategories
+    });
+  }
+  return result;
 }
 
 function resolveStreakGroup(typeOrGroupKey) {
-  if (typeOrGroupKey && typeof typeOrGroupKey === 'object') return typeOrGroupKey;
   const value = String(typeOrGroupKey || '');
   const groups = getRecognizedStreakGroups();
-  const exact = groups.find(group => group.key === value);
-  if (exact) return exact;
-  const base = groups.find(group => group.scope === 'type' && group.memberTypes.includes(value));
-  if (base) return base;
-  const label = getTypeLabel(value) || value || 'Other';
-  const key = slugifyType(label);
-  return {
-    key,
-    baseKey: key,
-    scope: 'type',
-    label,
+  return groups.find(group => group.key === value || (group.scope === 'type' && group.memberTypes.includes(value))) || {
+    key: slugifyType(getTypeLabel(value) || value || 'Other'),
+    label: getTypeLabel(value) || value || 'Other',
     memberTypes: value ? [value] : [],
-    subcategories: [],
     representativeType: value || 'other',
-    representativeEntry: null
+    representativeEntry: null,
+    scope: 'type',
+    parentKey: slugifyType(getTypeLabel(value) || value || 'Other'),
+    subcategories: []
   };
 }
 
 function getStreakConfig(typeOrGroupKey) {
   const group = resolveStreakGroup(typeOrGroupKey);
-
-  // New streak preferences are keyed by the visible target. Fall back to old
-  // internal-type keys only for whole-type streaks so existing settings survive.
   let saved = state.streakPrefs?.[group.key];
   if (!saved && group.scope === 'type') {
     for (const memberType of group.memberTypes) {
@@ -15179,80 +14815,49 @@ function getStreakConfig(typeOrGroupKey) {
     }
   }
   saved ||= {};
+  const representative = group.representativeEntry || { type: group.representativeType, typeLabel: group.label, subcategory: group.subcategories?.[0] || '' };
+  const defaultSticker = getStickerConfig(representative.type || group.representativeType, representative);
+  const shape = STICKER_SHAPES.includes(saved.stickerShape) ? saved.stickerShape : defaultSticker.shape;
+  const color = STICKER_COLORS.includes(saved.stickerColor) ? saved.stickerColor : defaultSticker.color;
+  const stickerLabel = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(saved.stickerLabel !== undefined ? saved.stickerLabel : defaultSticker.label);
+  const defaultName = group.scope === 'type' ? group.label : (group.shortLabel || group.label);
 
   return {
     enabled: Boolean(saved.enabled),
     restDays: Array.isArray(saved.restDays)
       ? [...new Set(saved.restDays.map(Number).filter(day => day >= 0 && day <= 6))]
       : [],
-    scope: saved.scope || group.scope || 'type',
-    baseKey: saved.baseKey || group.baseKey || group.key,
-    subcategories: Array.isArray(saved.subcategories)
-      ? saved.subcategories.map(normalizedStreakSubcategory).filter(Boolean)
-      : [...(group.subcategories || [])],
-    label: cleanTypeLabel(saved.label || group.label || '') || group.label || 'Streak',
-    sticker: saved.sticker && typeof saved.sticker === 'object' ? { ...saved.sticker } : null
+    name: cleanTypeLabel(saved.name || '') || defaultName,
+    stickerShape: shape,
+    stickerColor: color,
+    stickerLabel,
+    scope: group.scope,
+    parentKey: group.parentKey,
+    subcategories: [...(group.subcategories || [])]
   };
 }
 
-function getStreakStickerConfig(targetOrKey, overrideConfig = null) {
-  const target = resolveStreakGroup(targetOrKey);
-  const config = overrideConfig || getStreakConfig(target.key);
-  const representative = getCalendarEntries().find(entry => streakTargetMatchesEntry(target, entry))
-    || target.representativeEntry
-    || { type: target.representativeType || 'other', typeLabel: target.label, subcategory: target.scope === 'subcategory' ? target.subcategories?.[0] || '' : '' };
-  const base = getStickerConfig(representative.type || target.representativeType || 'other', representative);
-  const saved = config?.sticker || {};
-  const shape = STICKER_SHAPES.includes(saved.shape) ? saved.shape : base.shape;
-  const color = STICKER_COLORS.includes(saved.color) ? saved.color : base.color;
-  const label = STICKER_SYMBOL_SHAPES.has(shape)
-    ? ''
-    : cleanStickerLabel(saved.label !== undefined ? saved.label : base.label);
-  return { shape, color, label, tilt: base.tilt || 'none' };
-}
-
-function streakStickerMarkup(targetOrKey, overrideConfig = null) {
-  const target = resolveStreakGroup(targetOrKey);
-  const config = getStreakStickerConfig(target, overrideConfig);
-  const text = config.shape === 'star' ? '★' : config.shape === 'heart' ? '♥' : escapeHtml(config.label || '');
-  const name = cleanTypeLabel(overrideConfig?.label || getStreakConfig(target.key).label || target.label || 'Streak');
-  return `<span class="sticker sticker-${config.shape} sticker-palette-${config.color} sticker-tilt-${config.tilt}" aria-label="${escapeAttr(`${name} streak sticker`)}">${text}</span>`;
-}
-
-function streakTargetMatchesEntry(targetOrKey, entry) {
-  const target = resolveStreakGroup(targetOrKey);
-  const baseKey = target.baseKey || target.key;
-  if (getStreakTypeGroupKey(entry) !== baseKey) return false;
-  if (target.scope === 'type' || !target.subcategories?.length) return true;
-  const entrySubcategory = normalizedStreakSubcategory(entry.subcategory).toLocaleLowerCase();
-  if (!entrySubcategory) return false;
-  return target.subcategories.some(value => normalizedStreakSubcategory(value).toLocaleLowerCase() === entrySubcategory);
-}
-
-function getTypeActivityDates(typeOrGroupKey, overrideTarget = null) {
-  const group = overrideTarget || resolveStreakGroup(typeOrGroupKey);
+function getTypeActivityDates(typeOrGroupKey) {
+  const group = resolveStreakGroup(typeOrGroupKey);
+  const wantedSubcategories = new Set((group.subcategories || []).map(value => cleanTypeLabel(value).toLowerCase()).filter(Boolean));
   return new Set(
     getCalendarEntries()
-      .filter(entry => streakTargetMatchesEntry(group, entry) && entry.date && entry.showOnCalendar !== false)
+      .filter(entry => {
+        if (getStreakTypeGroupKey(entry) !== group.parentKey) return false;
+        if (group.scope === 'type') return true;
+        const subcategory = cleanTypeLabel(entry.subcategory || '').toLowerCase();
+        return Boolean(subcategory && wantedSubcategories.has(subcategory));
+      })
+      .filter(entry => entry.date && entry.showOnCalendar !== false)
       .map(entry => entry.date)
   );
 }
 
 function calculateTypeStreak(typeOrGroupKey, overrideConfig = null) {
-  const resolved = resolveStreakGroup(typeOrGroupKey);
-  const config = overrideConfig || getStreakConfig(resolved.key);
+  const config = overrideConfig || getStreakConfig(typeOrGroupKey);
   if (!config.enabled) return { enabled: false, count: 0, restToday: false };
 
-  const target = overrideConfig
-    ? {
-        ...resolved,
-        scope: config.scope || resolved.scope,
-        baseKey: config.baseKey || resolved.baseKey,
-        subcategories: Array.isArray(config.subcategories) ? config.subcategories : resolved.subcategories,
-        label: config.label || resolved.label
-      }
-    : resolved;
-  const activityDates = getTypeActivityDates(target, target);
+  const activityDates = getTypeActivityDates(typeOrGroupKey);
   const restDays = new Set((config.restDays || []).map(Number));
   const now = new Date();
   let cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
@@ -15310,6 +14915,13 @@ function streakBadgeMarkup(typeOrGroupKey) {
   return text ? `<span class="type-streak-badge">${escapeHtml(text)}</span>` : '';
 }
 
+function streakStickerMarkup(config, ariaLabel = 'Streak') {
+  const shape = STICKER_SHAPES.includes(config?.stickerShape) ? config.stickerShape : 'square';
+  const color = STICKER_COLORS.includes(config?.stickerColor) ? config.stickerColor : 'cream';
+  const text = shape === 'star' ? '★' : shape === 'heart' ? '♥' : escapeHtml(config?.stickerLabel || '');
+  return `<span class="sticker sticker-${shape} sticker-palette-${color} sticker-tilt-none" aria-label="${escapeAttr(`${ariaLabel} sticker`)}">${text}</span>`;
+}
+
 function renderTrackStreakSummary() {
   if (!els.trackStreakSummary) return;
   const active = getRecognizedStreakGroups()
@@ -15327,8 +14939,8 @@ function renderTrackStreakSummary() {
 
   els.trackStreakSummary.innerHTML = active.map(group => `
       <div class="track-streak-card">
-        <span class="track-streak-sticker">${streakStickerMarkup(group, group.config)}</span>
-        <span class="track-streak-copy"><strong>${escapeHtml(group.config.label || group.label)}</strong><small>${escapeHtml(group.text)}</small></span>
+        <span class="track-streak-sticker">${streakStickerMarkup(group.config, group.config.name)}</span>
+        <span class="track-streak-copy"><strong>${escapeHtml(group.config.name)}</strong><small>${escapeHtml(group.text)}</small></span>
       </div>`).join('');
 }
 
@@ -15338,225 +14950,140 @@ function openStreakSettings() {
   showDialogAtTop(els.stickerSettingsModal);
 }
 
-function streakRowTargetFromElement(row) {
-  let subcategories = [];
-  try { subcategories = JSON.parse(row.dataset.streakSubcategories || '[]'); } catch {}
-  return {
-    key: row.dataset.streakType || '',
-    baseKey: row.dataset.streakBaseKey || row.dataset.streakType || '',
-    scope: row.dataset.streakScope || 'type',
-    label: cleanTypeLabel(row.querySelector('[data-streak-field="name"]')?.value || row.dataset.streakLabel || '') || 'Streak',
-    subcategories: Array.isArray(subcategories) ? subcategories : []
-  };
-}
-
-function createStreakSettingRow(target, config = null) {
-  const saved = config || getStreakConfig(target.key);
-  const row = document.createElement('div');
-  row.className = `streak-setting-row streak-setting-row-${target.scope || 'type'}${saved.enabled ? ' is-enabled' : ''}`;
-  row.dataset.streakType = target.key;
-  row.dataset.streakBaseKey = target.baseKey || target.key;
-  row.dataset.streakScope = target.scope || 'type';
-  row.dataset.streakLabel = target.label || 'Streak';
-  row.dataset.streakSubcategories = JSON.stringify(target.subcategories || []);
-  const scopeNote = target.scope === 'type'
-    ? 'all subcategories'
-    : target.scope === 'group'
-      ? (target.subcategories || []).join(' + ')
-      : 'subcategory';
-  const sticker = getStreakStickerConfig(target, saved);
-  row.innerHTML = `
-    <div class="streak-setting-type">
-      <div class="streak-setting-identity">
-        <span class="streak-setting-sticker-preview">${streakStickerMarkup(target, saved)}</span>
-        <input class="streak-setting-name-input" data-streak-field="name" type="text" maxlength="60" value="${escapeAttr(saved.label || target.label || 'Streak')}" aria-label="Streak name" />
-      </div>
-      <small>${escapeHtml(scopeNote)}</small>
-      <details class="streak-style-editor">
-        <summary>Change sticker</summary>
-        <div class="streak-style-controls">
-          <label><span>Shape</span><select data-streak-field="sticker-shape">
-            ${STICKER_SHAPES.map(shape => `<option value="${shape}" ${sticker.shape === shape ? 'selected' : ''}>${shape[0].toUpperCase()+shape.slice(1)}</option>`).join('')}
-          </select></label>
-          <label><span>Color</span><select data-streak-field="sticker-color">
-            ${STICKER_COLORS.map(color => `<option value="${color}" ${sticker.color === color ? 'selected' : ''}>${color[0].toUpperCase()+color.slice(1)}</option>`).join('')}
-          </select></label>
-          <label><span>Text</span><input data-streak-field="sticker-label" type="text" maxlength="3" value="${escapeAttr(STICKER_SYMBOL_SHAPES.has(sticker.shape) ? '' : sticker.label)}" placeholder="Up to 3" ${STICKER_SYMBOL_SHAPES.has(sticker.shape) ? 'disabled' : ''} /></label>
-        </div>
-      </details>
-      ${target.scope === 'group' ? '<button class="streak-group-delete" type="button" data-delete-streak-group aria-label="Delete grouped streak" title="Delete grouped streak">×</button>' : ''}
-    </div>
-    <label class="streak-toggle">
-      <input data-streak-field="enabled" type="checkbox" ${saved.enabled ? 'checked' : ''} />
-      <span>On</span>
-    </label>
-    <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(saved.label || target.label)}">
-      ${WEEKDAY_OPTIONS.map(day => `
-        <label class="rest-day-chip" title="${day.label}">
-          <input data-streak-rest-day="${day.value}" type="checkbox" ${saved.restDays.includes(day.value) ? 'checked' : ''} />
-          <span>${day.short}</span>
-        </label>`).join('')}
-    </div>
-    <div class="streak-setting-current">${escapeHtml(streakText(target.key, saved) || 'Off')}</div>`;
-  return row;
-}
-
-function createStreakGroupBuilder(base, subcategories) {
-  if (subcategories.length < 2) return null;
-  const details = document.createElement('details');
-  details.className = 'streak-group-builder';
-  details.dataset.streakBaseKey = base.key;
-  details.innerHTML = `
-    <summary>+ Group subcategories</summary>
-    <div class="streak-group-builder-body">
-      <label class="field compact-field"><span>Group name <em>optional</em></span><input data-streak-group-name type="text" maxlength="60" placeholder="e.g. Cardio" /></label>
-      <div class="streak-group-subcategory-choices" aria-label="Subcategories to group">
-        ${subcategories.map(subcategory => `<label><input data-streak-group-subcategory type="checkbox" value="${escapeAttr(subcategory)}" /><span>${escapeHtml(subcategory)}</span></label>`).join('')}
-      </div>
-      <p class="streak-group-builder-message" data-streak-group-message hidden></p>
-      <button class="secondary-button" type="button" data-create-streak-group>Create grouped streak</button>
-    </div>`;
-  return details;
-}
-
 function renderStreakSettingsRows() {
   if (!els.streakSettingsRows) return;
   els.streakSettingsRows.innerHTML = '';
 
-  for (const base of getBaseStreakGroups()) {
-    const section = document.createElement('section');
-    section.className = 'streak-setting-section';
-    section.dataset.streakBaseKey = base.key;
-
-    const heading = document.createElement('div');
-    heading.className = 'streak-setting-section-heading';
-    heading.innerHTML = `<strong>${escapeHtml(base.label)}</strong><small>Use the whole type, one subcategory, or combine subcategories.</small>`;
-    section.appendChild(heading);
-
-    section.appendChild(createStreakSettingRow({ ...base, label: `All ${base.label}` }));
-
-    const subcategories = getStreakSubcategories(base.key);
-    for (const subcategory of subcategories) {
-      section.appendChild(createStreakSettingRow({
-        ...base,
-        key: streakSubcategoryTargetKey(base.key, subcategory),
-        baseKey: base.key,
-        scope: 'subcategory',
-        label: subcategory,
-        subcategories: [subcategory]
-      }));
-    }
-
-    for (const custom of configuredStreakGroupsForBase(base.key)) {
-      section.appendChild(createStreakSettingRow({
-        ...custom,
-        memberTypes: base.memberTypes,
-        representativeType: base.representativeType,
-        representativeEntry: base.representativeEntry
-      }));
-    }
-
-    const builder = createStreakGroupBuilder(base, subcategories);
-    if (builder) section.appendChild(builder);
-    els.streakSettingsRows.appendChild(section);
+  for (const group of getRecognizedStreakGroups()) {
+    const config = getStreakConfig(group.key);
+    const row = document.createElement('div');
+    row.className = `streak-setting-row streak-setting-row-${group.scope}${config.enabled ? ' is-enabled' : ''}`;
+    row.dataset.streakType = group.key;
+    row.dataset.streakScope = group.scope;
+    row.dataset.streakParentKey = group.parentKey || group.key;
+    row.dataset.streakSubcategories = JSON.stringify(group.subcategories || []);
+    const scopeLabel = group.scope === 'type' ? 'Whole type' : group.scope === 'subcategory' ? 'Subtype' : 'Group';
+    const canGroup = group.scope === 'type' && streakSubcategoriesForParent(group.key).length >= 2;
+    row.innerHTML = `
+      <div class="streak-setting-identity">
+        <div class="streak-setting-preview" data-streak-preview>${streakStickerMarkup(config, config.name)}</div>
+        <label class="streak-name-field"><span>${escapeHtml(scopeLabel)}</span><input data-streak-field="name" type="text" maxlength="40" value="${escapeAttr(config.name)}" placeholder="${escapeAttr(group.shortLabel || group.label)}" /></label>
+        <details class="streak-style-details">
+          <summary title="Change streak sticker">Sticker</summary>
+          <div class="streak-style-controls">
+            <label><span>Shape</span><select data-streak-field="shape">${STICKER_SHAPES.map(shape => `<option value="${shape}" ${config.stickerShape === shape ? 'selected' : ''}>${shape[0].toUpperCase()+shape.slice(1)}</option>`).join('')}</select></label>
+            <label><span>Color</span><select data-streak-field="color">${STICKER_COLORS.map(color => `<option value="${color}" ${config.stickerColor === color ? 'selected' : ''}>${color[0].toUpperCase()+color.slice(1)}</option>`).join('')}</select></label>
+            <label><span>Text</span><input data-streak-field="sticker-label" type="text" maxlength="3" value="${escapeAttr(config.stickerLabel || '')}" ${['star','heart'].includes(config.stickerShape) ? 'disabled' : ''} placeholder="Optional" /></label>
+          </div>
+        </details>
+        ${canGroup ? `<button class="quiet-button streak-group-button" type="button" data-streak-add-group="${escapeAttr(group.key)}">+ Group subtypes</button>` : ''}
+        ${group.scope === 'group' ? `<button class="quiet-button streak-group-delete" type="button" data-streak-delete-group="${escapeAttr(group.key)}">Delete group</button>` : ''}
+      </div>
+      <label class="streak-toggle">
+        <input data-streak-field="enabled" type="checkbox" ${config.enabled ? 'checked' : ''} />
+        <span>On</span>
+      </label>
+      <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(config.name)}">
+        ${WEEKDAY_OPTIONS.map(day => `
+          <label class="rest-day-chip" title="${day.label}">
+            <input data-streak-rest-day="${day.value}" type="checkbox" ${config.restDays.includes(day.value) ? 'checked' : ''} />
+            <span>${day.short}</span>
+          </label>`).join('')}
+      </div>
+      <div class="streak-setting-current">${escapeHtml(streakText(group.key, config) || 'Off')}</div>`;
+    els.streakSettingsRows.appendChild(row);
   }
 }
 
 function readStreakRowConfig(row) {
-  const target = streakRowTargetFromElement(row);
-  const shape = row.querySelector('[data-streak-field="sticker-shape"]')?.value || 'square';
-  const color = row.querySelector('[data-streak-field="sticker-color"]')?.value || 'cream';
-  const labelInput = row.querySelector('[data-streak-field="sticker-label"]');
-  const stickerLabel = STICKER_SYMBOL_SHAPES.has(shape) ? '' : cleanStickerLabel(labelInput?.value || '');
+  const shape = row.querySelector('[data-streak-field="shape"]')?.value || 'square';
+  let subcategories = [];
+  try { subcategories = JSON.parse(row.dataset.streakSubcategories || '[]'); } catch {}
   return {
     enabled: Boolean(row.querySelector('[data-streak-field="enabled"]')?.checked),
     restDays: [...row.querySelectorAll('[data-streak-rest-day]:checked')]
       .map(input => Number(input.dataset.streakRestDay)),
-    scope: target.scope,
-    baseKey: target.baseKey,
-    subcategories: target.subcategories,
-    label: target.label,
-    sticker: { shape, color, label: stickerLabel }
+    name: cleanTypeLabel(row.querySelector('[data-streak-field="name"]')?.value || ''),
+    stickerShape: STICKER_SHAPES.includes(shape) ? shape : 'square',
+    stickerColor: row.querySelector('[data-streak-field="color"]')?.value || 'cream',
+    stickerLabel: ['star','heart'].includes(shape) ? '' : cleanStickerLabel(row.querySelector('[data-streak-field="sticker-label"]')?.value || ''),
+    scope: row.dataset.streakScope || 'type',
+    parentKey: row.dataset.streakParentKey || row.dataset.streakType,
+    subcategories
   };
 }
 
 function previewStreakSettings(event) {
   const row = event.target.closest('.streak-setting-row[data-streak-type]');
   if (!row) return;
-  const shape = row.querySelector('[data-streak-field="sticker-shape"]')?.value || 'square';
-  const labelInput = row.querySelector('[data-streak-field="sticker-label"]');
-  if (labelInput) labelInput.disabled = STICKER_SYMBOL_SHAPES.has(shape);
   const config = readStreakRowConfig(row);
   row.classList.toggle('is-enabled', config.enabled);
   const current = row.querySelector('.streak-setting-current');
-  if (current) current.textContent = streakText(streakRowTargetFromElement(row), config) || 'Off';
-  const preview = row.querySelector('.streak-setting-sticker-preview');
-  if (preview) preview.innerHTML = streakStickerMarkup(streakRowTargetFromElement(row), config);
+  if (current) current.textContent = streakText(row.dataset.streakType, config) || 'Off';
+  const labelInput = row.querySelector('[data-streak-field="sticker-label"]');
+  if (labelInput) labelInput.disabled = ['star','heart'].includes(config.stickerShape);
+  const preview = row.querySelector('[data-streak-preview]');
+  if (preview) preview.innerHTML = streakStickerMarkup(config, config.name || 'Streak');
+}
+
+function addStreakSubcategoryGroup(parentKey) {
+  const parent = getBaseStreakGroups().find(group => group.key === parentKey);
+  const available = streakSubcategoriesForParent(parentKey);
+  if (!parent || available.length < 2) {
+    alert('This type needs at least two subtypes before you can group them.');
+    return;
+  }
+  const raw = prompt(`Group which ${parent.label} subtypes?\n\nAvailable: ${available.join(', ')}\n\nEnter two or more, separated by commas.`);
+  if (raw == null) return;
+  const wanted = raw.split(',').map(cleanTypeLabel).filter(Boolean);
+  const selected = available.filter(option => wanted.some(value => value.toLowerCase() === option.toLowerCase()));
+  if (selected.length < 2) {
+    alert('Choose at least two of the listed subtypes.');
+    return;
+  }
+  const suggested = selected.join(' + ');
+  const name = cleanTypeLabel(prompt('Name this streak group:', suggested) || suggested) || suggested;
+  const key = `${parentKey}::group::${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+  const representative = parent.representativeEntry || { type: parent.representativeType, typeLabel: parent.label };
+  const sticker = getStickerConfig(representative.type, representative);
+  state.streakPrefs[key] = {
+    enabled: true,
+    restDays: [],
+    name,
+    stickerShape: sticker.shape,
+    stickerColor: sticker.color,
+    stickerLabel: ['star','heart'].includes(sticker.shape) ? '' : sticker.label,
+    scope: 'group',
+    parentKey,
+    subcategories: selected
+  };
+  localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
+  scheduleCloudSync();
+  renderStreakSettingsRows();
 }
 
 function handleStreakSettingsClick(event) {
-  const deleteButton = event.target.closest('[data-delete-streak-group]');
-  if (deleteButton) {
-    deleteButton.closest('.streak-setting-row')?.remove();
+  const add = event.target.closest('[data-streak-add-group]');
+  if (add) {
+    addStreakSubcategoryGroup(add.dataset.streakAddGroup);
     return;
   }
-
-  const createButton = event.target.closest('[data-create-streak-group]');
-  if (!createButton) return;
-  const builder = createButton.closest('.streak-group-builder');
-  const section = createButton.closest('.streak-setting-section');
-  if (!builder || !section) return;
-  const selected = [...builder.querySelectorAll('[data-streak-group-subcategory]:checked')]
-    .map(input => normalizedStreakSubcategory(input.value))
-    .filter(Boolean);
-  const message = builder.querySelector('[data-streak-group-message]');
-  if (selected.length < 2) {
-    if (message) {
-      message.hidden = false;
-      message.textContent = 'Choose at least two subcategories.';
-    }
-    return;
+  const remove = event.target.closest('[data-streak-delete-group]');
+  if (remove) {
+    if (!confirm('Delete this grouped-subtype streak?')) return;
+    delete state.streakPrefs[remove.dataset.streakDeleteGroup];
+    localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
+    scheduleCloudSync();
+    renderStreakSettingsRows();
+    renderTrackStreakSummary();
   }
-  const requestedName = cleanTypeLabel(builder.querySelector('[data-streak-group-name]')?.value || '');
-  const label = requestedName || selected.join(' + ');
-  const baseKey = builder.dataset.streakBaseKey || section.dataset.streakBaseKey || '';
-  const key = `${baseKey}::group::${Date.now().toString(36)}${Math.random().toString(36).slice(2,7)}`;
-  const base = getBaseStreakGroups().find(group => group.key === baseKey) || { key: baseKey, label: baseKey };
-  const row = createStreakSettingRow({
-    ...base,
-    key,
-    baseKey,
-    scope: 'group',
-    label,
-    subcategories: selected
-  }, {
-    enabled: true,
-    restDays: [],
-    scope: 'group',
-    baseKey,
-    subcategories: selected,
-    label
-  });
-  section.insertBefore(row, builder);
-  builder.querySelectorAll('input').forEach(input => { if (input.type === 'checkbox') input.checked = false; else input.value = ''; });
-  if (message) message.hidden = true;
-  builder.open = false;
 }
 
 function saveStreakSettings(event) {
   event.preventDefault();
   const next = {};
   els.streakSettingsRows?.querySelectorAll('.streak-setting-row[data-streak-type]').forEach(row => {
-    const config = readStreakRowConfig(row);
-    const defaultName = cleanTypeLabel(row.dataset.streakLabel || '') || 'Streak';
-    const target = streakRowTargetFromElement(row);
-    const defaultSticker = getStreakStickerConfig({ ...target, label: defaultName }, { ...config, label: defaultName, sticker: null });
-    const customized = config.label !== defaultName
-      || config.sticker.shape !== defaultSticker.shape
-      || config.sticker.color !== defaultSticker.color
-      || config.sticker.label !== defaultSticker.label;
-    // Keep definitions for grouped streaks and preserve any custom name/sticker even while off.
-    if (config.enabled || config.scope === 'group' || customized) next[row.dataset.streakType] = config;
+    next[row.dataset.streakType] = readStreakRowConfig(row);
   });
   state.streakPrefs = next;
   localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
@@ -15566,7 +15093,7 @@ function saveStreakSettings(event) {
 }
 
 function resetStreakSettings() {
-  if (!confirm('Turn off all streaks, remove grouped subcategory streaks, and clear scheduled rest days?')) return;
+  if (!confirm('Turn off all streaks and clear scheduled rest days?')) return;
   state.streakPrefs = {};
   localStorage.removeItem(STREAK_PREFS_KEY);
   scheduleCloudSync();
@@ -15664,10 +15191,6 @@ function extractItemGenres(sourceType, source, editing) {
     const categories = source?.categories || source?.raw?.volumeInfo?.categories || editing?.genres || [];
     return [...new Set(categories.map(value => String(value || '').trim()).filter(Boolean))];
   }
-  if (['video-game','board-game'].includes(sourceType)) {
-    const direct = source?.genres || editing?.genres || [];
-    return [...new Set(direct.map(value => typeof value === 'string' ? value : value?.name).map(value => String(value || '').trim()).filter(Boolean))];
-  }
   if (sourceType === 'tv' || sourceType === 'movie') {
     const direct = source?.genres?.map?.(genre => typeof genre === 'string' ? genre : genre?.name).filter(Boolean) || [];
     if (direct.length) return [...new Set(direct)];
@@ -15690,7 +15213,6 @@ function extractItemGenres(sourceType, source, editing) {
 function extractItemReleaseDate(sourceType, source, editing) {
   if (sourceType === 'book') return normalizedReleaseDate(source?.publishedDate || source?.raw?.volumeInfo?.publishedDate || editing?.releaseDate || '');
   if (sourceType === 'tv') return normalizedReleaseDate(source?.raw?.first_air_date || editing?.releaseDate || '');
-  if (['video-game','board-game'].includes(sourceType)) return normalizedReleaseDate(source?.releaseDate || editing?.releaseDate || '');
   if (sourceType === 'movie') return normalizedReleaseDate(source?.raw?.release_date || editing?.releaseDate || '');
   if (sourceType === 'music' || sourceType === 'song') return normalizedReleaseDate(source?.releaseDate || source?.raw?.releaseDate || editing?.releaseDate || '');
   if (sourceType === 'artist') return normalizedReleaseDate(editing?.releaseDate || '');
@@ -15747,6 +15269,21 @@ function itemLibraryDate(item) {
   return dates.sort().at(-1) || '';
 }
 
+function libraryCardExperienceDate(item) {
+  if (!item || getSourceType(item) === 'book') return '';
+  if (getSourceType(item) === 'activity') {
+    const start = String(item.activityMeta?.startDate || item.date || '').slice(0,10);
+    const end = String(item.activityMeta?.endDate || start).slice(0,10);
+    return end || start;
+  }
+  const dates = state.history
+    .filter(entry => entry.sourceItemId === item.id && entry.date)
+    .map(entry => String(entry.date).slice(0,10))
+    .filter(Boolean);
+  if (item.date) dates.push(String(item.date).slice(0,10));
+  return [...new Set(dates)].sort().at(-1) || '';
+}
+
 function itemLastTrackedDate(item) {
   if (!item) return '';
   const dates = state.history
@@ -15772,37 +15309,19 @@ function itemLastTrackedDate(item) {
   return dates.sort().at(-1) || '';
 }
 
-function libraryCardFooterDate(item) {
-  if (!item || getSourceType(item) === 'book') return '';
-  const sourceType = getSourceType(item);
-
-  // Match Library's in-card date badge: explicit logged/history dates plus item.date.
-  // Do not use completedAt or createdAt, because those are storage/completion metadata
-  // and can differ from the date the user actually watched/went/completed something.
-  if (sourceType === 'activity') {
-    const start = String(item.activityMeta?.startDate || item.date || '').slice(0, 10);
-    const end = String(item.activityMeta?.endDate || start).slice(0, 10);
-    return end || start;
-  }
-
-  const dates = state.history
-    .filter(entry => entry.sourceItemId === item.id && entry.date)
-    .map(entry => String(entry.date).slice(0, 10))
-    .filter(Boolean);
-  if (item.date) dates.push(String(item.date).slice(0, 10));
-  return [...new Set(dates)].sort().at(-1) || '';
-}
-
 function normalizeLibraryPrefs(value) {
   const keys = Array.isArray(value?.defaultTypeKeys)
     ? [...new Set(value.defaultTypeKeys.map(key => slugifyType(key)).filter(Boolean))]
     : null;
-  return { defaultTypeKeys: keys };
+  const addTypeKeys = Array.isArray(value?.addTypeKeys)
+    ? [...new Set(value.addTypeKeys.map(key => String(key || '').trim()).filter(key => CORE_LOG_TYPE_KEYS.has(key)))]
+    : null;
+  return { defaultTypeKeys: keys, addTypeKeys };
 }
 
 function isCoreLibraryGroupKey(key) {
   const normalized = slugifyType(key).replace(/s$/, '');
-  return ['workout','movie','tv','book','music','food','game','event'].includes(normalized);
+  return ['tv','movie','book','music'].includes(normalized);
 }
 
 function libraryAvailableTypeGroups() {
@@ -15812,16 +15331,16 @@ function libraryAvailableTypeGroups() {
     if (!groups.has(key)) groups.set(key, getItemTypeLabel(item));
   }
 
-  // Keep Omni's built-in top-level Types available even before the user has
-  // saved something in each category. User-created Types appear only after one has been created.
-  [['workout', 'Workouts'], ['movie', 'Movies'], ['tv', 'TV'], ['book', 'Books'], ['music', 'Music'], ['food', 'Food'], ['game', 'Games'], ['event', 'Events']].forEach(([key, label]) => {
+  // Keep the three core content types available even before the user has saved
+  // something in each category.
+  [['tv', 'TV'], ['movie', 'Movie'], ['book', 'Book'], ['music', 'Music']].forEach(([key, label]) => {
     if (!groups.has(key) && ![...groups.keys()].some(existing => slugifyType(existing).replace(/s$/, '') === key)) {
       groups.set(key, label);
     }
   });
 
   return [...groups.entries()].sort(([aKey,aLabel],[bKey,bLabel]) => {
-    const preferred = ['workout','workouts','movie','movies','tv','book','books','music','food','game','games','event','events'];
+    const preferred = ['tv','movie','movies','book','books','music'];
     const ai = preferred.indexOf(aKey);
     const bi = preferred.indexOf(bKey);
     if (ai !== -1 || bi !== -1) {
@@ -15871,10 +15390,9 @@ function refreshTypeFilter() {
       <span>${escapeHtml(label)}</span>
     </label>`).join('');
   els.typeFilterOptions.innerHTML = `${options}
-    <div class="library-type-filter-actions" aria-label="Type tools">
+    <div class="library-type-filter-actions" aria-label="Filter defaults">
       <button type="button" data-library-filter-action="save-default">Make current default</button>
       <button type="button" data-library-filter-action="reset-default">Reset default</button>
-      <button type="button" data-library-filter-action="clean-unused">Clean up unused types</button>
       <small class="library-type-filter-status" aria-live="polite"></small>
     </div>`;
   if (els.typeFilterSummary) els.typeFilterSummary.textContent = libraryTypeFilterSummary();
@@ -15914,91 +15432,6 @@ function resetLibraryFilterDefault() {
   libraryFilterStatus('Default reset');
 }
 
-function unusedCustomTypes() {
-  return (state.customTypes || []).filter(custom => {
-    const type = String(custom?.type || '');
-    if (!type) return false;
-    const hasItem = state.items.some(item => String(item?.type || '') === type);
-    const hasHistory = state.history.some(entry => String(entry?.type || '') === type);
-    return !hasItem && !hasHistory;
-  });
-}
-
-function trackSettingsCleanupStatus(message = '') {
-  const status = els.trackSettingsCleanupStatus;
-  if (!status) return;
-  status.textContent = message;
-  if (message) setTimeout(() => { if (status.textContent === message) status.textContent = ''; }, 2600);
-}
-
-function cleanUpUnusedTypes({ origin = 'library' } = {}) {
-  const unused = unusedCustomTypes();
-  const setStatus = message => {
-    if (origin === 'track') trackSettingsCleanupStatus(message);
-    else libraryFilterStatus(message);
-  };
-  if (!unused.length) {
-    setStatus('No unused types');
-    return;
-  }
-  const labels = unused.map(entry => cleanTypeLabel(entry.label || getTypeLabel(entry.type))).filter(Boolean);
-  const preview = labels.slice(0, 8).join(', ');
-  const more = labels.length > 8 ? ` +${labels.length - 8} more` : '';
-  if (!confirm(`Remove ${unused.length} unused ${unused.length === 1 ? 'type' : 'types'}?\n\n${preview}${more}\n\nTheir Sticker, Streak, and Row settings will also be removed. No Library items or tracked history will be deleted.`)) return;
-
-  const removedTypes = new Set(unused.map(entry => String(entry.type || '')));
-  const removedGroupKeys = new Set(unused.map(entry => slugifyType(entry.label || getTypeLabel(entry.type))));
-  state.customTypes = state.customTypes.filter(entry => !removedTypes.has(String(entry.type || '')));
-
-  const nextUsage = { ...(state.typeUsage || {}) };
-  for (const type of removedTypes) {
-    delete nextUsage[type];
-    delete nextUsage[`custom:${type}`];
-    delete nextUsage[`builtin:${type}`];
-  }
-  state.typeUsage = nextUsage;
-
-  // Sticker and Track-row preferences share the same per-type preference object,
-  // so deleting the parent key clears both the sticker styling and any custom
-  // row/group/visibility settings. Subcategory sticker overrides go with it.
-  const nextStickerPrefs = { ...(state.stickerPrefs || {}) };
-  for (const key of Object.keys(nextStickerPrefs)) {
-    if (key === '__calendar') continue;
-    if ([...removedTypes].some(type => key === type || key.startsWith(`${type}::subcategory::`))) delete nextStickerPrefs[key];
-  }
-  state.stickerPrefs = nextStickerPrefs;
-
-  const nextStreakPrefs = { ...(state.streakPrefs || {}) };
-  for (const key of Object.keys(nextStreakPrefs)) {
-    if (removedTypes.has(key) || [...removedGroupKeys].some(groupKey => key === groupKey || key.startsWith(`${groupKey}::`))) delete nextStreakPrefs[key];
-  }
-  state.streakPrefs = nextStreakPrefs;
-
-  const prefs = normalizeLibraryPrefs(state.libraryPrefs);
-  if (Array.isArray(prefs.defaultTypeKeys)) {
-    prefs.defaultTypeKeys = prefs.defaultTypeKeys.filter(key => !removedGroupKeys.has(slugifyType(key)));
-  }
-  state.libraryPrefs = prefs;
-  if (state.libraryVisibleTypes instanceof Set) {
-    for (const key of removedGroupKeys) state.libraryVisibleTypes.delete(key);
-  }
-
-  safeLocalSet(CUSTOM_TYPES_KEY, state.customTypes);
-  safeLocalSet(TYPE_USAGE_KEY, state.typeUsage);
-  safeLocalSet(STICKER_PREFS_KEY, state.stickerPrefs);
-  safeLocalSet(STREAK_PREFS_KEY, state.streakPrefs);
-  safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
-  scheduleCloudSync();
-  refreshItemTypeOptions?.();
-  refreshItemKindChoices?.('', els.itemActionChoice?.value || 'completed');
-  refreshTypeFilter();
-  renderLibrary();
-  if (els.stickerSettingsRows) renderStickerSettingsRows();
-  if (els.streakSettingsRows) renderStreakSettingsRows();
-  if (els.calendarRowSettingsRows) renderCalendarRowSettingsRows();
-  setStatus(`Removed ${unused.length} unused ${unused.length === 1 ? 'type' : 'types'}`);
-}
-
 function handleLibraryTypeFilterAction(event) {
   const button = event.target.closest?.('[data-library-filter-action]');
   if (!button) return;
@@ -16006,7 +15439,6 @@ function handleLibraryTypeFilterAction(event) {
   event.stopPropagation();
   if (button.dataset.libraryFilterAction === 'save-default') saveCurrentLibraryFilterAsDefault();
   if (button.dataset.libraryFilterAction === 'reset-default') resetLibraryFilterDefault();
-  if (button.dataset.libraryFilterAction === 'clean-unused') cleanUpUnusedTypes();
 }
 
 function renderLibraryDefaultTypeOptions(selectedKeys = new Set(libraryDefaultTypeKeys())) {
@@ -16237,7 +15669,7 @@ function makeLibraryPoster(item) {
   albumButton.setAttribute('aria-label', `Add ${item.title} to album`);
   albumButton.title = 'Add to collection';
   shell.append(poster, albumButton);
-  const trackedDate = libraryCardFooterDate(item);
+  const trackedDate = libraryCardExperienceDate(item);
   if (trackedDate) {
     const tracked = document.createElement('span');
     tracked.className = 'library-card-tracked-date';
@@ -16258,7 +15690,7 @@ function renderLibrary() {
     .filter(item => !(item.calendarQueueOnly === true && item.calendarTracked !== true))
     .filter(item => state.libraryView !== 'recommended' || item.recommended)
     .filter(item => visibleTypes.has(libraryTypeGroupKey(item)))
-    .filter(item => !libraryQuery || normalizeSearchText([item.title, item.subtitle, item.notes, item.subcategory, getItemTypeLabel(item), item.artistName, ...getItemPeople(item), ...(itemHasRepeatLog(item) ? repeatLogHistoryEntries(item).flatMap(entry => [entry.title, entry.notes, entry.date]) : [])].filter(Boolean).join(' ')).includes(libraryQuery));
+    .filter(item => !libraryQuery || normalizeSearchText([item.title, item.subtitle, item.notes, item.subcategory, getItemTypeLabel(item), item.artistName, ...getItemPeople(item), ...(itemHasRepeatLog(item) || getSourceType(item) === 'class' ? repeatLogHistoryEntries(item).flatMap(entry => [entry.title, entry.notes, entry.date]) : [])].filter(Boolean).join(' ')).includes(libraryQuery));
 
   // For Recent, dated/calendar-associated items always come first in descending
   // date order. Undated items are deliberately shuffled at the end instead of
@@ -16546,16 +15978,14 @@ function getSourceType(item) {
   if (item.sourceType) return item.sourceType;
   if (item.provider === 'youtube' || item.type === 'workout') return 'youtube';
   if (item.provider === 'ticketmaster') return 'event';
-  if (item.type === 'game' && item.provider === 'igdb') return 'video-game';
-  if (item.type === 'game' && item.provider === 'bgg') return 'board-game';
-  if (['tv', 'movie', 'book', 'game', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class'].includes(item.type)) return item.type;
+  if (['tv', 'movie', 'book', 'music', 'artist', 'song', 'concert', 'event', 'activity', 'class'].includes(item.type)) return item.type;
   return 'other';
 }
 
 function getQueueStatus(item) {
   if (!item) return 'library';
   if (['upnext', 'tbr', 'library'].includes(item.queueStatus)) return item.queueStatus;
-  if (item.active !== false && ['tv', 'youtube', 'book', 'video-game', 'board-game', 'reminder', 'event'].includes(getSourceType(item))) return 'upnext';
+  if (item.active !== false && ['tv', 'youtube', 'book', 'reminder', 'event'].includes(getSourceType(item))) return 'upnext';
   return 'library';
 }
 
@@ -16710,6 +16140,7 @@ function hasMeaningfulLocalState(snapshot = buildCloudState()) {
     Object.keys(snapshot.stickerPrefs || {}).length ||
     Object.keys(snapshot.streakPrefs || {}).length ||
     Array.isArray(snapshot.libraryPrefs?.defaultTypeKeys) ||
+    Array.isArray(snapshot.libraryPrefs?.addTypeKeys) ||
     snapshot.discoverPrefs?.streamingProviderIds?.length
   );
 }
@@ -16952,6 +16383,19 @@ function safeLocalSet(key, value) {
 
 function addHistoryRecord(record) {
   const source = record?.sourceItemId ? findItem(record.sourceItemId) : null;
+  let queueChanged = false;
+  // Logging something that was merely saved for later means it has started.
+  // Keep explicit paused/DNF items in TBR until the user resumes them.
+  if (source && getQueueStatus(source) === 'tbr') {
+    const paused = source.watchDisposition === 'paused' || source.bookDisposition === 'paused' || source.mediaDisposition === 'paused';
+    const stopped = source.watchDisposition === 'stopped' || source.bookDisposition === 'dnf' || source.mediaDisposition === 'stopped';
+    if (!paused && !stopped && getSourceType(source) !== 'reminder') {
+      setItemQueueStatus(source, 'upnext');
+      if (getSourceType(source) === 'tv' && source.watchDisposition === 'watch-later') source.watchDisposition = 'following';
+      source.updatedAt = new Date().toISOString();
+      queueChanged = true;
+    }
+  }
   const repeatKey = historyRepeatIdentity(record);
   const priorRepeats = repeatKey ? state.history.filter(entry => historyRepeatIdentity(entry) === repeatKey).length : 0;
   const isRepeat = record?.rewatch == null ? priorRepeats > 0 : Boolean(record.rewatch);
@@ -16969,6 +16413,7 @@ function addHistoryRecord(record) {
     ...(repeatKey ? { rewatch: isRepeat, repeatIndex } : {}),
     subtitle
   });
+  if (queueChanged) saveItems();
 }
 
 function loadJSON(key, fallback) {
@@ -17073,6 +16518,8 @@ const socialState = {
   peopleResults: [],
   followingProfiles: [],
   followingSnapshots: new Map(),
+  followerProfiles: [],
+  followRequestProfiles: [],
   acceptedConnections: [],
   buddyWatches: [],
   viewedProfile: null,
@@ -17543,6 +16990,8 @@ function openSocialProfileSettings() {
   $('#socialBio').value = socialState.profile.bio || '';
   $('#socialPrivateProfile').checked = Boolean(socialState.profile.is_private);
   renderSocialShareSettingsEditor();
+  const logTypeHost = $('#socialLogTypeChoices');
+  if (logTypeHost) logTypeHost.innerHTML = loggingTypeChoicesMarkup(loggingAddTypeKeys());
   setSocialProfileSettingsMessage('');
   showDialogAtTop($('#socialProfileSettingsModal'));
 }
@@ -17720,6 +17169,11 @@ async function saveSocialProfileSettings(event) {
   if (prefsResult.error) { setSocialProfileSettingsMessage(prefsResult.error.message, true); return; }
   socialState.profile = { ...data, share_settings: shareSettings };
   socialState.shareSettings = normalizeSocialShareSettings(shareSettings);
+  const logTypeHost = $('#socialLogTypeChoices');
+  if (logTypeHost) {
+    const selectedLogTypes = [...logTypeHost.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value);
+    saveLoggingAddTypeKeys(selectedLogTypes);
+  }
   await publishSocialSnapshot();
   $('#socialProfileSettingsModal')?.close();
   renderSocialMyProfile();
@@ -17780,12 +17234,14 @@ function socialFollowButtonMarkup(profile, relation = null) {
 
 async function loadSocialFollowing() {
   if (!socialState.schemaReady || !supabase || !currentUser) return;
-  const [outgoingResult, incomingResult] = await Promise.all([
+  const [outgoingResult, incomingResult, followersResult] = await Promise.all([
     supabase.from('follows').select('follower_id, following_id, status, created_at').eq('follower_id', currentUser.id),
-    supabase.from('follows').select('follower_id, following_id, status, created_at').eq('following_id', currentUser.id).eq('status','pending')
+    supabase.from('follows').select('follower_id, following_id, status, created_at').eq('following_id', currentUser.id).eq('status','pending'),
+    supabase.from('follows').select('follower_id, following_id, status, created_at').eq('following_id', currentUser.id).eq('status','accepted')
   ]);
   if (outgoingResult.error) throw outgoingResult.error;
   if (incomingResult.error) throw incomingResult.error;
+  if (followersResult.error) throw followersResult.error;
 
   const accepted = (outgoingResult.data || []).filter(row => row.status === 'accepted');
   const ids = accepted.map(row => row.following_id);
@@ -17809,14 +17265,24 @@ async function loadSocialFollowing() {
   if (host) host.innerHTML = profiles.map(profile => socialProfileCardMarkup(profile, snapshotMap.get(profile.user_id), relationMap.get(profile.user_id))).join('');
   if ($('#socialFollowingEmpty')) $('#socialFollowingEmpty').hidden = profiles.length > 0;
 
+  const followerIds = (followersResult.data || []).map(row => row.follower_id).filter(Boolean);
+  if (followerIds.length) {
+    const followerResult = await supabase.from('profiles').select('user_id, username, display_name, avatar_url, is_private').in('user_id', followerIds);
+    if (followerResult.error) throw followerResult.error;
+    socialState.followerProfiles = followerResult.data || [];
+  } else {
+    socialState.followerProfiles = [];
+  }
+
   const requests = incomingResult.data || [];
   const requestHost = $('#socialFollowRequests');
   if (requestHost) {
-    if (!requests.length) requestHost.innerHTML = '';
+    if (!requests.length) { socialState.followRequestProfiles = []; requestHost.innerHTML = ''; }
     else {
       const requestIds = requests.map(row => row.follower_id);
       const { data: requestProfiles, error } = await supabase.from('profiles').select('user_id, username, display_name, avatar_url, is_private').in('user_id', requestIds);
       if (error) throw error;
+      socialState.followRequestProfiles = requestProfiles || [];
       requestHost.innerHTML = `<div class="social-request-heading">Follow requests</div>${(requestProfiles || []).map(profile => `<article class="social-request-row"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}</small></span><div><button class="primary-button social-small-button" type="button" data-social-accept-follow="${escapeAttr(profile.user_id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-social-decline-follow="${escapeAttr(profile.user_id)}">Decline</button></div></article>`).join('')}`;
     }
   }
@@ -17851,6 +17317,15 @@ function socialBuddyInviteMarkup(watch) {
   return `<article class="social-buddy-invite"><div class="social-buddy-invite-main">${item.image ? `<img src="${escapeAttr(item.image)}" alt="" />` : ''}<span><small>Buddy Watch · ${escapeHtml(person)}</small><strong>${escapeHtml(item.title || watch.title || 'Buddy Watch')}</strong></span></div><div class="social-buddy-invite-actions"><button class="primary-button social-small-button" type="button" data-buddy-accept="${escapeAttr(watch.id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-buddy-decline="${escapeAttr(watch.id)}">Decline</button></div></article>`;
 }
 
+function socialFeedPeopleMarkup() {
+  const requests = socialState.followRequestProfiles || [];
+  const followers = socialState.followerProfiles || [];
+  if (!requests.length && !followers.length) return '';
+  const requestRows = requests.map(profile => `<article class="social-feed-request-row"><button class="social-feed-person-pill" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}</small></span></button><div><button class="primary-button social-small-button" type="button" data-social-accept-follow="${escapeAttr(profile.user_id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-social-decline-follow="${escapeAttr(profile.user_id)}">Decline</button></div></article>`).join('');
+  const followerPills = followers.map(profile => `<button class="social-feed-follower-pill" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span>${escapeHtml(profile.display_name || profile.username)}</span></button>`).join('');
+  return `<section class="social-feed-people">${requests.length ? `<div class="social-feed-people-block"><div class="social-feed-section-title">Follow requests</div><div class="social-feed-request-list">${requestRows}</div></div>` : ''}${followers.length ? `<div class="social-feed-people-block"><div class="social-feed-section-title">Followers</div><div class="social-feed-follower-list">${followerPills}</div></div>` : ''}</section>`;
+}
+
 function renderSocialFeed() {
   const host = $('#socialFeed');
   if (!host) return;
@@ -17865,8 +17340,9 @@ function renderSocialFeed() {
   }
   entries.sort((a,b) => String(b.date).localeCompare(String(a.date)));
   const invites = (socialState.buddyWatches || []).filter(watch => watch.myMembership?.status === 'pending');
-  host.innerHTML = invites.map(socialBuddyInviteMarkup).join('') + entries.slice(0,120).map(socialFeedCardMarkup).join('');
-  if ($('#socialFeedEmpty')) $('#socialFeedEmpty').hidden = invites.length > 0 || entries.length > 0;
+  const peopleMarkup = socialFeedPeopleMarkup();
+  host.innerHTML = peopleMarkup + invites.map(socialBuddyInviteMarkup).join('') + entries.slice(0,120).map(socialFeedCardMarkup).join('');
+  if ($('#socialFeedEmpty')) $('#socialFeedEmpty').hidden = Boolean(peopleMarkup) || invites.length > 0 || entries.length > 0;
 }
 
 async function handleSocialPeopleSearch(event) {

@@ -1103,54 +1103,13 @@ export const TrackerAPI = (() => {
     return required(settings.gameCatalogueProxyUrl, 'Game catalogue proxy URL');
   }
 
-  let gameCatalogueHealthPromise = null;
-
-  async function gameCatalogueFetchOnce(settings, payload) {
+  async function gameCatalogueProxy(settings, payload) {
     const url = gameCatalogueProxyUrl(settings);
-    const response = await fetch(url, {
+    return fetchJson(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload || {})
     });
-    let data = null;
-    try { data = await response.json(); } catch {}
-    if (!response.ok) {
-      const message = data?.error?.message || data?.message || `${response.status} ${response.statusText || 'Game catalogue request failed'}`.trim();
-      throw new Error(message);
-    }
-    return data || {};
-  }
-
-  async function gameCatalogueHealth(settings) {
-    if (!gameCatalogueHealthPromise) {
-      gameCatalogueHealthPromise = gameCatalogueFetchOnce(settings, { provider: 'health', action: 'health' })
-        .catch(error => {
-          gameCatalogueHealthPromise = null;
-          throw error;
-        });
-    }
-    return gameCatalogueHealthPromise;
-  }
-
-  async function gameCatalogueProxy(settings, payload) {
-    const provider = String(payload?.provider || '').toLowerCase();
-    if (provider === 'igdb' || provider === 'bgg') {
-      // New deployments expose a lightweight health response. If an older
-      // function is still deployed, fall through and preserve compatibility.
-      try {
-        const health = await gameCatalogueHealth(settings);
-        if (health?.providers?.[provider]?.configured === false) {
-          const label = provider === 'igdb' ? 'IGDB' : 'BoardGameGeek';
-          const secrets = provider === 'igdb' ? 'IGDB_CLIENT_ID and IGDB_CLIENT_SECRET' : 'BGG_APPLICATION_TOKEN';
-          throw new Error(`${label} is not configured in the Supabase game-catalogue function. Sync ${secrets} and redeploy the function.`);
-        }
-      } catch (error) {
-        if (/is not configured in the Supabase game-catalogue function/i.test(error?.message || '')) throw error;
-      }
-    }
-    // Do not use the generic 5xx retry loop here: a bad function deployment or
-    // credential should fail once, not generate several identical 500 requests.
-    return gameCatalogueFetchOnce(settings, payload);
   }
 
   function igdbCoverUrl(imageId, size = 't_cover_big') {
@@ -1196,6 +1155,14 @@ export const TrackerAPI = (() => {
     const data = await gameCatalogueProxy(settings, { provider: 'igdb', action: 'details', id: String(id || '') });
     const result = data.result || data.results?.[0] || null;
     return result ? mapIGDBGame(result) : null;
+  }
+
+  async function discoverVideoGames(mode, page, settings, limit = 24) {
+    const data = await gameCatalogueProxy(settings, {
+      provider: 'igdb', action: 'discover', mode: String(mode || 'popular'),
+      page: Math.max(1, Number(page || 1)), limit: Math.max(1, Math.min(30, Number(limit || 24)))
+    });
+    return (data.results || []).map(mapIGDBGame).filter(result => result.providerId);
   }
 
   function parseXml(xml) {
@@ -1271,24 +1238,14 @@ export const TrackerAPI = (() => {
     return item ? mapBGGThing(item) : null;
   }
 
-  async function discoverVideoGames(settings, options = {}) {
-    const mode = ['new','popular','for-you'].includes(String(options.mode || '')) ? String(options.mode) : 'for-you';
-    const page = Math.max(1, Number(options.page || 1));
-    const limit = Math.max(1, Math.min(30, Number(options.limit || 24)));
-    const offset = Math.max(0, (page - 1) * limit);
-    const data = await gameCatalogueProxy(settings, { provider: 'igdb', action: 'discover', mode, limit, offset });
-    return (data.results || []).map(mapIGDBGame).filter(result => result.providerId);
-  }
-
-  async function discoverBoardGames(settings, options = {}) {
-    const mode = ['new','popular','for-you'].includes(String(options.mode || '')) ? String(options.mode) : 'for-you';
-    const page = Math.max(1, Number(options.page || 1));
-    const limit = Math.max(1, Math.min(40, Number(options.limit || 24)));
-    const data = await gameCatalogueProxy(settings, { provider: 'bgg', action: 'hot', mode });
+  async function discoverBoardGames(mode, page, settings, limit = 24) {
+    const data = await gameCatalogueProxy(settings, { provider: 'bgg', action: 'discover', mode: String(mode || 'popular') });
     const doc = parseXml(data.xml || '');
     const rows = [...doc.querySelectorAll('items > item')].map(mapBGGSearchItem).filter(result => result.providerId);
-    const start = (page - 1) * limit;
-    return rows.slice(start, start + limit);
+    if (!rows.length) return [];
+    const size = Math.max(1, Math.min(rows.length, Number(limit || 24)));
+    const start = ((Math.max(1, Number(page || 1)) - 1) * size) % rows.length;
+    return Array.from({ length: Math.min(size, rows.length) }, (_, index) => rows[(start + index) % rows.length]);
   }
 
   async function searchCatalogue(query, type, settings, options = {}) {
@@ -1325,9 +1282,9 @@ export const TrackerAPI = (() => {
     searchVideoGames,
     getVideoGameDetails,
     discoverVideoGames,
-    discoverBoardGames,
     searchBoardGames,
     getBoardGameDetails,
+    discoverBoardGames,
     searchMusic,
     searchArtists,
     searchSongs,
