@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-unified-add-79" />
+  <link rel="stylesheet" href="style.css?v=omni-streak-scopes-games-83" />
 </head>
 <body class="discover-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -271,14 +271,11 @@
           <select id="itemKindChoice" aria-label="Type"></select>
         </label>
 
-        <details id="itemSubcategoryDisclosure" class="compact-add-option subtype-inline-disclosure">
-          <summary><span>Subtype</span><small id="itemSubcategorySummary">optional</small></summary>
-          <label class="field compact-add-body">
-            <span class="sr-only">Subtype</span>
-            <input id="itemSubcategory" type="text" autocomplete="off" list="itemSubtypeSuggestions" placeholder="Add or choose a subtype" />
-            <datalist id="itemSubtypeSuggestions"></datalist>
-          </label>
-        </details>
+        <label id="itemSubcategoryDisclosure" class="field subtype-inline-field soft-entry-field">
+          <span>Subtype <em>optional</em></span>
+          <input id="itemSubcategory" type="text" autocomplete="off" list="itemSubtypeSuggestions" placeholder="Subtype" />
+          <datalist id="itemSubtypeSuggestions"></datalist>
+        </label>
       </div>
 
       <label class="field add-underlying-type" hidden>
@@ -315,7 +312,7 @@
         <div id="catalogueSearchBlock" class="find-it-block">
           <span class="field-label">Find it <em>optional</em></span>
           <div class="find-it-combo">
-            <select id="itemFindSource" aria-label="What Find it searches">
+            <select id="itemFindSource" class="find-source-arrow" aria-label="Change what Find it searches" title="Change search source">
               <option value="auto">Movies</option>
               <option value="manual">Manual</option>
               <option value="youtube-videos">YouTube</option>
@@ -334,15 +331,15 @@
           </div>
           <div id="itemFindSourceDisclosure" hidden></div>
           <small id="itemFindSourceSummary" class="sr-only">Movies</small>
-          <small id="findSourcePrompt" class="find-source-prompt" hidden>Choose what to search from the dropdown.</small>
+          <small id="findSourcePrompt" class="find-source-prompt" hidden>Choose what to search from the arrow.</small>
           <div id="searchResults" class="search-results" hidden></div>
           <div id="selectedSource" class="selected-source" hidden></div>
         </div>
 
         <div id="manualTitleBlock">
-          <label class="field">
+          <label class="field soft-entry-field">
             <span>Title</span>
-            <input id="manualTitle" type="text" placeholder="Type a title" required />
+            <input id="manualTitle" type="text" placeholder="Enter title manually" required />
           </label>
         </div>
       </div>
@@ -401,7 +398,73 @@
         </div>
       </div>
 
-      <div class="rating-date-grid">
+      <div id="itemDateField" class="date-log-section">
+        <span class="field-label">Date <em>optional</em></span>
+        <div class="date-with-actions">
+          <label id="itemDateInputField" class="field date-main-field">
+            <span class="sr-only">Date</span>
+            <input id="itemDate" type="date" />
+          </label>
+          <div class="date-behavior-row" aria-label="Date and logging options">
+            <label class="mini-toggle mode-toggle" title="Keep separate dated entries under this item">
+              <input id="itemUseRepeatLog" type="checkbox" />
+              <span>Multiple logs</span>
+            </label>
+            <details id="itemRepeatDisclosure" class="mini-option-menu">
+              <summary title="Set a reminder schedule"><span>Repeat</span><small id="itemRepeatSummary"></small></summary>
+              <div id="reminderBlock" class="repeat-menu-panel">
+                <label class="field compact-field">
+                  <span>Remind</span>
+                  <select id="reminderFrequency">
+                    <option value="none" selected>Don't repeat</option>
+                    <option value="daily">Every day</option>
+                    <option value="weekly">Every week</option>
+                    <option value="biweekly">Every 2 weeks</option>
+                    <option value="monthly">Every month</option>
+                    <option value="custom">Custom…</option>
+                  </select>
+                </label>
+                <label id="reminderWeekdayField" class="field compact-field" hidden>
+                  <span>Day</span>
+                  <select id="reminderWeekday">
+                    <option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option>
+                  </select>
+                </label>
+                <label id="reminderDateField" class="field compact-field" hidden>
+                  <span id="reminderDateLabel">Starts</span>
+                  <input id="reminderDueDate" type="date" />
+                </label>
+                <div id="reminderCustomFields" class="reminder-custom-fields" hidden>
+                  <label class="field compact-field"><span>Every</span><input id="reminderInterval" type="number" min="1" max="365" step="1" value="2" inputmode="numeric" /></label>
+                  <label class="field compact-field"><span>Unit</span><select id="reminderIntervalUnit"><option value="days">Days</option><option value="weeks" selected>Weeks</option><option value="months">Months</option></select></label>
+                </div>
+              </div>
+            </details>
+            <label class="mini-toggle mode-toggle" title="Use a start and end date">
+              <input id="itemUseDateRange" type="checkbox" />
+              <span>Multi-day</span>
+            </label>
+          </div>
+        </div>
+        <small id="itemLogModeHint" class="date-mode-hint" hidden>Each log gets its own date and details.</small>
+        <div id="itemLogEntryFields" class="log-entry-fields" hidden>
+          <label class="field compact-field soft-entry-field"><span>Entry title <em>optional</em></span><input id="itemLogEntryTitle" type="text" autocomplete="off" placeholder="e.g. Evening session" /></label>
+        </div>
+        <div id="activityFields" class="progress-fields activity-fields" hidden>
+          <div class="two-column-fields">
+            <label class="field compact-field">
+              <span>Starts</span>
+              <input id="activityStartDate" type="date" />
+            </label>
+            <label class="field compact-field">
+              <span>Ends <em>optional</em></span>
+              <input id="activityEndDate" type="date" />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="rating-comment-grid">
         <fieldset class="rating-fieldset">
           <legend>Rating</legend>
           <div id="starPicker" class="star-picker" aria-label="Rating out of five stars">
@@ -416,77 +479,10 @@
           <input id="itemRating" type="hidden" value="0" />
         </fieldset>
 
-        <div id="itemDateField" class="date-control-stack">
-          <span class="field-label">Date <em>optional</em></span>
-          <div class="date-with-actions">
-            <label id="itemDateInputField" class="field date-main-field">
-              <span class="sr-only">Date</span>
-              <input id="itemDate" type="date" />
-            </label>
-            <div class="date-behavior-row" aria-label="Date options">
-              <label class="mini-toggle mode-toggle" title="Keep separate dated entries under this item">
-                <input id="itemUseRepeatLog" type="checkbox" />
-                <span>Multiple logs</span>
-              </label>
-              <details id="itemRepeatDisclosure" class="mini-option-menu">
-                <summary title="Set a reminder schedule"><span>Repeat</span><small id="itemRepeatSummary"></small></summary>
-                <div id="reminderBlock" class="repeat-menu-panel">
-                  <label class="field compact-field">
-                    <span>Remind</span>
-                    <select id="reminderFrequency">
-                      <option value="none" selected>Don't repeat</option>
-                      <option value="daily">Every day</option>
-                      <option value="weekly">Every week</option>
-                      <option value="biweekly">Every 2 weeks</option>
-                      <option value="monthly">Every month</option>
-                      <option value="custom">Custom…</option>
-                    </select>
-                  </label>
-                  <label id="reminderWeekdayField" class="field compact-field" hidden>
-                    <span>Day</span>
-                    <select id="reminderWeekday">
-                      <option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option>
-                    </select>
-                  </label>
-                  <label id="reminderDateField" class="field compact-field" hidden>
-                    <span id="reminderDateLabel">Starts</span>
-                    <input id="reminderDueDate" type="date" />
-                  </label>
-                  <div id="reminderCustomFields" class="reminder-custom-fields" hidden>
-                    <label class="field compact-field"><span>Every</span><input id="reminderInterval" type="number" min="1" max="365" step="1" value="2" inputmode="numeric" /></label>
-                    <label class="field compact-field"><span>Unit</span><select id="reminderIntervalUnit"><option value="days">Days</option><option value="weeks" selected>Weeks</option><option value="months">Months</option></select></label>
-                  </div>
-                </div>
-              </details>
-              <label class="mini-toggle mode-toggle" title="Use a start and end date">
-                <input id="itemUseDateRange" type="checkbox" />
-                <span>Multi-day</span>
-              </label>
-            </div>
-          </div>
-          <small id="itemLogModeHint" class="date-mode-hint" hidden>Keep separate dated entries under this item.</small>
-                <div id="activityFields" class="progress-fields activity-fields" hidden>
-                  <div class="two-column-fields">
-                    <label class="field compact-field">
-                      <span>Starts</span>
-                      <input id="activityStartDate" type="date" />
-                    </label>
-                    <label class="field compact-field">
-                      <span>Ends <em>optional</em></span>
-                      <input id="activityEndDate" type="date" />
-                    </label>
-                  </div>
-                </div>
-        </div>
-      </div>
-
-      <label class="field item-comment-field">
-        <span>Comment <em>public</em></span>
-        <textarea id="itemComment" rows="2" maxlength="500" placeholder="What did you think?"></textarea>
-      </label>
-
-      <div id="itemLogEntryFields" class="log-entry-fields" hidden>
-        <label class="field compact-field"><span>Log name <em>optional</em></span><input id="itemLogEntryTitle" type="text" autocomplete="off" placeholder="e.g. Evening session" /></label>
+        <label class="field item-comment-field">
+          <span>Comment <em>public</em></span>
+          <textarea id="itemComment" rows="2" maxlength="500" placeholder="What did you think?"></textarea>
+        </label>
       </div>
       <details id="itemNoteDisclosure" class="compact-add-option note-self-disclosure">
         <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Note to self</span><small>private</small></summary>
@@ -775,6 +771,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-unified-add-79"></script>
+  <script type="module" src="app.js?v=omni-streak-scopes-games-83"></script>
 </body>
 </html>

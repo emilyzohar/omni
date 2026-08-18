@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-unified-add-79';
-import { API_CONFIG } from './config.js?v=omni-unified-add-79';
+import { TrackerAPI } from './api.js?v=omni-streak-scopes-games-83';
+import { API_CONFIG } from './config.js?v=omni-streak-scopes-games-83';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -1545,6 +1545,8 @@ function bindEvents() {
   els.openStreakSettings?.addEventListener('click', openStreakSettings);
   els.streakSettingsForm?.addEventListener('submit', saveStreakSettings);
   els.streakSettingsRows?.addEventListener('change', previewStreakSettings);
+  els.streakSettingsRows?.addEventListener('input', previewStreakSettings);
+  els.streakSettingsRows?.addEventListener('click', handleStreakSettingsClick);
   els.resetStreakSettings?.addEventListener('click', resetStreakSettings);
   els.calendarRowSettingsForm?.addEventListener('submit', saveCalendarRowSettings);
   els.resetCalendarRowSettings?.addEventListener('click', resetCalendarRowSettings);
@@ -14551,7 +14553,7 @@ const WEEKDAY_OPTIONS = [
   { value: 0, short: 'S', label: 'Sunday' }
 ];
 
-function getRecognizedStreakGroups() {
+function getBaseStreakGroups() {
   const groups = new Map();
 
   for (const { type, label } of getRecognizedTypes()) {
@@ -14570,11 +14572,7 @@ function getRecognizedStreakGroups() {
     if (!group.memberTypes.includes(type)) group.memberTypes.push(type);
   }
 
-  // Calendar entries are the final authority for visible grouping. This also
-  // catches two different internal source types that have the same displayed
-  // type label (for example a YouTube item and a manual item both called
-  // "Workout").
-  for (const entry of getCalendarEntries()) {
+  for (const entry of getCalendarEntries({ respectVisibility: false })) {
     const label = getStreakTypeGroupLabel(entry);
     const key = getStreakTypeGroupKey(entry);
     if (!groups.has(key)) {
@@ -14594,26 +14592,113 @@ function getRecognizedStreakGroups() {
   return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
+function getStreakSubcategories(baseKey) {
+  const base = getBaseStreakGroups().find(group => group.key === baseKey);
+  if (!base) return [];
+  const labels = new Map();
+  const add = value => {
+    const label = cleanTypeLabel(value || '');
+    const key = slugifyType(label);
+    if (label && key && !labels.has(key)) labels.set(key, label);
+  };
+
+  state.items.forEach(item => {
+    if (base.memberTypes.includes(item.type)) add(item.subcategory);
+  });
+  state.history.forEach(entry => {
+    if (base.memberTypes.includes(entry.type)) add(entry.subcategory || findItem(entry.sourceItemId)?.subcategory);
+  });
+  getCalendarEntries({ respectVisibility: false }).forEach(entry => {
+    if (getStreakTypeGroupKey(entry) === baseKey) add(entry.subcategory);
+  });
+
+  return [...labels.entries()]
+    .map(([key, label]) => ({ key, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function streakSubcategoryTargetKey(baseKey, subcategory) {
+  return `${baseKey}::sub::${slugifyType(subcategory)}`;
+}
+
+function configuredStreakGroupsForBase(baseKey) {
+  const base = getBaseStreakGroups().find(group => group.key === baseKey);
+  if (!base) return [];
+  return Object.entries(state.streakPrefs || {})
+    .filter(([key, saved]) => saved && typeof saved === 'object' && saved.scope === 'group' && (saved.baseKey === baseKey || key.startsWith(`${baseKey}::group::`)))
+    .map(([key, saved]) => {
+      const subcategories = Array.isArray(saved.subcategories)
+        ? [...new Set(saved.subcategories.map(value => cleanTypeLabel(value)).filter(Boolean))]
+        : [];
+      return {
+        key,
+        label: cleanTypeLabel(saved.label || '') || subcategories.join(' + ') || `${base.label} group`,
+        memberTypes: [...base.memberTypes],
+        representativeType: base.representativeType,
+        representativeEntry: base.representativeEntry,
+        scope: 'group',
+        baseKey,
+        subcategories
+      };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function getRecognizedStreakGroups() {
+  const output = [];
+  for (const base of getBaseStreakGroups()) {
+    output.push({
+      ...base,
+      scope: 'type',
+      baseKey: base.key,
+      subcategories: []
+    });
+    for (const subcategory of getStreakSubcategories(base.key)) {
+      output.push({
+        key: streakSubcategoryTargetKey(base.key, subcategory.label),
+        label: subcategory.label,
+        memberTypes: [...base.memberTypes],
+        representativeType: base.representativeType,
+        representativeEntry: base.representativeEntry,
+        scope: 'subcategory',
+        baseKey: base.key,
+        subcategories: [subcategory.label]
+      });
+    }
+    output.push(...configuredStreakGroupsForBase(base.key));
+  }
+  return output;
+}
+
 function resolveStreakGroup(typeOrGroupKey) {
+  if (typeOrGroupKey && typeof typeOrGroupKey === 'object' && typeOrGroupKey.key) return typeOrGroupKey;
   const value = String(typeOrGroupKey || '');
   const groups = getRecognizedStreakGroups();
-  return groups.find(group => group.key === value || group.memberTypes.includes(value)) || {
+  const direct = groups.find(group => group.key === value);
+  if (direct) return direct;
+
+  const base = getBaseStreakGroups().find(group => group.memberTypes.includes(value) || group.key === value);
+  if (base) return { ...base, scope: 'type', baseKey: base.key, subcategories: [] };
+
+  return {
     key: slugifyType(getTypeLabel(value) || value || 'Other'),
     label: getTypeLabel(value) || value || 'Other',
     memberTypes: value ? [value] : [],
     representativeType: value || 'other',
-    representativeEntry: null
+    representativeEntry: null,
+    scope: 'type',
+    baseKey: slugifyType(getTypeLabel(value) || value || 'Other'),
+    subcategories: []
   };
 }
 
 function getStreakConfig(typeOrGroupKey) {
-  const group = resolveStreakGroup(typeOrGroupKey);
+  const target = resolveStreakGroup(typeOrGroupKey);
+  let saved = state.streakPrefs?.[target.key];
 
-  // New streak preferences are keyed by the visible type name. Fall back to
-  // the old internal-type keys so existing settings survive this migration.
-  let saved = state.streakPrefs?.[group.key];
-  if (!saved) {
-    for (const memberType of group.memberTypes) {
+  // Fall back to the pre-scope type keys so existing whole-type streaks survive.
+  if (!saved && target.scope === 'type') {
+    for (const memberType of target.memberTypes) {
       if (state.streakPrefs?.[memberType]) {
         saved = state.streakPrefs[memberType];
         break;
@@ -14622,35 +14707,57 @@ function getStreakConfig(typeOrGroupKey) {
   }
   saved ||= {};
 
+  const subcategories = Array.isArray(saved.subcategories)
+    ? [...new Set(saved.subcategories.map(value => cleanTypeLabel(value)).filter(Boolean))]
+    : [...(target.subcategories || [])];
+
   return {
     enabled: Boolean(saved.enabled),
     restDays: Array.isArray(saved.restDays)
       ? [...new Set(saved.restDays.map(Number).filter(day => day >= 0 && day <= 6))]
-      : []
+      : [],
+    scope: saved.scope || target.scope || 'type',
+    baseKey: saved.baseKey || target.baseKey || target.key,
+    subcategories,
+    label: cleanTypeLabel(saved.label || '') || target.label,
+    sticker: saved.sticker && typeof saved.sticker === 'object' ? { ...saved.sticker } : null
   };
 }
 
-function getTypeActivityDates(typeOrGroupKey) {
-  const group = resolveStreakGroup(typeOrGroupKey);
+function streakTargetMatchesEntry(targetOrKey, entry, overrideConfig = null) {
+  const target = resolveStreakGroup(targetOrKey);
+  const config = overrideConfig || getStreakConfig(target);
+  const baseKey = config.baseKey || target.baseKey || target.key;
+  if (getStreakTypeGroupKey(entry) !== baseKey) return false;
+  if ((config.scope || target.scope) === 'type') return true;
+
+  const wanted = new Set((config.subcategories || target.subcategories || []).map(value => slugifyType(cleanTypeLabel(value))).filter(Boolean));
+  if (!wanted.size) return false;
+  return wanted.has(slugifyType(cleanTypeLabel(entry?.subcategory || '')));
+}
+
+function getTypeActivityDates(typeOrGroupKey, overrideConfig = null) {
+  const target = resolveStreakGroup(typeOrGroupKey);
+  const config = overrideConfig || getStreakConfig(target);
   return new Set(
     getCalendarEntries()
-      .filter(entry => getStreakTypeGroupKey(entry) === group.key && entry.date && entry.showOnCalendar !== false)
+      .filter(entry => entry.date && entry.showOnCalendar !== false && streakTargetMatchesEntry(target, entry, config))
       .map(entry => entry.date)
   );
 }
 
 function calculateTypeStreak(typeOrGroupKey, overrideConfig = null) {
-  const config = overrideConfig || getStreakConfig(typeOrGroupKey);
+  const target = resolveStreakGroup(typeOrGroupKey);
+  const config = overrideConfig || getStreakConfig(target);
   if (!config.enabled) return { enabled: false, count: 0, restToday: false };
 
-  const activityDates = getTypeActivityDates(typeOrGroupKey);
+  const activityDates = getTypeActivityDates(target, config);
   const restDays = new Set((config.restDays || []).map(Number));
   const now = new Date();
   let cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
   let count = 0;
   let firstCalendarDay = true;
 
-  // Ten years is only a safety guard against malformed dates/settings.
   for (let guard = 0; guard < 3650; guard += 1) {
     const weekday = cursor.getDay();
     const date = localDateString(cursor);
@@ -14668,21 +14775,15 @@ function calculateTypeStreak(typeOrGroupKey, overrideConfig = null) {
       continue;
     }
 
-    // Today is still in progress, so absence today does not break a streak yet.
     if (firstCalendarDay) {
       cursor = addDays(cursor, -1);
       firstCalendarDay = false;
       continue;
     }
-
     break;
   }
 
-  return {
-    enabled: true,
-    count,
-    restToday: restDays.has(now.getDay())
-  };
+  return { enabled: true, count, restToday: restDays.has(now.getDay()) };
 }
 
 function streakText(typeOrGroupKey, overrideConfig = null) {
@@ -14701,11 +14802,37 @@ function streakBadgeMarkup(typeOrGroupKey) {
   return text ? `<span class="type-streak-badge">${escapeHtml(text)}</span>` : '';
 }
 
+function getStreakStickerConfig(targetOrKey, overrideConfig = null) {
+  const target = resolveStreakGroup(targetOrKey);
+  const config = overrideConfig || getStreakConfig(target);
+  const representative = getCalendarEntries({ respectVisibility: false }).find(entry => streakTargetMatchesEntry(target, entry, config))
+    || target.representativeEntry
+    || { type: target.representativeType, typeLabel: getBaseStreakGroups().find(base => base.key === target.baseKey)?.label || target.label };
+  const baseSticker = getStickerConfig(representative.type || target.representativeType, representative);
+  const saved = config.sticker || {};
+  const allowedShapes = ['square', 'circle', 'star', 'heart'];
+  const shape = allowedShapes.includes(saved.shape) ? saved.shape : baseSticker.shape;
+  const color = STICKER_COLORS.includes(saved.color) ? saved.color : baseSticker.color;
+  const label = ['star', 'heart'].includes(shape)
+    ? ''
+    : cleanStickerLabel(saved.label !== undefined ? saved.label : baseSticker.label);
+  return { ...baseSticker, shape, color, label };
+}
+
+function streakStickerMarkup(targetOrKey, overrideConfig = null) {
+  const config = getStreakStickerConfig(targetOrKey, overrideConfig);
+  const symbol = config.shape === 'star' ? '★' : config.shape === 'heart' ? '♥' : escapeHtml(config.label || '');
+  return `<span class="sticker sticker-${config.shape} sticker-palette-${config.color} sticker-tilt-${config.tilt}">${symbol}</span>`;
+}
+
 function renderTrackStreakSummary() {
   if (!els.trackStreakSummary) return;
   const active = getRecognizedStreakGroups()
-    .map(group => ({ ...group, text: streakText(group.key) }))
-    .filter(entry => entry.text);
+    .map(target => {
+      const config = getStreakConfig(target);
+      return { ...target, config, text: streakText(target, config) };
+    })
+    .filter(entry => entry.config.enabled && entry.text);
 
   els.trackStreakSummary.hidden = active.length === 0;
   if (!active.length) {
@@ -14713,16 +14840,11 @@ function renderTrackStreakSummary() {
     return;
   }
 
-  els.trackStreakSummary.innerHTML = active.map(group => {
-    const representative = group.representativeEntry
-      || getCalendarEntries().find(entry => getStreakTypeGroupKey(entry) === group.key)
-      || { type: group.representativeType, typeLabel: group.label };
-    return `
-      <div class="track-streak-card">
-        <span class="track-streak-sticker">${calendarStickerMarkup(representative.type, representative)}</span>
-        <span class="track-streak-copy"><strong>${escapeHtml(group.label)}</strong><small>${escapeHtml(group.text)}</small></span>
-      </div>`;
-  }).join('');
+  els.trackStreakSummary.innerHTML = active.map(target => `
+    <div class="track-streak-card">
+      <span class="track-streak-sticker">${streakStickerMarkup(target, target.config)}</span>
+      <span class="track-streak-copy"><strong>${escapeHtml(target.config.label || target.label)}</strong><small>${escapeHtml(target.text)}</small></span>
+    </div>`).join('');
 }
 
 function openStreakSettings() {
@@ -14731,55 +14853,227 @@ function openStreakSettings() {
   showDialogAtTop(els.stickerSettingsModal);
 }
 
+function streakScopeLabel(target) {
+  if (target.scope === 'subcategory') return 'Subtype';
+  if (target.scope === 'group') return 'Grouped subtypes';
+  return 'Whole type';
+}
+
+function createStreakSettingRow(target, options = {}) {
+  const config = options.config || getStreakConfig(target);
+  const sticker = getStreakStickerConfig(target, config);
+  const row = document.createElement('div');
+  row.className = `streak-setting-row${config.enabled ? ' is-enabled' : ''}${target.scope === 'group' ? ' is-group' : ''}`;
+  row.dataset.streakType = target.key;
+  row.dataset.streakScope = config.scope || target.scope || 'type';
+  row.dataset.streakBaseKey = config.baseKey || target.baseKey || target.key;
+  row.dataset.streakSubcategories = JSON.stringify(config.subcategories || target.subcategories || []);
+  row.dataset.streakDefaultLabel = target.label || '';
+  row.innerHTML = `
+    <div class="streak-setting-identity">
+      <span class="streak-setting-sticker-preview">${streakStickerMarkup(target, config)}</span>
+      <div class="streak-setting-name-wrap">
+        <input class="streak-setting-name-input" data-streak-field="name" type="text" maxlength="40" value="${escapeAttr(config.label || target.label)}" aria-label="Streak name" />
+        <small>${escapeHtml(streakScopeLabel(target))}</small>
+      </div>
+      <details class="streak-style-editor">
+        <summary>Sticker</summary>
+        <div class="streak-style-controls">
+          <label><span>Shape</span><select data-streak-field="sticker-shape">
+            ${['square','circle','star','heart'].map(shape => `<option value="${shape}" ${sticker.shape === shape ? 'selected' : ''}>${shape[0].toUpperCase()+shape.slice(1)}</option>`).join('')}
+          </select></label>
+          <label><span>Color</span><select data-streak-field="sticker-color">
+            ${STICKER_COLORS.map(color => `<option value="${color}" ${sticker.color === color ? 'selected' : ''}>${color[0].toUpperCase()+color.slice(1)}</option>`).join('')}
+          </select></label>
+          <label><span>Text</span><input data-streak-field="sticker-label" type="text" maxlength="3" value="${escapeAttr(['star','heart'].includes(sticker.shape) ? '' : sticker.label)}" ${['star','heart'].includes(sticker.shape) ? 'disabled' : ''} /></label>
+        </div>
+      </details>
+      ${target.scope === 'group' ? '<button class="quiet-button streak-delete-group" type="button" data-streak-delete-group>Delete group</button>' : ''}
+    </div>
+    <label class="streak-toggle">
+      <input data-streak-field="enabled" type="checkbox" ${config.enabled ? 'checked' : ''} />
+      <span>On</span>
+    </label>
+    <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(config.label || target.label)}">
+      ${WEEKDAY_OPTIONS.map(day => `
+        <label class="rest-day-chip" title="${day.label}">
+          <input data-streak-rest-day="${day.value}" type="checkbox" ${config.restDays.includes(day.value) ? 'checked' : ''} />
+          <span>${day.short}</span>
+        </label>`).join('')}
+    </div>
+    <div class="streak-setting-current">${escapeHtml(streakText(target, config) || 'Off')}</div>`;
+  return row;
+}
+
+function createStreakGroupBuilder(base) {
+  const subcategories = getStreakSubcategories(base.key);
+  const builder = document.createElement('div');
+  builder.className = 'streak-group-builder';
+  builder.dataset.streakGroupBuilder = base.key;
+  builder.hidden = true;
+  builder.innerHTML = `
+    <div class="streak-group-builder-fields">
+      <label class="streak-group-name"><span>Group name</span><input data-streak-group-name type="text" maxlength="40" placeholder="Optional" /></label>
+      <div class="streak-group-subtypes" aria-label="Choose ${escapeAttr(base.label)} subtypes">
+        ${subcategories.map(subcategory => `<label><input type="checkbox" data-streak-group-subcategory value="${escapeAttr(subcategory.label)}" /><span>${escapeHtml(subcategory.label)}</span></label>`).join('')}
+      </div>
+    </div>
+    <div class="streak-group-builder-actions">
+      <button class="quiet-button" type="button" data-streak-cancel-group>Cancel</button>
+      <button class="secondary-button" type="button" data-streak-create-group>Create group</button>
+    </div>`;
+  return builder;
+}
+
 function renderStreakSettingsRows() {
   if (!els.streakSettingsRows) return;
   els.streakSettingsRows.innerHTML = '';
 
-  for (const group of getRecognizedStreakGroups()) {
-    const config = getStreakConfig(group.key);
-    const row = document.createElement('div');
-    row.className = `streak-setting-row${config.enabled ? ' is-enabled' : ''}`;
-    row.dataset.streakType = group.key;
-    row.innerHTML = `
-      <div class="streak-setting-type"><strong>${escapeHtml(group.label)}</strong></div>
-      <label class="streak-toggle">
-        <input data-streak-field="enabled" type="checkbox" ${config.enabled ? 'checked' : ''} />
-        <span>On</span>
-      </label>
-      <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(group.label)}">
-        ${WEEKDAY_OPTIONS.map(day => `
-          <label class="rest-day-chip" title="${day.label}">
-            <input data-streak-rest-day="${day.value}" type="checkbox" ${config.restDays.includes(day.value) ? 'checked' : ''} />
-            <span>${day.short}</span>
-          </label>`).join('')}
+  for (const base of getBaseStreakGroups()) {
+    const section = document.createElement('section');
+    section.className = 'streak-type-section';
+    section.dataset.streakBaseSection = base.key;
+    const subcategories = getStreakSubcategories(base.key);
+    section.innerHTML = `
+      <div class="streak-type-section-heading">
+        <strong>${escapeHtml(base.label)}</strong>
+        ${subcategories.length >= 2 ? '<button class="quiet-button streak-add-group" type="button" data-streak-add-group>+ Group subtypes</button>' : ''}
       </div>
-      <div class="streak-setting-current">${escapeHtml(streakText(group.key, config) || 'Off')}</div>`;
-    els.streakSettingsRows.appendChild(row);
+      <div class="streak-type-section-rows"></div>`;
+    const rows = section.querySelector('.streak-type-section-rows');
+
+    rows.appendChild(createStreakSettingRow({ ...base, scope: 'type', baseKey: base.key, subcategories: [] }));
+    for (const subcategory of subcategories) {
+      rows.appendChild(createStreakSettingRow({
+        key: streakSubcategoryTargetKey(base.key, subcategory.label),
+        label: subcategory.label,
+        memberTypes: [...base.memberTypes],
+        representativeType: base.representativeType,
+        representativeEntry: base.representativeEntry,
+        scope: 'subcategory',
+        baseKey: base.key,
+        subcategories: [subcategory.label]
+      }));
+    }
+    for (const group of configuredStreakGroupsForBase(base.key)) rows.appendChild(createStreakSettingRow(group));
+
+    section.appendChild(createStreakGroupBuilder(base));
+    els.streakSettingsRows.appendChild(section);
   }
 }
 
+function streakRowTargetFromElement(row) {
+  if (!row) return null;
+  const subcategories = (() => {
+    try { return JSON.parse(row.dataset.streakSubcategories || '[]'); }
+    catch { return []; }
+  })();
+  const base = getBaseStreakGroups().find(group => group.key === row.dataset.streakBaseKey);
+  return {
+    key: row.dataset.streakType,
+    label: cleanTypeLabel(row.querySelector('[data-streak-field="name"]')?.value || row.dataset.streakDefaultLabel || ''),
+    memberTypes: [...(base?.memberTypes || [])],
+    representativeType: base?.representativeType || 'other',
+    representativeEntry: base?.representativeEntry || null,
+    scope: row.dataset.streakScope || 'type',
+    baseKey: row.dataset.streakBaseKey || row.dataset.streakType,
+    subcategories
+  };
+}
+
 function readStreakRowConfig(row) {
+  const target = streakRowTargetFromElement(row);
+  const shape = row.querySelector('[data-streak-field="sticker-shape"]')?.value || 'square';
+  const color = row.querySelector('[data-streak-field="sticker-color"]')?.value || 'cream';
+  const labelInput = row.querySelector('[data-streak-field="sticker-label"]');
+  const stickerLabel = ['star','heart'].includes(shape) ? '' : cleanStickerLabel(labelInput?.value || '');
   return {
     enabled: Boolean(row.querySelector('[data-streak-field="enabled"]')?.checked),
-    restDays: [...row.querySelectorAll('[data-streak-rest-day]:checked')]
-      .map(input => Number(input.dataset.streakRestDay))
+    restDays: [...row.querySelectorAll('[data-streak-rest-day]:checked')].map(input => Number(input.dataset.streakRestDay)),
+    scope: target.scope,
+    baseKey: target.baseKey,
+    subcategories: target.subcategories,
+    label: cleanTypeLabel(row.querySelector('[data-streak-field="name"]')?.value || '') || row.dataset.streakDefaultLabel || target.label,
+    sticker: { shape, color, label: stickerLabel }
   };
 }
 
 function previewStreakSettings(event) {
   const row = event.target.closest('.streak-setting-row[data-streak-type]');
   if (!row) return;
+  const target = streakRowTargetFromElement(row);
   const config = readStreakRowConfig(row);
   row.classList.toggle('is-enabled', config.enabled);
+
+  const labelInput = row.querySelector('[data-streak-field="sticker-label"]');
+  if (labelInput) labelInput.disabled = ['star','heart'].includes(config.sticker.shape);
+  const preview = row.querySelector('.streak-setting-sticker-preview');
+  if (preview) preview.innerHTML = streakStickerMarkup(target, config);
   const current = row.querySelector('.streak-setting-current');
-  if (current) current.textContent = streakText(row.dataset.streakType, config) || 'Off';
+  if (current) current.textContent = streakText(target, config) || 'Off';
+}
+
+function handleStreakSettingsClick(event) {
+  const section = event.target.closest('.streak-type-section[data-streak-base-section]');
+  if (!section) return;
+  const builder = section.querySelector('.streak-group-builder');
+
+  if (event.target.closest('[data-streak-add-group]')) {
+    if (builder) builder.hidden = false;
+    return;
+  }
+  if (event.target.closest('[data-streak-cancel-group]')) {
+    if (builder) builder.hidden = true;
+    return;
+  }
+  if (event.target.closest('[data-streak-create-group]')) {
+    const selected = [...builder.querySelectorAll('[data-streak-group-subcategory]:checked')].map(input => cleanTypeLabel(input.value)).filter(Boolean);
+    if (selected.length < 2) {
+      alert('Choose at least two subtypes to make a grouped streak.');
+      return;
+    }
+    const baseKey = section.dataset.streakBaseSection;
+    const base = getBaseStreakGroups().find(group => group.key === baseKey);
+    if (!base) return;
+    const customName = cleanTypeLabel(builder.querySelector('[data-streak-group-name]')?.value || '');
+    const label = customName || selected.join(' + ');
+    const key = `${baseKey}::group::${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
+    const target = {
+      key, label, memberTypes: [...base.memberTypes], representativeType: base.representativeType,
+      representativeEntry: base.representativeEntry, scope: 'group', baseKey, subcategories: selected
+    };
+    section.querySelector('.streak-type-section-rows')?.appendChild(createStreakSettingRow(target, {
+      config: { ...getStreakConfig(target), enabled: true, label, scope: 'group', baseKey, subcategories: selected }
+    }));
+    builder.querySelectorAll('input').forEach(input => { if (input.type === 'checkbox') input.checked = false; else input.value = ''; });
+    builder.hidden = true;
+    return;
+  }
+  const deleteButton = event.target.closest('[data-streak-delete-group]');
+  if (deleteButton) {
+    deleteButton.closest('.streak-setting-row')?.remove();
+  }
 }
 
 function saveStreakSettings(event) {
   event.preventDefault();
   const next = {};
   els.streakSettingsRows?.querySelectorAll('.streak-setting-row[data-streak-type]').forEach(row => {
-    next[row.dataset.streakType] = readStreakRowConfig(row);
+    const target = streakRowTargetFromElement(row);
+    const config = readStreakRowConfig(row);
+    const baseline = getStreakStickerConfig(target, {
+      ...config,
+      sticker: null,
+      label: row.dataset.streakDefaultLabel || target.label
+    });
+    const defaultName = cleanTypeLabel(row.dataset.streakDefaultLabel || target.label);
+    const customName = cleanTypeLabel(config.label) !== defaultName;
+    const customSticker = config.sticker.shape !== baseline.shape
+      || config.sticker.color !== baseline.color
+      || cleanStickerLabel(config.sticker.label) !== cleanStickerLabel(baseline.label);
+    if (config.enabled || config.scope === 'group' || config.restDays.length || customName || customSticker) {
+      next[row.dataset.streakType] = config;
+    }
   });
   state.streakPrefs = next;
   localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
@@ -14789,7 +15083,7 @@ function saveStreakSettings(event) {
 }
 
 function resetStreakSettings() {
-  if (!confirm('Turn off all streaks and clear scheduled rest days?')) return;
+  if (!confirm('Turn off all streaks and clear subtype groups, names, stickers, and rest days?')) return;
   state.streakPrefs = {};
   localStorage.removeItem(STREAK_PREFS_KEY);
   scheduleCloudSync();
