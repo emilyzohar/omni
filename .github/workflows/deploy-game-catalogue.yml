@@ -1,15 +1,12 @@
-name: Deploy game catalogue proxy
+name: Deploy game catalogue function
 
 on:
-  workflow_dispatch:
   push:
     branches: [main]
     paths:
       - 'supabase/functions/game-catalogue/**'
       - '.github/workflows/deploy-game-catalogue.yml'
-
-permissions:
-  contents: read
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -20,23 +17,22 @@ jobs:
       IGDB_CLIENT_ID: ${{ secrets.IGDB_CLIENT_ID }}
       IGDB_CLIENT_SECRET: ${{ secrets.IGDB_CLIENT_SECRET }}
       BGG_APPLICATION_TOKEN: ${{ secrets.BGG_APPLICATION_TOKEN }}
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: supabase/setup-cli@v1
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
         with:
           version: latest
 
-      - name: Sync catalogue credentials to function runtime
-        shell: bash
+      - name: Sync game API secrets
         run: |
-          set -euo pipefail
           supabase secrets set \
+            --project-ref "$SUPABASE_PROJECT_ID" \
             IGDB_CLIENT_ID="$IGDB_CLIENT_ID" \
             IGDB_CLIENT_SECRET="$IGDB_CLIENT_SECRET" \
-            BGG_APPLICATION_TOKEN="$BGG_APPLICATION_TOKEN" \
-            --project-ref "$SUPABASE_PROJECT_ID"
+            BGG_APPLICATION_TOKEN="$BGG_APPLICATION_TOKEN"
 
-      - name: Deploy game catalogue function
-        run: supabase functions deploy game-catalogue --no-verify-jwt --project-ref "$SUPABASE_PROJECT_ID"
+      - name: Deploy game-catalogue
+        run: supabase functions deploy game-catalogue --project-ref "$SUPABASE_PROJECT_ID" --no-verify-jwt
