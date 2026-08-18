@@ -1,9 +1,0 @@
-Music/manual/calendar update
-
-- Music can be saved as a general manual item with no subcategory.
-- iTunes Music search results are automatically Music > Album.
-- Artist, Song, Concert remain true Music subcategories.
-- Concert can be entered manually with any date, including past dates.
-- Artist, Song, Album/general Music can have optional dates and therefore calendar associations.
-- Expanded generic Library sections group items by subcategory; uncategorized items appear under General.
-- Recommended badge is heart-only.

@@ -1,6 +1,6 @@
-import { TrackerAPI } from './api.js?v=omni-fast-add-83';
-import { API_CONFIG } from './config.js?v=omni-fast-add-83';
-import { supabase, hasSupabaseConfig } from './supabase.js?v=omni-fast-add-83';
+import { TrackerAPI } from './api.js?v=omni-fast-add-84';
+import { API_CONFIG } from './config.js?v=omni-fast-add-84';
+import { supabase, hasSupabaseConfig } from './supabase.js?v=omni-fast-add-84';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
 const CACHE_KEY = 'zoharTracker.apiCache.v1';
@@ -164,17 +164,19 @@ const attachmentCoverObjectUrls = new Map();
 const apiCacheInFlight = new Map();
 let libraryDateCache = null;
 let deferredInitialRenderHandle = null;
+let apiCacheLoaded = false;
+let apiCachePersistHandle = null;
 
 
 const state = {
   items: loadJSON(ITEMS_KEY, []),
   settings: API_CONFIG,
-  cache: loadJSON(CACHE_KEY, {}),
+  cache: {},
   customTypes: loadJSON(CUSTOM_TYPES_KEY, []),
   albums: loadJSON(ALBUMS_KEY, []),
   typeUsage: loadJSON(TYPE_USAGE_KEY, {}),
   photoUploadLog: loadJSON(PHOTO_UPLOAD_LOG_KEY, []),
-  history: loadJSON(HISTORY_KEY, []),
+  history: [],
   discoverPrefs: loadJSON(DISCOVER_PREFS_KEY, DEFAULT_DISCOVER_PREFS),
   stickerPrefs: loadJSON(STICKER_PREFS_KEY, {}),
   streakPrefs: loadJSON(STREAK_PREFS_KEY, {}),
@@ -1127,7 +1129,10 @@ function startAppOnce() {
     return;
   }
   appStarted = true;
-  init();
+  // Yield once after removing the auth gate so the browser can paint the shell
+  // before Omni does any page rendering or event setup. This makes signed-in
+  // navigation feel immediate even on slower phones.
+  requestAnimationFrame(() => init());
 }
 
 function lockApp() {
@@ -10135,11 +10140,12 @@ function discoverCalendarCachePrefix() {
 }
 
 function clearDiscoverCalendarCache() {
+  ensureApiCacheLoaded();
   const prefix = discoverCalendarCachePrefix();
   for (const key of Object.keys(state.cache)) {
     if (key.startsWith(prefix)) delete state.cache[key];
   }
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
+  persistApiCacheSoon();
 }
 
 function ticketmasterMonthBoundary(dateString, atEnd = false) {
@@ -10430,10 +10436,11 @@ async function renderLegacyDiscover(force = false) {
   els.discoverStatus.hidden = false;
   els.discoverStatus.textContent = `Loading recommendations… · Tip: ${loadingTipText()}`;
   if (force) {
+    ensureApiCacheLoaded();
     for (const key of Object.keys(state.cache)) {
       if (key.startsWith('discover:')) delete state.cache[key];
     }
-    try { localStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
+    persistApiCacheSoon();
   }
 
   try {
@@ -10461,10 +10468,11 @@ async function renderLegacyDiscover(force = false) {
 
 function resetDiscoverFeed(clearApiCache = false) {
   if (clearApiCache) {
+    ensureApiCacheLoaded();
     for (const key of Object.keys(state.cache)) {
       if (key.startsWith('discover:feed:') || key.startsWith('discover:recommend:') || key.startsWith('discover:author:')) delete state.cache[key];
     }
-    try { localStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
+    persistApiCacheSoon();
   }
 
   state.discoverFeedItems = [];
@@ -16050,7 +16058,51 @@ async function getPlaylistCached(id) {
   return getCached(`playlist:${id}`, () => TrackerAPI.getPlaylist(id, state.settings));
 }
 
+function ensureApiCacheLoaded() {
+  if (apiCacheLoaded) return;
+  apiCacheLoaded = true;
+  state.cache = {};
+
+  // Older builds stored one ever-growing API cache blob in localStorage. Parsing
+  // that blob on every page load became a major startup cost. Discard it without
+  // parsing, and keep the bounded cache session-scoped instead.
+  try { localStorage.removeItem(CACHE_KEY); } catch {}
+
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const now = Date.now();
+    if (!parsed || typeof parsed !== 'object') return;
+    for (const [cacheKey, entry] of Object.entries(parsed)) {
+      if (!entry || !Number.isFinite(Number(entry.savedAt))) continue;
+      if (now - Number(entry.savedAt) >= CACHE_TTL) continue;
+      state.cache[cacheKey] = entry;
+    }
+  } catch {
+    state.cache = {};
+    try { sessionStorage.removeItem(CACHE_KEY); } catch {}
+  }
+}
+
+function persistApiCacheSoon() {
+  if (apiCachePersistHandle) return;
+  const persist = () => {
+    apiCachePersistHandle = null;
+    const now = Date.now();
+    const entries = Object.entries(state.cache)
+      .filter(([, entry]) => entry && now - Number(entry.savedAt || 0) < CACHE_TTL)
+      .sort((a, b) => Number(b[1].savedAt || 0) - Number(a[1].savedAt || 0))
+      .slice(0, 48);
+    state.cache = Object.fromEntries(entries);
+    try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
+  };
+  if ('requestIdleCallback' in window) apiCachePersistHandle = window.requestIdleCallback(persist, { timeout: 900 });
+  else apiCachePersistHandle = window.setTimeout(persist, 350);
+}
+
 async function getCached(key, loader) {
+  ensureApiCacheLoaded();
   const cached = state.cache[key];
   if (cached && Date.now() - cached.savedAt < CACHE_TTL) return cached.value;
   if (apiCacheInFlight.has(key)) return apiCacheInFlight.get(key);
@@ -16067,8 +16119,9 @@ async function getCached(key, loader) {
 }
 
 function cachePut(key, value) {
+  ensureApiCacheLoaded();
   state.cache[key] = { savedAt: Date.now(), value };
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
+  persistApiCacheSoon();
 }
 
 function saveItems() {
@@ -16319,6 +16372,9 @@ function clearLocalSyncedState() {
     const key = localStorage.key(index);
     if (key?.startsWith(`${CLOUD_UPDATED_AT_KEY}.`)) localStorage.removeItem(key);
   }
+  try { sessionStorage.removeItem(CACHE_KEY); } catch {}
+  state.cache = {};
+  apiCacheLoaded = true;
   deleteLargeState(HISTORY_IDB_KEY).catch(() => {});
 }
 
@@ -16411,6 +16467,7 @@ function safeLocalSet(key, value) {
       // API cache is disposable; clearing it often frees space left by older builds.
       try {
         localStorage.removeItem(CACHE_KEY);
+        sessionStorage.removeItem(CACHE_KEY);
         if (key !== CACHE_KEY) localStorage.setItem(key, JSON.stringify(value));
         return true;
       } catch {}
