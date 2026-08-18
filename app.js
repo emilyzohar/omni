@@ -1,4 +1,4 @@
-import { TrackerAPI } from './api.js?v=omni-library-stats-30';
+import { TrackerAPI } from './api.js?v=omni-game-api-restore-78';
 import { API_CONFIG } from './config.js?v=omni-social-buddy-card-placement-11';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
@@ -416,6 +416,10 @@ const els = {
   itemProgressMode: $('#itemProgressMode'),
   itemUseDateRange: $('#itemUseDateRange'),
   itemUseRepeatLog: $('#itemUseRepeatLog'),
+  itemRepeatDisclosure: $('#itemRepeatDisclosure'),
+  itemRepeatSummary: $('#itemRepeatSummary'),
+  itemLogEntryFields: $('#itemLogEntryFields'),
+  itemLogEntryTitle: $('#itemLogEntryTitle'),
   itemUsePlaylist: $('#itemUsePlaylist'),
   catalogueQuery: $('#catalogueQuery'),
   catalogueSearchButton: $('#catalogueSearchButton'),
@@ -486,6 +490,9 @@ const els = {
   itemRecommended: $('#itemRecommended'),
   itemRecommendHeart: $('#itemRecommendHeart'),
   queueStatusField: $('#queueStatusField'),
+  itemStatusPicker: $('#itemStatusPicker'),
+  itemStatusSummary: $('#itemStatusSummary'),
+  itemQueueChoice: $('#itemQueueChoice'),
   itemQueueStatus: $('#itemQueueStatus'),
   editingId: $('#editingId'),
   provider: $('#provider'),
@@ -1553,7 +1560,7 @@ function bindEvents() {
   });
   els.itemProgressMode?.addEventListener('change', updateItemFormForType);
   els.itemUseDateRange?.addEventListener('change', updateItemFormForType);
-  els.itemUseRepeatLog?.addEventListener('change', updateItemFormForType);
+  els.itemUseRepeatLog?.addEventListener('change', () => { updateItemFormForType(); syncLogEntryFields(); });
   els.itemUsePlaylist?.addEventListener('change', updateItemFormForType);
   els.catalogueQuery?.addEventListener('focus', promptForCustomFindSource);
   els.catalogueSearchButton?.addEventListener('click', searchCatalogue);
@@ -1566,6 +1573,15 @@ function bindEvents() {
   els.playlistLoadButton?.addEventListener('click', loadPlaylistPreview);
   els.reminderFrequency?.addEventListener('change', updateReminderFormFields);
   els.reminderIntervalUnit?.addEventListener('change', updateReminderFormFields);
+  els.reminderWeekday?.addEventListener('change', updateReminderFormFields);
+  els.itemDate?.addEventListener('change', () => { if (els.reminderDueDate) els.reminderDueDate.value = els.itemDate.value || todayString(); });
+  els.itemStatusPicker?.addEventListener('click', event => {
+    const button = event.target.closest('[data-item-status]');
+    if (!button || !els.itemQueueStatus) return;
+    els.itemQueueStatus.value = button.dataset.itemStatus;
+    if (els.itemQueueChoice) els.itemQueueChoice.open = false;
+    syncItemStatusPicker();
+  });
   els.tvWatchSetupList?.addEventListener('change', handleTVDraftEpisodeToggle);
   els.tvWatchSetupList?.addEventListener('click', handleTVDraftSeasonAction);
   els.tvMarkAllWatched?.addEventListener('click', toggleAllTVDraftEpisodes);
@@ -1788,6 +1804,13 @@ function bindEvents() {
       return;
     }
 
+    const artistAlbumToggle = event.target.closest('[data-artist-album-toggle]');
+    if (artistAlbumToggle) {
+      event.preventDefault();
+      await expandArtistAlbum(artistAlbumToggle);
+      return;
+    }
+
     const artistFavorite = event.target.closest('[data-artist-favorite]');
     if (artistFavorite) {
       const item = findItem(artistFavorite.dataset.artistItemId || state.openDetailId);
@@ -1796,7 +1819,10 @@ function bindEvents() {
           const payload = JSON.parse(decodeURIComponent(artistFavorite.dataset.artistFavorite || ''));
           toggleArtistFavorite(item, payload);
           saveItems();
-          await openDetails(item.id);
+          const selected = artistFavoriteIsSaved(item, payload.kind === 'song' ? 'songs' : 'albums', payload.id);
+          artistFavorite.classList.toggle('is-favorite', selected);
+          artistFavorite.setAttribute('aria-label', `${selected ? 'Remove from' : 'Add to'} favorite ${payload.kind === 'song' ? 'songs' : 'albums'}`);
+          artistFavorite.closest('.artist-album-card, .artist-album-track, .artist-catalog-row')?.classList.toggle('is-favorite', selected);
         } catch (error) {
           console.warn('[Artist favorites] Could not update favorite', error);
         }
@@ -3203,7 +3229,7 @@ async function renderUpNext(options = {}) {
   const today = todayString();
   const availableItems = state.items.filter(item => {
     if (getQueueStatus(item) !== view) return false;
-    if (view === 'upnext' && getSourceType(item) === 'reminder') {
+    if (view === 'upnext' && hasReminderSchedule(item)) {
       const dueDate = getNextReminderDueDate(item);
       return !dueDate || dueDate <= today;
     }
@@ -3647,7 +3673,7 @@ async function buildQueueCalendarEntries() {
 
   for (const item of state.items) {
     const sourceType = getSourceType(item);
-    if (sourceType === 'reminder') {
+    if (hasReminderSchedule(item)) {
       let due = getNextReminderDueDate(item);
       if (!due || due < today) continue;
       const frequency = reminderFrequency(item);
@@ -3795,12 +3821,12 @@ function queueCardMarkup(item, info) {
   let action = '';
   if (isTBR) {
     action = `<button class="check-button start-button" type="button" data-action="start" data-id="${item.id}" aria-label="Up Next" title="Up Next">→</button>`;
-  } else if (sourceType === 'book') {
-    action = `<button class="check-button book-check" type="button" data-action="complete" data-id="${item.id}" aria-label="Update pages & dates" title="Update pages & dates">↗</button>`;
-  } else if (sourceType === 'reminder') {
+  } else if (hasReminderSchedule(item)) {
     const due = info.dueDate || getNextReminderDueDate(item);
     const canComplete = !due || due <= todayString();
     action = `<button class="check-button reminder-check" type="button" data-action="complete" data-id="${item.id}" aria-label="Mark reminder complete" title="${canComplete ? 'Mark complete' : `Due ${escapeAttr(formatLongDate(due))}`}" ${canComplete ? '' : 'disabled'}>✓</button>`;
+  } else if (sourceType === 'book') {
+    action = `<button class="check-button book-check" type="button" data-action="complete" data-id="${item.id}" aria-label="Update pages & dates" title="Update pages & dates">↗</button>`;
   } else {
     const label = sourceType === 'tv' ? 'Mark episode watched' : sourceType === 'youtube' ? `Mark ${getItemTypeLabel(item).toLowerCase()} complete` : 'Mark completed';
     action = `<button class="check-button" type="button" data-action="complete" data-id="${item.id}" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}">✓</button>`;
@@ -3863,7 +3889,7 @@ function tbrMeta(item) {
   if (sourceType === 'tv') return [item.subtitle, paused ? 'Paused' : 'Not started'].filter(Boolean).join(' · ');
   if (sourceType === 'book') return [item.subtitle, paused ? 'Paused' : 'To be read'].filter(Boolean).join(' · ');
   if (sourceType === 'youtube') return isYouTubePlaylistItem(item) ? [item.subtitle, 'Playlist'].filter(Boolean).join(' · ') : (item.subtitle || 'YouTube');
-  if (sourceType === 'reminder') return reminderScheduleLabel(item);
+  if (hasReminderSchedule(item)) return reminderScheduleLabel(item);
   if (['event', 'concert'].includes(sourceType)) return eventQueueMeta(item);
   return item.subtitle || 'Saved for later';
 }
@@ -3931,7 +3957,7 @@ async function getUpNextInfo(item) {
     };
   }
 
-  if (getSourceType(item) === 'reminder') {
+  if (hasReminderSchedule(item)) {
     const dueDate = getNextReminderDueDate(item);
     return {
       title: item.title,
@@ -4006,26 +4032,30 @@ async function handleUpNextClick(event) {
   }
 
   if (button.dataset.action === 'complete') {
-    if (getSourceType(item) === 'book') {
+    if (getSourceType(item) === 'book' && !hasReminderSchedule(item)) {
       openBookProgress(item);
       return;
     }
     button.disabled = true;
     try {
       let completed = null;
-      if (getSourceType(item) === 'tv') completed = await advanceTV(item);
+      if (hasReminderSchedule(item)) completed = reminderCompletionRecord(item);
+      else if (getSourceType(item) === 'tv') completed = await advanceTV(item);
       else if (getSourceType(item) === 'youtube') completed = isYouTubePlaylistItem(item) ? await advanceWorkout(item) : genericCompletionRecord(item, true);
-      else if (getSourceType(item) === 'reminder') completed = reminderCompletionRecord(item);
       else completed = genericCompletionRecord(item, true);
       if (completed) addHistoryRecord(completed);
-      if (!['tv','youtube','reminder'].includes(getSourceType(item)) || (getSourceType(item) === 'youtube' && !isYouTubePlaylistItem(item))) {
+      if (!hasReminderSchedule(item) && (!['tv','youtube','reminder'].includes(getSourceType(item)) || (getSourceType(item) === 'youtube' && !isYouTubePlaylistItem(item)))) {
         item.completedAt = todayString();
         setItemQueueStatus(item, 'library');
       }
-      if (getSourceType(item) === 'reminder') {
+      if (hasReminderSchedule(item)) {
         item.lastCompletedAt = new Date().toISOString();
-        if (isOneTimeReminder(item)) {
+        if (isOneTimeReminder(item) && getSourceType(item) === 'reminder') {
           state.items = state.items.filter(existing => existing.id !== item.id);
+        } else if (isOneTimeReminder(item)) {
+          delete item.reminder;
+          item.completedAt = todayString();
+          setItemQueueStatus(item, 'library');
         } else {
           setItemQueueStatus(item, 'upnext');
         }
@@ -4043,7 +4073,7 @@ async function handleUpNextClick(event) {
 }
 
 function queueSortKey(item, view = 'upnext') {
-  if (view === 'upnext' && getSourceType(item) === 'reminder') return `0:${getNextReminderDueDate(item) || '9999-12-31'}:${item.createdAt || ''}`;
+  if (view === 'upnext' && hasReminderSchedule(item)) return `0:${getNextReminderDueDate(item) || '9999-12-31'}:${item.createdAt || ''}`;
   if (['event', 'concert'].includes(getSourceType(item))) return `0:${item.date || item.eventMeta?.eventDate || '9999-12-31'}:${item.createdAt || ''}`;
   return `1:${item.createdAt || ''}`;
 }
@@ -4088,6 +4118,10 @@ function reminderCompletionRecord(item) {
   };
 }
 
+function hasReminderSchedule(item) {
+  return Boolean(item?.reminder && ['none','daily','weekly','biweekly','monthly','custom'].includes(item.reminder.frequency));
+}
+
 function reminderFrequency(item) {
   const value = item?.reminder?.frequency;
   if (['none', 'daily', 'weekly', 'biweekly', 'monthly', 'custom'].includes(value)) return value;
@@ -4107,7 +4141,7 @@ function reminderRecurrence(item) {
 }
 
 function isOneTimeReminder(item) {
-  return getSourceType(item) === 'reminder' && reminderFrequency(item) === 'none';
+  return hasReminderSchedule(item) && reminderFrequency(item) === 'none';
 }
 
 function getReminderScheduleStart(item) {
@@ -4115,7 +4149,7 @@ function getReminderScheduleStart(item) {
 }
 
 function getNextReminderDueDate(item) {
-  if (getSourceType(item) !== 'reminder') return '';
+  if (!hasReminderSchedule(item)) return '';
   const frequency = reminderFrequency(item);
   const scheduleStart = getReminderScheduleStart(item);
 
@@ -5631,7 +5665,7 @@ function openItemModal(id = '', defaultQueueStatus = 'library') {
       els.playlistInput.value = item.providerId || '';
       state.loadedPlaylist = null;
       showSelectedSource({ title: item.title, subtitle: item.subtitle, image: item.image }, true);
-    } else if (sourceType === 'reminder') {
+    } else if (sourceType === 'reminder' || item.reminder) {
       if (els.reminderFrequency) els.reminderFrequency.value = reminderFrequency(item);
       if (els.reminderDueDate) els.reminderDueDate.value = (reminderFrequency(item) === 'weekly' && !item.reminder?.intervalUnit && Number.isInteger(Number(item.reminder?.weekday))) ? (getNextReminderDueDate(item) || todayString()) : (item.reminder?.dueDate || item.reminder?.scheduleStart || getNextReminderDueDate(item) || todayString());
       if (els.reminderInterval) els.reminderInterval.value = String(Math.max(1, Number(item.reminder?.interval || 2)));
@@ -5685,6 +5719,8 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.itemProgressMode) els.itemProgressMode.value = 'auto';
   if (els.itemUseDateRange) els.itemUseDateRange.checked = false;
   if (els.itemUseRepeatLog) { els.itemUseRepeatLog.checked = false; els.itemUseRepeatLog.disabled = false; }
+  if (els.itemLogEntryTitle) els.itemLogEntryTitle.value = '';
+  if (els.itemRepeatDisclosure) els.itemRepeatDisclosure.open = false;
   if (els.itemUsePlaylist) els.itemUsePlaylist.checked = false;
   if (els.itemFeaturesDisclosure) els.itemFeaturesDisclosure.open = false;
   if (els.itemBuddyWatchPerson) els.itemBuddyWatchPerson.innerHTML = '';
@@ -6037,7 +6073,7 @@ function updateItemFormForType() {
   if (els.catalogueQuery) els.catalogueQuery.disabled = !isCatalogue;
   if (els.catalogueSearchButton) els.catalogueSearchButton.disabled = !isCatalogue;
   els.workoutBlock.hidden = !Boolean(els.itemUsePlaylist?.checked);
-  if (els.reminderBlock) els.reminderBlock.hidden = !isReminder;
+  if (els.reminderBlock) els.reminderBlock.hidden = false;
   if (els.activityFields) els.activityFields.hidden = !(isActivity || Boolean(els.itemUseDateRange?.checked));
   const bookDisplay = parentType === 'book' || sourceType === 'book';
   if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.hidden = bookDisplay;
@@ -6053,7 +6089,7 @@ function updateItemFormForType() {
   if (els.tvProgressFields && (progressMode !== 'tv' || sourceType !== 'tv')) els.tvProgressFields.hidden = true;
   syncFlexibleEpisodeProgressFields(sourceType, progressMode);
   els.bookProgressFields.hidden = progressMode !== 'book';
-  if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isReminder || isActivity;
+  if (els.itemDateField) els.itemDateField.hidden = sourceType === 'book' || isActivity;
   if (els.itemUseRepeatLog?.checked && !els.editingId.value && els.itemDate && !els.itemDate.value) els.itemDate.value = todayString();
   const simpleDateField = $('#itemDateInputField');
   if (simpleDateField) simpleDateField.hidden = Boolean(els.itemUseDateRange?.checked);
@@ -6114,6 +6150,8 @@ function updateItemFormForType() {
   }
 
   updateReminderFormFields();
+  syncLogEntryFields();
+  syncItemStatusPicker();
 
   const placeholders = { tv: 'Search TV', movie: 'Search movies', book: 'Search books', artist: 'Search artists', concert: 'Search concerts', event: 'Search events', restaurant: 'Search restaurants', place: 'Search places', 'video-game': 'Search video games', 'board-game': 'Search board games', youtube: 'Paste YouTube URL' };
   els.catalogueQuery.placeholder = isCatalogue ? (placeholders[sourceType] || 'Search') : 'Use title';
@@ -6146,16 +6184,43 @@ function updateItemFormForType() {
   if (els.itemLinkLabel) els.itemLinkLabel.placeholder = sourceType === 'recipe' ? 'Recipe source (optional)' : 'Link label (optional)';
 }
 
+function syncLogEntryFields() {
+  const enabled = Boolean(els.itemUseRepeatLog?.checked);
+  if (els.itemLogEntryFields) els.itemLogEntryFields.hidden = !enabled;
+  els.itemUseRepeatLog?.closest('.mode-toggle')?.classList.toggle('is-selected', enabled);
+}
+
+function syncItemStatusPicker() {
+  if (!els.itemQueueStatus) return;
+  const status = ['library','upnext','tbr'].includes(els.itemQueueStatus.value) ? els.itemQueueStatus.value : 'library';
+  const labels = { library: 'Completed', upnext: 'Up Next', tbr: 'TBR' };
+  els.itemStatusPicker?.querySelectorAll('[data-item-status]').forEach(button => {
+    const selected = button.dataset.itemStatus === status;
+    button.classList.toggle('is-selected', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
+  els.itemQueueChoice?.classList.toggle('is-selected', status !== 'library');
+  if (els.itemStatusSummary) els.itemStatusSummary.textContent = labels[status] || 'Completed';
+}
+
 function updateReminderFormFields() {
   if (!els.reminderFrequency) return;
   const frequency = els.reminderFrequency.value;
   const custom = frequency === 'custom';
-  if (els.reminderWeekdayField) els.reminderWeekdayField.hidden = true;
-  if (els.reminderDateField) els.reminderDateField.hidden = false;
+  const weekly = frequency === 'weekly';
+  if (els.reminderWeekdayField) els.reminderWeekdayField.hidden = !weekly;
+  if (els.reminderDateField) els.reminderDateField.hidden = true;
   if (els.reminderDateLabel) els.reminderDateLabel.textContent = frequency === 'none' ? 'Date' : 'Starts';
   if (els.reminderCustomFields) els.reminderCustomFields.hidden = !custom;
-  if (els.reminderDueDate && !els.reminderDueDate.value) els.reminderDueDate.value = todayString();
+  if (els.reminderDueDate) els.reminderDueDate.value = els.itemDate?.value || els.reminderDueDate.value || todayString();
   if (custom && els.reminderInterval && Number(els.reminderInterval.value || 0) < 1) els.reminderInterval.value = '1';
+  const labels = { none: 'Off', daily: 'Daily', weekly: 'Weekly', biweekly: 'Every 2 weeks', monthly: 'Monthly', custom: 'Custom' };
+  if (els.itemRepeatSummary) els.itemRepeatSummary.textContent = labels[frequency] || 'Off';
+  els.itemRepeatDisclosure?.classList.toggle('has-value', frequency !== 'none');
+  if (frequency !== 'none' && els.itemQueueStatus && !els.queueStatusField?.hidden && !els.editingId?.value) {
+    els.itemQueueStatus.value = 'upnext';
+    syncItemStatusPicker();
+  }
 }
 
 function syncFindItInputUI() {
@@ -6173,7 +6238,7 @@ function syncFindItInputUI() {
 
   els.catalogueQuery.removeAttribute('inputmode');
   els.catalogueSearchButton.textContent = 'Find';
-  if (customManual) els.catalogueQuery.placeholder = 'Choose a search with ⚙︎';
+  if (customManual) els.catalogueQuery.placeholder = 'Choose a search source above';
   else if (sourceKey === 'google-places') els.catalogueQuery.placeholder = 'Search places';
   else if (sourceKey === 'ticketmaster-events' || sourceKey === 'ticketmaster-concerts') els.catalogueQuery.placeholder = 'Search events';
   else if (sourceKey === 'lastfm-artists') els.catalogueQuery.placeholder = 'Search artists';
@@ -6186,9 +6251,8 @@ function promptForCustomFindSource() {
   const requested = els.itemFindSource?.value || 'auto';
   const sourceKey = requested === 'auto' ? defaultFindSourceForType(automaticFormSourceType()) : requested;
   if (sourceKey !== 'manual') return false;
-  if (els.itemFindSettingsDisclosure) els.itemFindSettingsDisclosure.open = true;
   syncFindItInputUI();
-  showFormMessage('Choose what Find it searches using the gear.', false);
+  showFormMessage('Choose what Find it searches from the dropdown beside Find it.', false);
   return true;
 }
 
@@ -6642,6 +6706,13 @@ async function saveItemFromForm(event) {
   const buddyFriendId = startBuddyAfterSave ? (els.itemBuddyWatchPerson?.value || '') : '';
   const sourceType = selectedFormSourceType();
   const editing = findItem(els.editingId.value);
+  const repeatFrequency = els.reminderFrequency?.value || 'none';
+  const repeatReminderEnabled = repeatFrequency !== 'none';
+  const repeatStartDate = sourceType === 'book'
+    ? (els.bookStartDate?.value || '')
+    : els.itemUseDateRange?.checked
+      ? (els.activityStartDate?.value || '')
+      : (els.itemDate?.value || '');
   const selectedActionCategory = normalizeAddActionCategory(els.itemActionChoice?.value || editing?.actionCategory || addActionForKind(kindForCurrentForm()) || 'other');
   let title = els.manualTitle.value.trim();
   let provider = els.provider.value;
@@ -6774,11 +6845,11 @@ async function saveItemFromForm(event) {
     showFormMessage('Choose the date for this class.', true);
     return;
   }
-  if (sourceType === 'reminder' && !els.reminderDueDate?.value) {
-    showFormMessage(els.reminderFrequency?.value === 'none' ? 'Choose a date for the reminder.' : 'Choose a start date for the repeating reminder.', true);
+  if ((sourceType === 'reminder' || repeatReminderEnabled) && !(repeatStartDate || els.reminderDueDate?.value)) {
+    showFormMessage(repeatReminderEnabled ? 'Choose a start date for the repeat.' : 'Choose a date for the reminder.', true);
     return;
   }
-  if (sourceType === 'reminder' && els.reminderFrequency?.value === 'custom' && Number(els.reminderInterval?.value || 0) < 1) {
+  if ((sourceType === 'reminder' || repeatReminderEnabled) && repeatFrequency === 'custom' && Number(els.reminderInterval?.value || 0) < 1) {
     showFormMessage('Custom repeats must be at least every 1 day, week, or month.', true);
     return;
   }
@@ -6852,8 +6923,8 @@ async function saveItemFromForm(event) {
     coverAttachmentId: '',
     links: state.attachmentDraft.links.map(link => ({ ...link })),
     date: sourceType === 'reminder' ? '' : (sourceType === 'activity' || els.itemUseDateRange?.checked) ? (els.activityStartDate?.value || '') : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
-    queueStatus: sourceType === 'reminder' ? 'upnext' : ['activity','class'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'),
-    active: sourceType === 'reminder' || (!['activity','class'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
+    queueStatus: (sourceType === 'reminder' || repeatReminderEnabled) ? 'upnext' : ['activity','class'].includes(sourceType) ? 'library' : (els.itemQueueStatus.value || 'library'),
+    active: sourceType === 'reminder' || repeatReminderEnabled || (!['activity','class'].includes(sourceType) && (els.itemQueueStatus.value || 'library') === 'upnext'),
     featureConfig: {
       findSource: requestedFindSource,
       progressMode: effectiveItemProgressMode(sourceType),
@@ -6896,21 +6967,24 @@ async function saveItemFromForm(event) {
 
   };
 
-  if (sourceType === 'reminder') {
-    const frequency = ['none','daily','weekly','biweekly','monthly','custom'].includes(els.reminderFrequency?.value)
-      ? els.reminderFrequency.value
+  if (sourceType === 'reminder' || repeatReminderEnabled) {
+    const frequency = ['none','daily','weekly','biweekly','monthly','custom'].includes(repeatFrequency)
+      ? repeatFrequency
       : 'none';
-    const scheduleStart = els.reminderDueDate?.value || todayString();
+    const scheduleStart = repeatStartDate || els.reminderDueDate?.value || todayString();
     const dueDate = frequency === 'none' ? scheduleStart : '';
     item.reminder = {
       frequency,
       dueDate,
       scheduleStart,
+      ...(frequency === 'weekly' ? { weekday: Math.max(0, Math.min(6, Number(els.reminderWeekday?.value ?? parseLocalDateString(scheduleStart).getDay()))) } : {}),
       interval: frequency === 'custom' ? Math.max(1, Math.min(365, Number(els.reminderInterval?.value || 1))) : undefined,
       intervalUnit: frequency === 'custom' && ['days','weeks','months'].includes(els.reminderIntervalUnit?.value)
         ? els.reminderIntervalUnit.value
         : undefined
     };
+  } else if (editing?.reminder) {
+    delete item.reminder;
   }
   const progressMode = effectiveItemProgressMode(sourceType);
   if (progressMode === 'tv') {
@@ -7095,7 +7169,7 @@ async function saveItemFromForm(event) {
         date: occurrenceDate,
         showOnCalendar: true,
         kind: 'repeatable-log',
-        title: item.title,
+        title: cleanTypeLabel(els.itemLogEntryTitle?.value || '') || item.title,
         subtitle: '',
         notes: item.notes || '',
         comment: item.comment || '',
@@ -7163,6 +7237,7 @@ async function saveItemFromForm(event) {
   recordTypeUse(item);
   refreshItemTypeOptions();
   saveItems();
+  if (itemHasRepeatLog(item)) saveHistory();
   await deleteRemovedDraftAttachments();
 
   let buddyWatchError = null;
@@ -7379,6 +7454,7 @@ async function openDetails(id) {
     appendFlexibleFeatureProgress(item);
     appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
+    appendReminderFeatureSummary(item);
     appendLibraryPeopleSummary(item);
     appendLibraryPersonalMetadata(item);
     appendRepeatLogSection(item);
@@ -7390,6 +7466,7 @@ async function openDetails(id) {
     appendFlexibleFeatureProgress(item);
     appendLibraryReleaseDateSummary(item);
     appendLibraryDateSummary(item);
+    appendReminderFeatureSummary(item);
     appendLibraryPeopleSummary(item);
     appendLibraryPersonalMetadata(item);
     appendRepeatLogSection(item);
@@ -7784,10 +7861,94 @@ function artistFavoriteButtonMarkup(item, payload) {
   return `<button class="artist-favorite-button${selected ? ' is-favorite' : ''}" type="button" data-artist-item-id="${escapeAttr(item.id)}" data-artist-favorite="${escapeAttr(encodeURIComponent(JSON.stringify(payload)))}" aria-label="${selected ? 'Remove from' : 'Add to'} favorite ${payload.kind === 'song' ? 'songs' : 'albums'}">♥</button>`;
 }
 
+function artistAlbumPayload(album = {}) {
+  const id = String(album.collectionId || album.id || '');
+  return {
+    kind: 'album',
+    id,
+    title: album.collectionName || album.title || 'Album',
+    year: String(album.releaseDate || album.year || '').slice(0, 4),
+    image: album.artworkUrl100 || album.image || '',
+    url: album.collectionViewUrl || album.url || ''
+  };
+}
+
+function artistAlbumAccordionMarkup(album, item = null) {
+  const payload = artistAlbumPayload(album);
+  const id = payload.id;
+  if (!id) return '';
+  const favorite = item ? artistFavoriteIsSaved(item, 'albums', id) : false;
+  const image = String(payload.image || '').replace('100x100bb', '180x180bb');
+  return `<article class="artist-album-card${favorite ? ' is-favorite' : ''}" data-artist-album-card="${escapeAttr(id)}">
+    <div class="artist-album-header">
+      <button class="artist-album-toggle" type="button" data-artist-album-toggle="${escapeAttr(id)}" ${item ? `data-artist-item-id="${escapeAttr(item.id)}"` : ''} aria-expanded="false">
+        <span class="artist-album-chevron" aria-hidden="true">›</span>
+        ${image ? `<img class="artist-album-art" src="${escapeAttr(image)}" alt="" loading="lazy" />` : '<span class="artist-album-art is-placeholder" aria-hidden="true">♪</span>'}
+        <span class="artist-album-copy"><strong>${escapeHtml(payload.title)}</strong>${payload.year ? `<small>${escapeHtml(payload.year)}</small>` : ''}</span>
+      </button>
+      <div class="artist-catalog-actions">
+        ${payload.url ? `<a class="artist-music-link" href="${escapeAttr(payload.url)}" target="_blank" rel="noopener" aria-label="Open ${escapeAttr(payload.title)} in Apple Music">↗ Music</a>` : ''}
+        ${item ? artistFavoriteButtonMarkup(item, payload) : ''}
+      </div>
+    </div>
+    <div class="artist-album-tracks" data-artist-album-tracks="${escapeAttr(id)}" hidden></div>
+  </article>`;
+}
+
+function artistAlbumTrackRowsMarkup(tracks, item = null) {
+  return (tracks || []).map((track, index) => {
+    const id = String(track.trackId || track.id || '');
+    const title = track.trackName || track.title || 'Track';
+    const albumName = track.collectionName || track.albumName || '';
+    const url = track.trackViewUrl || track.url || '';
+    const payload = { kind: 'song', id, title, albumName, image: track.artworkUrl100 || track.image || '', url };
+    const favorite = item && id ? artistFavoriteIsSaved(item, 'songs', id) : false;
+    return `<div class="artist-album-track${favorite ? ' is-favorite' : ''}">
+      <span class="artist-album-track-number">${escapeHtml(String(track.trackNumber || index + 1))}</span>
+      <span class="artist-album-track-copy"><strong>${escapeHtml(title)}</strong>${track.trackTimeMillis ? `<small>${escapeHtml(formatMillis(track.trackTimeMillis))}</small>` : ''}</span>
+      <span class="artist-catalog-actions">
+        ${url ? `<a class="artist-music-link" href="${escapeAttr(url)}" target="_blank" rel="noopener" aria-label="Open ${escapeAttr(title)} in Apple Music">↗ Music</a>` : ''}
+        ${item && id ? artistFavoriteButtonMarkup(item, payload) : ''}
+      </span>
+    </div>`;
+  }).join('');
+}
+
+async function expandArtistAlbum(toggle) {
+  const albumId = String(toggle?.dataset?.artistAlbumToggle || '');
+  if (!albumId) return;
+  const card = toggle.closest('[data-artist-album-card]');
+  const panel = card?.querySelector(`[data-artist-album-tracks="${CSS.escape(albumId)}"]`);
+  if (!panel) return;
+  const expanded = toggle.getAttribute('aria-expanded') === 'true';
+  toggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+  card?.classList.toggle('is-expanded', !expanded);
+  panel.hidden = expanded;
+  if (expanded || panel.dataset.loaded === 'true' || panel.dataset.loading === 'true') return;
+
+  panel.dataset.loading = 'true';
+  panel.innerHTML = '<p class="artist-album-loading">Loading songs…</p>';
+  const item = findItem(toggle.dataset.artistItemId || '');
+  try {
+    const data = await getCached(`album:tracks:v2:${albumId}`, () => TrackerAPI.getMusicDetails(albumId, state.settings));
+    const tracks = (data?.results || [])
+      .filter(result => result.wrapperType === 'track')
+      .sort((a, b) => Number(a.discNumber || 1) - Number(b.discNumber || 1) || Number(a.trackNumber || 0) - Number(b.trackNumber || 0));
+    panel.innerHTML = tracks.length
+      ? `<div class="artist-album-track-list">${artistAlbumTrackRowsMarkup(tracks, item)}</div>`
+      : '<p class="artist-album-empty">No songs returned for this album.</p>';
+    panel.dataset.loaded = 'true';
+  } catch (error) {
+    console.warn('[Music] Could not load album tracks:', error?.message || error);
+    panel.innerHTML = '<p class="artist-album-empty">Could not load this album’s songs.</p>';
+  } finally {
+    delete panel.dataset.loading;
+  }
+}
+
 async function renderArtistDetails(item) {
-  // Discover/Add now treats Music as artist-first and may save a Last.fm-backed
-  // artist. Resolve that artist to Apple's catalogue only for its album/song
-  // catalogue; keep the Omni item itself attached to the original artist source.
+  // Artist pages are album-first. Songs are fetched only when an album is opened,
+  // rather than showing an unrelated list of recent/random tracks under the artist.
   let appleArtistId = String(item.musicMeta?.itunesArtistId || (item.provider === 'itunes' ? item.providerId : '') || '');
   if (!appleArtistId) {
     try {
@@ -7805,43 +7966,22 @@ async function renderArtistDetails(item) {
     }
   }
   const data = appleArtistId
-    ? await getCached(`artist:v3:${appleArtistId}`, () => TrackerAPI.getArtistDetails(appleArtistId, state.settings))
+    ? await getCached(`artist:v4:${appleArtistId}`, () => TrackerAPI.getArtistDetails(appleArtistId, state.settings))
     : { results: [] };
   const artist = (data.results || []).find(result => result.wrapperType === 'artist') || {};
   const liveAlbums = (data.results || []).filter(result => result.wrapperType === 'collection');
-  const liveSongs = (data.results || []).filter(result => result.wrapperType === 'track');
   const savedAlbums = artistFavoritesFor(item, 'albums');
-  const savedSongs = artistFavoritesFor(item, 'songs');
   const albums = mergeArtistCatalogWithFavorites(liveAlbums, savedAlbums, entry => entry.collectionId || entry.id);
-  const songs = mergeArtistCatalogWithFavorites(liveSongs, savedSongs, entry => entry.trackId || entry.id);
   const image = (liveAlbums.find(album => album.artworkUrl100)?.artworkUrl100 || savedAlbums.find(album => album.image)?.image || item.image || '').replace('100x100bb', '600x600bb');
   if (!item.image && image) { item.image = image; saveItems(); }
   const artistUrl = artist.artistLinkUrl || artist.artistViewUrl || item.artistViewUrl || '';
-
-  const albumRows = albums.slice(0, 14).map(album => {
-    const id = String(album.collectionId || album.id || '');
-    const title = album.collectionName || album.title || 'Album';
-    const year = String(album.releaseDate || album.year || '').slice(0, 4);
-    const url = album.collectionViewUrl || album.url || '';
-    const payload = { kind: 'album', id, title, year, image: album.artworkUrl100 || album.image || '', url };
-    return `<div class="artist-catalog-row${artistFavoriteIsSaved(item, 'albums', id) ? ' is-favorite' : ''}"><div class="artist-catalog-copy"><div class="list-title">${escapeHtml(title)}</div><div class="list-meta">${escapeHtml(year)}</div></div><div class="artist-catalog-actions">${url ? `<a class="artist-music-link" href="${escapeAttr(url)}" target="_blank" rel="noopener" aria-label="Open ${escapeAttr(title)} in Apple Music">↗ Music</a>` : ''}${artistFavoriteButtonMarkup(item, payload)}</div></div>`;
-  }).join('');
-
-  const songRows = songs.slice(0, 16).map(song => {
-    const id = String(song.trackId || song.id || '');
-    const title = song.trackName || song.title || 'Song';
-    const albumName = song.collectionName || song.albumName || '';
-    const url = song.trackViewUrl || song.url || '';
-    const payload = { kind: 'song', id, title, albumName, image: song.artworkUrl100 || song.image || '', url };
-    return `<div class="artist-catalog-row${artistFavoriteIsSaved(item, 'songs', id) ? ' is-favorite' : ''}"><div class="artist-catalog-copy"><div class="list-title">${escapeHtml(title)}</div><div class="list-meta">${escapeHtml(albumName)}</div></div><div class="artist-catalog-actions">${url ? `<a class="artist-music-link" href="${escapeAttr(url)}" target="_blank" rel="noopener" aria-label="Open ${escapeAttr(title)} in Apple Music">↗ Music</a>` : ''}${artistFavoriteButtonMarkup(item, payload)}</div></div>`;
-  }).join('');
+  const albumRows = albums.slice(0, 18).map(album => artistAlbumAccordionMarkup(album, item)).join('');
 
   els.detailBody.innerHTML = `
     ${libraryDetailHero({ type:'ARTIST', title:artist.artistName || item.title, image, subtitle:artist.primaryGenreName || item.subtitle || '', overview:'' })}
     ${detailEditButton(item)}
     ${artistUrl ? `<section class="detail-section artist-open-music"><a class="secondary-button detail-link-button" href="${escapeAttr(artistUrl)}" target="_blank" rel="noopener">Open artist in Apple Music ↗</a></section>` : ''}
-    ${albumRows ? `<section class="detail-section"><div class="detail-section-heading"><h3>Albums</h3><span class="artist-favorite-hint">♥ saves inside this artist</span></div><div class="artist-catalog-list">${albumRows}</div></section>` : ''}
-    ${songRows ? `<section class="detail-section"><div class="detail-section-heading"><h3>Songs</h3><span class="artist-favorite-hint">♥ saves inside this artist</span></div><div class="artist-catalog-list">${songRows}</div></section>` : ''}`;
+    ${albumRows ? `<section class="detail-section"><div class="detail-section-heading"><h3>Albums</h3><span class="artist-favorite-hint">Open an album to see its songs · ♥ saves favorites</span></div><div class="artist-album-list">${albumRows}</div></section>` : '<section class="detail-section"><p class="list-meta">No albums were returned for this artist.</p></section>'}`;
 }
 
 async function renderSongDetails(item) {
@@ -8308,6 +8448,20 @@ function appendLibraryDateSummary(item) {
   else {
     const hero = els.detailBody.querySelector('.detail-hero');
     if (hero) hero.insertAdjacentHTML('afterend', markup);
+    else els.detailBody.insertAdjacentHTML('afterbegin', markup);
+  }
+}
+
+function appendReminderFeatureSummary(item) {
+  if (!item || !hasReminderSchedule(item) || getSourceType(item) === 'reminder' || !els.detailBody) return;
+  if (els.detailBody.querySelector(`[data-library-repeat-summary="${CSS.escape(item.id)}"]`)) return;
+  const due = getNextReminderDueDate(item);
+  const markup = `<div class="library-detail-date-strip" data-library-repeat-summary="${escapeAttr(item.id)}"><span>Repeat</span><strong>${escapeHtml(reminderScheduleLabel(item))}${due ? ` · ${escapeHtml(reminderDueLabel(due))}` : ''}</strong></div>`;
+  const dateSummary = els.detailBody.querySelector(`[data-library-date-summary="${CSS.escape(item.id)}"]`);
+  if (dateSummary) dateSummary.insertAdjacentHTML('afterend', markup);
+  else {
+    const title = els.detailBody.querySelector('.detail-hero h2');
+    if (title) title.insertAdjacentHTML('afterend', markup);
     else els.detailBody.insertAdjacentHTML('afterbegin', markup);
   }
 }
@@ -13950,7 +14104,7 @@ async function renderDiscoverArtistDetail(key) {
       }
     }
     if (itunesArtistId) {
-      const data = await getCached(`artist:v2:${itunesArtistId}`, () => TrackerAPI.getArtistDetails(itunesArtistId, state.settings));
+      const data = await getCached(`artist:v4:${itunesArtistId}`, () => TrackerAPI.getArtistDetails(itunesArtistId, state.settings));
       artist = (data.results || []).find(r => r.wrapperType === 'artist') || {};
       albums = (data.results || []).filter(r => r.wrapperType === 'collection');
       musicDiscoverDebug('lazy iTunes artist detail resolution complete', { artist: result.title, itunesArtistId, albums: albums.length });
@@ -13962,11 +14116,12 @@ async function renderDiscoverArtistDetail(key) {
   const image = (albums.find(album => album.artworkUrl100)?.artworkUrl100 || result.image || '').replace('100x100bb','600x600bb');
   if (!result.image && image) result.image = image;
   const externalUrl = result.lastfmUrl || result.raw?.lastfmUrl || '';
+  const albumRows = albums.slice(0, 18).map(album => artistAlbumAccordionMarkup(album)).join('');
   els.detailBody.innerHTML = `
     ${detailHero({ type:'ARTIST', title:artist.artistName || result.title, image, subtitle:artist.primaryGenreName || result.subtitle || '', overview:'' })}
     ${discoverLibraryOnlyActionMarkup(result, key)}
     ${metadataError ? `<section class="detail-section"><p class="list-meta">Extra iTunes metadata is temporarily unavailable. The Last.fm recommendation is still usable.</p></section>` : ''}
-    ${albums.length ? `<section class="detail-section"><h3>Recent albums</h3><div class="track-list">${albums.slice(0,8).map(album => `<div class="track-row"><div>•</div><div><div class="list-title">${escapeHtml(album.collectionName || 'Album')}</div><div class="list-meta">${escapeHtml(String(album.releaseDate || '').slice(0,4))}</div></div></div>`).join('')}</div></section>` : ''}
+    ${albumRows ? `<section class="detail-section"><div class="detail-section-heading"><h3>Albums</h3><span class="artist-favorite-hint">Open an album to see its songs</span></div><div class="artist-album-list">${albumRows}</div></section>` : ''}
     ${externalUrl ? `<section class="detail-section"><a class="secondary-button detail-link-button" href="${escapeAttr(externalUrl)}" target="_blank" rel="noopener">Open on Last.fm ↗</a></section>` : ''}`;
 }
 

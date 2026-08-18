@@ -11501,436 +11501,315 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
 }
 
 /* =========================================================
-   Simplified Add flow: title + Find it, date options, compact files
+   Add form: compact type / find / date / status controls v71
    ========================================================= */
-.add-title-find-grid {
+.item-modal .add-type-subtype-grid,
+.item-modal .add-find-title-grid,
+.item-modal .rating-date-grid {
   display: grid;
-  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
-  gap: 12px;
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: end;
 }
-.add-title-find-grid > * { min-width: 0; }
-.find-it-heading-row {
-  min-height: 22px;
+.item-modal .add-type-subtype-grid > *,
+.item-modal .add-find-title-grid > *,
+.item-modal .rating-date-grid > * { min-width: 0; }
+
+.item-modal .subtype-inline-field { margin: 0; }
+.item-modal .subtype-inline-field.has-value > span { color: var(--ink); }
+
+.item-modal .add-find-title-grid {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr);
+}
+.item-modal .find-it-block { align-self: end; }
+.item-modal .find-it-heading-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+  min-height: 28px;
 }
-.find-it-heading-row .field-label {
-  font-size: .72rem;
-  font-weight: 700;
-  color: #686c62;
+.item-modal .find-source-inline {
+  display: block;
+  margin-left: auto;
+  min-width: 0;
 }
-.find-it-heading-row .field-label em {
-  font-style: normal;
-  font-weight: 500;
-  opacity: .72;
+.item-modal .find-source-inline select {
+  width: auto;
+  max-width: 190px;
+  min-height: 30px;
+  padding: 4px 28px 4px 9px;
+  border: 1px solid rgba(21,36,58,.16);
+  border-radius: 999px;
+  background: rgba(255,255,255,.46);
+  color: var(--ink);
+  font-size: .76rem;
+  font-weight: 600;
 }
-.find-settings-disclosure {
-  position: relative;
-  flex: 0 0 auto;
-}
-.find-settings-disclosure > summary {
-  list-style: none;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(21,36,58,.14);
-  border-radius: 50%;
-  background: rgba(255,255,255,.62);
-  cursor: pointer;
-  font-size: .94rem;
-  line-height: 1;
-}
-.find-settings-disclosure > summary::-webkit-details-marker { display: none; }
-.find-settings-disclosure[open] > summary { background: rgba(139,153,202,.14); }
-.find-settings-panel {
-  position: absolute;
-  z-index: 40;
-  top: 34px;
-  right: 0;
-  width: min(285px, calc(100vw - 40px));
-  padding: 11px;
-  border: 1px solid rgba(21,36,58,.13);
-  border-radius: 13px;
-  background: var(--paper);
-  box-shadow: 0 12px 28px rgba(27,31,24,.17);
-}
-.find-settings-panel .field { gap: 5px; }
-.find-settings-panel .item-feature-inline-summary { display: block; margin-top: 5px; color: var(--muted); font-size: .7rem; }
+.item-modal .add-find-title-grid .search-row { grid-template-columns: minmax(0,1fr) auto; }
 
-.date-options-row {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto;
+.item-modal .rating-date-grid {
+  grid-template-columns: minmax(0, 1.35fr) minmax(220px, .65fr);
   align-items: end;
-  gap: 12px;
 }
-.date-quick-options {
-  min-height: 42px;
+.item-modal .rating-date-grid .rating-fieldset,
+.item-modal .rating-date-grid .date-control-stack { margin: 0; min-width: 0; }
+.item-modal .date-control-stack { display: grid; }
+.item-modal .date-control-stack .field { margin: 0; }
+.item-modal .item-comment-field { margin-top: 0; }
+
+.item-modal .date-behavior-row {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 7px;
-  padding-bottom: 1px;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -2px;
 }
-.mini-toggle {
+.item-modal .mode-toggle,
+.item-modal .mini-option-menu > summary {
+  min-height: 38px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 6px 10px;
-  border: 1px solid rgba(21,36,58,.13);
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border: 1px solid rgba(21,36,58,.18);
   border-radius: 999px;
-  background: rgba(255,255,255,.48);
-  font-size: .72rem;
-  font-weight: 650;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.mini-toggle input { margin: 0; accent-color: var(--maroon); }
-.mini-toggle:has(input:checked) { background: rgba(139,153,202,.15); border-color: rgba(79,94,143,.24); }
-.progress-status-field { max-width: 360px; }
-
-.item-modal .attachment-editor-collapsible {
-  margin-top: 2px;
-  border-color: rgba(21,36,58,.08);
-  background: rgba(255,255,255,.22);
-}
-.item-modal .attachment-editor-collapsible > .attachment-editor-heading {
-  min-height: 34px;
-  padding: 6px 9px;
-  font-size: .72rem;
-}
-.item-modal .attachment-editor-collapsible .attachment-editor-content { padding-top: 7px; }
-.item-modal .attachment-editor-note { font-size: .67rem; }
-.item-modal .attachment-upload-button span { font-size: .72rem; }
-
-/* Paused items remain visually distinct while they sit in TBR. */
-.tbr-thumbnail-button { position: relative; }
-.tbr-paused-badge {
-  position: absolute;
-  left: 7px;
-  bottom: 7px;
-  z-index: 2;
-  padding: 3px 7px;
-  border-radius: 999px;
-  background: rgba(21,36,58,.88);
-  color: #fff;
-  font: 650 .62rem/1.2 var(--sans);
-  letter-spacing: .02em;
-}
-.queue-card-paused-badge {
-  position: static;
-  display: inline-flex;
-  width: max-content;
-  margin-top: 6px;
-}
-
-/* Onboarding/Profile: choose only the Types that belong in Add. */
-.onboarding-log-type-choices,
-.social-log-type-choices {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0,1fr));
-  gap: 8px;
-}
-.log-type-choice {
-  min-height: 42px;
-  padding: 9px 10px;
-  border: 1px solid rgba(21,36,58,.12);
-  border-radius: 12px;
   background: rgba(255,255,255,.42);
-}
-.log-type-choice:has(input:checked) { background: rgba(139,153,202,.14); border-color: rgba(74,88,135,.22); }
-.social-setting-help { margin: 0 0 10px; color: var(--muted); font-size: .78rem; line-height: 1.45; }
-
-/* Followers and requests live in Feed as well as the Following tab. */
-.social-feed-people {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: 12px;
-  padding: 14px;
-  border-radius: 18px;
-  background: rgba(255,255,255,.50);
-  border: 1px solid rgba(21,36,58,.08);
-}
-.social-feed-people-block { display: grid; gap: 8px; }
-.social-feed-section-title { font-size: .7rem; font-weight: 750; text-transform: uppercase; letter-spacing: .07em; color: #72756b; }
-.social-feed-follower-list { display: flex; gap: 7px; overflow-x: auto; padding-bottom: 2px; }
-.social-feed-follower-pill,
-.social-feed-person-pill {
-  border: 0;
-  background: transparent;
-  color: inherit;
   cursor: pointer;
-}
-.social-feed-follower-pill {
-  flex: 0 0 auto;
-  min-width: 74px;
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  padding: 5px 7px;
-  font-size: .7rem;
+  font-size: .8rem;
   font-weight: 650;
+  line-height: 1;
+  list-style: none;
 }
-.social-feed-follower-pill .social-avatar { width: 36px; height: 36px; }
-.social-feed-request-list { display: grid; gap: 6px; }
-.social-feed-request-row {
+.item-modal .mode-toggle input { margin: 0; }
+.item-modal .mode-toggle.is-selected,
+.item-modal .mini-option-menu.has-value > summary {
+  background: rgba(21,36,58,.08);
+  border-color: rgba(21,36,58,.3);
+}
+.item-modal .mini-option-menu { position: relative; }
+.item-modal .mini-option-menu > summary::-webkit-details-marker { display: none; }
+.item-modal .mini-option-menu > summary small {
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 600;
+}
+.item-modal .repeat-menu-panel {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 7px);
+  left: 0;
+  width: min(330px, calc(100vw - 42px));
   display: grid;
-  grid-template-columns: minmax(0,1fr) auto;
-  gap: 8px;
-  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(21,36,58,.14);
+  border-radius: 14px;
+  background: var(--paper);
+  box-shadow: 0 12px 30px rgba(27,31,24,.16);
 }
-.social-feed-person-pill { display: flex; align-items: center; gap: 8px; min-width: 0; text-align: left; padding: 3px 0; }
-.social-feed-person-pill > span:last-child { display: grid; min-width: 0; }
-.social-feed-person-pill strong { font-size: .78rem; }
-.social-feed-person-pill small { color: var(--muted); font-size: .67rem; }
-.social-feed-request-row > div { display: flex; gap: 5px; }
+.item-modal .repeat-menu-panel .field { margin: 0; }
+.item-modal .repeat-menu-panel .reminder-custom-fields { margin: 0; }
 
-@media (max-width: 760px) {
-  .add-title-find-grid { grid-template-columns: 1fr; gap: 10px; }
-  .date-options-row { grid-template-columns: 1fr; gap: 6px; }
-  .date-quick-options { justify-content: flex-start; min-height: 0; }
-  .onboarding-log-type-choices,
-  .social-log-type-choices { grid-template-columns: 1fr 1fr; }
-  .social-feed-request-row { grid-template-columns: 1fr; }
-  .social-feed-request-row > div { padding-left: 44px; }
-
-  /* Keep the completion check visible on Discover mobile. There are two
-     actions for progress-capable cards: check + Progress. */
-  .discover-feed-grid .discover-card-actions,
-  .discover-card-actions {
-    display: grid !important;
-    grid-template-columns: 36px minmax(0,1fr) !important;
-    gap: 6px !important;
-  }
-  .discover-feed-grid .discover-card-actions.no-complete,
-  .discover-card-actions.no-complete {
-    grid-template-columns: minmax(0,1fr) !important;
-  }
-  .discover-card-actions .discover-complete-button {
-    display: grid !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    width: 36px !important;
-    height: 36px !important;
-  }
-  .discover-card-actions .discover-add-button {
-    min-width: 0 !important;
-    width: 100% !important;
-  }
+.item-modal .log-entry-fields {
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid rgba(21,36,58,.1);
+  border-radius: 12px;
+  background: rgba(255,255,255,.28);
+}
+.item-modal .log-entry-fields[hidden] { display: none !important; }
+.item-modal .log-entry-fields > small {
+  color: var(--muted);
+  font-size: .72rem;
+  line-height: 1.35;
 }
 
-@media (max-width: 380px) {
-  .discover-feed-grid .discover-card-actions,
-  .discover-card-actions { grid-template-columns: 34px minmax(0,1fr) !important; }
-  .discover-feed-grid .discover-card-actions.no-complete,
-  .discover-card-actions.no-complete { grid-template-columns: minmax(0,1fr) !important; }
-  .discover-card-actions .discover-complete-button { width: 34px !important; height: 34px !important; }
-}
-
-/* Repeat is a lightweight per-item log. The aggregate card keeps the overall
-   title while each occurrence gets its own date/rating/note and edit controls. */
-.repeat-log-summary-actions > div,
-.repeat-log-history-actions {
-  display: flex;
-  align-items: center;
+.item-modal .progress-status-field {
+  display: grid;
   gap: 7px;
 }
-.repeat-summary-button,
-.repeat-log-add-button,
-.repeat-log-history-actions .secondary-button,
-.repeat-log-history-actions .quiet-button {
-  min-width: 92px;
-  min-height: 36px;
-  display: inline-grid;
-  place-items: center;
+.item-modal .item-status-picker {
+  display: flex;
+  align-items: center;
+  gap: 9px;
 }
-.repeat-log-history-list { display: grid; gap: 9px; }
-.repeat-log-history-row {
+.item-modal .status-symbol-button {
+  width: 43px;
+  height: 43px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(21,36,58,.18);
+  border-radius: 50%;
+  background: rgba(255,255,255,.46);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 1.45rem;
+  font-weight: 500;
+  line-height: 1;
+  list-style: none;
+}
+.item-modal .status-symbol-button.is-selected,
+.item-modal .status-plus-menu.is-selected > summary {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+.item-modal .status-plus-menu { position: relative; }
+.item-modal .status-plus-menu > summary::-webkit-details-marker { display: none; }
+.item-modal .status-plus-panel {
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  bottom: calc(100% + 7px);
+  min-width: 132px;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid rgba(21,36,58,.14);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 12px 30px rgba(27,31,24,.16);
+}
+.item-modal .status-plus-panel button {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 9px 10px;
+  text-align: left;
+  cursor: pointer;
+  font-size: .82rem;
+  font-weight: 650;
+}
+.item-modal .status-plus-panel button:hover,
+.item-modal .status-plus-panel button.is-selected { background: rgba(21,36,58,.07); }
+.item-modal #itemStatusSummary {
+  font-size: .86rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+@media (max-width: 620px) {
+  .item-modal .add-type-subtype-grid,
+  .item-modal .add-find-title-grid,
+  .item-modal .rating-date-grid { grid-template-columns: 1fr; gap: 11px; }
+  .item-modal .add-find-title-grid #catalogueSearchBlock { order: 1; }
+  .item-modal .add-find-title-grid #manualTitleBlock { order: 2; }
+  .item-modal .find-source-inline select { max-width: 155px; }
+  .item-modal .repeat-menu-panel { position: fixed; left: 18px; right: 18px; top: auto; bottom: 18px; width: auto; }
+}
+
+
+/* Artist pages: albums expand in place to reveal their tracks. */
+.artist-album-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.artist-album-card {
+  border: 1px solid rgba(21,36,58,.10);
+  border-radius: 15px;
+  background: rgba(255,255,255,.34);
+  overflow: hidden;
+  transition: background .16s ease, border-color .16s ease;
+}
+.artist-album-card.is-favorite { border-color: rgba(114,0,20,.20); }
+.artist-album-card.is-expanded { background: rgba(255,255,255,.52); }
+.artist-album-header {
   display: grid;
   grid-template-columns: minmax(0,1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 11px 0;
-  border-bottom: 1px solid rgba(21,36,58,.09);
+  gap: 10px;
+  min-height: 62px;
+  padding: 6px 9px 6px 6px;
 }
-.repeat-log-history-row:last-child { border-bottom: 0; }
-.repeat-log-history-main {
+.artist-album-toggle {
   min-width: 0;
   display: grid;
-  grid-template-columns: auto minmax(0,1fr) auto;
-  align-items: baseline;
-  gap: 6px 10px;
-}
-.repeat-log-history-date { color: var(--muted); font-size: .72rem; white-space: nowrap; }
-.repeat-log-history-main strong { font-size: .9rem; overflow-wrap: anywhere; }
-.repeat-log-history-stars { font-size: .75rem; font-weight: 650; white-space: nowrap; }
-.repeat-log-history-main p { grid-column: 2 / -1; margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.4; }
-.repeat-log-modal .repeat-log-rating-field { margin-bottom: 0; }
-
-@media (max-width: 760px) {
-  .repeat-log-summary-actions { align-items: flex-start; gap: 9px; }
-  .repeat-log-summary-actions > div { width: 100%; }
-  .repeat-summary-button { flex: 1 1 0; min-width: 0; }
-  .repeat-log-history-row { grid-template-columns: 1fr; gap: 8px; }
-  .repeat-log-history-actions { justify-content: flex-end; }
-}
-
-/* 2026-08-18 Add simplification: Date options stay attached to Date, even on mobile. */
-.date-options-row {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-}
-.date-quick-options {
-  align-self: end;
-  padding-bottom: 1px;
-}
-
-/* Progress replaces the old destination/"Where" choice. */
-.progress-choice-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-/* Files are deliberately secondary in Add and in opened details. */
-.item-modal .attachment-editor-collapsible {
-  margin-top: 2px;
-  border-color: rgba(21,36,58,.08);
-  background: rgba(255,255,255,.24);
-}
-.item-modal .attachment-editor-collapsible > .attachment-editor-heading {
-  min-height: 34px;
-  padding: 7px 9px;
-  font-size: .74rem;
-}
-.item-modal .attachment-editor-collapsible > .attachment-editor-heading small { font-size: .65rem; }
-.compact-resources-section { margin-top: 22px; }
-.compact-resources-section > h3 { font-size: 1rem; margin-bottom: 9px; }
-.resource-image-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.resource-image-card {
+  grid-template-columns: 18px 48px minmax(0,1fr);
+  align-items: center;
+  gap: 10px;
   border: 0;
+  background: transparent;
   padding: 0;
-  border-radius: 12px;
-  overflow: hidden;
-  background: rgba(21,36,58,.055);
+  color: inherit;
+  text-align: left;
   cursor: pointer;
-  aspect-ratio: 4 / 3;
 }
-.resource-inline-image { width: 100%; height: 100%; object-fit: cover; }
-.resource-image-loading { display: grid; place-items: center; width: 100%; height: 100%; color: var(--muted); font-size: .7rem; }
-.compact-resource-grid { gap: 6px; }
-.compact-resource-grid .resource-card { min-height: 42px; padding: 7px 9px; }
-.compact-resource-grid .resource-card strong { font-size: .75rem; }
-.compact-resource-grid .resource-card small { font-size: .62rem; }
-.compact-external-links { gap: 6px; }
-.compact-external-links .external-link-button { min-height: 38px; padding: 7px 10px; font-size: .74rem; }
-
-@media (max-width: 760px) {
-  .date-options-row { grid-template-columns: minmax(0, 1fr) auto !important; gap: 7px !important; }
-  .date-quick-options { justify-content: flex-end; align-self: end; }
-  .mini-toggle { padding-inline: 7px; }
-  .progress-choice-grid { grid-template-columns: 1fr; }
-  .resource-image-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.artist-album-chevron {
+  display: inline-grid;
+  place-items: center;
+  font: 400 1.55rem/1 var(--serif);
+  transform: rotate(0deg);
+  transition: transform .16s ease;
 }
-
-/* Opened Collections read like a small Library, with the collection note under its title. */
-.collection-library-heading {
+.artist-album-toggle[aria-expanded="true"] .artist-album-chevron { transform: rotate(90deg); }
+.artist-album-art {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 9px;
+  background: rgba(21,36,58,.06);
+}
+.artist-album-art.is-placeholder {
+  display: grid;
+  place-items: center;
+  color: rgba(21,36,58,.35);
+  font-size: 1.15rem;
+}
+.artist-album-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.artist-album-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .92rem;
+}
+.artist-album-copy small { color: var(--muted); font-size: .72rem; }
+.artist-album-tracks {
+  border-top: 1px solid rgba(21,36,58,.08);
+  padding: 4px 10px 8px 38px;
+}
+.artist-album-track-list { display: grid; }
+.artist-album-track {
+  display: grid;
+  grid-template-columns: 24px minmax(0,1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 43px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(21,36,58,.065);
+}
+.artist-album-track:last-child { border-bottom: 0; }
+.artist-album-track.is-favorite { background: linear-gradient(90deg,rgba(114,0,20,.04),transparent 55%); }
+.artist-album-track-number { color: var(--muted); font-size: .7rem; text-align: right; }
+.artist-album-track-copy {
+  min-width: 0;
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 18px;
-  margin-bottom: 22px;
+  align-items: baseline;
+  gap: 8px;
 }
-.collection-library-heading > div { min-width: 0; }
-.collection-library-note { margin: 7px 0 0; color: var(--muted); max-width: 68ch; line-height: 1.45; }
-.collection-library-groups { display: grid; gap: 28px; }
-.collection-library-group { min-width: 0; }
-.collection-library-group-heading { display: flex; align-items: baseline; gap: 9px; margin-bottom: 10px; }
-.collection-library-group-heading h3 { font-size: 1.35rem; }
-.collection-library-group-heading span { color: var(--muted); font-size: .75rem; }
-.collection-library-grid { row-gap: 28px !important; }
-.collection-library-grid .library-card-album-button { display: none !important; }
-@media (max-width: 760px) {
-  .collection-library-heading { gap: 10px; }
-  .collection-library-grid { row-gap: 24px !important; }
+.artist-album-track-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .82rem;
 }
+.artist-album-track-copy small { flex: 0 0 auto; color: var(--muted); font-size: .66rem; }
+.artist-album-loading,
+.artist-album-empty { margin: 7px 0; color: var(--muted); font-size: .78rem; }
 
-/* Rounded geometric sticker shapes. They use masks so every palette still works. */
-.sticker-triangle,
-.sticker-diamond,
-.sticker-hexagon,
-.sticker-pentagon,
-.sticker-oval {
-  width: 22px;
-  height: 22px;
-  color: var(--sticker-fg);
-  background: var(--sticker-bg);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
-  -webkit-mask-size: contain;
-  mask-size: contain;
-  filter: drop-shadow(1px 2px 0 rgba(21,36,58,.13));
-}
-.sticker-triangle {
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c1 0 1.6.5 2.15 1.55l7.1 14.15c.9 1.8-.2 3.3-2.2 3.3H4.95c-2 0-3.1-1.5-2.2-3.3l7.1-14.15C10.4 2.5 11 2 12 2Z'/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c1 0 1.6.5 2.15 1.55l7.1 14.15c.9 1.8-.2 3.3-2.2 3.3H4.95c-2 0-3.1-1.5-2.2-3.3l7.1-14.15C10.4 2.5 11 2 12 2Z'/%3E%3C/svg%3E");
-}
-.sticker-diamond {
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10.35 2.35a2.3 2.3 0 0 1 3.3 0l8 8a2.3 2.3 0 0 1 0 3.3l-8 8a2.3 2.3 0 0 1-3.3 0l-8-8a2.3 2.3 0 0 1 0-3.3l8-8Z'/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10.35 2.35a2.3 2.3 0 0 1 3.3 0l8 8a2.3 2.3 0 0 1 0 3.3l-8 8a2.3 2.3 0 0 1-3.3 0l-8-8a2.3 2.3 0 0 1 0-3.3l8-8Z'/%3E%3C/svg%3E");
-}
-.sticker-hexagon {
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M8 2h8c.9 0 1.6.4 2.05 1.15l4 7c.4.7.4 1.05 0 1.75l-4 7A2.35 2.35 0 0 1 16 20H8c-.9 0-1.6-.4-2.05-1.15l-4-7c-.4-.7-.4-1.05 0-1.75l4-7A2.35 2.35 0 0 1 8 2Z'/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M8 2h8c.9 0 1.6.4 2.05 1.15l4 7c.4.7.4 1.05 0 1.75l-4 7A2.35 2.35 0 0 1 16 20H8c-.9 0-1.6-.4-2.05-1.15l-4-7c-.4-.7-.4-1.05 0-1.75l4-7A2.35 2.35 0 0 1 8 2Z'/%3E%3C/svg%3E");
-}
-.sticker-pentagon {
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10.45 2.5a2.8 2.8 0 0 1 3.1 0l7.2 5.25a2.8 2.8 0 0 1 1 3.05L19 19.25a2.8 2.8 0 0 1-2.65 1.9h-8.7A2.8 2.8 0 0 1 5 19.25L2.25 10.8a2.8 2.8 0 0 1 1-3.05l7.2-5.25Z'/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10.45 2.5a2.8 2.8 0 0 1 3.1 0l7.2 5.25a2.8 2.8 0 0 1 1 3.05L19 19.25a2.8 2.8 0 0 1-2.65 1.9h-8.7A2.8 2.8 0 0 1 5 19.25L2.25 10.8a2.8 2.8 0 0 1 1-3.05l7.2-5.25Z'/%3E%3C/svg%3E");
-}
-.sticker-oval { width: 25px; height: 18px; border-radius: 50%; -webkit-mask-image: none; mask-image: none; }
-.sticker-triangle[class*="sticker-palette-"],
-.sticker-diamond[class*="sticker-palette-"],
-.sticker-hexagon[class*="sticker-palette-"],
-.sticker-pentagon[class*="sticker-palette-"],
-.sticker-oval[class*="sticker-palette-"] { background: var(--sticker-bg); color: var(--sticker-fg); }
-
-/* Streak scope/name/sticker controls. */
-.streak-setting-row {
-  grid-template-columns: minmax(260px, 1.25fr) 72px minmax(250px, 1.15fr) 86px;
-  align-items: start;
-}
-.streak-setting-identity { min-width: 0; display: grid; grid-template-columns: 34px minmax(0,1fr) auto; gap: 7px; align-items: center; }
-.streak-setting-preview { display: grid; place-items: center; min-height: 32px; }
-.streak-name-field { min-width: 0; display: grid; gap: 3px; }
-.streak-name-field > span { color: var(--muted); font-size: .62rem; text-transform: uppercase; letter-spacing: .06em; }
-.streak-name-field input { width: 100%; min-width: 0; border: 1px solid rgba(21,36,58,.12); border-radius: 9px; background: #fffdf7; padding: 7px 8px; font-size: .8rem; }
-.streak-style-details { position: relative; }
-.streak-style-details > summary { list-style: none; cursor: pointer; padding: 6px 8px; border: 1px solid rgba(21,36,58,.10); border-radius: 9px; font-size: .68rem; font-weight: 700; background: rgba(255,255,255,.55); }
-.streak-style-details > summary::-webkit-details-marker { display: none; }
-.streak-style-controls { position: absolute; z-index: 8; right: 0; top: calc(100% + 5px); min-width: 220px; display: grid; gap: 7px; padding: 10px; border: 1px solid rgba(21,36,58,.12); border-radius: 12px; background: var(--paper); box-shadow: 0 10px 25px rgba(21,36,58,.13); }
-.streak-style-controls label { display: grid; grid-template-columns: 55px minmax(0,1fr); gap: 7px; align-items: center; font-size: .68rem; }
-.streak-style-controls select, .streak-style-controls input { min-width: 0; width: 100%; padding: 6px 7px; border: 1px solid rgba(21,36,58,.12); border-radius: 8px; background: #fffdf7; }
-.streak-group-button, .streak-group-delete { grid-column: 2 / -1; justify-self: start; padding: 4px 7px; min-height: 28px; font-size: .67rem; }
-.streak-group-delete { color: #8c2940; }
-.streak-setting-row-subcategory .streak-setting-identity { padding-left: 14px; }
-.streak-setting-row-subcategory .streak-setting-identity::before { content: '↳'; color: var(--muted); grid-column: 1; grid-row: 1; justify-self: end; margin-right: 24px; }
-.streak-setting-row-subcategory .streak-setting-preview { grid-column: 1; grid-row: 1; }
-.streak-setting-row-group { background: rgba(139,153,202,.055); }
-
-@media (max-width: 760px) {
-  .streak-setting-row { grid-template-columns: minmax(0,1fr) auto !important; align-items: start; }
-  .streak-setting-identity { grid-column: 1 / -1; grid-template-columns: 32px minmax(0,1fr) auto; }
-  .streak-toggle { grid-column: 2; grid-row: 2; }
-  .rest-day-picker { grid-column: 1 / -1; }
-  .streak-setting-current { grid-column: 1 / -1; }
-  .streak-style-controls { right: auto; left: 0; min-width: min(240px, 75vw); }
+@media (max-width:760px) {
+  .artist-album-header { grid-template-columns:minmax(0,1fr) auto; gap:6px; padding-right:7px; }
+  .artist-album-toggle { grid-template-columns:14px 42px minmax(0,1fr); gap:7px; }
+  .artist-album-art { width:42px; height:42px; border-radius:8px; }
+  .artist-album-tracks { padding-left:15px; padding-right:7px; }
+  .artist-album-track { grid-template-columns:20px minmax(0,1fr) auto; gap:6px; }
+  .artist-album-track-copy { display:grid; gap:1px; }
+  .artist-album-track-copy small { font-size:.62rem; }
 }

@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-add-flow-social-tbr-75" />
+  <link rel="stylesheet" href="style.css?v=omni-artist-albums-77" />
 </head>
 <body class="library-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -225,10 +225,17 @@
       <input id="providerImage" type="hidden" />
       <input id="providerSubtitle" type="hidden" />
 
-      <div class="add-intent-grid add-type-only">
+      <div class="add-type-subtype-grid">
         <label class="field">
           <span>Type</span>
           <select id="itemKindChoice" aria-label="Type"></select>
+        </label>
+
+        <label id="itemSubcategoryDisclosure" class="field subtype-inline-field">
+          <span>Subtype <em>optional</em></span>
+          <input id="itemSubcategory" type="text" autocomplete="off" list="itemSubtypeSuggestions" placeholder="Add or choose a subtype" />
+          <datalist id="itemSubtypeSuggestions"></datalist>
+          <small id="itemSubcategorySummary" class="sr-only"></small>
         </label>
       </div>
 
@@ -252,19 +259,6 @@
         </select>
       </label>
 
-      <details id="itemSubcategoryDisclosure" class="compact-add-option subcategory-disclosure">
-        <summary>
-          <span class="compact-add-plus" aria-hidden="true">+</span>
-          <span>Subtype</span>
-          <small id="itemSubcategorySummary"></small>
-        </summary>
-        <label class="field compact-field compact-add-body">
-          <span class="sr-only">Subtype</span>
-          <input id="itemSubcategory" type="text" autocomplete="off" list="itemSubtypeSuggestions" placeholder="e.g. Documentary, Lecture, Gym" />
-          <datalist id="itemSubtypeSuggestions"></datalist>
-        </label>
-      </details>
-
       <label id="itemSubtypeBlock" class="field" hidden>
         <span id="itemSubtypeLabel">Kind</span>
         <select id="itemSubtype"></select>
@@ -275,40 +269,29 @@
         <input id="itemDisplayType" type="text" autocomplete="off" placeholder="Workout" />
       </label>
 
-      <div class="add-title-find-grid">
-        <div id="manualTitleBlock">
-          <label class="field">
-            <span>Title</span>
-            <input id="manualTitle" type="text" placeholder="Type a title" required />
-          </label>
-        </div>
-
+      <div class="add-find-title-grid">
         <div id="catalogueSearchBlock" class="find-it-block">
           <div class="find-it-heading-row">
             <span class="field-label">Find it <em>optional</em></span>
-            <details id="itemFindSettingsDisclosure" class="find-settings-disclosure">
-              <summary aria-label="Choose what Find it searches" title="Choose what Find it searches">⚙︎</summary>
-              <div id="itemFindSourceDisclosure" class="find-settings-panel">
-                <label class="field compact-field">
-                  <span>Search</span>
-                  <select id="itemFindSource" aria-label="Search source">
+            <label class="find-source-inline">
+              <span class="sr-only">What to search</span>
+              <select id="itemFindSource" aria-label="What Find it searches">
                 <option value="auto">Automatic</option>
-                <option value="manual">None</option>
+                <option value="manual">Manual only</option>
                 <option value="youtube-videos">YouTube</option>
-                <option value="google-places">Google Maps / Places</option>
-                <option value="ticketmaster-events">Live events · Ticketmaster</option>
-                <option value="ticketmaster-concerts">Concerts · Ticketmaster</option>
-                <option value="tmdb-tv">TV · TMDB</option>
-                <option value="tmdb-movie">Movies · TMDB</option>
-                <option value="google-books">Books · Google Books</option>
-                <option value="igdb-games">Video games · IGDB</option>
-                <option value="bgg-games">Board games · BoardGameGeek</option>
-                <option value="lastfm-artists">Artists · Last.fm</option>
+                <option value="google-places">Google Maps</option>
+                <option value="ticketmaster-events">Live events</option>
+                <option value="ticketmaster-concerts">Concerts</option>
+                <option value="tmdb-tv">TV</option>
+                <option value="tmdb-movie">Movies</option>
+                <option value="google-books">Books</option>
+                <option value="igdb-games">Video games</option>
+                <option value="bgg-games">Board games</option>
+                <option value="lastfm-artists">Artists</option>
               </select>
-                </label>
-                <small id="itemFindSourceSummary" class="item-feature-inline-summary">Automatic</small>
-              </div>
-            </details>
+            </label>
+            <div id="itemFindSourceDisclosure" hidden></div>
+            <small id="itemFindSourceSummary" class="sr-only">Automatic</small>
           </div>
           <div class="search-row">
             <input id="catalogueQuery" type="search" autocomplete="off" placeholder="Search" />
@@ -317,8 +300,14 @@
           <div id="searchResults" class="search-results" hidden></div>
           <div id="selectedSource" class="selected-source" hidden></div>
         </div>
-      </div>
 
+        <div id="manualTitleBlock">
+          <label class="field">
+            <span>Title</span>
+            <input id="manualTitle" type="text" placeholder="Type a title" required />
+          </label>
+        </div>
+      </div>
       <input id="itemProgressMode" type="hidden" value="auto" />
       <input id="itemUsePlaylist" type="checkbox" hidden />
 
@@ -331,40 +320,6 @@
           </div>
         </label>
         <div id="playlistPreview" class="selected-source" hidden></div>
-      </div>
-
-      <div id="reminderBlock" class="progress-fields reminder-fields" hidden>
-        <div class="two-column-fields reminder-repeat-grid">
-          <label class="field compact-field">
-            <span>Repeat</span>
-            <select id="reminderFrequency">
-              <option value="none" selected>Never</option>
-              <option value="daily">Every day</option>
-              <option value="weekly">Every week</option>
-              <option value="biweekly">Every 2 weeks</option>
-              <option value="monthly">Every month</option>
-              <option value="custom">Custom…</option>
-            </select>
-          </label>
-          <label id="reminderDateField" class="field compact-field">
-            <span id="reminderDateLabel">Date</span>
-            <input id="reminderDueDate" type="date" />
-          </label>
-        </div>
-        <div id="reminderCustomFields" class="reminder-custom-fields" hidden>
-          <label class="field compact-field">
-            <span>Every</span>
-            <input id="reminderInterval" type="number" min="1" max="365" step="1" value="2" inputmode="numeric" />
-          </label>
-          <label class="field compact-field">
-            <span>Unit</span>
-            <select id="reminderIntervalUnit">
-              <option value="days">Days</option>
-              <option value="weeks" selected>Weeks</option>
-              <option value="months">Months</option>
-            </select>
-          </label>
-        </div>
       </div>
 
       <div id="activityFields" class="progress-fields activity-fields" hidden>
@@ -421,28 +376,26 @@
         </div>
       </div>
 
-      <fieldset class="rating-fieldset">
-        <legend>Rating</legend>
-        <div id="starPicker" class="star-picker" aria-label="Rating out of five stars">
-          <button type="button" data-rating="1" aria-label="1 star">★</button>
-          <button type="button" data-rating="2" aria-label="2 stars">★</button>
-          <button type="button" data-rating="3" aria-label="3 stars">★</button>
-          <button type="button" data-rating="4" aria-label="4 stars">★</button>
-          <button type="button" data-rating="5" aria-label="5 stars">★</button>
-          <button id="itemRecommendHeart" class="rating-heart-button" type="button" aria-label="Add to Recommended" aria-pressed="false" title="Recommended">♡</button>
-          <button id="clearRating" class="clear-rating" type="button">clear</button>
-        </div>
-        <input id="itemRating" type="hidden" value="0" />
-      </fieldset>
+      <div class="rating-date-grid">
+        <fieldset class="rating-fieldset">
+          <legend>Rating</legend>
+          <div id="starPicker" class="star-picker" aria-label="Rating out of five stars">
+            <button type="button" data-rating="1" aria-label="1 star">★</button>
+            <button type="button" data-rating="2" aria-label="2 stars">★</button>
+            <button type="button" data-rating="3" aria-label="3 stars">★</button>
+            <button type="button" data-rating="4" aria-label="4 stars">★</button>
+            <button type="button" data-rating="5" aria-label="5 stars">★</button>
+            <button id="itemRecommendHeart" class="rating-heart-button" type="button" aria-label="Add to Recommended" aria-pressed="false" title="Recommended">♡</button>
+            <button id="clearRating" class="clear-rating" type="button">clear</button>
+          </div>
+          <input id="itemRating" type="hidden" value="0" />
+        </fieldset>
 
-      <div id="itemDateField" class="date-options-row">
-        <label id="itemDateInputField" class="field date-main-field">
-          <span>Date <em>optional</em></span>
-          <input id="itemDate" type="date" />
-        </label>
-        <div class="date-quick-options" aria-label="Date options">
-          <label class="mini-toggle"><input id="itemUseRepeatLog" type="checkbox" /><span>Repeat</span></label>
-          <label class="mini-toggle"><input id="itemUseDateRange" type="checkbox" /><span>Multi-day</span></label>
+        <div id="itemDateField" class="date-control-stack">
+          <label id="itemDateInputField" class="field date-main-field">
+            <span>Date <em>optional</em></span>
+            <input id="itemDate" type="date" />
+          </label>
         </div>
       </div>
 
@@ -451,6 +404,72 @@
         <textarea id="itemComment" rows="2" maxlength="500" placeholder="What did you think?"></textarea>
       </label>
 
+      <div class="date-behavior-row" aria-label="How this item uses dates">
+        <label class="mini-toggle mode-toggle" title="Keep separate dated entries under this item">
+          <input id="itemUseRepeatLog" type="checkbox" />
+          <span>Multiple logs</span>
+        </label>
+
+        <details id="itemRepeatDisclosure" class="mini-option-menu">
+          <summary title="Set a reminder schedule"><span>Repeat</span><small id="itemRepeatSummary">Off</small></summary>
+          <div id="reminderBlock" class="repeat-menu-panel">
+            <label class="field compact-field">
+              <span>Remind</span>
+              <select id="reminderFrequency">
+                <option value="none" selected>Don't repeat</option>
+                <option value="daily">Every day</option>
+                <option value="weekly">Every week</option>
+                <option value="biweekly">Every 2 weeks</option>
+                <option value="monthly">Every month</option>
+                <option value="custom">Custom…</option>
+              </select>
+            </label>
+            <label id="reminderWeekdayField" class="field compact-field" hidden>
+              <span>Day</span>
+              <select id="reminderWeekday">
+                <option value="0">Sunday</option>
+                <option value="1">Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5">Friday</option>
+                <option value="6">Saturday</option>
+              </select>
+            </label>
+            <label id="reminderDateField" class="field compact-field" hidden>
+              <span id="reminderDateLabel">Starts</span>
+              <input id="reminderDueDate" type="date" />
+            </label>
+            <div id="reminderCustomFields" class="reminder-custom-fields" hidden>
+              <label class="field compact-field">
+                <span>Every</span>
+                <input id="reminderInterval" type="number" min="1" max="365" step="1" value="2" inputmode="numeric" />
+              </label>
+              <label class="field compact-field">
+                <span>Unit</span>
+                <select id="reminderIntervalUnit">
+                  <option value="days">Days</option>
+                  <option value="weeks" selected>Weeks</option>
+                  <option value="months">Months</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </details>
+
+        <label class="mini-toggle mode-toggle" title="Use a start and end date">
+          <input id="itemUseDateRange" type="checkbox" />
+          <span>Multi-day</span>
+        </label>
+      </div>
+
+      <div id="itemLogEntryFields" class="log-entry-fields" hidden>
+        <label class="field compact-field">
+          <span>Entry name <em>optional</em></span>
+          <input id="itemLogEntryTitle" type="text" autocomplete="off" placeholder="e.g. Evening session" />
+        </label>
+        <small>Use Multiple logs when one Library item should keep separate dated sessions.</small>
+      </div>
       <details id="itemNoteDisclosure" class="compact-add-option note-self-disclosure">
         <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Note to self</span><small>private</small></summary>
         <label class="field compact-add-body">
@@ -492,14 +511,25 @@
       <input id="itemRecommended" type="checkbox" hidden />
 
 
-      <label id="queueStatusField" class="field progress-status-field">
-        <span>Progress</span>
-        <select id="itemQueueStatus">
+      <div id="queueStatusField" class="progress-status-field">
+        <span class="field-label">Status</span>
+        <div id="itemStatusPicker" class="item-status-picker" role="group" aria-label="Status">
+          <button class="status-symbol-button" type="button" data-item-status="library" aria-label="Completed" title="Completed">✓</button>
+          <details id="itemQueueChoice" class="status-plus-menu">
+            <summary class="status-symbol-button" aria-label="Save to TBR or Up Next" title="TBR or Up Next">+</summary>
+            <div class="status-plus-panel">
+              <button type="button" data-item-status="upnext">Up Next</button>
+              <button type="button" data-item-status="tbr">TBR</button>
+            </div>
+          </details>
+          <strong id="itemStatusSummary">Completed</strong>
+        </div>
+        <select id="itemQueueStatus" hidden aria-hidden="true" tabindex="-1">
           <option value="library">Completed</option>
-          <option value="upnext">In progress</option>
-          <option value="tbr">Not started</option>
+          <option value="upnext">Up Next</option>
+          <option value="tbr">TBR</option>
         </select>
-      </label>
+      </div>
 
       <details id="itemAttachmentsDisclosure" class="attachment-editor attachment-editor-collapsible">
         <summary class="attachment-editor-heading">
@@ -662,6 +692,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-add-flow-social-tbr-75"></script>
+  <script type="module" src="app.js?v=omni-artist-albums-77"></script>
 </body>
 </html>
