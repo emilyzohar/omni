@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-unified-add-79';
-import { API_CONFIG } from './config.js?v=omni-unified-add-79';
+import { TrackerAPI } from './api.js?v=omni-other-layout-87';
+import { API_CONFIG } from './config.js?v=omni-other-layout-87';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -478,6 +478,8 @@ const els = {
   attachmentBody: $('#attachmentBody'),
   itemDate: $('#itemDate'),
   itemDateField: $('#itemDateField'),
+  itemDateOptionsDisclosure: $('#itemDateOptionsDisclosure'),
+  itemDateOptionsSummary: $('#itemDateOptionsSummary'),
   itemReleaseDate: $('#itemReleaseDate'),
   itemReleaseDateField: $('#itemReleaseDateField'),
   itemRecommended: $('#itemRecommended'),
@@ -1545,6 +1547,7 @@ function bindEvents() {
   els.openStreakSettings?.addEventListener('click', openStreakSettings);
   els.streakSettingsForm?.addEventListener('submit', saveStreakSettings);
   els.streakSettingsRows?.addEventListener('change', previewStreakSettings);
+  els.streakSettingsRows?.addEventListener('click', handleStreakSettingsClick);
   els.resetStreakSettings?.addEventListener('click', resetStreakSettings);
   els.calendarRowSettingsForm?.addEventListener('submit', saveCalendarRowSettings);
   els.resetCalendarRowSettings?.addEventListener('click', resetCalendarRowSettings);
@@ -2783,29 +2786,43 @@ function renderGenrePie(genres = []) {
     els.statsGenres.innerHTML = '<p class="empty-state">No watched genres yet.</p>';
     return;
   }
+
+  // Keep meaningful categories readable. Any recognized genre representing less
+  // than 5% of the pie joins Other; genuinely unrecognized genres always live
+  // in Other as well. Exactly 5% remains its own slice.
+  const rawTotal = genres.reduce((sum, [, count]) => sum + Number(count || 0), 0) || 1;
   const visible = [];
-  const unknown = [];
-  for (const [label,count] of genres) {
-    if (STATS_RECOGNIZED_GENRES.has(label)) visible.push({ label, count, labels:[label] });
-    else unknown.push([label,count]);
+  const otherGenres = [];
+  for (const [label, countValue] of genres) {
+    const count = Number(countValue || 0);
+    const share = count / rawTotal;
+    if (STATS_RECOGNIZED_GENRES.has(label) && share >= 0.05) {
+      visible.push({ label, count, labels: [label], isOther: false });
+    } else {
+      otherGenres.push({ label, count });
+    }
   }
-  if (unknown.length) visible.push({
-    label:'Other',
-    count:unknown.reduce((sum,entry) => sum + entry[1],0),
-    labels:unknown.map(entry => entry[0])
-  });
-  visible.sort((a,b) => b.count - a.count || a.label.localeCompare(b.label));
-  const total = visible.reduce((sum,entry) => sum + entry.count,0) || 1;
+  if (otherGenres.length) {
+    visible.push({
+      label: 'Other',
+      count: otherGenres.reduce((sum, entry) => sum + entry.count, 0),
+      labels: otherGenres.map(entry => entry.label),
+      isOther: true
+    });
+  }
+
+  visible.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  const total = visible.reduce((sum, entry) => sum + entry.count, 0) || 1;
   const genreColor = label => STATS_GENRE_COLORS[label] || STATS_GENRE_COLORS.Other;
   let angle = -Math.PI / 2;
   const paths = visible.map(entry => {
     const next = angle + (entry.count / total) * Math.PI * 2;
-    const d = statsPiePath(100,100,82,angle,next);
+    const d = statsPiePath(100, 100, 82, angle, next);
     angle = next;
     const encoded = escapeAttr(JSON.stringify(entry.labels));
-    return `<path class="stats-genre-slice" d="${d}" fill="${genreColor(entry.label)}" tabindex="0" role="button" data-stats-genre-list="${encoded}" aria-label="${escapeAttr(`${entry.label}: ${entry.count}`)}"><title>${escapeHtml(entry.label)} · ${entry.count}</title></path>`;
+    return `<path class="stats-genre-slice" d="${d}" fill="${genreColor(entry.label)}" tabindex="0" role="button" data-stats-genre-list="${encoded}" ${entry.isOther ? 'data-stats-genre-other="true"' : ''} aria-label="${escapeAttr(`${entry.label}: ${entry.count}`)}"><title>${escapeHtml(entry.label)} · ${entry.count}</title></path>`;
   }).join('');
-  const legend = visible.map(entry => `<button class="stats-genre-legend-row" type="button" data-stats-genre-list="${escapeAttr(JSON.stringify(entry.labels))}"><span class="stats-genre-swatch" style="--genre-color:${genreColor(entry.label)}"></span><span>${escapeHtml(entry.label)}</span><strong>${entry.count}</strong></button>`).join('');
+  const legend = visible.map(entry => `<button class="stats-genre-legend-row" type="button" data-stats-genre-list="${escapeAttr(JSON.stringify(entry.labels))}" ${entry.isOther ? 'data-stats-genre-other="true"' : ''}><span class="stats-genre-swatch" style="--genre-color:${genreColor(entry.label)}"></span><span>${escapeHtml(entry.label)}</span><strong>${entry.count}</strong></button>`).join('');
   els.statsGenres.innerHTML = `<div class="stats-genre-pie-layout"><svg class="stats-genre-pie" viewBox="0 0 200 200" role="img" aria-label="Genres watched pie chart">${paths}</svg><div class="stats-genre-legend">${legend}</div></div>`;
 }
 
@@ -2841,9 +2858,41 @@ function openStatsCatalogue(title, items = []) {
   $('#statsCatalogueTitle').textContent = title || 'Library';
   $('#statsCatalogueCount').textContent = `${unique.length} ${unique.length === 1 ? 'item' : 'items'}`;
   const grid = $('#statsCatalogueGrid');
+  grid.classList.remove('stats-genre-other-grid');
   grid.innerHTML = '';
   for (const item of unique) grid.appendChild(makeLibraryPoster(item));
   if (!unique.length) grid.innerHTML = '<p class="empty-state">No items.</p>';
+  showDialogAtTop(modal);
+}
+
+
+function openStatsOtherGenres(labels = []) {
+  const modal = ensureStatsCatalogueModal();
+  const countMap = new Map(watchedGenreCounts());
+  const groups = [...new Set((labels || []).map(label => cleanTypeLabel(label)).filter(Boolean))]
+    .map(label => ({ label, count: Number(countMap.get(label) || 0), items: statsGenreItems([label]) }))
+    .filter(group => group.items.length)
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+
+  const uniqueItems = [...new Map(groups.flatMap(group => group.items).map(item => [item.id, item])).values()];
+  $('#statsCatalogueTitle').textContent = 'Other genres';
+  $('#statsCatalogueCount').textContent = `${groups.length} ${groups.length === 1 ? 'genre' : 'genres'} · ${uniqueItems.length} ${uniqueItems.length === 1 ? 'item' : 'items'}`;
+  const grid = $('#statsCatalogueGrid');
+  grid.innerHTML = '';
+  grid.classList.add('stats-genre-other-grid');
+
+  if (!groups.length) {
+    grid.innerHTML = '<p class="empty-state">No items.</p>';
+  } else {
+    for (const group of groups) {
+      const section = document.createElement('section');
+      section.className = 'stats-genre-other-section';
+      section.innerHTML = `<div class="stats-genre-other-heading"><h3>${escapeHtml(group.label)}</h3><span>${group.items.length}</span></div><div class="library-poster-grid is-expanded stats-genre-other-posters"></div>`;
+      const posters = section.querySelector('.stats-genre-other-posters');
+      for (const item of group.items) posters.appendChild(makeLibraryPoster(item));
+      grid.appendChild(section);
+    }
+  }
   showDialogAtTop(modal);
 }
 
@@ -2864,8 +2913,8 @@ function handleStatsBreakdownClick(event) {
   if (genreTarget) {
     let labels = [];
     try { labels = JSON.parse(genreTarget.dataset.statsGenreList || '[]'); } catch {}
-    const title = labels.length === 1 ? labels[0] : 'Other genres';
-    openStatsCatalogue(title, statsGenreItems(labels));
+    if (genreTarget.dataset.statsGenreOther === 'true') openStatsOtherGenres(labels);
+    else openStatsCatalogue(labels[0] || 'Genre', statsGenreItems(labels));
   }
 }
 
@@ -5657,6 +5706,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.itemDisplayType.value = 'Workout';
   if (els.itemSubcategory) els.itemSubcategory.value = '';
   if (els.itemSubcategoryDisclosure) els.itemSubcategoryDisclosure.open = false;
+  if (els.itemDateOptionsDisclosure) els.itemDateOptionsDisclosure.open = false;
   if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.open = false;
   if (els.itemAttachmentsDisclosure) els.itemAttachmentsDisclosure.open = false;
   if (els.itemFindSourceDisclosure) els.itemFindSourceDisclosure.open = false;
@@ -5948,7 +5998,7 @@ function clearSourceSelectionForTypeChange() {
 function syncItemSubcategoryDisclosure() {
   if (!els.itemSubcategoryDisclosure) return;
   const value = cleanTypeLabel(els.itemSubcategory?.value || '');
-  if (els.itemSubcategorySummary) els.itemSubcategorySummary.textContent = value ? `· ${value}` : 'optional';
+  if (els.itemSubcategorySummary) els.itemSubcategorySummary.textContent = value ? `· ${value}` : '';
   els.itemSubcategoryDisclosure.classList.toggle('has-value', Boolean(value));
 }
 
@@ -5956,7 +6006,7 @@ function syncItemPeopleDisclosure() {
   if (!els.itemPeopleDisclosure) return;
   const people = parseItemPeople(els.itemPeople?.value || '');
   if (els.itemPeopleSummary) {
-    els.itemPeopleSummary.textContent = people.length ? `· ${people.length} ${people.length === 1 ? 'person' : 'people'}` : 'optional';
+    els.itemPeopleSummary.textContent = people.length ? `· ${people.length} ${people.length === 1 ? 'person' : 'people'}` : '';
   }
   els.itemPeopleDisclosure.classList.toggle('has-value', people.length > 0);
 }
@@ -5968,12 +6018,24 @@ function syncItemAttachmentsDisclosure() {
   const newCount = (state.attachmentDraft?.newFiles || []).length;
   const linkCount = (state.attachmentDraft?.links || []).length;
   const total = existingCount + newCount + linkCount;
-  if (els.itemAttachmentsSummary) els.itemAttachmentsSummary.textContent = total ? `${total} ${total === 1 ? 'item' : 'items'}` : 'optional';
+  if (els.itemAttachmentsSummary) els.itemAttachmentsSummary.textContent = total ? `${total} ${total === 1 ? 'item' : 'items'}` : '';
   els.itemAttachmentsDisclosure.classList.toggle('has-value', total > 0);
+}
+
+function syncItemDateOptionsDisclosure() {
+  if (!els.itemDateOptionsDisclosure) return;
+  const active = [];
+  if (els.itemUseRepeatLog?.checked) active.push('Multiple logs');
+  const repeat = String(els.itemRepeatSummary?.textContent || '').trim();
+  if (repeat) active.push(repeat);
+  if (els.itemUseDateRange?.checked) active.push('Multi-day');
+  if (els.itemDateOptionsSummary) els.itemDateOptionsSummary.textContent = active.length ? `· ${active.join(' · ')}` : '';
+  els.itemDateOptionsDisclosure.classList.toggle('has-value', active.length > 0);
 }
 
 function syncItemOptionalDisclosures() {
   syncItemSubcategoryDisclosure();
+  syncItemDateOptionsDisclosure();
   syncItemPeopleDisclosure();
   syncItemAttachmentsDisclosure();
   syncItemBuddyWatchToggle();
@@ -6156,6 +6218,7 @@ function updateItemFormForType() {
 
   updateReminderFormFields();
   syncItemFeatureSummary();
+  syncItemDateOptionsDisclosure();
   syncItemFindSourceSummary();
   syncItemStatusPicker();
   if (els.manualTitle) els.manualTitle.placeholder = 'Enter title manually';
@@ -6173,6 +6236,7 @@ function updateReminderFormFields() {
     monthly: 'Every month', custom: 'Custom'
   };
   if (els.itemRepeatSummary) els.itemRepeatSummary.textContent = repeatLabels[frequency] || '';
+  syncItemDateOptionsDisclosure();
   const custom = frequency === 'custom';
   const weekly = frequency === 'weekly' || frequency === 'biweekly';
   if (els.reminderWeekdayField) els.reminderWeekdayField.hidden = !weekly;
@@ -14551,8 +14615,9 @@ const WEEKDAY_OPTIONS = [
   { value: 0, short: 'S', label: 'Sunday' }
 ];
 
-function getRecognizedStreakGroups() {
+function getBaseStreakGroups(calendarEntries = null) {
   const groups = new Map();
+  const entries = Array.isArray(calendarEntries) ? calendarEntries : getCalendarEntries({ respectVisibility: false });
 
   for (const { type, label } of getRecognizedTypes()) {
     const cleanLabel = cleanTypeLabel(label || getTypeLabel(type)) || 'Other';
@@ -14560,8 +14625,11 @@ function getRecognizedStreakGroups() {
     if (!groups.has(key)) {
       groups.set(key, {
         key,
+        baseKey: key,
+        scope: 'type',
         label: cleanLabel,
         memberTypes: [],
+        subcategories: [],
         representativeType: type,
         representativeEntry: null
       });
@@ -14570,18 +14638,17 @@ function getRecognizedStreakGroups() {
     if (!group.memberTypes.includes(type)) group.memberTypes.push(type);
   }
 
-  // Calendar entries are the final authority for visible grouping. This also
-  // catches two different internal source types that have the same displayed
-  // type label (for example a YouTube item and a manual item both called
-  // "Workout").
-  for (const entry of getCalendarEntries()) {
+  for (const entry of entries) {
     const label = getStreakTypeGroupLabel(entry);
     const key = getStreakTypeGroupKey(entry);
     if (!groups.has(key)) {
       groups.set(key, {
         key,
+        baseKey: key,
+        scope: 'type',
         label,
         memberTypes: [],
+        subcategories: [],
         representativeType: entry.type,
         representativeEntry: entry
       });
@@ -14594,25 +14661,127 @@ function getRecognizedStreakGroups() {
   return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
+function getStreakSubcategories(baseKey, baseGroups = null, calendarEntries = null) {
+  const entries = Array.isArray(calendarEntries) ? calendarEntries : getCalendarEntries({ respectVisibility: false });
+  const bases = Array.isArray(baseGroups) ? baseGroups : getBaseStreakGroups(entries);
+  const base = bases.find(group => group.key === baseKey);
+  if (!base) return [];
+  const names = new Map();
+  const add = value => {
+    const label = cleanTypeLabel(value || '');
+    if (!label) return;
+    const key = label.toLowerCase();
+    if (!names.has(key)) names.set(key, label);
+  };
+
+  for (const item of state.items) {
+    if (base.memberTypes.includes(item.type)) add(item.subcategory);
+  }
+  for (const entry of state.history) {
+    if (base.memberTypes.includes(entry.type)) add(entry.subcategory);
+  }
+  for (const entry of entries) {
+    if (getStreakTypeGroupKey(entry) === baseKey) add(entry.subcategory);
+  }
+  return [...names.values()].sort((a, b) => a.localeCompare(b));
+}
+
+function streakSubcategoryTargetKey(baseKey, subcategory) {
+  return `${baseKey}::sub::${slugifyType(subcategory)}`;
+}
+
+function configuredStreakGroupsForBase(baseKey) {
+  return Object.entries(state.streakPrefs || {})
+    .filter(([, config]) => config && typeof config === 'object' && config.scope === 'group' && config.baseKey === baseKey)
+    .map(([key, config]) => ({ key, config }));
+}
+
+function getRecognizedStreakGroups() {
+  const targets = [];
+  const calendarEntries = getCalendarEntries({ respectVisibility: false });
+  const baseGroups = getBaseStreakGroups(calendarEntries);
+  const baseByType = new Map();
+  const subcategoriesByBase = new Map(baseGroups.map(base => [base.key, new Map()]));
+
+  for (const base of baseGroups) {
+    for (const type of base.memberTypes) baseByType.set(type, base.key);
+  }
+  const addSubcategory = (baseKey, value) => {
+    const label = cleanTypeLabel(value || '');
+    if (!baseKey || !label || !subcategoriesByBase.has(baseKey)) return;
+    const map = subcategoriesByBase.get(baseKey);
+    const normalized = label.toLowerCase();
+    if (!map.has(normalized)) map.set(normalized, label);
+  };
+  for (const item of state.items) addSubcategory(baseByType.get(item.type), item.subcategory);
+  for (const entry of state.history) addSubcategory(baseByType.get(entry.type), entry.subcategory);
+  for (const entry of calendarEntries) addSubcategory(getStreakTypeGroupKey(entry), entry.subcategory);
+
+  for (const base of baseGroups) {
+    targets.push({ ...base, subcategories: [] });
+
+    const subcategories = [...(subcategoriesByBase.get(base.key)?.values() || [])].sort((a, b) => a.localeCompare(b));
+    for (const subcategory of subcategories) {
+      targets.push({
+        key: streakSubcategoryTargetKey(base.key, subcategory),
+        baseKey: base.key,
+        scope: 'subcategory',
+        label: `${base.label} · ${subcategory}`,
+        subcategory,
+        subcategories: [subcategory],
+        memberTypes: [...base.memberTypes],
+        representativeType: base.representativeType,
+        representativeEntry: calendarEntries.find(entry => getStreakTypeGroupKey(entry) === base.key && cleanTypeLabel(entry.subcategory || '').toLowerCase() === subcategory.toLowerCase()) || null
+      });
+    }
+
+    for (const { key, config } of configuredStreakGroupsForBase(base.key)) {
+      const selected = [...new Set((config.subcategories || []).map(value => cleanTypeLabel(value)).filter(Boolean))];
+      if (selected.length < 2) continue;
+      targets.push({
+        key,
+        baseKey: base.key,
+        scope: 'group',
+        label: cleanTypeLabel(config.label || '') || selected.join(' + '),
+        subcategories: selected,
+        memberTypes: [...base.memberTypes],
+        representativeType: base.representativeType,
+        representativeEntry: calendarEntries.find(entry => getStreakTypeGroupKey(entry) === base.key && selected.some(value => value.toLowerCase() === cleanTypeLabel(entry.subcategory || '').toLowerCase())) || null
+      });
+    }
+  }
+  return targets;
+}
+
 function resolveStreakGroup(typeOrGroupKey) {
   const value = String(typeOrGroupKey || '');
   const groups = getRecognizedStreakGroups();
-  return groups.find(group => group.key === value || group.memberTypes.includes(value)) || {
-    key: slugifyType(getTypeLabel(value) || value || 'Other'),
-    label: getTypeLabel(value) || value || 'Other',
+  const exact = groups.find(group => group.key === value);
+  if (exact) return exact;
+  const base = groups.find(group => group.scope === 'type' && group.memberTypes.includes(value));
+  if (base) return base;
+  const label = getTypeLabel(value) || value || 'Other';
+  const key = slugifyType(label);
+  return {
+    key,
+    baseKey: key,
+    scope: 'type',
+    label,
     memberTypes: value ? [value] : [],
+    subcategories: [],
     representativeType: value || 'other',
     representativeEntry: null
   };
 }
 
 function getStreakConfig(typeOrGroupKey) {
-  const group = resolveStreakGroup(typeOrGroupKey);
+  const group = typeof typeOrGroupKey === 'object' && typeOrGroupKey?.key
+    ? typeOrGroupKey
+    : resolveStreakGroup(typeOrGroupKey);
 
-  // New streak preferences are keyed by the visible type name. Fall back to
-  // the old internal-type keys so existing settings survive this migration.
   let saved = state.streakPrefs?.[group.key];
-  if (!saved) {
+  // Only whole-type streaks inherit the old internal-type preference keys.
+  if (!saved && group.scope === 'type') {
     for (const memberType of group.memberTypes) {
       if (state.streakPrefs?.[memberType]) {
         saved = state.streakPrefs[memberType];
@@ -14626,63 +14795,76 @@ function getStreakConfig(typeOrGroupKey) {
     enabled: Boolean(saved.enabled),
     restDays: Array.isArray(saved.restDays)
       ? [...new Set(saved.restDays.map(Number).filter(day => day >= 0 && day <= 6))]
-      : []
+      : [],
+    scope: saved.scope || group.scope || 'type',
+    baseKey: saved.baseKey || group.baseKey || group.key,
+    subcategories: [...new Set((saved.subcategories || group.subcategories || []).map(value => cleanTypeLabel(value)).filter(Boolean))],
+    label: cleanTypeLabel(saved.label || '') || group.label
   };
 }
 
+function streakTargetMatchesEntry(targetOrKey, entry) {
+  const target = typeof targetOrKey === 'object' && targetOrKey?.key ? targetOrKey : resolveStreakGroup(targetOrKey);
+  if (!entry || getStreakTypeGroupKey(entry) !== target.baseKey) return false;
+  if (target.scope === 'type') return true;
+  const subcategory = cleanTypeLabel(entry.subcategory || '').toLowerCase();
+  if (!subcategory) return false;
+  return (target.subcategories || []).some(value => cleanTypeLabel(value).toLowerCase() === subcategory);
+}
+
 function getTypeActivityDates(typeOrGroupKey) {
-  const group = resolveStreakGroup(typeOrGroupKey);
+  const target = typeof typeOrGroupKey === 'object' && typeOrGroupKey?.key ? typeOrGroupKey : resolveStreakGroup(typeOrGroupKey);
   return new Set(
-    getCalendarEntries()
-      .filter(entry => getStreakTypeGroupKey(entry) === group.key && entry.date && entry.showOnCalendar !== false)
+    getCalendarEntries({ respectVisibility: false })
+      .filter(entry => streakTargetMatchesEntry(target, entry) && entry.date && entry.showOnCalendar !== false)
       .map(entry => entry.date)
   );
 }
 
 function calculateTypeStreak(typeOrGroupKey, overrideConfig = null) {
-  const config = overrideConfig || getStreakConfig(typeOrGroupKey);
+  let target = typeof typeOrGroupKey === 'object' && typeOrGroupKey?.key ? typeOrGroupKey : resolveStreakGroup(typeOrGroupKey);
+  const config = overrideConfig || getStreakConfig(target);
+  if (overrideConfig?.scope && overrideConfig?.baseKey) {
+    target = {
+      ...target,
+      key: typeof typeOrGroupKey === 'string' ? typeOrGroupKey : target.key,
+      scope: overrideConfig.scope,
+      baseKey: overrideConfig.baseKey,
+      subcategories: [...(overrideConfig.subcategories || target.subcategories || [])]
+    };
+  }
   if (!config.enabled) return { enabled: false, count: 0, restToday: false };
 
-  const activityDates = getTypeActivityDates(typeOrGroupKey);
+  const activityDates = getTypeActivityDates(target);
   const restDays = new Set((config.restDays || []).map(Number));
   const now = new Date();
   let cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
   let count = 0;
   let firstCalendarDay = true;
 
-  // Ten years is only a safety guard against malformed dates/settings.
   for (let guard = 0; guard < 3650; guard += 1) {
     const weekday = cursor.getDay();
     const date = localDateString(cursor);
-
     if (restDays.has(weekday)) {
       cursor = addDays(cursor, -1);
       firstCalendarDay = false;
       continue;
     }
-
     if (activityDates.has(date)) {
       count += 1;
       cursor = addDays(cursor, -1);
       firstCalendarDay = false;
       continue;
     }
-
-    // Today is still in progress, so absence today does not break a streak yet.
     if (firstCalendarDay) {
       cursor = addDays(cursor, -1);
       firstCalendarDay = false;
       continue;
     }
-
     break;
   }
 
-  return {
-    enabled: true,
-    count,
-    restToday: restDays.has(now.getDay())
-  };
+  return { enabled: true, count, restToday: restDays.has(now.getDay()) };
 }
 
 function streakText(typeOrGroupKey, overrideConfig = null) {
@@ -14704,8 +14886,9 @@ function streakBadgeMarkup(typeOrGroupKey) {
 function renderTrackStreakSummary() {
   if (!els.trackStreakSummary) return;
   const active = getRecognizedStreakGroups()
-    .map(group => ({ ...group, text: streakText(group.key) }))
-    .filter(entry => entry.text);
+    .map(group => ({ ...group, config: getStreakConfig(group) }))
+    .filter(group => group.config.enabled)
+    .map(group => ({ ...group, text: streakText(group, group.config) }));
 
   els.trackStreakSummary.hidden = active.length === 0;
   if (!active.length) {
@@ -14715,12 +14898,12 @@ function renderTrackStreakSummary() {
 
   els.trackStreakSummary.innerHTML = active.map(group => {
     const representative = group.representativeEntry
-      || getCalendarEntries().find(entry => getStreakTypeGroupKey(entry) === group.key)
-      || { type: group.representativeType, typeLabel: group.label };
+      || getCalendarEntries({ respectVisibility: false }).find(entry => streakTargetMatchesEntry(group, entry))
+      || { type: group.representativeType, typeLabel: group.label, subcategory: group.subcategories?.[0] || '' };
     return `
       <div class="track-streak-card">
         <span class="track-streak-sticker">${calendarStickerMarkup(representative.type, representative)}</span>
-        <span class="track-streak-copy"><strong>${escapeHtml(group.label)}</strong><small>${escapeHtml(group.text)}</small></span>
+        <span class="track-streak-copy"><strong>${escapeHtml(group.config.label || group.label)}</strong><small>${escapeHtml(group.text)}</small></span>
       </div>`;
   }).join('');
 }
@@ -14731,38 +14914,99 @@ function openStreakSettings() {
   showDialogAtTop(els.stickerSettingsModal);
 }
 
+function createStreakSettingRow(group, config = getStreakConfig(group)) {
+  const row = document.createElement('div');
+  row.className = `streak-setting-row${config.enabled ? ' is-enabled' : ''}${group.scope === 'type' ? ' streak-setting-whole-type' : ''}${group.scope === 'group' ? ' streak-setting-grouped' : ''}`;
+  row.dataset.streakType = group.key;
+  row.dataset.streakScope = group.scope || 'type';
+  row.dataset.streakBase = group.baseKey || group.key;
+  row.dataset.streakSubcategories = JSON.stringify(config.subcategories || group.subcategories || []);
+  const scopeText = group.scope === 'type' ? 'All subtypes' : group.scope === 'group' ? (config.subcategories || []).join(' + ') : (group.subcategories || [])[0] || 'Subtype';
+  row.innerHTML = `
+    <div class="streak-setting-type">
+      <strong>${escapeHtml(config.label || group.label)}</strong>
+      <small>${escapeHtml(scopeText)}</small>
+      ${group.scope === 'group' ? `<button class="streak-group-remove" type="button" data-streak-remove-group="${escapeAttr(group.key)}" aria-label="Remove grouped streak">×</button>` : ''}
+    </div>
+    <label class="streak-toggle">
+      <input data-streak-field="enabled" type="checkbox" ${config.enabled ? 'checked' : ''} />
+      <span>On</span>
+    </label>
+    <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(config.label || group.label)}">
+      ${WEEKDAY_OPTIONS.map(day => `
+        <label class="rest-day-chip" title="${day.label}">
+          <input data-streak-rest-day="${day.value}" type="checkbox" ${config.restDays.includes(day.value) ? 'checked' : ''} />
+          <span>${day.short}</span>
+        </label>`).join('')}
+    </div>
+    <div class="streak-setting-current">${escapeHtml(streakText(group, config) || 'Off')}</div>`;
+  return row;
+}
+
+function createStreakGroupBuilder(base, knownSubcategories = null) {
+  const subcategories = Array.isArray(knownSubcategories) ? knownSubcategories : getStreakSubcategories(base.key);
+  if (subcategories.length < 2) return null;
+  const details = document.createElement('details');
+  details.className = 'streak-group-builder';
+  details.dataset.streakBuilderBase = base.key;
+  details.innerHTML = `
+    <summary>+ Group subtypes</summary>
+    <div class="streak-group-builder-body">
+      <label class="streak-group-name"><span>Group name</span><input data-streak-group-name type="text" maxlength="40" placeholder="Optional" /></label>
+      <div class="streak-group-subtype-options" aria-label="Choose subtypes to group">
+        ${subcategories.map(subcategory => `<label><input type="checkbox" data-streak-group-subcategory value="${escapeAttr(subcategory)}" /><span>${escapeHtml(subcategory)}</span></label>`).join('')}
+      </div>
+      <button class="secondary-button streak-group-add" type="button" data-streak-add-group>Add group</button>
+      <p class="streak-group-builder-message" hidden></p>
+    </div>`;
+  return details;
+}
+
 function renderStreakSettingsRows() {
   if (!els.streakSettingsRows) return;
   els.streakSettingsRows.innerHTML = '';
+  const allTargets = getRecognizedStreakGroups();
+  const bases = allTargets.filter(group => group.scope === 'type');
 
-  for (const group of getRecognizedStreakGroups()) {
-    const config = getStreakConfig(group.key);
-    const row = document.createElement('div');
-    row.className = `streak-setting-row${config.enabled ? ' is-enabled' : ''}`;
-    row.dataset.streakType = group.key;
-    row.innerHTML = `
-      <div class="streak-setting-type"><strong>${escapeHtml(group.label)}</strong></div>
-      <label class="streak-toggle">
-        <input data-streak-field="enabled" type="checkbox" ${config.enabled ? 'checked' : ''} />
-        <span>On</span>
-      </label>
-      <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(group.label)}">
-        ${WEEKDAY_OPTIONS.map(day => `
-          <label class="rest-day-chip" title="${day.label}">
-            <input data-streak-rest-day="${day.value}" type="checkbox" ${config.restDays.includes(day.value) ? 'checked' : ''} />
-            <span>${day.short}</span>
-          </label>`).join('')}
-      </div>
-      <div class="streak-setting-current">${escapeHtml(streakText(group.key, config) || 'Off')}</div>`;
-    els.streakSettingsRows.appendChild(row);
+  for (const base of bases) {
+    const section = document.createElement('section');
+    section.className = 'streak-scope-section';
+    section.dataset.streakBaseSection = base.key;
+    section.innerHTML = `<div class="streak-scope-heading"><strong>${escapeHtml(base.label)}</strong><span>Whole type, subtype, or your own group</span></div>`;
+
+    const targetRows = allTargets.filter(group => group.baseKey === base.key);
+    for (const group of targetRows) section.appendChild(createStreakSettingRow(group));
+    const builder = createStreakGroupBuilder(base, allTargets.filter(group => group.baseKey === base.key && group.scope === 'subcategory').map(group => group.subcategories[0]).filter(Boolean));
+    if (builder) section.appendChild(builder);
+    els.streakSettingsRows.appendChild(section);
   }
 }
 
-function readStreakRowConfig(row) {
+function streakRowTargetFromElement(row) {
+  const key = row.dataset.streakType || '';
+  const existing = resolveStreakGroup(key);
+  let subcategories = [];
+  try { subcategories = JSON.parse(row.dataset.streakSubcategories || '[]'); } catch {}
   return {
+    ...existing,
+    key,
+    baseKey: row.dataset.streakBase || existing.baseKey,
+    scope: row.dataset.streakScope || existing.scope,
+    subcategories
+  };
+}
+
+function readStreakRowConfig(row) {
+  const target = streakRowTargetFromElement(row);
+  const existing = state.streakPrefs?.[row.dataset.streakType] || {};
+  return {
+    ...existing,
     enabled: Boolean(row.querySelector('[data-streak-field="enabled"]')?.checked),
-    restDays: [...row.querySelectorAll('[data-streak-rest-day]:checked')]
-      .map(input => Number(input.dataset.streakRestDay))
+    restDays: [...row.querySelectorAll('[data-streak-rest-day]:checked')].map(input => Number(input.dataset.streakRestDay)),
+    scope: target.scope,
+    baseKey: target.baseKey,
+    subcategories: [...target.subcategories],
+    label: cleanTypeLabel(row.querySelector('.streak-setting-type strong')?.textContent || target.label)
   };
 }
 
@@ -14775,11 +15019,58 @@ function previewStreakSettings(event) {
   if (current) current.textContent = streakText(row.dataset.streakType, config) || 'Off';
 }
 
+function handleStreakSettingsClick(event) {
+  const add = event.target.closest('[data-streak-add-group]');
+  if (add) {
+    const builder = add.closest('[data-streak-builder-base]');
+    const baseKey = builder?.dataset.streakBuilderBase || '';
+    const selected = [...(builder?.querySelectorAll('[data-streak-group-subcategory]:checked') || [])].map(input => cleanTypeLabel(input.value)).filter(Boolean);
+    const message = builder?.querySelector('.streak-group-builder-message');
+    if (selected.length < 2) {
+      if (message) { message.hidden = false; message.textContent = 'Choose at least two subtypes.'; }
+      return;
+    }
+    const base = getRecognizedStreakGroups().find(group => group.scope === 'type' && group.key === baseKey);
+    if (!base) return;
+    const customLabel = cleanTypeLabel(builder.querySelector('[data-streak-group-name]')?.value || '');
+    const label = customLabel || selected.join(' + ');
+    const uniquePart = `${slugifyType(label)}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const key = `${baseKey}::group::${uniquePart}`;
+    const group = {
+      key,
+      baseKey,
+      scope: 'group',
+      label,
+      subcategories: selected,
+      memberTypes: [...base.memberTypes],
+      representativeType: base.representativeType,
+      representativeEntry: null
+    };
+    const config = { enabled: true, restDays: [], scope: 'group', baseKey, subcategories: selected, label };
+    const row = createStreakSettingRow(group, config);
+    builder.before(row);
+    builder.querySelectorAll('[data-streak-group-subcategory]').forEach(input => { input.checked = false; });
+    const name = builder.querySelector('[data-streak-group-name]');
+    if (name) name.value = '';
+    if (message) message.hidden = true;
+    builder.open = false;
+    return;
+  }
+
+  const remove = event.target.closest('[data-streak-remove-group]');
+  if (remove) {
+    remove.closest('.streak-setting-row')?.remove();
+  }
+}
+
 function saveStreakSettings(event) {
   event.preventDefault();
   const next = {};
   els.streakSettingsRows?.querySelectorAll('.streak-setting-row[data-streak-type]').forEach(row => {
-    next[row.dataset.streakType] = readStreakRowConfig(row);
+    const config = readStreakRowConfig(row);
+    const existing = state.streakPrefs?.[row.dataset.streakType] || {};
+    // Keep grouped definitions and any existing custom identity even while off.
+    if (config.enabled || config.scope === 'group' || existing.label || existing.sticker) next[row.dataset.streakType] = config;
   });
   state.streakPrefs = next;
   localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
@@ -14789,7 +15080,7 @@ function saveStreakSettings(event) {
 }
 
 function resetStreakSettings() {
-  if (!confirm('Turn off all streaks and clear scheduled rest days?')) return;
+  if (!confirm('Turn off all streaks and remove grouped subtype streaks?')) return;
   state.streakPrefs = {};
   localStorage.removeItem(STREAK_PREFS_KEY);
   scheduleCloudSync();
@@ -16693,7 +16984,7 @@ function openSocialProfileSettings() {
 }
 
 function socialShareableStreakGroups() {
-  return getRecognizedStreakGroups().filter(group => getStreakConfig(group.key).enabled);
+  return getRecognizedStreakGroups().filter(group => getStreakConfig(group).enabled);
 }
 
 function socialTypeCheckboxes(section, prefs) {
