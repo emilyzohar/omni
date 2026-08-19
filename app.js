@@ -1,6 +1,6 @@
-import { TrackerAPI } from './api.js?v=omni-fast-add-84';
-import { API_CONFIG } from './config.js?v=omni-fast-add-84';
-import { supabase, hasSupabaseConfig } from './supabase.js?v=omni-fast-add-84';
+import { TrackerAPI } from './api.js?v=omni-genre-streak-85';
+import { API_CONFIG } from './config.js?v=omni-genre-streak-85';
+import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
 const CACHE_KEY = 'zoharTracker.apiCache.v1';
@@ -15,10 +15,7 @@ const TYPE_USAGE_KEY = 'zoharTracker.typeUsage.v1';
 const PHOTO_UPLOAD_LOG_KEY = 'zoharTracker.photoUploadLog.v1';
 const ONBOARDING_KEY = 'zoharTracker.onboarding.v1';
 const ONBOARDING_STEP_KEY = 'zoharTracker.onboardingStep.v2';
-const CLOUD_UPDATED_AT_KEY = 'zoharTracker.cloudUpdatedAt.v1';
 const LOG_TYPE_PREFS_KEY = 'zoharTracker.logTypePrefs.v1';
-const DATA_MIGRATION_KEY = 'zoharTracker.dataMigration.v1';
-const DATA_MIGRATION_VERSION = 83;
 const PHOTO_WEEKLY_LIMIT = 20;
 const ATTACHMENT_DB_NAME = 'zoharTracker.attachments.v1';
 const ATTACHMENT_STORE_NAME = 'files';
@@ -154,29 +151,20 @@ let localOnlyMode = false;
 let cloudSyncTimer = null;
 let cloudSyncBusy = false;
 let cloudSyncQueued = false;
-let cloudHydrationReady = false;
-let cloudSyncDeferred = false;
-let socialStartupTimer = null;
-let statsEnrichmentPromise = null;
 let lastCloudUpdatedAt = '';
 let discoverFeedObserver = null;
 const attachmentCoverObjectUrls = new Map();
-const apiCacheInFlight = new Map();
-let libraryDateCache = null;
-let deferredInitialRenderHandle = null;
-let apiCacheLoaded = false;
-let apiCachePersistHandle = null;
 
 
 const state = {
   items: loadJSON(ITEMS_KEY, []),
   settings: API_CONFIG,
-  cache: {},
+  cache: loadJSON(CACHE_KEY, {}),
   customTypes: loadJSON(CUSTOM_TYPES_KEY, []),
   albums: loadJSON(ALBUMS_KEY, []),
   typeUsage: loadJSON(TYPE_USAGE_KEY, {}),
   photoUploadLog: loadJSON(PHOTO_UPLOAD_LOG_KEY, []),
-  history: [],
+  history: loadJSON(HISTORY_KEY, []),
   discoverPrefs: loadJSON(DISCOVER_PREFS_KEY, DEFAULT_DISCOVER_PREFS),
   stickerPrefs: loadJSON(STICKER_PREFS_KEY, {}),
   streakPrefs: loadJSON(STREAK_PREFS_KEY, {}),
@@ -423,8 +411,6 @@ const els = {
   itemLogEntryFields: $('#itemLogEntryFields'),
   itemLogEntryTitle: $('#itemLogEntryTitle'),
   itemLogModeHint: $('#itemLogModeHint'),
-  itemDateOptionsDisclosure: $('#itemDateOptionsDisclosure'),
-  itemDateOptionsSummary: $('#itemDateOptionsSummary'),
   findSourcePrompt: $('#findSourcePrompt'),
   itemUsePlaylist: $('#itemUsePlaylist'),
   catalogueQuery: $('#catalogueQuery'),
@@ -559,15 +545,11 @@ async function bootstrapAuth() {
 
 function bindAuthEvents() {
   els.authForm?.addEventListener('submit', handleAuthSubmit);
-  els.continueLocalButton?.addEventListener('click', () => {
+  els.continueLocalButton?.addEventListener('click', async () => {
     localOnlyMode = true;
-    cloudHydrationReady = true;
+    await hydrateLargeLocalState();
     unlockApp();
     startAppOnce();
-    hydrateLargeLocalState().then(() => {
-      runDataMigrations();
-      if (appStarted) renderInitialPage();
-    });
   });
   els.signOutButton?.addEventListener('click', handleSignOut);
 }
@@ -684,70 +666,25 @@ async function startForUser(user) {
     window.location.assign('index.html');
     return;
   }
-
   currentUser = user;
-  cloudHydrationReady = false;
-  cloudSyncDeferred = false;
   if (els.userEmail) els.userEmail.textContent = user.email || '';
-
-  // Paint the locally cached app immediately. Cloud state and the potentially
-  // large IndexedDB history are hydration work, not a reason to keep the entire
-  // interface behind the auth loading screen.
-  unlockApp();
-  startAppOnce();
-  maybeShowOnboarding(user);
-  setSyncStatus('Syncing…');
-
-  window.addEventListener('focus', refreshCloudProfile);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') refreshCloudProfile();
-  });
-
+  setAuthMessage('Loading your profile…', false);
   try {
     await hydrateLargeLocalState();
-    runDataMigrations();
-    if (appStarted) renderInitialPage();
-
-    const localMigrationChanges = cloudSyncDeferred;
-    const cloudChanged = await hydrateCloudProfile(user.id);
-    cloudHydrationReady = true;
-    if (cloudChanged) {
-      // A newer cloud snapshot supersedes saves requested against the local cache.
-      cloudSyncDeferred = false;
-      runDataMigrations({ force: true });
-      if (appStarted) renderInitialPage();
-    } else if (localMigrationChanges) {
-      // The cloud timestamp matched our cache, so local migration changes are safe
-      // to persist now that hydration has confirmed the snapshot is current.
-      cloudSyncDeferred = false;
-      scheduleCloudSync();
-    }
-    setSyncStatus('Synced');
-    deferSocialStartup();
-  } catch (error) {
-    // Keep the cached app usable when the network is slow/offline. We deliberately
-    // leave cloudHydrationReady false so a stale local snapshot cannot overwrite
-    // a cloud profile that we failed to read.
-    console.warn('Cloud profile hydration failed:', error);
-    setSyncStatus('Offline', true);
-    deferSocialStartup();
-  }
-}
-
-function deferSocialStartup() {
-  if (socialStartupTimer || localOnlyMode || !currentUser) return;
-  const start = () => {
-    socialStartupTimer = null;
+    await hydrateCloudProfile(user.id);
+    unlockApp();
+    startAppOnce();
     initializeSocialForUser().catch(error => console.warn('[Social] background initialization failed:', error));
-  };
-  if ($('#socialRoot')) {
-    start();
-    return;
-  }
-  if ('requestIdleCallback' in window) {
-    socialStartupTimer = window.requestIdleCallback(start, { timeout: 1800 });
-  } else {
-    socialStartupTimer = window.setTimeout(start, 900);
+    maybeShowOnboarding(user);
+    setSyncStatus('Synced');
+    window.addEventListener('focus', refreshCloudProfile);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') refreshCloudProfile();
+    });
+  } catch (error) {
+    currentUser = null;
+    lockApp();
+    setAuthMessage(`Signed in, but your cloud profile could not load: ${error.message}`, true);
   }
 }
 
@@ -1129,10 +1066,7 @@ function startAppOnce() {
     return;
   }
   appStarted = true;
-  // Yield once after removing the auth gate so the browser can paint the shell
-  // before Omni does any page rendering or event setup. This makes signed-in
-  // navigation feel immediate even on slower phones.
-  requestAnimationFrame(() => init());
+  init();
 }
 
 function lockApp() {
@@ -1224,10 +1158,9 @@ function normalizeFoodFamilyItem(item) {
 function migrateSavedFoodClassification() {
   let itemsChanged = false;
   let historyChanged = false;
-  const itemById = new Map(state.items.map(item => [item.id, item]));
   for (const item of state.items) if (normalizeFoodFamilyItem(item)) itemsChanged = true;
   for (const entry of state.history) {
-    const source = entry.sourceItemId ? itemById.get(entry.sourceItemId) || null : null;
+    const source = entry.sourceItemId ? state.items.find(item => item.id === entry.sourceItemId) : null;
     const sourceType = source ? getSourceType(source) : entry.sourceType || '';
     if (!['food','restaurant','recipe'].includes(sourceType)) continue;
     const subcategory = source ? (foodSubcategoryForSourceType(sourceType) || source.subcategory || '') : (foodSubcategoryForSourceType(sourceType) || entry.subcategory || '');
@@ -1242,7 +1175,6 @@ function migrateSavedFoodClassification() {
 function migrateSavedMusicClassification() {
   let itemsChanged = false;
   let historyChanged = false;
-  const itemById = new Map(state.items.map(item => [item.id, item]));
   for (const item of state.items) {
     if (normalizeMusicFamilyItem(item)) itemsChanged = true;
     const sourceType = getSourceType(item);
@@ -1261,7 +1193,7 @@ function migrateSavedMusicClassification() {
   }
 
   for (const entry of state.history) {
-    const source = entry.sourceItemId ? itemById.get(entry.sourceItemId) || null : null;
+    const source = entry.sourceItemId ? state.items.find(item => item.id === entry.sourceItemId) : null;
     let sourceType = source ? getSourceType(source) : '';
     if (!sourceType && ['artist', 'song', 'concert'].includes(entry.type)) sourceType = entry.type;
     if (!sourceType && entry.type === 'music') {
@@ -1483,16 +1415,7 @@ function migrateDuplicateLibraryItems() {
   if (historyChanged) saveHistory();
 }
 
-function dataMigrationStorageKey(userId = currentUser?.id || (localOnlyMode ? 'local' : 'anonymous')) {
-  return `${DATA_MIGRATION_KEY}.${userId}`;
-}
-
-function runDataMigrations({ force = false } = {}) {
-  const key = dataMigrationStorageKey();
-  if (!force && localStorage.getItem(key) === String(DATA_MIGRATION_VERSION)) {
-    reconcileLocalProgressQueues();
-    return false;
-  }
+function init() {
   migrateSavedMusicClassification();
   migrateSavedFoodClassification();
   migrateDuplicateLibraryItems();
@@ -1500,35 +1423,6 @@ function runDataMigrations({ force = false } = {}) {
   migrateCustomTypeActionCategories();
   seedTypeUsageFromLibrary();
   reconcileLocalProgressQueues();
-  localStorage.setItem(key, String(DATA_MIGRATION_VERSION));
-  return true;
-}
-
-function scheduleDeferredInitialSections() {
-  if (deferredInitialRenderHandle) {
-    if ('cancelIdleCallback' in window && typeof deferredInitialRenderHandle === 'number') window.cancelIdleCallback(deferredInitialRenderHandle);
-    else clearTimeout(deferredInitialRenderHandle);
-  }
-  const run = () => {
-    deferredInitialRenderHandle = null;
-    if (els.trackerGrid) renderTracker();
-    if (els.trackStreakSummary) renderTrackStreakSummary();
-    if (els.albumsGrid) renderAlbums();
-    if (els.statsSummary) renderStats();
-  };
-  if ('requestIdleCallback' in window) deferredInitialRenderHandle = window.requestIdleCallback(run, { timeout: 650 });
-  else deferredInitialRenderHandle = window.setTimeout(run, 180);
-}
-
-function renderInitialPage() {
-  reconcileLocalProgressQueues();
-  if (els.upNextList) renderUpNext();
-  if (els.libraryGroups) renderLibrary();
-  if (els.discoverStatus) renderDiscover();
-  scheduleDeferredInitialSections();
-}
-
-function init() {
   const now = new Date();
   if (els.monthPicker) {
     els.monthPicker.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -1537,7 +1431,7 @@ function init() {
 
   bindEvents();
   initSocialPage();
-  renderInitialPage();
+  renderAll();
 }
 
 function resetDialogScrollPosition(dialog) {
@@ -1651,6 +1545,7 @@ function bindEvents() {
   els.openStreakSettings?.addEventListener('click', openStreakSettings);
   els.streakSettingsForm?.addEventListener('submit', saveStreakSettings);
   els.streakSettingsRows?.addEventListener('change', previewStreakSettings);
+  els.streakSettingsRows?.addEventListener('click', handleStreakSettingsClick);
   els.resetStreakSettings?.addEventListener('click', resetStreakSettings);
   els.calendarRowSettingsForm?.addEventListener('submit', saveCalendarRowSettings);
   els.resetCalendarRowSettings?.addEventListener('click', resetCalendarRowSettings);
@@ -2889,29 +2784,43 @@ function renderGenrePie(genres = []) {
     els.statsGenres.innerHTML = '<p class="empty-state">No watched genres yet.</p>';
     return;
   }
+
+  // Keep meaningful categories readable. Any recognized genre representing less
+  // than 5% of the pie joins Other; genuinely unrecognized genres always live
+  // in Other as well. Exactly 5% remains its own slice.
+  const rawTotal = genres.reduce((sum, [, count]) => sum + Number(count || 0), 0) || 1;
   const visible = [];
-  const unknown = [];
-  for (const [label,count] of genres) {
-    if (STATS_RECOGNIZED_GENRES.has(label)) visible.push({ label, count, labels:[label] });
-    else unknown.push([label,count]);
+  const otherGenres = [];
+  for (const [label, countValue] of genres) {
+    const count = Number(countValue || 0);
+    const share = count / rawTotal;
+    if (STATS_RECOGNIZED_GENRES.has(label) && share >= 0.08) {
+      visible.push({ label, count, labels: [label], isOther: false });
+    } else {
+      otherGenres.push({ label, count });
+    }
   }
-  if (unknown.length) visible.push({
-    label:'Other',
-    count:unknown.reduce((sum,entry) => sum + entry[1],0),
-    labels:unknown.map(entry => entry[0])
-  });
-  visible.sort((a,b) => b.count - a.count || a.label.localeCompare(b.label));
-  const total = visible.reduce((sum,entry) => sum + entry.count,0) || 1;
+  if (otherGenres.length) {
+    visible.push({
+      label: 'Other',
+      count: otherGenres.reduce((sum, entry) => sum + entry.count, 0),
+      labels: otherGenres.map(entry => entry.label),
+      isOther: true
+    });
+  }
+
+  visible.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  const total = visible.reduce((sum, entry) => sum + entry.count, 0) || 1;
   const genreColor = label => STATS_GENRE_COLORS[label] || STATS_GENRE_COLORS.Other;
   let angle = -Math.PI / 2;
   const paths = visible.map(entry => {
     const next = angle + (entry.count / total) * Math.PI * 2;
-    const d = statsPiePath(100,100,82,angle,next);
+    const d = statsPiePath(100, 100, 82, angle, next);
     angle = next;
     const encoded = escapeAttr(JSON.stringify(entry.labels));
-    return `<path class="stats-genre-slice" d="${d}" fill="${genreColor(entry.label)}" tabindex="0" role="button" data-stats-genre-list="${encoded}" aria-label="${escapeAttr(`${entry.label}: ${entry.count}`)}"><title>${escapeHtml(entry.label)} · ${entry.count}</title></path>`;
+    return `<path class="stats-genre-slice" d="${d}" fill="${genreColor(entry.label)}" tabindex="0" role="button" data-stats-genre-list="${encoded}" ${entry.isOther ? 'data-stats-genre-other="true"' : ''} aria-label="${escapeAttr(`${entry.label}: ${entry.count}`)}"><title>${escapeHtml(entry.label)} · ${entry.count}</title></path>`;
   }).join('');
-  const legend = visible.map(entry => `<button class="stats-genre-legend-row" type="button" data-stats-genre-list="${escapeAttr(JSON.stringify(entry.labels))}"><span class="stats-genre-swatch" style="--genre-color:${genreColor(entry.label)}"></span><span>${escapeHtml(entry.label)}</span><strong>${entry.count}</strong></button>`).join('');
+  const legend = visible.map(entry => `<button class="stats-genre-legend-row" type="button" data-stats-genre-list="${escapeAttr(JSON.stringify(entry.labels))}" ${entry.isOther ? 'data-stats-genre-other="true"' : ''}><span class="stats-genre-swatch" style="--genre-color:${genreColor(entry.label)}"></span><span>${escapeHtml(entry.label)}</span><strong>${entry.count}</strong></button>`).join('');
   els.statsGenres.innerHTML = `<div class="stats-genre-pie-layout"><svg class="stats-genre-pie" viewBox="0 0 200 200" role="img" aria-label="Genres watched pie chart">${paths}</svg><div class="stats-genre-legend">${legend}</div></div>`;
 }
 
@@ -2947,9 +2856,41 @@ function openStatsCatalogue(title, items = []) {
   $('#statsCatalogueTitle').textContent = title || 'Library';
   $('#statsCatalogueCount').textContent = `${unique.length} ${unique.length === 1 ? 'item' : 'items'}`;
   const grid = $('#statsCatalogueGrid');
+  grid.classList.remove('stats-genre-other-grid');
   grid.innerHTML = '';
   for (const item of unique) grid.appendChild(makeLibraryPoster(item));
   if (!unique.length) grid.innerHTML = '<p class="empty-state">No items.</p>';
+  showDialogAtTop(modal);
+}
+
+
+function openStatsOtherGenres(labels = []) {
+  const modal = ensureStatsCatalogueModal();
+  const countMap = new Map(watchedGenreCounts());
+  const groups = [...new Set((labels || []).map(label => cleanTypeLabel(label)).filter(Boolean))]
+    .map(label => ({ label, count: Number(countMap.get(label) || 0), items: statsGenreItems([label]) }))
+    .filter(group => group.items.length)
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+
+  const uniqueItems = [...new Map(groups.flatMap(group => group.items).map(item => [item.id, item])).values()];
+  $('#statsCatalogueTitle').textContent = 'Other genres';
+  $('#statsCatalogueCount').textContent = `${groups.length} ${groups.length === 1 ? 'genre' : 'genres'} · ${uniqueItems.length} ${uniqueItems.length === 1 ? 'item' : 'items'}`;
+  const grid = $('#statsCatalogueGrid');
+  grid.innerHTML = '';
+  grid.classList.add('stats-genre-other-grid');
+
+  if (!groups.length) {
+    grid.innerHTML = '<p class="empty-state">No items.</p>';
+  } else {
+    for (const group of groups) {
+      const section = document.createElement('section');
+      section.className = 'stats-genre-other-section';
+      section.innerHTML = `<div class="stats-genre-other-heading"><h3>${escapeHtml(group.label)}</h3><span>${group.items.length}</span></div><div class="library-poster-grid is-expanded stats-genre-other-posters"></div>`;
+      const posters = section.querySelector('.stats-genre-other-posters');
+      for (const item of group.items) posters.appendChild(makeLibraryPoster(item));
+      grid.appendChild(section);
+    }
+  }
   showDialogAtTop(modal);
 }
 
@@ -2970,8 +2911,8 @@ function handleStatsBreakdownClick(event) {
   if (genreTarget) {
     let labels = [];
     try { labels = JSON.parse(genreTarget.dataset.statsGenreList || '[]'); } catch {}
-    const title = labels.length === 1 ? labels[0] : 'Other genres';
-    openStatsCatalogue(title, statsGenreItems(labels));
+    if (genreTarget.dataset.statsGenreOther === 'true') openStatsOtherGenres(labels);
+    else openStatsCatalogue(labels[0] || 'Genre', statsGenreItems(labels));
   }
 }
 
@@ -3139,30 +3080,14 @@ async function renderStats() {
       .map(group => `<button class="stat-type-row" type="button" data-stats-type-key="${escapeAttr(group.key)}" data-stats-label="${escapeAttr(group.label)}"><span>${escapeHtml(group.label)}</span><strong>${group.items.length}</strong></button>`).join('');
   }
   renderGenrePie(genres);
-  scheduleStatsEnrichment(requestToken);
-}
-
-function scheduleStatsEnrichment(requestToken) {
-  if (statsEnrichmentPromise) return;
-  const run = async () => {
-    try {
-      const [minutes] = await Promise.all([estimatedWatchMinutes(), enrichWatchedTVStatsGenres()]);
-      if (!els.statsSummary) return;
-      const hours = formatWatchHours(minutes);
-      const cards = [...els.statsSummary.querySelectorAll('.stat-card')];
-      const watchCard = cards.find(card => card.querySelector('span')?.textContent === 'Watch hours');
-      if (watchCard) watchCard.querySelector('strong').textContent = hours;
-      renderGenrePie(watchedGenreCounts());
-    } finally {
-      statsEnrichmentPromise = null;
-    }
-  };
-
-  statsEnrichmentPromise = new Promise(resolve => {
-    const start = () => run().finally(resolve);
-    if ('requestIdleCallback' in window) window.requestIdleCallback(start, { timeout: 2200 });
-    else window.setTimeout(start, 1200);
-  });
+  const [minutes] = await Promise.all([estimatedWatchMinutes(), enrichWatchedTVStatsGenres()]);
+  if (els.statsSummary?.dataset.renderToken !== requestToken) return;
+  const hours = formatWatchHours(minutes);
+  const cards = [...els.statsSummary.querySelectorAll('.stat-card')];
+  const watchCard = cards.find(card => card.querySelector('span')?.textContent === 'Watch hours');
+  if (watchCard) watchCard.querySelector('strong').textContent = hours;
+  // Runtime lookups can also fill missing genre metadata.
+  renderGenrePie(watchedGenreCounts());
 }
 
 function isPlaceBackedItem(item) {
@@ -5781,7 +5706,6 @@ function resetItemForm(defaultQueueStatus = 'library') {
   if (els.itemSubcategoryDisclosure) els.itemSubcategoryDisclosure.open = false;
   if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.open = false;
   if (els.itemAttachmentsDisclosure) els.itemAttachmentsDisclosure.open = false;
-  if (els.itemDateOptionsDisclosure) els.itemDateOptionsDisclosure.open = false;
   if (els.itemFindSourceDisclosure) els.itemFindSourceDisclosure.open = false;
   if (els.itemNoteDisclosure) els.itemNoteDisclosure.open = false;
   if (els.itemBuddyWatchToggle) els.itemBuddyWatchToggle.checked = false;
@@ -6071,7 +5995,7 @@ function clearSourceSelectionForTypeChange() {
 function syncItemSubcategoryDisclosure() {
   if (!els.itemSubcategoryDisclosure) return;
   const value = cleanTypeLabel(els.itemSubcategory?.value || '');
-  if (els.itemSubcategorySummary) els.itemSubcategorySummary.textContent = value ? `· ${value}` : '';
+  if (els.itemSubcategorySummary) els.itemSubcategorySummary.textContent = value ? `· ${value}` : 'optional';
   els.itemSubcategoryDisclosure.classList.toggle('has-value', Boolean(value));
 }
 
@@ -6079,7 +6003,7 @@ function syncItemPeopleDisclosure() {
   if (!els.itemPeopleDisclosure) return;
   const people = parseItemPeople(els.itemPeople?.value || '');
   if (els.itemPeopleSummary) {
-    els.itemPeopleSummary.textContent = people.length ? `· ${people.length}` : '';
+    els.itemPeopleSummary.textContent = people.length ? `· ${people.length} ${people.length === 1 ? 'person' : 'people'}` : 'optional';
   }
   els.itemPeopleDisclosure.classList.toggle('has-value', people.length > 0);
 }
@@ -6091,22 +6015,8 @@ function syncItemAttachmentsDisclosure() {
   const newCount = (state.attachmentDraft?.newFiles || []).length;
   const linkCount = (state.attachmentDraft?.links || []).length;
   const total = existingCount + newCount + linkCount;
-  if (els.itemAttachmentsSummary) els.itemAttachmentsSummary.textContent = total ? `${total}` : '';
+  if (els.itemAttachmentsSummary) els.itemAttachmentsSummary.textContent = total ? `${total} ${total === 1 ? 'item' : 'items'}` : 'optional';
   els.itemAttachmentsDisclosure.classList.toggle('has-value', total > 0);
-}
-
-function syncItemDateOptionsDisclosure() {
-  if (!els.itemDateOptionsDisclosure) return;
-  const bits = [];
-  if (els.itemUseRepeatLog?.checked) bits.push('Multiple logs');
-  const frequency = els.reminderFrequency?.value || 'none';
-  if (frequency !== 'none') {
-    const repeatLabel = String(els.itemRepeatSummary?.textContent || '').trim();
-    bits.push(repeatLabel || 'Repeat');
-  }
-  if (els.itemUseDateRange?.checked) bits.push('Multi-day');
-  if (els.itemDateOptionsSummary) els.itemDateOptionsSummary.textContent = bits.length ? `· ${bits.join(' · ')}` : '';
-  els.itemDateOptionsDisclosure.classList.toggle('has-value', bits.length > 0);
 }
 
 function syncItemOptionalDisclosures() {
@@ -6114,7 +6024,6 @@ function syncItemOptionalDisclosures() {
   syncItemPeopleDisclosure();
   syncItemAttachmentsDisclosure();
   syncItemBuddyWatchToggle();
-  syncItemDateOptionsDisclosure();
 }
 
 function syncItemBuddyWatchToggle() {
@@ -6319,7 +6228,6 @@ function updateReminderFormFields() {
   if (els.reminderCustomFields) els.reminderCustomFields.hidden = !custom;
   if (els.reminderDueDate && !els.reminderDueDate.value) els.reminderDueDate.value = els.itemDate?.value || todayString();
   if (custom && els.reminderInterval && Number(els.reminderInterval.value || 0) < 1) els.reminderInterval.value = '1';
-  syncItemDateOptionsDisclosure();
 }
 
 function parseYouTubeVideoId(value) {
@@ -7373,7 +7281,6 @@ function setRating(value) {
   const rating = normalizeStarRating(value);
   els.itemRating.value = String(rating);
   syncStarPicker(els.starPicker, '[data-rating]', 'data-rating', rating);
-  if (els.clearRating) els.clearRating.hidden = rating <= 0;
 }
 
 let actionFeedbackTimer = null;
@@ -9264,19 +9171,12 @@ function renderMonthTracker() {
     els.trackerGrid.appendChild(dayCell);
   }
 
-  const entriesByGroupDate = new Map();
-  for (const entry of dated) {
-    const key = `${getCalendarTypeGroupKey(entry)}|${entry.date}`;
-    if (!entriesByGroupDate.has(key)) entriesByGroupDate.set(key, []);
-    entriesByGroupDate.get(key).push(entry);
-  }
-
   for (const group of displayGroups) {
     els.trackerGrid.appendChild(cell('tracker-cell tracker-category', group.label.toLowerCase()));
     for (let day=1; day<=days; day++) {
       const date = `${yearText}-${monthText}-${String(day).padStart(2, '0')}`;
       const container = cell(`tracker-cell${isCurrentMonth && date === today ? ' is-today-column' : ''}`, '');
-      const matches = entriesByGroupDate.get(`${group.key}|${date}`) || [];
+      const matches = dated.filter(entry => getCalendarTypeGroupKey(entry) === group.key && entry.date === date);
       const rangeMatches = matches.filter(entry => entry.kind === 'book-reading-day');
       const eventMatches = matches.filter(entry => entry.kind !== 'book-reading-day');
 
@@ -9828,43 +9728,27 @@ function selectedDiscoverGenre() {
 
 async function ensureDiscoverGenreCatalog() {
   if (!els.discoverGenreFilter) return;
-
-  // The genre menu itself is static. Do not make two TMDB requests before the
-  // first Discover card can render when the user is simply viewing All genres.
-  const current = state.discoverPrefs.genre || 'all';
-  els.discoverGenreFilter.innerHTML = '<option value="all">All genres</option>' + DISCOVER_GENRES.map(genre => `<option value="${escapeAttr(genre.value)}">${escapeHtml(genre.label)}</option>`).join('');
-  els.discoverGenreFilter.value = DISCOVER_GENRES.some(genre => genre.value === current) ? current : 'all';
+  if (!state.discoverGenreCatalog.tv.length || !state.discoverGenreCatalog.movie.length) {
+    const [tv, movie] = await Promise.allSettled([
+      TrackerAPI.getTMDBGenres('tv', state.settings),
+      TrackerAPI.getTMDBGenres('movie', state.settings)
+    ]);
+    if (tv.status === 'fulfilled') state.discoverGenreCatalog.tv = tv.value;
+    if (movie.status === 'fulfilled') state.discoverGenreCatalog.movie = movie.value;
+  }
 
   const selected = selectedDiscoverGenre();
-  if (!selected) return;
-
-  const enabled = new Set(normalizedDiscoverContentTypes());
-  const genreRequests = [];
-  const genreTargets = [];
-  if (enabled.has('tv') && !state.discoverGenreCatalog.tv.length) {
-    genreTargets.push('tv');
-    genreRequests.push(TrackerAPI.getTMDBGenres('tv', state.settings));
-  }
-  if (enabled.has('movie') && !state.discoverGenreCatalog.movie.length) {
-    genreTargets.push('movie');
-    genreRequests.push(TrackerAPI.getTMDBGenres('movie', state.settings));
-  }
-  if (genreRequests.length) {
-    const settled = await Promise.allSettled(genreRequests);
-    settled.forEach((result, index) => {
-      if (result.status === 'fulfilled') state.discoverGenreCatalog[genreTargets[index]] = result.value;
-    });
-  }
-
-  const needsTmdbKeywords = (enabled.has('tv') || enabled.has('movie'))
-    && !['tv','movie'].some(type => enabled.has(type) && discoverTMDBGenreIds(type).length);
-  if (needsTmdbKeywords && !state.discoverKeywordCatalog[selected.value]) {
+  if (selected && !state.discoverKeywordCatalog[selected.value]) {
     try {
       state.discoverKeywordCatalog[selected.value] = await TrackerAPI.getTMDBKeywordIds(selected.keywords || [], state.settings);
     } catch {
       state.discoverKeywordCatalog[selected.value] = [];
     }
   }
+
+  const current = state.discoverPrefs.genre || 'all';
+  els.discoverGenreFilter.innerHTML = '<option value="all">All genres</option>' + DISCOVER_GENRES.map(genre => `<option value="${escapeAttr(genre.value)}">${escapeHtml(genre.label)}</option>`).join('');
+  els.discoverGenreFilter.value = DISCOVER_GENRES.some(genre => genre.value === current) ? current : 'all';
 }
 
 function discoverTMDBGenreIds(type) {
@@ -10140,12 +10024,11 @@ function discoverCalendarCachePrefix() {
 }
 
 function clearDiscoverCalendarCache() {
-  ensureApiCacheLoaded();
   const prefix = discoverCalendarCachePrefix();
   for (const key of Object.keys(state.cache)) {
     if (key.startsWith(prefix)) delete state.cache[key];
   }
-  persistApiCacheSoon();
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
 }
 
 function ticketmasterMonthBoundary(dateString, atEnd = false) {
@@ -10436,11 +10319,10 @@ async function renderLegacyDiscover(force = false) {
   els.discoverStatus.hidden = false;
   els.discoverStatus.textContent = `Loading recommendations… · Tip: ${loadingTipText()}`;
   if (force) {
-    ensureApiCacheLoaded();
     for (const key of Object.keys(state.cache)) {
       if (key.startsWith('discover:')) delete state.cache[key];
     }
-    persistApiCacheSoon();
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
   }
 
   try {
@@ -10468,11 +10350,10 @@ async function renderLegacyDiscover(force = false) {
 
 function resetDiscoverFeed(clearApiCache = false) {
   if (clearApiCache) {
-    ensureApiCacheLoaded();
     for (const key of Object.keys(state.cache)) {
       if (key.startsWith('discover:feed:') || key.startsWith('discover:recommend:') || key.startsWith('discover:author:')) delete state.cache[key];
     }
-    persistApiCacheSoon();
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
   }
 
   state.discoverFeedItems = [];
@@ -11557,8 +11438,6 @@ async function collectLiveDiscoverCandidates(batchNumber, mode = 'for-you') {
 }
 
 async function collectForYouDiscoverCandidates(batchNumber) {
-  const selectedTypes = normalizedDiscoverContentTypes();
-  const selected = new Set(selectedTypes);
   const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
   const candidates = [];
   const add = (results, sourceType, source, boost = 0, exploration = false) => (results || []).forEach(result => candidates.push({
@@ -11570,159 +11449,101 @@ async function collectForYouDiscoverCandidates(batchNumber) {
   }));
   const recommendationPage = 1 + ((batchNumber - 1) % 3);
 
-  // Personalized TV/movie recommendations used to run one request after another.
-  // Run the selected categories concurrently and skip categories the user disabled.
-  const personalRequests = [];
   for (const sourceType of ['tv', 'movie']) {
-    if (!selected.has(sourceType)) continue;
     const used = new Set();
     for (let i = 0; i < 3; i++) {
       const seed = pickDiscoverSeed(sourceType, used);
       if (!seed?.providerId) continue;
       used.add(String(seed.providerId));
-      personalRequests.push({
-        sourceType,
-        seed,
-        promise: getCached(
+      try {
+        const recs = await getCached(
           `discover:for-you:${sourceType}:${seed.providerId}:${recommendationPage}`,
           () => TrackerAPI.getTMDBRecommendations(sourceType, seed.providerId, state.settings, recommendationPage)
-        )
-      });
-    }
-  }
-  if (personalRequests.length) {
-    const settled = await Promise.allSettled(personalRequests.map(entry => entry.promise));
-    settled.forEach((result, index) => {
-      if (result.status !== 'fulfilled') return;
-      const request = personalRequests[index];
-      add(filterAlreadyKnown(result.value, request.sourceType), request.sourceType, 'personal', 11 + Number(request.seed.rating || 0));
-    });
-  }
-
-  if (selected.has('book')) {
-    const readAuthors = getReadAuthors();
-    if (readAuthors.length && state.discoverPrefs.prioritizeAuthors !== false) {
-      const start = ((batchNumber - 1) * 2) % readAuthors.length;
-      const authors = [...new Set([readAuthors[start], readAuthors[(start + 1) % readAuthors.length]].filter(Boolean))];
-      const authorResults = await Promise.allSettled(authors.map(author =>
-        getCached(`discover:for-you:author:${author.toLowerCase()}`, () => TrackerAPI.getBooksByAuthor(author, state.settings))
-      ));
-      authorResults.forEach(result => {
-        if (result.status === 'fulfilled') add(filterAlreadyKnown(result.value, 'book'), 'book', 'familiar-author', 13);
-      });
-    }
-
-    const bookSeed = pickDiscoverSeed('book');
-    if (bookSeed?.providerId) {
-      try {
-        const books = await getCached(`discover:for-you:book:${bookSeed.providerId}`, () => TrackerAPI.getBookRecommendations(bookSeed.providerId, state.settings));
-        add(filterAlreadyKnown(books, 'book'), 'book', 'personal', 11 + Number(bookSeed.rating || 0));
+        );
+        add(filterAlreadyKnown(recs, sourceType), sourceType, 'personal', 11 + Number(seed.rating || 0));
       } catch {}
     }
   }
 
-  if (selectedProviders.length && (selected.has('tv') || selected.has('movie'))) {
+  const readAuthors = getReadAuthors();
+  if (readAuthors.length && state.discoverPrefs.prioritizeAuthors !== false) {
+    const start = ((batchNumber - 1) * 2) % readAuthors.length;
+    for (const author of [readAuthors[start], readAuthors[(start + 1) % readAuthors.length]].filter(Boolean)) {
+      try {
+        const books = await getCached(`discover:for-you:author:${author.toLowerCase()}`, () => TrackerAPI.getBooksByAuthor(author, state.settings));
+        add(filterAlreadyKnown(books, 'book'), 'book', 'familiar-author', 13);
+      } catch {}
+    }
+  }
+
+  const bookSeed = pickDiscoverSeed('book');
+  if (bookSeed?.providerId) {
+    try {
+      const books = await getCached(`discover:for-you:book:${bookSeed.providerId}`, () => TrackerAPI.getBookRecommendations(bookSeed.providerId, state.settings));
+      add(filterAlreadyKnown(books, 'book'), 'book', 'personal', 11 + Number(bookSeed.rating || 0));
+    } catch {}
+  }
+
+  if (selectedProviders.length) {
     const providerPage = 1 + ((batchNumber - 1) % 8);
-    const providerRequests = [];
-    if (selected.has('tv')) providerRequests.push({
-      sourceType: 'tv',
-      promise: TrackerAPI.getTMDBDiscover('tv', providerPage, state.settings, discoverTMDBOptions('tv', { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 20 }))
-    });
-    if (selected.has('movie')) providerRequests.push({
-      sourceType: 'movie',
-      promise: TrackerAPI.getTMDBDiscover('movie', providerPage, state.settings, discoverTMDBOptions('movie', { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 30 }))
-    });
-    const providerResults = await Promise.allSettled(providerRequests.map(entry => entry.promise));
-    providerResults.forEach((result, index) => {
-      if (result.status !== 'fulfilled') return;
-      const sourceType = providerRequests[index].sourceType;
-      add(filterAlreadyKnown(result.value.results, sourceType), sourceType, 'preferred-streaming', 8);
-    });
+    const providerResults = await Promise.allSettled([
+      TrackerAPI.getTMDBDiscover('tv', providerPage, state.settings, discoverTMDBOptions('tv', { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 20 })),
+      TrackerAPI.getTMDBDiscover('movie', providerPage, state.settings, discoverTMDBOptions('movie', { providerIds: selectedProviders, sortBy: 'popularity.desc', minVotes: 30 }))
+    ]);
+    if (providerResults[0].status === 'fulfilled') add(filterAlreadyKnown(providerResults[0].value.results, 'tv'), 'tv', 'preferred-streaming', 8);
+    if (providerResults[1].status === 'fulfilled') add(filterAlreadyKnown(providerResults[1].value.results, 'movie'), 'movie', 'preferred-streaming', 8);
   }
 
-  // Only request exploration catalogues for categories that are actually enabled.
+  // Deliberate exploration: roughly a quarter of the final For You batch is
+  // reserved for broader catalogue material, rather than hiding it in a separate
+  // "Discover" tab. These candidates are marked so rankDiscoverFeedCandidates
+  // can guarantee they actually survive the personalized ranking.
   const explorationPage = 1 + ((batchNumber + Math.floor(state.discoverFeedSession * 11)) % 12);
-  const exploreRequests = [];
-  if (selected.has('tv')) exploreRequests.push({
-    sourceType: 'tv',
-    promise: TrackerAPI.getTMDBDiscover('tv', explorationPage, state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 25 }))
-  });
-  if (selected.has('movie')) exploreRequests.push({
-    sourceType: 'movie',
-    promise: TrackerAPI.getTMDBDiscover('movie', explorationPage, state.settings, discoverTMDBOptions('movie', { sortBy: 'popularity.desc', minVotes: 40 }))
-  });
-  if (selected.has('book')) exploreRequests.push({
-    sourceType: 'book',
-    promise: TrackerAPI.getBookFeed((batchNumber - 1) * DISCOVER_BOOK_BATCH_SIZE, state.settings, discoverBookOptions({ query: chooseDiscoverBookPlan([], batchNumber).query, orderBy: 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE }))
-  });
-  if (exploreRequests.length) {
-    const explore = await Promise.allSettled(exploreRequests.map(entry => entry.promise));
-    explore.forEach((result, index) => {
-      if (result.status !== 'fulfilled') return;
-      const sourceType = exploreRequests[index].sourceType;
-      const rows = sourceType === 'book' ? result.value.results : result.value.results;
-      add(filterAlreadyKnown(rows, sourceType), sourceType, 'explore', sourceType === 'book' ? 3 : 4, true);
-    });
+  const explore = await Promise.allSettled([
+    TrackerAPI.getTMDBDiscover('tv', explorationPage, state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 25 })),
+    TrackerAPI.getTMDBDiscover('movie', explorationPage, state.settings, discoverTMDBOptions('movie', { sortBy: 'popularity.desc', minVotes: 40 })),
+    TrackerAPI.getBookFeed((batchNumber - 1) * DISCOVER_BOOK_BATCH_SIZE, state.settings, discoverBookOptions({ query: chooseDiscoverBookPlan([], batchNumber).query, orderBy: 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE }))
+  ]);
+  if (explore[0].status === 'fulfilled') add(filterAlreadyKnown(explore[0].value.results, 'tv'), 'tv', 'explore', 4, true);
+  if (explore[1].status === 'fulfilled') add(filterAlreadyKnown(explore[1].value.results, 'movie'), 'movie', 'explore', 4, true);
+  if (explore[2].status === 'fulfilled') add(filterAlreadyKnown(explore[2].value.results, 'book'), 'book', 'explore', 3, true);
+
+  if (normalizedDiscoverContentTypes().some(type => ['music','artist','song'].includes(type))) {
+    try {
+      candidates.push(...await collectMusicDiscoverCandidates(batchNumber, 'for-you'));
+    } catch (error) {
+      musicDiscoverWarn('For You music collector failed', { batchNumber, error: error?.message || String(error) });
+    }
   }
 
-  const supplementalRequests = [];
-  if (selectedTypes.some(type => ['music','artist','song'].includes(type))) {
-    supplementalRequests.push({
-      kind: 'music',
-      promise: collectMusicDiscoverCandidates(batchNumber, 'for-you')
-    });
+  if (state.settings.googlePlacesKey && discoverTypeSelected('restaurant')) {
+    candidates.push(...await collectRestaurantDiscoverCandidates(batchNumber, 'for-you'));
   }
-  if (state.settings.googlePlacesKey && selected.has('restaurant')) {
-    supplementalRequests.push({
-      kind: 'restaurant',
-      promise: collectRestaurantDiscoverCandidates(batchNumber, 'for-you')
-    });
-  }
-  if (state.settings.ticketmasterKey && selectedTypes.some(type => ['concert','event'].includes(type))) {
-    supplementalRequests.push({
-      kind: 'live',
-      promise: Promise.all([
-        selected.has('concert') ? getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 12 }) : Promise.resolve([]),
-        selected.has('concert') ? getRelatedTicketmasterConcerts(batchNumber, 12) : Promise.resolve([]),
+
+  if (state.settings.ticketmasterKey && normalizedDiscoverContentTypes().some(type => ['concert','event'].includes(type))) {
+    try {
+      const [concerts, relatedConcerts, generalEvents] = await Promise.all([
+        getNearbyTicketmasterConcerts({ includeInferred: true, artistLimit: 12 }),
+        getRelatedTicketmasterConcerts(batchNumber, 12),
         fetchTicketmasterEventsForPreferences('', { page: Math.max(0, batchNumber - 1), size: 36, skipPrioritySearch: true })
-      ])
-    });
-  }
-
-  if (supplementalRequests.length) {
-    const supplemental = await Promise.allSettled(supplementalRequests.map(entry => entry.promise));
-    supplemental.forEach((result, index) => {
-      if (result.status !== 'fulfilled') {
-        if (supplementalRequests[index].kind === 'music') musicDiscoverWarn('For You music collector failed', { batchNumber, error: result.reason?.message || String(result.reason || '') });
-        return;
-      }
-      const kind = supplementalRequests[index].kind;
-      if (kind === 'music' || kind === 'restaurant') {
-        candidates.push(...result.value);
-        return;
-      }
-      const [concerts, relatedConcerts, generalEvents] = result.value;
-      if (selected.has('concert')) {
-        candidates.push(...concerts.map(entry => ({
-          ...entry, sourceType: 'concert', _discoverSource: 'ticketmaster-liked',
-          _discoverBoost: entry.likedArtist ? 14 : 10, _discoverExploration: false
-        })));
-        candidates.push(...relatedConcerts.map(entry => ({
-          ...entry, sourceType: 'concert', _discoverSource: 'ticketmaster-related',
-          _discoverBoost: 8, _discoverExploration: false
-        })));
-      }
-      candidates.push(...generalEvents
-        .map(entry => asLiveDiscoverCandidate(entry, 'live-explore', 3, true))
-        .filter(entry => selected.has(entry.sourceType)));
-    });
+      ]);
+      candidates.push(...concerts.map(result => ({
+        ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-liked',
+        _discoverBoost: result.likedArtist ? 14 : 10, _discoverExploration: false
+      })));
+      candidates.push(...relatedConcerts.map(result => ({
+        ...result, sourceType: 'concert', _discoverSource: 'ticketmaster-related',
+        _discoverBoost: 8, _discoverExploration: false
+      })));
+      candidates.push(...generalEvents.map(result => asLiveDiscoverCandidate(result, 'live-explore', 3, true)));
+    } catch {}
   }
 
   return dedupeDiscoverCandidatesByBoost(candidates);
 }
 
 function discoverLoadingLabel() {
-  return `Tip: ${loadingTipText()}`;
+  return `Loading… · Tip: ${loadingTipText()}`;
 }
 
 function discoverEndlessLabel() {
@@ -14777,8 +14598,9 @@ const WEEKDAY_OPTIONS = [
   { value: 0, short: 'S', label: 'Sunday' }
 ];
 
-function getRecognizedStreakGroups() {
+function getBaseStreakGroups(calendarEntries = null) {
   const groups = new Map();
+  const entries = Array.isArray(calendarEntries) ? calendarEntries : getCalendarEntries({ respectVisibility: false });
 
   for (const { type, label } of getRecognizedTypes()) {
     const cleanLabel = cleanTypeLabel(label || getTypeLabel(type)) || 'Other';
@@ -14786,8 +14608,11 @@ function getRecognizedStreakGroups() {
     if (!groups.has(key)) {
       groups.set(key, {
         key,
+        baseKey: key,
+        scope: 'type',
         label: cleanLabel,
         memberTypes: [],
+        subcategories: [],
         representativeType: type,
         representativeEntry: null
       });
@@ -14796,18 +14621,17 @@ function getRecognizedStreakGroups() {
     if (!group.memberTypes.includes(type)) group.memberTypes.push(type);
   }
 
-  // Calendar entries are the final authority for visible grouping. This also
-  // catches two different internal source types that have the same displayed
-  // type label (for example a YouTube item and a manual item both called
-  // "Workout").
-  for (const entry of getCalendarEntries()) {
+  for (const entry of entries) {
     const label = getStreakTypeGroupLabel(entry);
     const key = getStreakTypeGroupKey(entry);
     if (!groups.has(key)) {
       groups.set(key, {
         key,
+        baseKey: key,
+        scope: 'type',
         label,
         memberTypes: [],
+        subcategories: [],
         representativeType: entry.type,
         representativeEntry: entry
       });
@@ -14820,25 +14644,127 @@ function getRecognizedStreakGroups() {
   return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
+function getStreakSubcategories(baseKey, baseGroups = null, calendarEntries = null) {
+  const entries = Array.isArray(calendarEntries) ? calendarEntries : getCalendarEntries({ respectVisibility: false });
+  const bases = Array.isArray(baseGroups) ? baseGroups : getBaseStreakGroups(entries);
+  const base = bases.find(group => group.key === baseKey);
+  if (!base) return [];
+  const names = new Map();
+  const add = value => {
+    const label = cleanTypeLabel(value || '');
+    if (!label) return;
+    const key = label.toLowerCase();
+    if (!names.has(key)) names.set(key, label);
+  };
+
+  for (const item of state.items) {
+    if (base.memberTypes.includes(item.type)) add(item.subcategory);
+  }
+  for (const entry of state.history) {
+    if (base.memberTypes.includes(entry.type)) add(entry.subcategory);
+  }
+  for (const entry of entries) {
+    if (getStreakTypeGroupKey(entry) === baseKey) add(entry.subcategory);
+  }
+  return [...names.values()].sort((a, b) => a.localeCompare(b));
+}
+
+function streakSubcategoryTargetKey(baseKey, subcategory) {
+  return `${baseKey}::sub::${slugifyType(subcategory)}`;
+}
+
+function configuredStreakGroupsForBase(baseKey) {
+  return Object.entries(state.streakPrefs || {})
+    .filter(([, config]) => config && typeof config === 'object' && config.scope === 'group' && config.baseKey === baseKey)
+    .map(([key, config]) => ({ key, config }));
+}
+
+function getRecognizedStreakGroups() {
+  const targets = [];
+  const calendarEntries = getCalendarEntries({ respectVisibility: false });
+  const baseGroups = getBaseStreakGroups(calendarEntries);
+  const baseByType = new Map();
+  const subcategoriesByBase = new Map(baseGroups.map(base => [base.key, new Map()]));
+
+  for (const base of baseGroups) {
+    for (const type of base.memberTypes) baseByType.set(type, base.key);
+  }
+  const addSubcategory = (baseKey, value) => {
+    const label = cleanTypeLabel(value || '');
+    if (!baseKey || !label || !subcategoriesByBase.has(baseKey)) return;
+    const map = subcategoriesByBase.get(baseKey);
+    const normalized = label.toLowerCase();
+    if (!map.has(normalized)) map.set(normalized, label);
+  };
+  for (const item of state.items) addSubcategory(baseByType.get(item.type), item.subcategory);
+  for (const entry of state.history) addSubcategory(baseByType.get(entry.type), entry.subcategory);
+  for (const entry of calendarEntries) addSubcategory(getStreakTypeGroupKey(entry), entry.subcategory);
+
+  for (const base of baseGroups) {
+    targets.push({ ...base, subcategories: [] });
+
+    const subcategories = [...(subcategoriesByBase.get(base.key)?.values() || [])].sort((a, b) => a.localeCompare(b));
+    for (const subcategory of subcategories) {
+      targets.push({
+        key: streakSubcategoryTargetKey(base.key, subcategory),
+        baseKey: base.key,
+        scope: 'subcategory',
+        label: `${base.label} · ${subcategory}`,
+        subcategory,
+        subcategories: [subcategory],
+        memberTypes: [...base.memberTypes],
+        representativeType: base.representativeType,
+        representativeEntry: calendarEntries.find(entry => getStreakTypeGroupKey(entry) === base.key && cleanTypeLabel(entry.subcategory || '').toLowerCase() === subcategory.toLowerCase()) || null
+      });
+    }
+
+    for (const { key, config } of configuredStreakGroupsForBase(base.key)) {
+      const selected = [...new Set((config.subcategories || []).map(value => cleanTypeLabel(value)).filter(Boolean))];
+      if (selected.length < 2) continue;
+      targets.push({
+        key,
+        baseKey: base.key,
+        scope: 'group',
+        label: cleanTypeLabel(config.label || '') || selected.join(' + '),
+        subcategories: selected,
+        memberTypes: [...base.memberTypes],
+        representativeType: base.representativeType,
+        representativeEntry: calendarEntries.find(entry => getStreakTypeGroupKey(entry) === base.key && selected.some(value => value.toLowerCase() === cleanTypeLabel(entry.subcategory || '').toLowerCase())) || null
+      });
+    }
+  }
+  return targets;
+}
+
 function resolveStreakGroup(typeOrGroupKey) {
   const value = String(typeOrGroupKey || '');
   const groups = getRecognizedStreakGroups();
-  return groups.find(group => group.key === value || group.memberTypes.includes(value)) || {
-    key: slugifyType(getTypeLabel(value) || value || 'Other'),
-    label: getTypeLabel(value) || value || 'Other',
+  const exact = groups.find(group => group.key === value);
+  if (exact) return exact;
+  const base = groups.find(group => group.scope === 'type' && group.memberTypes.includes(value));
+  if (base) return base;
+  const label = getTypeLabel(value) || value || 'Other';
+  const key = slugifyType(label);
+  return {
+    key,
+    baseKey: key,
+    scope: 'type',
+    label,
     memberTypes: value ? [value] : [],
+    subcategories: [],
     representativeType: value || 'other',
     representativeEntry: null
   };
 }
 
 function getStreakConfig(typeOrGroupKey) {
-  const group = resolveStreakGroup(typeOrGroupKey);
+  const group = typeof typeOrGroupKey === 'object' && typeOrGroupKey?.key
+    ? typeOrGroupKey
+    : resolveStreakGroup(typeOrGroupKey);
 
-  // New streak preferences are keyed by the visible type name. Fall back to
-  // the old internal-type keys so existing settings survive this migration.
   let saved = state.streakPrefs?.[group.key];
-  if (!saved) {
+  // Only whole-type streaks inherit the old internal-type preference keys.
+  if (!saved && group.scope === 'type') {
     for (const memberType of group.memberTypes) {
       if (state.streakPrefs?.[memberType]) {
         saved = state.streakPrefs[memberType];
@@ -14852,63 +14778,76 @@ function getStreakConfig(typeOrGroupKey) {
     enabled: Boolean(saved.enabled),
     restDays: Array.isArray(saved.restDays)
       ? [...new Set(saved.restDays.map(Number).filter(day => day >= 0 && day <= 6))]
-      : []
+      : [],
+    scope: saved.scope || group.scope || 'type',
+    baseKey: saved.baseKey || group.baseKey || group.key,
+    subcategories: [...new Set((saved.subcategories || group.subcategories || []).map(value => cleanTypeLabel(value)).filter(Boolean))],
+    label: cleanTypeLabel(saved.label || '') || group.label
   };
 }
 
+function streakTargetMatchesEntry(targetOrKey, entry) {
+  const target = typeof targetOrKey === 'object' && targetOrKey?.key ? targetOrKey : resolveStreakGroup(targetOrKey);
+  if (!entry || getStreakTypeGroupKey(entry) !== target.baseKey) return false;
+  if (target.scope === 'type') return true;
+  const subcategory = cleanTypeLabel(entry.subcategory || '').toLowerCase();
+  if (!subcategory) return false;
+  return (target.subcategories || []).some(value => cleanTypeLabel(value).toLowerCase() === subcategory);
+}
+
 function getTypeActivityDates(typeOrGroupKey) {
-  const group = resolveStreakGroup(typeOrGroupKey);
+  const target = typeof typeOrGroupKey === 'object' && typeOrGroupKey?.key ? typeOrGroupKey : resolveStreakGroup(typeOrGroupKey);
   return new Set(
-    getCalendarEntries()
-      .filter(entry => getStreakTypeGroupKey(entry) === group.key && entry.date && entry.showOnCalendar !== false)
+    getCalendarEntries({ respectVisibility: false })
+      .filter(entry => streakTargetMatchesEntry(target, entry) && entry.date && entry.showOnCalendar !== false)
       .map(entry => entry.date)
   );
 }
 
 function calculateTypeStreak(typeOrGroupKey, overrideConfig = null) {
-  const config = overrideConfig || getStreakConfig(typeOrGroupKey);
+  let target = typeof typeOrGroupKey === 'object' && typeOrGroupKey?.key ? typeOrGroupKey : resolveStreakGroup(typeOrGroupKey);
+  const config = overrideConfig || getStreakConfig(target);
+  if (overrideConfig?.scope && overrideConfig?.baseKey) {
+    target = {
+      ...target,
+      key: typeof typeOrGroupKey === 'string' ? typeOrGroupKey : target.key,
+      scope: overrideConfig.scope,
+      baseKey: overrideConfig.baseKey,
+      subcategories: [...(overrideConfig.subcategories || target.subcategories || [])]
+    };
+  }
   if (!config.enabled) return { enabled: false, count: 0, restToday: false };
 
-  const activityDates = getTypeActivityDates(typeOrGroupKey);
+  const activityDates = getTypeActivityDates(target);
   const restDays = new Set((config.restDays || []).map(Number));
   const now = new Date();
   let cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
   let count = 0;
   let firstCalendarDay = true;
 
-  // Ten years is only a safety guard against malformed dates/settings.
   for (let guard = 0; guard < 3650; guard += 1) {
     const weekday = cursor.getDay();
     const date = localDateString(cursor);
-
     if (restDays.has(weekday)) {
       cursor = addDays(cursor, -1);
       firstCalendarDay = false;
       continue;
     }
-
     if (activityDates.has(date)) {
       count += 1;
       cursor = addDays(cursor, -1);
       firstCalendarDay = false;
       continue;
     }
-
-    // Today is still in progress, so absence today does not break a streak yet.
     if (firstCalendarDay) {
       cursor = addDays(cursor, -1);
       firstCalendarDay = false;
       continue;
     }
-
     break;
   }
 
-  return {
-    enabled: true,
-    count,
-    restToday: restDays.has(now.getDay())
-  };
+  return { enabled: true, count, restToday: restDays.has(now.getDay()) };
 }
 
 function streakText(typeOrGroupKey, overrideConfig = null) {
@@ -14930,8 +14869,9 @@ function streakBadgeMarkup(typeOrGroupKey) {
 function renderTrackStreakSummary() {
   if (!els.trackStreakSummary) return;
   const active = getRecognizedStreakGroups()
-    .map(group => ({ ...group, text: streakText(group.key) }))
-    .filter(entry => entry.text);
+    .map(group => ({ ...group, config: getStreakConfig(group) }))
+    .filter(group => group.config.enabled)
+    .map(group => ({ ...group, text: streakText(group, group.config) }));
 
   els.trackStreakSummary.hidden = active.length === 0;
   if (!active.length) {
@@ -14941,12 +14881,12 @@ function renderTrackStreakSummary() {
 
   els.trackStreakSummary.innerHTML = active.map(group => {
     const representative = group.representativeEntry
-      || getCalendarEntries().find(entry => getStreakTypeGroupKey(entry) === group.key)
-      || { type: group.representativeType, typeLabel: group.label };
+      || getCalendarEntries({ respectVisibility: false }).find(entry => streakTargetMatchesEntry(group, entry))
+      || { type: group.representativeType, typeLabel: group.label, subcategory: group.subcategories?.[0] || '' };
     return `
       <div class="track-streak-card">
         <span class="track-streak-sticker">${calendarStickerMarkup(representative.type, representative)}</span>
-        <span class="track-streak-copy"><strong>${escapeHtml(group.label)}</strong><small>${escapeHtml(group.text)}</small></span>
+        <span class="track-streak-copy"><strong>${escapeHtml(group.config.label || group.label)}</strong><small>${escapeHtml(group.text)}</small></span>
       </div>`;
   }).join('');
 }
@@ -14957,38 +14897,99 @@ function openStreakSettings() {
   showDialogAtTop(els.stickerSettingsModal);
 }
 
+function createStreakSettingRow(group, config = getStreakConfig(group)) {
+  const row = document.createElement('div');
+  row.className = `streak-setting-row${config.enabled ? ' is-enabled' : ''}${group.scope === 'type' ? ' streak-setting-whole-type' : ''}${group.scope === 'group' ? ' streak-setting-grouped' : ''}`;
+  row.dataset.streakType = group.key;
+  row.dataset.streakScope = group.scope || 'type';
+  row.dataset.streakBase = group.baseKey || group.key;
+  row.dataset.streakSubcategories = JSON.stringify(config.subcategories || group.subcategories || []);
+  const scopeText = group.scope === 'type' ? 'All subtypes' : group.scope === 'group' ? (config.subcategories || []).join(' + ') : (group.subcategories || [])[0] || 'Subtype';
+  row.innerHTML = `
+    <div class="streak-setting-type">
+      <strong>${escapeHtml(config.label || group.label)}</strong>
+      <small>${escapeHtml(scopeText)}</small>
+      ${group.scope === 'group' ? `<button class="streak-group-remove" type="button" data-streak-remove-group="${escapeAttr(group.key)}" aria-label="Remove grouped streak">×</button>` : ''}
+    </div>
+    <label class="streak-toggle">
+      <input data-streak-field="enabled" type="checkbox" ${config.enabled ? 'checked' : ''} />
+      <span>On</span>
+    </label>
+    <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(config.label || group.label)}">
+      ${WEEKDAY_OPTIONS.map(day => `
+        <label class="rest-day-chip" title="${day.label}">
+          <input data-streak-rest-day="${day.value}" type="checkbox" ${config.restDays.includes(day.value) ? 'checked' : ''} />
+          <span>${day.short}</span>
+        </label>`).join('')}
+    </div>
+    <div class="streak-setting-current">${escapeHtml(streakText(group, config) || 'Off')}</div>`;
+  return row;
+}
+
+function createStreakGroupBuilder(base, knownSubcategories = null) {
+  const subcategories = Array.isArray(knownSubcategories) ? knownSubcategories : getStreakSubcategories(base.key);
+  if (subcategories.length < 2) return null;
+  const details = document.createElement('details');
+  details.className = 'streak-group-builder';
+  details.dataset.streakBuilderBase = base.key;
+  details.innerHTML = `
+    <summary>+ Group subtypes</summary>
+    <div class="streak-group-builder-body">
+      <label class="streak-group-name"><span>Group name</span><input data-streak-group-name type="text" maxlength="40" placeholder="Optional" /></label>
+      <div class="streak-group-subtype-options" aria-label="Choose subtypes to group">
+        ${subcategories.map(subcategory => `<label><input type="checkbox" data-streak-group-subcategory value="${escapeAttr(subcategory)}" /><span>${escapeHtml(subcategory)}</span></label>`).join('')}
+      </div>
+      <button class="secondary-button streak-group-add" type="button" data-streak-add-group>Add group</button>
+      <p class="streak-group-builder-message" hidden></p>
+    </div>`;
+  return details;
+}
+
 function renderStreakSettingsRows() {
   if (!els.streakSettingsRows) return;
   els.streakSettingsRows.innerHTML = '';
+  const allTargets = getRecognizedStreakGroups();
+  const bases = allTargets.filter(group => group.scope === 'type');
 
-  for (const group of getRecognizedStreakGroups()) {
-    const config = getStreakConfig(group.key);
-    const row = document.createElement('div');
-    row.className = `streak-setting-row${config.enabled ? ' is-enabled' : ''}`;
-    row.dataset.streakType = group.key;
-    row.innerHTML = `
-      <div class="streak-setting-type"><strong>${escapeHtml(group.label)}</strong></div>
-      <label class="streak-toggle">
-        <input data-streak-field="enabled" type="checkbox" ${config.enabled ? 'checked' : ''} />
-        <span>On</span>
-      </label>
-      <div class="rest-day-picker" aria-label="Rest days for ${escapeAttr(group.label)}">
-        ${WEEKDAY_OPTIONS.map(day => `
-          <label class="rest-day-chip" title="${day.label}">
-            <input data-streak-rest-day="${day.value}" type="checkbox" ${config.restDays.includes(day.value) ? 'checked' : ''} />
-            <span>${day.short}</span>
-          </label>`).join('')}
-      </div>
-      <div class="streak-setting-current">${escapeHtml(streakText(group.key, config) || 'Off')}</div>`;
-    els.streakSettingsRows.appendChild(row);
+  for (const base of bases) {
+    const section = document.createElement('section');
+    section.className = 'streak-scope-section';
+    section.dataset.streakBaseSection = base.key;
+    section.innerHTML = `<div class="streak-scope-heading"><strong>${escapeHtml(base.label)}</strong><span>Whole type, subtype, or your own group</span></div>`;
+
+    const targetRows = allTargets.filter(group => group.baseKey === base.key);
+    for (const group of targetRows) section.appendChild(createStreakSettingRow(group));
+    const builder = createStreakGroupBuilder(base, allTargets.filter(group => group.baseKey === base.key && group.scope === 'subcategory').map(group => group.subcategories[0]).filter(Boolean));
+    if (builder) section.appendChild(builder);
+    els.streakSettingsRows.appendChild(section);
   }
 }
 
-function readStreakRowConfig(row) {
+function streakRowTargetFromElement(row) {
+  const key = row.dataset.streakType || '';
+  const existing = resolveStreakGroup(key);
+  let subcategories = [];
+  try { subcategories = JSON.parse(row.dataset.streakSubcategories || '[]'); } catch {}
   return {
+    ...existing,
+    key,
+    baseKey: row.dataset.streakBase || existing.baseKey,
+    scope: row.dataset.streakScope || existing.scope,
+    subcategories
+  };
+}
+
+function readStreakRowConfig(row) {
+  const target = streakRowTargetFromElement(row);
+  const existing = state.streakPrefs?.[row.dataset.streakType] || {};
+  return {
+    ...existing,
     enabled: Boolean(row.querySelector('[data-streak-field="enabled"]')?.checked),
-    restDays: [...row.querySelectorAll('[data-streak-rest-day]:checked')]
-      .map(input => Number(input.dataset.streakRestDay))
+    restDays: [...row.querySelectorAll('[data-streak-rest-day]:checked')].map(input => Number(input.dataset.streakRestDay)),
+    scope: target.scope,
+    baseKey: target.baseKey,
+    subcategories: [...target.subcategories],
+    label: cleanTypeLabel(row.querySelector('.streak-setting-type strong')?.textContent || target.label)
   };
 }
 
@@ -15001,11 +15002,58 @@ function previewStreakSettings(event) {
   if (current) current.textContent = streakText(row.dataset.streakType, config) || 'Off';
 }
 
+function handleStreakSettingsClick(event) {
+  const add = event.target.closest('[data-streak-add-group]');
+  if (add) {
+    const builder = add.closest('[data-streak-builder-base]');
+    const baseKey = builder?.dataset.streakBuilderBase || '';
+    const selected = [...(builder?.querySelectorAll('[data-streak-group-subcategory]:checked') || [])].map(input => cleanTypeLabel(input.value)).filter(Boolean);
+    const message = builder?.querySelector('.streak-group-builder-message');
+    if (selected.length < 2) {
+      if (message) { message.hidden = false; message.textContent = 'Choose at least two subtypes.'; }
+      return;
+    }
+    const base = getRecognizedStreakGroups().find(group => group.scope === 'type' && group.key === baseKey);
+    if (!base) return;
+    const customLabel = cleanTypeLabel(builder.querySelector('[data-streak-group-name]')?.value || '');
+    const label = customLabel || selected.join(' + ');
+    const uniquePart = `${slugifyType(label)}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const key = `${baseKey}::group::${uniquePart}`;
+    const group = {
+      key,
+      baseKey,
+      scope: 'group',
+      label,
+      subcategories: selected,
+      memberTypes: [...base.memberTypes],
+      representativeType: base.representativeType,
+      representativeEntry: null
+    };
+    const config = { enabled: true, restDays: [], scope: 'group', baseKey, subcategories: selected, label };
+    const row = createStreakSettingRow(group, config);
+    builder.before(row);
+    builder.querySelectorAll('[data-streak-group-subcategory]').forEach(input => { input.checked = false; });
+    const name = builder.querySelector('[data-streak-group-name]');
+    if (name) name.value = '';
+    if (message) message.hidden = true;
+    builder.open = false;
+    return;
+  }
+
+  const remove = event.target.closest('[data-streak-remove-group]');
+  if (remove) {
+    remove.closest('.streak-setting-row')?.remove();
+  }
+}
+
 function saveStreakSettings(event) {
   event.preventDefault();
   const next = {};
   els.streakSettingsRows?.querySelectorAll('.streak-setting-row[data-streak-type]').forEach(row => {
-    next[row.dataset.streakType] = readStreakRowConfig(row);
+    const config = readStreakRowConfig(row);
+    const existing = state.streakPrefs?.[row.dataset.streakType] || {};
+    // Keep grouped definitions and any existing custom identity even while off.
+    if (config.enabled || config.scope === 'group' || existing.label || existing.sticker) next[row.dataset.streakType] = config;
   });
   state.streakPrefs = next;
   localStorage.setItem(STREAK_PREFS_KEY, JSON.stringify(state.streakPrefs));
@@ -15015,7 +15063,7 @@ function saveStreakSettings(event) {
 }
 
 function resetStreakSettings() {
-  if (!confirm('Turn off all streaks and clear scheduled rest days?')) return;
+  if (!confirm('Turn off all streaks and remove grouped subtype streaks?')) return;
   state.streakPrefs = {};
   localStorage.removeItem(STREAK_PREFS_KEY);
   scheduleCloudSync();
@@ -15152,59 +15200,7 @@ function setLibraryView(view) {
   renderLibrary();
 }
 
-function buildLibraryDateCache() {
-  const visibleHistory = new Map();
-  const allHistory = new Map();
-  for (const entry of state.history) {
-    const id = String(entry?.sourceItemId || '');
-    const date = String(entry?.date || '').slice(0, 10);
-    if (!id || !date) continue;
-    if (!allHistory.has(id)) allHistory.set(id, []);
-    allHistory.get(id).push(date);
-    if (entry.showOnCalendar !== false) {
-      if (!visibleHistory.has(id)) visibleHistory.set(id, []);
-      visibleHistory.get(id).push(date);
-    }
-  }
-
-  const library = new Map();
-  const footer = new Map();
-  for (const item of state.items) {
-    const id = String(item?.id || '');
-    const sourceType = getSourceType(item);
-    const calendarDates = item?.calendarHidden ? [] : [...(visibleHistory.get(id) || [])];
-    const footerDates = [...(allHistory.get(id) || [])];
-
-    if (!item?.calendarHidden && sourceType !== 'book' && item.date) calendarDates.push(String(item.date).slice(0, 10));
-    if (sourceType !== 'book' && item.date) footerDates.push(String(item.date).slice(0, 10));
-
-    if (sourceType === 'activity') {
-      const start = String(item.activityMeta?.startDate || item.date || '').slice(0, 10);
-      const end = String(item.activityMeta?.endDate || start).slice(0, 10);
-      if (!item?.calendarHidden && start) calendarDates.push(end && end >= start ? end : start);
-      footer.set(id, end || start || '');
-    } else if (sourceType === 'book') {
-      if (!item?.calendarHidden) {
-        const today = todayString();
-        for (const period of getBookReadingPeriods(item)) {
-          const start = String(period?.startDate || '').slice(0, 10);
-          if (!start) continue;
-          const end = String(period?.endDate || today).slice(0, 10);
-          if (end >= start) calendarDates.push(end);
-        }
-      }
-      footer.set(id, '');
-    } else {
-      footer.set(id, footerDates.filter(Boolean).sort().at(-1) || '');
-    }
-
-    library.set(id, item?.calendarHidden ? '' : calendarDates.filter(Boolean).sort().at(-1) || '');
-  }
-  return { library, footer };
-}
-
 function itemLibraryDate(item) {
-  if (item?.id && libraryDateCache?.library?.has(String(item.id))) return libraryDateCache.library.get(String(item.id)) || '';
   // Library → Recent follows the calendar, not when an item was added, edited,
   // rated, or silently completed. If an item has been removed from the calendar,
   // it is intentionally treated as undated here as well.
@@ -15244,7 +15240,6 @@ function itemLibraryDate(item) {
 }
 
 function libraryFooterDate(item) {
-  if (item?.id && libraryDateCache?.footer?.has(String(item.id))) return libraryDateCache.footer.get(String(item.id)) || '';
   if (!item || getSourceType(item) === 'book') return '';
   const sourceType = getSourceType(item);
   if (sourceType === 'activity') {
@@ -15654,7 +15649,6 @@ function makeLibraryPoster(item) {
 }
 
 function renderLibrary() {
-  libraryDateCache = buildLibraryDateCache();
   refreshTypeFilter();
   const visibleTypes = ensureLibraryVisibleTypes();
   const sort = els.librarySort?.value || 'date';
@@ -16058,80 +16052,25 @@ async function getPlaylistCached(id) {
   return getCached(`playlist:${id}`, () => TrackerAPI.getPlaylist(id, state.settings));
 }
 
-function ensureApiCacheLoaded() {
-  if (apiCacheLoaded) return;
-  apiCacheLoaded = true;
-  state.cache = {};
-
-  // Older builds stored one ever-growing API cache blob in localStorage. Parsing
-  // that blob on every page load became a major startup cost. Discard it without
-  // parsing, and keep the bounded cache session-scoped instead.
-  try { localStorage.removeItem(CACHE_KEY); } catch {}
-
-  try {
-    const raw = sessionStorage.getItem(CACHE_KEY);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    const now = Date.now();
-    if (!parsed || typeof parsed !== 'object') return;
-    for (const [cacheKey, entry] of Object.entries(parsed)) {
-      if (!entry || !Number.isFinite(Number(entry.savedAt))) continue;
-      if (now - Number(entry.savedAt) >= CACHE_TTL) continue;
-      state.cache[cacheKey] = entry;
-    }
-  } catch {
-    state.cache = {};
-    try { sessionStorage.removeItem(CACHE_KEY); } catch {}
-  }
-}
-
-function persistApiCacheSoon() {
-  if (apiCachePersistHandle) return;
-  const persist = () => {
-    apiCachePersistHandle = null;
-    const now = Date.now();
-    const entries = Object.entries(state.cache)
-      .filter(([, entry]) => entry && now - Number(entry.savedAt || 0) < CACHE_TTL)
-      .sort((a, b) => Number(b[1].savedAt || 0) - Number(a[1].savedAt || 0))
-      .slice(0, 48);
-    state.cache = Object.fromEntries(entries);
-    try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
-  };
-  if ('requestIdleCallback' in window) apiCachePersistHandle = window.requestIdleCallback(persist, { timeout: 900 });
-  else apiCachePersistHandle = window.setTimeout(persist, 350);
-}
-
 async function getCached(key, loader) {
-  ensureApiCacheLoaded();
   const cached = state.cache[key];
   if (cached && Date.now() - cached.savedAt < CACHE_TTL) return cached.value;
-  if (apiCacheInFlight.has(key)) return apiCacheInFlight.get(key);
-
-  const request = Promise.resolve()
-    .then(loader)
-    .then(value => {
-      cachePut(key, value);
-      return value;
-    })
-    .finally(() => apiCacheInFlight.delete(key));
-  apiCacheInFlight.set(key, request);
-  return request;
+  const value = await loader();
+  cachePut(key, value);
+  return value;
 }
 
 function cachePut(key, value) {
-  ensureApiCacheLoaded();
   state.cache[key] = { savedAt: Date.now(), value };
-  persistApiCacheSoon();
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
 }
 
 function saveItems() {
-  libraryDateCache = null;
   safeLocalSet(ITEMS_KEY, state.items);
   scheduleCloudSync();
 }
 
 function saveHistory() {
-  libraryDateCache = null;
   // History can contain hundreds or thousands of episode/video records.
   // localStorage is intentionally not used here because browsers normally
   // cap it at only a few MB per origin. IndexedDB is the durable local cache.
@@ -16211,56 +16150,22 @@ async function persistCloudStateLocally(snapshot) {
   localStorage.removeItem(HISTORY_KEY);
 }
 
-function cloudUpdatedAtStorageKey(userId = currentUser?.id || '') {
-  return userId ? `${CLOUD_UPDATED_AT_KEY}.${userId}` : '';
-}
-
-function rememberCloudUpdatedAt(value, userId = currentUser?.id || '') {
-  const key = cloudUpdatedAtStorageKey(userId);
-  if (!key || !value) return;
-  lastCloudUpdatedAt = String(value);
-  localStorage.setItem(key, lastCloudUpdatedAt);
-}
-
-function rememberedCloudUpdatedAt(userId = currentUser?.id || '') {
-  const key = cloudUpdatedAtStorageKey(userId);
-  return key ? String(localStorage.getItem(key) || '') : '';
-}
-
 async function hydrateCloudProfile(userId) {
   if (!supabase || !userId) return;
 
   const localSnapshot = buildCloudState();
-  const cachedUpdatedAt = rememberedCloudUpdatedAt(userId);
-
-  // Page-to-page navigation used to download the entire (potentially very large)
-  // cloud state every time. Check the tiny timestamp first and only transfer the
-  // state blob when another device/session actually changed it.
-  const { data: metadata, error: metadataError } = await supabase
+  const { data, error } = await supabase
     .from('user_state')
-    .select('updated_at')
+    .select('state, updated_at')
     .eq('user_id', userId)
     .maybeSingle();
 
-  if (metadataError) throw metadataError;
+  if (error) throw error;
 
-  if (metadata?.updated_at && cachedUpdatedAt && metadata.updated_at === cachedUpdatedAt) {
-    rememberCloudUpdatedAt(metadata.updated_at, userId);
-    return false;
-  }
-
-  if (metadata?.updated_at) {
-    const { data, error } = await supabase
-      .from('user_state')
-      .select('state, updated_at')
-      .eq('user_id', userId)
-      .maybeSingle();
-    if (error) throw error;
-    if (data?.state) {
-      await persistCloudStateLocally(data.state);
-      rememberCloudUpdatedAt(data.updated_at || metadata.updated_at, userId);
-      return true;
-    }
+  if (data?.state) {
+    await persistCloudStateLocally(data.state);
+    lastCloudUpdatedAt = data.updated_at || '';
+    return;
   }
 
   const initialState = localSnapshot;
@@ -16274,16 +16179,11 @@ async function hydrateCloudProfile(userId) {
     });
 
   if (insertError) throw insertError;
-  rememberCloudUpdatedAt(updatedAt, userId);
-  return false;
+  lastCloudUpdatedAt = updatedAt;
 }
 
 function scheduleCloudSync() {
   if (localOnlyMode || !currentUser || !supabase) return;
-  if (!cloudHydrationReady) {
-    cloudSyncDeferred = true;
-    return;
-  }
   clearTimeout(cloudSyncTimer);
   setSyncStatus('Saving…');
   cloudSyncTimer = setTimeout(pushCloudState, 350);
@@ -16310,7 +16210,7 @@ async function pushCloudState() {
       });
 
     if (error) throw error;
-    rememberCloudUpdatedAt(updatedAt, currentUser.id);
+    lastCloudUpdatedAt = updatedAt;
     setSyncStatus('Synced');
   } catch (error) {
     setSyncStatus('Not synced', true);
@@ -16326,36 +16226,21 @@ async function pushCloudState() {
 
 async function refreshCloudProfile() {
   if (localOnlyMode || !currentUser || !supabase || cloudSyncBusy) return;
-  if (!lastCloudUpdatedAt) lastCloudUpdatedAt = rememberedCloudUpdatedAt(currentUser.id);
 
   try {
-    const { data: metadata, error: metadataError } = await supabase
-      .from('user_state')
-      .select('updated_at')
-      .eq('user_id', currentUser.id)
-      .maybeSingle();
-
-    if (metadataError) throw metadataError;
-    cloudHydrationReady = true;
-    if (!metadata?.updated_at || metadata.updated_at === lastCloudUpdatedAt) {
-      if (cloudSyncDeferred) { cloudSyncDeferred = false; scheduleCloudSync(); }
-      return;
-    }
-
     const { data, error } = await supabase
       .from('user_state')
       .select('state, updated_at')
       .eq('user_id', currentUser.id)
       .maybeSingle();
+
     if (error) throw error;
-    if (!data?.state || !data.updated_at) return;
+    if (!data?.state || !data.updated_at || data.updated_at === lastCloudUpdatedAt) return;
 
     if (!lastCloudUpdatedAt || new Date(data.updated_at) > new Date(lastCloudUpdatedAt)) {
       await persistCloudStateLocally(data.state);
-      rememberCloudUpdatedAt(data.updated_at, currentUser.id);
-      cloudSyncDeferred = false;
-      runDataMigrations({ force: true });
-      if (appStarted) renderInitialPage();
+      lastCloudUpdatedAt = data.updated_at;
+      if (appStarted) renderAll();
       setSyncStatus('Synced');
     }
   } catch (error) {
@@ -16368,13 +16253,6 @@ function clearLocalSyncedState() {
   [ITEMS_KEY, HISTORY_KEY, CUSTOM_TYPES_KEY, ALBUMS_KEY, TYPE_USAGE_KEY, PHOTO_UPLOAD_LOG_KEY, DISCOVER_PREFS_KEY, STICKER_PREFS_KEY, STREAK_PREFS_KEY, LIBRARY_PREFS_KEY].forEach(key => {
     localStorage.removeItem(key);
   });
-  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
-    const key = localStorage.key(index);
-    if (key?.startsWith(`${CLOUD_UPDATED_AT_KEY}.`)) localStorage.removeItem(key);
-  }
-  try { sessionStorage.removeItem(CACHE_KEY); } catch {}
-  state.cache = {};
-  apiCacheLoaded = true;
   deleteLargeState(HISTORY_IDB_KEY).catch(() => {});
 }
 
@@ -16467,7 +16345,6 @@ function safeLocalSet(key, value) {
       // API cache is disposable; clearing it often frees space left by older builds.
       try {
         localStorage.removeItem(CACHE_KEY);
-        sessionStorage.removeItem(CACHE_KEY);
         if (key !== CACHE_KEY) localStorage.setItem(key, JSON.stringify(value));
         return true;
       } catch {}
@@ -17090,7 +16967,7 @@ function openSocialProfileSettings() {
 }
 
 function socialShareableStreakGroups() {
-  return getRecognizedStreakGroups().filter(group => getStreakConfig(group.key).enabled);
+  return getRecognizedStreakGroups().filter(group => getStreakConfig(group).enabled);
 }
 
 function socialTypeCheckboxes(section, prefs) {

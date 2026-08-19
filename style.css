@@ -11995,356 +11995,126 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
 }
 .mini-option-menu > summary small:empty { display: none; }
 
-/* =========================================================
-   Streamlined Add/Edit: keep the default form quiet
-   ========================================================= */
-.item-modal .item-form { gap: 10px; }
-
-/* Type stays primary; subtype is available without taking a full field. */
-.item-modal .add-type-subtype-grid {
-  grid-template-columns: minmax(0,1fr) auto;
-  gap: 10px;
-  align-items: end;
-  margin-bottom: 6px;
-}
-.subtype-compact-disclosure {
-  position: relative;
-  align-self: end;
-}
-.subtype-compact-disclosure > summary {
-  min-height: 46px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 5px;
-  list-style: none;
-  cursor: pointer;
-  color: #76786f;
-  font-size: .76rem;
-  font-weight: 650;
-  white-space: nowrap;
-}
-.subtype-compact-disclosure > summary::-webkit-details-marker { display: none; }
-.subtype-compact-disclosure > summary .compact-add-plus {
-  width: auto;
-  height: auto;
-  flex: 0 0 auto;
-  border-radius: 0;
-  background: transparent;
-  font-size: 1rem;
-}
-.subtype-compact-disclosure > summary small {
-  max-width: 110px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: #76786f;
-  font-size: .7rem;
-  font-weight: 500;
-}
-.subtype-compact-disclosure.has-value > summary { color: var(--ink); }
-.subtype-compact-disclosure[open] > summary .compact-add-plus { transform: rotate(45deg); }
-.subtype-compact-popover {
-  position: absolute;
-  z-index: 35;
-  top: calc(100% + 4px);
-  right: 0;
-  width: min(240px, 72vw);
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--paper);
-  box-shadow: 0 10px 24px rgba(27,31,24,.14);
-}
-.subtype-compact-popover .field { margin: 0; }
-.subtype-compact-popover input,
-.soft-entry-field input {
-  background: rgba(21,36,58,.045) !important;
-}
-
-/* Search source is just an arrow until the user opens it. */
-.item-modal .find-it-combo { grid-template-columns: 44px minmax(0,1fr) auto; }
-.item-modal .find-it-combo select {
-  width: 44px;
-  max-width: 44px;
-  padding: 0 20px 0 4px;
-  color: transparent;
-  font-size: 0;
-  cursor: pointer;
-}
-.item-modal .find-it-combo select option {
-  color: var(--ink);
-  font-size: .86rem;
-}
-
-/* Date gets one small Options affordance; detailed modes stay hidden until requested. */
-.item-modal .date-log-section { position: relative; }
-.item-modal .date-with-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.item-modal .date-main-field { flex: 1 1 auto; min-width: 0; }
-.date-options-disclosure {
-  position: relative;
-  flex: 0 0 auto;
-}
-.date-options-disclosure > summary {
-  min-height: 40px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 5px;
-  list-style: none;
-  cursor: pointer;
-  color: #76786f;
-  font-size: .74rem;
-  font-weight: 650;
-  white-space: nowrap;
-}
-.date-options-disclosure > summary::-webkit-details-marker { display: none; }
-.date-options-disclosure > summary .compact-add-plus {
-  width: auto;
-  height: auto;
-  flex: 0 0 auto;
-  border-radius: 0;
-  background: transparent;
-  font-size: 1rem;
-}
-.date-options-disclosure > summary small {
-  max-width: 190px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: #6e746c;
-  font-size: .68rem;
-  font-weight: 500;
-}
-.date-options-disclosure.has-value > summary { color: var(--ink); }
-.date-options-disclosure[open] > summary .compact-add-plus { transform: rotate(45deg); }
-.date-options-panel {
-  position: absolute;
-  z-index: 32;
-  top: calc(100% + 4px);
-  right: 0;
-  width: max-content;
-  max-width: min(440px, 86vw);
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 13px;
-  background: var(--paper);
-  box-shadow: 0 10px 26px rgba(27,31,24,.15);
-}
-.date-options-panel .date-behavior-row {
-  width: auto;
-  margin: 0;
-  flex-wrap: nowrap;
-}
-.item-modal .log-entry-fields { margin: 5px 0 2px; }
-.item-modal .date-mode-hint { margin-top: 3px; }
-
-/* Rating and public comment are the one main reflection row. */
-.item-modal .rating-comment-grid {
+/* Stats: keep small genre slices inside Other and show grouped contents on open. */
+.stats-catalogue-grid.stats-genre-other-grid {
   display: grid;
-  grid-template-columns: minmax(230px,.82fr) minmax(0,1.18fr);
-  gap: 18px;
-  align-items: start;
-  margin-top: 2px;
+  grid-template-columns: 1fr;
+  gap: 24px !important;
+  align-content: start;
 }
-.item-modal .rating-comment-grid > * { min-width: 0; margin: 0; }
-.item-modal .rating-fieldset { margin: 0; }
-.item-modal .item-comment-field { margin: 0; }
-.item-modal .item-comment-field textarea { min-height: 62px; }
-.item-modal .star-picker .rating-heart-button {
-  width: 32px;
-  height: 32px;
-  flex-basis: 32px;
-  margin-left: 5px;
-  font-size: 1.2rem;
-}
-.item-modal .star-picker .clear-rating[hidden] { display: none !important; }
-
-/* Private/social extras are quiet inline actions until opened. */
-.item-secondary-actions {
+.stats-genre-other-section { display: grid; gap: 10px; min-width: 0; }
+.stats-genre-other-heading {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  min-height: 28px;
-  margin: -1px 0 1px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 3px 7px;
+  border-bottom: 1px solid rgba(21,36,58,.10);
 }
-.item-secondary-actions[hidden] { display: none !important; }
-.compact-inline-option {
-  flex: 0 0 auto;
-  min-width: 0;
-  border: 0;
-  background: transparent;
+.stats-genre-other-heading h3 { margin: 0; font-size: 1.28rem; }
+.stats-genre-other-heading span { color: var(--muted); font-size: .78rem; font-weight: 700; }
+.stats-genre-other-posters { width: 100%; }
+
+/* Streak scopes: whole Type, each subtype, and user-created subtype groups. */
+.streak-scope-section {
+  display: grid;
+  border-bottom: 1px solid rgba(21,36,58,.10);
 }
-.compact-inline-option[hidden] { display: none !important; }
-.compact-inline-option > summary {
-  min-height: 28px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0;
-  list-style: none;
-  cursor: pointer;
-  color: #777a72;
-  font-size: .75rem;
-  font-weight: 650;
+.streak-scope-section:last-child { border-bottom: 0; }
+.streak-scope-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 10px 5px;
+  background: rgba(255,255,255,.28);
 }
-.compact-inline-option > summary::-webkit-details-marker { display: none; }
-.compact-inline-option > summary small {
-  color: #8a8579;
+.streak-scope-heading strong { font-family: var(--serif); font-size: 1.05rem; font-weight: 400; }
+.streak-scope-heading span { color: var(--muted); font-size: .7rem; }
+.streak-setting-type { position: relative; min-width: 0; }
+.streak-setting-type strong { display: block; }
+.streak-setting-type small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
   font-size: .68rem;
   font-weight: 500;
+  line-height: 1.25;
 }
-.compact-inline-plus {
-  color: #777a72;
-  font-size: .96rem;
-  font-weight: 500;
-  line-height: 1;
+.streak-setting-row[data-streak-scope="subcategory"] .streak-setting-type,
+.streak-setting-row[data-streak-scope="group"] .streak-setting-type { padding-left: 13px; }
+.streak-setting-row[data-streak-scope="subcategory"] .streak-setting-type::before,
+.streak-setting-row[data-streak-scope="group"] .streak-setting-type::before {
+  content: "↳";
+  position: absolute;
+  left: 0;
+  top: 1px;
+  color: var(--muted);
+  opacity: .55;
 }
-.compact-inline-option.has-value > summary,
-.compact-inline-option[open] > summary { color: var(--ink); }
-.compact-inline-option[open] {
-  flex: 1 1 100%;
-  padding: 3px 0 4px;
-}
-.compact-inline-body {
-  display: block;
-  margin-top: 5px;
-}
-.compact-inline-body .field { margin: 0; }
-.compact-buddy-watch {
-  min-height: 28px;
-  padding: 0;
+.streak-group-remove {
+  position: absolute;
+  top: -2px;
+  right: 0;
   border: 0;
-  border-radius: 0;
   background: transparent;
-  gap: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 2px 4px;
 }
-.compact-buddy-watch .buddy-watch-toggle {
-  min-height: 28px;
-  gap: 5px;
-  color: #777a72;
-  font-size: .75rem;
-  font-weight: 650;
-}
-.compact-buddy-watch.is-enabled .buddy-watch-toggle { color: var(--ink); }
-.compact-buddy-watch .buddy-watch-switch {
-  width: 24px;
-  height: 14px;
-  flex-basis: 24px;
-}
-.compact-buddy-watch .buddy-watch-switch::after {
-  width: 10px;
-  height: 10px;
-  top: 2px;
-  left: 2px;
-}
-.compact-buddy-watch .buddy-watch-toggle > input:checked + .buddy-watch-switch::after { transform: translateX(10px); }
-.compact-buddy-watch .buddy-watch-person-field { flex: 0 1 180px; }
-
-/* Status is important, but it does not need another heading. */
-.item-modal .progress-status-field { margin-top: 1px; }
-.item-modal .explicit-status-picker { gap: 6px; }
-.item-modal .explicit-status-picker .status-text-button {
-  min-height: 38px;
-  background: transparent;
-  border-color: rgba(21,36,58,.14);
-  font-size: .82rem;
-}
-.item-modal .explicit-status-picker .status-text-button.is-selected {
-  background: var(--ink);
-  border-color: var(--ink);
-}
-
-/* Attachments are supporting metadata. */
-.item-form .attachment-editor-collapsible { margin-top: 5px; }
-.item-form .attachment-editor-collapsible > summary {
-  min-height: 25px;
+.streak-group-builder { margin: 6px 10px 12px; }
+.streak-group-builder > summary {
   width: max-content;
-  gap: 4px;
-  padding: 0;
-  color: #777a72;
-  font-size: .73rem;
+  list-style: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: .76rem;
+  font-weight: 700;
 }
-.item-form .attachment-editor-collapsible > summary .compact-add-plus {
-  width: auto;
-  height: auto;
-  flex: 0 0 auto;
-  border-radius: 0;
-  background: transparent;
-  font-size: .96rem;
+.streak-group-builder > summary::-webkit-details-marker { display: none; }
+.streak-group-builder-body {
+  display: grid;
+  gap: 10px;
+  margin-top: 9px;
+  padding: 12px;
+  border: 1px solid rgba(21,36,58,.10);
+  border-radius: 12px;
+  background: rgba(255,255,255,.38);
 }
-.item-form .attachment-editor-collapsible > summary small { margin-left: 3px; }
+.streak-group-name { display: grid; gap: 4px; }
+.streak-group-name span { color: var(--muted); font-size: .68rem; font-weight: 700; }
+.streak-group-name input {
+  width: 100%;
+  border: 1px solid rgba(21,36,58,.14);
+  border-radius: 9px;
+  background: #fffdf7;
+  padding: 8px 10px;
+}
+.streak-group-subtype-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.streak-group-subtype-options label { position: relative; cursor: pointer; }
+.streak-group-subtype-options input { position: absolute; opacity: 0; pointer-events: none; }
+.streak-group-subtype-options span {
+  display: inline-flex;
+  padding: 6px 9px;
+  border: 1px solid rgba(21,36,58,.13);
+  border-radius: 999px;
+  background: #fffdf7;
+  font-size: .72rem;
+  font-weight: 700;
+}
+.streak-group-subtype-options input:checked + span {
+  background: var(--blue);
+  border-color: var(--blue-deep);
+  color: #fff8df;
+}
+.streak-group-add { justify-self: start; min-height: 34px; padding: 6px 10px; }
+.streak-group-builder-message { margin: 0; color: var(--rust); font-size: .72rem; }
 
-@media (max-width: 760px) {
-  .item-modal .add-type-subtype-grid {
-    grid-template-columns: minmax(0,1fr) auto !important;
-    gap: 7px;
-  }
-  .subtype-compact-disclosure > summary { padding-inline: 2px; }
-  .item-modal .add-find-title-grid,
-  .item-modal .rating-comment-grid { grid-template-columns: 1fr; gap: 10px; }
-  .item-modal .date-with-actions { flex-wrap: nowrap; }
-  .date-options-disclosure > summary small { max-width: 92px; }
-  .date-options-panel {
-    position: fixed;
-    left: 12px;
-    right: 12px;
-    top: auto;
-    bottom: 14px;
-    width: auto;
-    max-width: none;
-  }
-  .date-options-panel .date-behavior-row {
-    flex-wrap: wrap;
-  }
-  .date-options-panel .date-behavior-row > * { flex: 1 1 auto; }
-  .item-secondary-actions { gap: 3px 12px; }
+@media (max-width: 620px) {
+  .streak-scope-section { gap: 8px; border: 0; }
+  .streak-scope-heading { padding: 8px 2px 2px; background: transparent; align-items: flex-start; }
+  .streak-scope-heading span { max-width: 52%; text-align: right; }
+  .streak-group-builder { margin: 0 3px 14px; }
 }
-
-/* =========================================================
-   Add/Edit v83: explicit progressive disclosure + faster paint
-   ========================================================= */
-/* Closed optional controls must stay visually absent even if an older rule
-   elsewhere in this large stylesheet targets their inner panels. */
-.subtype-compact-disclosure:not([open]) > .subtype-compact-popover,
-.date-options-disclosure:not([open]) > .date-options-panel,
-.compact-inline-option:not([open]) > .compact-inline-body,
-.attachment-editor-collapsible:not([open]) > .attachment-editor-content {
-  display: none !important;
-}
-
-/* Exact default hierarchy: Type + Subtype / Find it + Title / Date + Options /
-   Rating + Comment / Note + People + Buddy Watch / status / Attach. */
-.item-modal .add-type-subtype-grid {
-  grid-template-columns: minmax(0, 1fr) auto !important;
-  align-items: end !important;
-}
-.item-modal .subtype-compact-disclosure > summary,
-.item-modal .date-options-disclosure > summary,
-.item-modal .compact-inline-option > summary,
-.item-modal .attachment-editor-collapsible > summary {
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-}
-.item-modal .subtype-compact-disclosure > summary { min-height: 42px; }
-.item-modal .date-with-actions { min-height: 48px; }
-.item-modal .date-options-disclosure > summary { min-height: 42px; }
-.item-modal .rating-comment-grid { align-items: start; }
-.item-modal .item-secondary-actions { border: 0; background: transparent; }
-.item-modal .progress-status-field { margin-top: 2px; }
-.item-modal .attachment-editor-collapsible { border: 0; background: transparent; }
-
-/* Off-screen sections do not need full layout/paint work during first load. */
-.track-section,
-.albums-section,
-.stats-section {
-  content-visibility: auto;
-}
-.track-section { contain-intrinsic-size: auto 720px; }
-.albums-section { contain-intrinsic-size: auto 420px; }
-.stats-section { contain-intrinsic-size: auto 760px; }
