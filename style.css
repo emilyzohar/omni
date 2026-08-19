@@ -12469,3 +12469,9 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
     gap: 24px !important;
   }
 }
+.tracker-day,
+.tracker-corner,
+.tracker-category,
+.week-weekday {
+  font-weight: 400 !important;
+}
