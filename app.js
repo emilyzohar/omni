@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-genre-streak-85';
-import { API_CONFIG } from './config.js?v=omni-genre-streak-85';
+import { TrackerAPI } from './api.js?v=omni-other-layout-87';
+import { API_CONFIG } from './config.js?v=omni-other-layout-87';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -478,6 +478,8 @@ const els = {
   attachmentBody: $('#attachmentBody'),
   itemDate: $('#itemDate'),
   itemDateField: $('#itemDateField'),
+  itemDateOptionsDisclosure: $('#itemDateOptionsDisclosure'),
+  itemDateOptionsSummary: $('#itemDateOptionsSummary'),
   itemReleaseDate: $('#itemReleaseDate'),
   itemReleaseDateField: $('#itemReleaseDateField'),
   itemRecommended: $('#itemRecommended'),
@@ -5704,6 +5706,7 @@ function resetItemForm(defaultQueueStatus = 'library') {
   els.itemDisplayType.value = 'Workout';
   if (els.itemSubcategory) els.itemSubcategory.value = '';
   if (els.itemSubcategoryDisclosure) els.itemSubcategoryDisclosure.open = false;
+  if (els.itemDateOptionsDisclosure) els.itemDateOptionsDisclosure.open = false;
   if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.open = false;
   if (els.itemAttachmentsDisclosure) els.itemAttachmentsDisclosure.open = false;
   if (els.itemFindSourceDisclosure) els.itemFindSourceDisclosure.open = false;
@@ -5995,7 +5998,7 @@ function clearSourceSelectionForTypeChange() {
 function syncItemSubcategoryDisclosure() {
   if (!els.itemSubcategoryDisclosure) return;
   const value = cleanTypeLabel(els.itemSubcategory?.value || '');
-  if (els.itemSubcategorySummary) els.itemSubcategorySummary.textContent = value ? `· ${value}` : 'optional';
+  if (els.itemSubcategorySummary) els.itemSubcategorySummary.textContent = value ? `· ${value}` : '';
   els.itemSubcategoryDisclosure.classList.toggle('has-value', Boolean(value));
 }
 
@@ -6003,7 +6006,7 @@ function syncItemPeopleDisclosure() {
   if (!els.itemPeopleDisclosure) return;
   const people = parseItemPeople(els.itemPeople?.value || '');
   if (els.itemPeopleSummary) {
-    els.itemPeopleSummary.textContent = people.length ? `· ${people.length} ${people.length === 1 ? 'person' : 'people'}` : 'optional';
+    els.itemPeopleSummary.textContent = people.length ? `· ${people.length} ${people.length === 1 ? 'person' : 'people'}` : '';
   }
   els.itemPeopleDisclosure.classList.toggle('has-value', people.length > 0);
 }
@@ -6015,12 +6018,24 @@ function syncItemAttachmentsDisclosure() {
   const newCount = (state.attachmentDraft?.newFiles || []).length;
   const linkCount = (state.attachmentDraft?.links || []).length;
   const total = existingCount + newCount + linkCount;
-  if (els.itemAttachmentsSummary) els.itemAttachmentsSummary.textContent = total ? `${total} ${total === 1 ? 'item' : 'items'}` : 'optional';
+  if (els.itemAttachmentsSummary) els.itemAttachmentsSummary.textContent = total ? `${total} ${total === 1 ? 'item' : 'items'}` : '';
   els.itemAttachmentsDisclosure.classList.toggle('has-value', total > 0);
+}
+
+function syncItemDateOptionsDisclosure() {
+  if (!els.itemDateOptionsDisclosure) return;
+  const active = [];
+  if (els.itemUseRepeatLog?.checked) active.push('Multiple logs');
+  const repeat = String(els.itemRepeatSummary?.textContent || '').trim();
+  if (repeat) active.push(repeat);
+  if (els.itemUseDateRange?.checked) active.push('Multi-day');
+  if (els.itemDateOptionsSummary) els.itemDateOptionsSummary.textContent = active.length ? `· ${active.join(' · ')}` : '';
+  els.itemDateOptionsDisclosure.classList.toggle('has-value', active.length > 0);
 }
 
 function syncItemOptionalDisclosures() {
   syncItemSubcategoryDisclosure();
+  syncItemDateOptionsDisclosure();
   syncItemPeopleDisclosure();
   syncItemAttachmentsDisclosure();
   syncItemBuddyWatchToggle();
@@ -6203,6 +6218,7 @@ function updateItemFormForType() {
 
   updateReminderFormFields();
   syncItemFeatureSummary();
+  syncItemDateOptionsDisclosure();
   syncItemFindSourceSummary();
   syncItemStatusPicker();
   if (els.manualTitle) els.manualTitle.placeholder = 'Enter title manually';
@@ -6220,6 +6236,7 @@ function updateReminderFormFields() {
     monthly: 'Every month', custom: 'Custom'
   };
   if (els.itemRepeatSummary) els.itemRepeatSummary.textContent = repeatLabels[frequency] || '';
+  syncItemDateOptionsDisclosure();
   const custom = frequency === 'custom';
   const weekly = frequency === 'weekly' || frequency === 'biweekly';
   if (els.reminderWeekdayField) els.reminderWeekdayField.hidden = !weekly;
