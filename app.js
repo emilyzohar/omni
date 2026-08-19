@@ -2796,7 +2796,7 @@ function renderGenrePie(genres = []) {
   for (const [label, countValue] of genres) {
     const count = Number(countValue || 0);
     const share = count / rawTotal;
-    if (STATS_RECOGNIZED_GENRES.has(label) && share >= 0.15) {
+    if (STATS_RECOGNIZED_GENRES.has(label) && share >= 0.02) {
       visible.push({ label, count, labels: [label], isOther: false });
     } else {
       otherGenres.push({ label, count });
