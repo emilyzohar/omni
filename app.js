@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-due-subtypes-log-89';
-import { API_CONFIG } from './config.js?v=omni-due-subtypes-log-89';
+import { TrackerAPI } from './api.js?v=omni-release-only-91';
+import { API_CONFIG } from './config.js?v=omni-release-only-91';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -5100,8 +5100,25 @@ function reconcileLocalProgressQueues() {
     const dueReminder = !markedDone && item.reminder && getNextReminderDueDate(item) && getNextReminderDueDate(item) <= today;
     const scheduledDate = item.date || item.eventMeta?.eventDate || '';
     const dueScheduledEvent = !markedDone && ['event','concert'].includes(sourceType) && item.queueCalendarScheduled === true && scheduledDate && scheduledDate <= today;
-    const dueDatedItem = !markedDone && !item.reminder && !['book','tv'].includes(sourceType) && !item.calendarHidden && item.date && item.date <= today;
-    if ((dueReminder || dueScheduledEvent || dueDatedItem) && getQueueStatus(item) !== 'upnext') {
+
+    // `item.date` is a tracked/calendar date, not an availability date. Never use
+    // it by itself to move ordinary items into Up Next. Clean up items that the
+    // previous build already promoted for that reason. Real release dates live in
+    // `releaseDate`; TV uses aired/unwatched episodes; reminders and explicitly
+    // scheduled live events have their own due-date rules.
+    const hasRealReleaseDate = RELEASE_QUEUE_SOURCE_TYPES.has(sourceType) && Boolean(itemReleaseDate(item));
+    const trackedDateOnlyLeak = getQueueStatus(item) === 'upnext'
+      && !item.reminder
+      && !( ['event','concert'].includes(sourceType) && item.queueCalendarScheduled === true )
+      && !hasRealReleaseDate
+      && Boolean(item.date && item.date <= today);
+    if (trackedDateOnlyLeak) {
+      setItemQueueStatus(item, 'library');
+      item.updatedAt = new Date().toISOString();
+      changed = true;
+    }
+
+    if ((dueReminder || dueScheduledEvent) && getQueueStatus(item) !== 'upnext') {
       setItemQueueStatus(item, 'upnext');
       item.updatedAt = new Date().toISOString();
       changed = true;
@@ -7308,12 +7325,6 @@ async function saveItemFromForm(event) {
   }
 
   applyReleaseQueueAutomation(item);
-
-  // Logging a real date/progress on something that was sitting in TBR means it has started.
-  // Preserve deliberate TBR saves, but do not leave an edited/logged item stranded there.
-  if (editing && getQueueStatus(editing) === 'tbr' && item.date && item.date !== editing.date && getQueueStatus(item) === 'tbr') {
-    resumeTbrItemAfterLog(item);
-  }
 
   if (editing) {
     state.items = state.items.map(existing => existing.id === item.id ? item : existing);
@@ -16589,20 +16600,8 @@ function safeLocalSet(key, value) {
   }
 }
 
-function resumeTbrItemAfterLog(item) {
-  if (!item || getQueueStatus(item) !== 'tbr' || item.completedAt) return;
-  const sourceType = getSourceType(item);
-  if (['event','concert','restaurant','place'].includes(sourceType)) return;
-  if (sourceType === 'tv') item.watchDisposition = 'following';
-  if (sourceType === 'book') item.bookDisposition = '';
-  if (sourceType === 'movie') item.mediaDisposition = '';
-  setItemQueueStatus(item, 'upnext');
-  item.updatedAt = new Date().toISOString();
-}
-
 function addHistoryRecord(record) {
   const source = record?.sourceItemId ? findItem(record.sourceItemId) : null;
-  if (source && record?.date && record?.showOnCalendar !== false) resumeTbrItemAfterLog(source);
   const repeatKey = historyRepeatIdentity(record);
   const priorRepeats = repeatKey ? state.history.filter(entry => historyRepeatIdentity(entry) === repeatKey).length : 0;
   const isRepeat = record?.rewatch == null ? priorRepeats > 0 : Boolean(record.rewatch);
