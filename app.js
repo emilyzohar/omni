@@ -10,6 +10,7 @@ const DISCOVER_PREFS_KEY = 'zoharTracker.discoverPrefs.v1';
 const STICKER_PREFS_KEY = 'zoharTracker.stickerPrefs.v1';
 const STREAK_PREFS_KEY = 'zoharTracker.streakPrefs.v1';
 const LIBRARY_PREFS_KEY = 'zoharTracker.libraryPrefs.v1';
+const LETTERBOXD_PREFS_KEY = 'zoharTracker.letterboxdPrefs.v1';
 const ALBUMS_KEY = 'zoharTracker.albums.v1';
 const TYPE_USAGE_KEY = 'zoharTracker.typeUsage.v1';
 const PHOTO_UPLOAD_LOG_KEY = 'zoharTracker.photoUploadLog.v1';
@@ -73,7 +74,7 @@ const CALENDAR_THEMES = [
   { id: 'espresso', label: 'Espresso' }
 ];
 
-const CLOUD_STATE_VERSION = 3;
+const CLOUD_STATE_VERSION = 4;
 const TICKETMASTER_EVENT_CATEGORIES = [
   { key: 'music', label: 'Music', classificationName: 'Music' },
   { key: 'sports', label: 'Sports', classificationName: 'Sports' },
@@ -146,6 +147,18 @@ function syncDiscoverTypeFilterUI() {
 }
 
 const DEFAULT_LIBRARY_PREFS = { defaultTypeKeys: null };
+const DEFAULT_LETTERBOXD_PREFS = { username: '', autoSync: true, lastSyncAt: '', lastImportAt: '' };
+function normalizeLetterboxdPrefs(value = {}) {
+  const username = String(value?.username || '').trim().replace(/^@/, '').toLowerCase();
+  return {
+    ...DEFAULT_LETTERBOXD_PREFS,
+    ...(value && typeof value === 'object' ? value : {}),
+    username,
+    autoSync: value?.autoSync !== false,
+    lastSyncAt: String(value?.lastSyncAt || ''),
+    lastImportAt: String(value?.lastImportAt || '')
+  };
+}
 let currentUser = null;
 let appStarted = false;
 let localOnlyMode = false;
@@ -170,6 +183,7 @@ const state = {
   stickerPrefs: loadJSON(STICKER_PREFS_KEY, {}),
   streakPrefs: loadJSON(STREAK_PREFS_KEY, {}),
   libraryPrefs: loadJSON(LIBRARY_PREFS_KEY, DEFAULT_LIBRARY_PREFS),
+  letterboxdPrefs: normalizeLetterboxdPrefs(loadJSON(LETTERBOXD_PREFS_KEY, DEFAULT_LETTERBOXD_PREFS)),
   watchProviderCatalog: [],
   discoverProviderDraft: new Map(),
   selectedSource: null,
@@ -304,6 +318,16 @@ const els = {
   libraryGroups: $('#libraryGroups'),
   libraryEmpty: $('#libraryEmpty'),
   openLibraryMap: $('#openLibraryMap'),
+  openLetterboxd: $('#openLetterboxd'),
+  letterboxdModal: $('#letterboxdModal'),
+  letterboxdUsername: $('#letterboxdUsername'),
+  letterboxdAutoSync: $('#letterboxdAutoSync'),
+  letterboxdSaveConnection: $('#letterboxdSaveConnection'),
+  letterboxdSyncNow: $('#letterboxdSyncNow'),
+  letterboxdImportFiles: $('#letterboxdImportFiles'),
+  letterboxdImportButton: $('#letterboxdImportButton'),
+  letterboxdStatus: $('#letterboxdStatus'),
+  letterboxdLastSync: $('#letterboxdLastSync'),
   statsSummary: $('#statsSummary'),
   statsTypes: $('#statsTypes'),
   statsGenres: $('#statsGenres'),
@@ -679,6 +703,7 @@ async function startForUser(user) {
     await hydrateCloudProfile(user.id);
     unlockApp();
     startAppOnce();
+    scheduleLetterboxdAutoSync();
     initializeSocialForUser().catch(error => console.warn('[Social] background initialization failed:', error));
     maybeShowOnboarding(user);
     setSyncStatus('Synced');
@@ -1699,6 +1724,10 @@ function bindEvents() {
     slice.click();
   });
   els.openLibraryMap?.addEventListener('click', () => openLibraryMap().catch(error => alert(error?.message || 'Could not load map.')));
+  els.openLetterboxd?.addEventListener('click', openLetterboxdSettings);
+  els.letterboxdSaveConnection?.addEventListener('click', saveLetterboxdConnection);
+  els.letterboxdSyncNow?.addEventListener('click', () => syncLetterboxdRecent({ manual: true }));
+  els.letterboxdImportButton?.addEventListener('click', importSelectedLetterboxdFiles);
   els.refreshDiscover?.addEventListener('click', () => renderDiscover(true));
   els.discoverCalendarPrevious?.addEventListener('click', () => shiftDiscoverCalendarMonth(-1));
   els.discoverCalendarToday?.addEventListener('click', () => jumpDiscoverCalendarToToday());
@@ -15834,6 +15863,7 @@ function saveCurrentLibraryFilterAsDefault() {
   const selected = [...ensureLibraryVisibleTypes()];
   state.libraryPrefs = { ...normalizeLibraryPrefs(state.libraryPrefs), defaultTypeKeys: [...new Set(selected)] };
   safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
+  safeLocalSet(LETTERBOXD_PREFS_KEY, state.letterboxdPrefs);
   scheduleCloudSync();
   libraryFilterStatus('Default saved');
 }
@@ -15843,6 +15873,7 @@ function resetLibraryFilterDefault() {
   state.libraryPrefs = { ...normalizeLibraryPrefs(state.libraryPrefs), defaultTypeKeys: core };
   state.libraryVisibleTypes = new Set(core);
   safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
+  safeLocalSet(LETTERBOXD_PREFS_KEY, state.letterboxdPrefs);
   scheduleCloudSync();
   refreshTypeFilter();
   renderLibrary();
@@ -15883,6 +15914,7 @@ function saveLibrarySettings(event) {
     .map(input => input.value);
   state.libraryPrefs = { defaultTypeKeys: [...new Set(selected)] };
   safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
+  safeLocalSet(LETTERBOXD_PREFS_KEY, state.letterboxdPrefs);
   state.libraryVisibleTypes = new Set(state.libraryPrefs.defaultTypeKeys);
   scheduleCloudSync();
   els.librarySettingsModal?.close();
@@ -16493,6 +16525,504 @@ function libraryTypeGroupLabel(items = [], groupKey = '') {
 }
 
 
+
+// ---------------------------
+// LETTERBOXD
+// ---------------------------
+const LETTERBOXD_AUTO_SYNC_MS = 6 * 60 * 60 * 1000;
+let letterboxdSyncBusy = false;
+let letterboxdImportBusy = false;
+
+function setLetterboxdStatus(message, error = false) {
+  if (!els.letterboxdStatus) return;
+  els.letterboxdStatus.textContent = message || '';
+  els.letterboxdStatus.hidden = !message;
+  els.letterboxdStatus.classList.toggle('is-error', Boolean(error));
+}
+
+function formatLetterboxdTimestamp(value) {
+  const time = Date.parse(String(value || ''));
+  if (!Number.isFinite(time)) return 'Never';
+  return new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(time));
+}
+
+function renderLetterboxdSettings() {
+  state.letterboxdPrefs = normalizeLetterboxdPrefs(state.letterboxdPrefs);
+  if (els.letterboxdUsername) els.letterboxdUsername.value = state.letterboxdPrefs.username || '';
+  if (els.letterboxdAutoSync) els.letterboxdAutoSync.checked = state.letterboxdPrefs.autoSync !== false;
+  if (els.letterboxdLastSync) {
+    const bits = [];
+    if (state.letterboxdPrefs.lastSyncAt) bits.push(`Recent sync: ${formatLetterboxdTimestamp(state.letterboxdPrefs.lastSyncAt)}`);
+    if (state.letterboxdPrefs.lastImportAt) bits.push(`Full import: ${formatLetterboxdTimestamp(state.letterboxdPrefs.lastImportAt)}`);
+    els.letterboxdLastSync.textContent = bits.length ? bits.join(' · ') : 'Not synced yet.';
+  }
+}
+
+function openLetterboxdSettings() {
+  renderLetterboxdSettings();
+  setLetterboxdStatus('');
+  if (els.letterboxdImportFiles) els.letterboxdImportFiles.value = '';
+  showDialogAtTop(els.letterboxdModal);
+}
+
+function validLetterboxdUsername(value) {
+  return /^[a-z0-9][a-z0-9_-]{0,29}$/i.test(String(value || '').trim().replace(/^@/, ''));
+}
+
+function saveLetterboxdConnection() {
+  const username = String(els.letterboxdUsername?.value || '').trim().replace(/^@/, '').toLowerCase();
+  if (username && !validLetterboxdUsername(username)) {
+    setLetterboxdStatus('Enter a valid Letterboxd username.', true);
+    return false;
+  }
+  state.letterboxdPrefs = normalizeLetterboxdPrefs({
+    ...state.letterboxdPrefs,
+    username,
+    autoSync: Boolean(els.letterboxdAutoSync?.checked)
+  });
+  safeLocalSet(LETTERBOXD_PREFS_KEY, state.letterboxdPrefs);
+  scheduleCloudSync();
+  renderLetterboxdSettings();
+  setLetterboxdStatus(username ? 'Letterboxd connection saved.' : 'Letterboxd connection cleared.');
+  if (username && state.letterboxdPrefs.autoSync) setTimeout(() => syncLetterboxdRecent({ manual: false }), 100);
+  return true;
+}
+
+function scheduleLetterboxdAutoSync() {
+  const prefs = normalizeLetterboxdPrefs(state.letterboxdPrefs);
+  if (!prefs.username || prefs.autoSync === false) return;
+  const last = Date.parse(prefs.lastSyncAt || '');
+  if (Number.isFinite(last) && Date.now() - last < LETTERBOXD_AUTO_SYNC_MS) return;
+  setTimeout(() => syncLetterboxdRecent({ manual: false }).catch(error => console.warn('[Letterboxd] automatic sync failed:', error)), 1600);
+}
+
+async function fetchLetterboxdRSS(username) {
+  const clean = String(username || '').trim().replace(/^@/, '').toLowerCase();
+  if (!validLetterboxdUsername(clean)) throw new Error('Enter a valid Letterboxd username first.');
+  const url = `https://letterboxd.com/${encodeURIComponent(clean)}/rss/`;
+  let directError = null;
+  try {
+    const response = await fetch(url, { headers: { Accept: 'application/rss+xml, application/xml, text/xml, */*' } });
+    if (response.ok) return await response.text();
+    directError = new Error(`Letterboxd returned ${response.status}.`);
+  } catch (error) {
+    directError = error;
+  }
+
+  if (supabase && !localOnlyMode) {
+    try {
+      const { data, error } = await supabase.functions.invoke('letterboxd-rss', { body: { username: clean } });
+      if (error) throw error;
+      if (typeof data === 'string' && data.trim().startsWith('<')) return data;
+      if (data?.xml) return String(data.xml);
+    } catch (error) {
+      console.warn('[Letterboxd] Supabase RSS proxy unavailable:', error?.message || error);
+    }
+  }
+  const suffix = directError?.message ? ` (${directError.message})` : '';
+  throw new Error(`Could not read the Letterboxd RSS feed${suffix}. Deploy the included Supabase letterboxd-rss function if your browser blocks direct RSS access.`);
+}
+
+function letterboxdXmlText(node, tagName) {
+  return String(node?.getElementsByTagName(tagName)?.[0]?.textContent || '').trim();
+}
+
+function parseLetterboxdRSS(xml) {
+  const doc = new DOMParser().parseFromString(String(xml || ''), 'application/xml');
+  if (doc.querySelector('parsererror')) throw new Error('Letterboxd returned an unreadable RSS feed.');
+  return [...doc.getElementsByTagName('item')].map(node => ({
+    guid: letterboxdXmlText(node, 'guid'),
+    title: letterboxdXmlText(node, 'letterboxd:filmTitle') || letterboxdXmlText(node, 'title').replace(/,\s*\d{4}\s*-.*$/, ''),
+    year: Number(letterboxdXmlText(node, 'letterboxd:filmYear') || 0),
+    watchedDate: letterboxdXmlText(node, 'letterboxd:watchedDate'),
+    rating: Number(letterboxdXmlText(node, 'letterboxd:memberRating') || 0),
+    rewatch: /^yes|true|1$/i.test(letterboxdXmlText(node, 'letterboxd:rewatch')),
+    liked: /^yes|true|1$/i.test(letterboxdXmlText(node, 'letterboxd:memberLike')),
+    tmdbMovieId: letterboxdXmlText(node, 'tmdb:movieId'),
+    tmdbTvId: letterboxdXmlText(node, 'tmdb:tvId'),
+    uri: letterboxdXmlText(node, 'link'),
+    source: 'rss'
+  })).filter(entry => entry.title && (entry.tmdbMovieId || entry.tmdbTvId));
+}
+
+function normalizeLetterboxdTitle(value) {
+  return normalizeSearchText(String(value || '')).replace(/^the\s+/, '').trim();
+}
+
+function letterboxdTMDBResult(sourceType, details) {
+  if (!details?.id) return null;
+  const title = sourceType === 'tv' ? details.name : details.title;
+  const date = sourceType === 'tv' ? details.first_air_date : details.release_date;
+  return {
+    sourceType,
+    provider: 'tmdb',
+    providerId: String(details.id),
+    title: title || 'Untitled',
+    subtitle: String(date || '').slice(0, 4),
+    image: TrackerAPI.tmdbImage(details.poster_path),
+    description: details.overview || '',
+    genres: (details.genres || []).map(genre => genre?.name).filter(Boolean),
+    raw: details
+  };
+}
+
+async function resolveLetterboxdTMDBEntry(entry) {
+  if (entry.tmdbMovieId) {
+    const id = String(entry.tmdbMovieId);
+    const details = await getCached(`movie:${id}`, () => TrackerAPI.getMovieDetails(id, state.settings));
+    return letterboxdTMDBResult('movie', details);
+  }
+  if (entry.tmdbTvId) {
+    const id = String(entry.tmdbTvId);
+    const details = await getCached(`tv:${id}`, () => TrackerAPI.getTVDetails(id, state.settings));
+    return letterboxdTMDBResult('tv', details);
+  }
+
+  const results = await TrackerAPI.searchCatalogue(entry.title, 'movie', state.settings);
+  const wantedTitle = normalizeLetterboxdTitle(entry.title);
+  const wantedYear = Number(entry.year || 0);
+  const ranked = (results || []).map(result => {
+    const rawTitle = result.raw?.title || result.title || '';
+    const original = result.raw?.original_title || '';
+    const year = Number(String(result.raw?.release_date || result.subtitle || '').slice(0, 4) || 0);
+    let score = 0;
+    if (normalizeLetterboxdTitle(rawTitle) === wantedTitle) score += 12;
+    if (normalizeLetterboxdTitle(original) === wantedTitle) score += 10;
+    if (wantedYear && year === wantedYear) score += 8;
+    else if (wantedYear && Math.abs(year - wantedYear) === 1) score += 2;
+    score += Math.min(2, Number(result.raw?.popularity || 0) / 100);
+    return { result, score };
+  }).sort((a, b) => b.score - a.score);
+  const match = ranked[0];
+  if (!match || match.score < (wantedYear ? 12 : 10)) return null;
+  return { ...match.result, sourceType: 'movie' };
+}
+
+function ensureLetterboxdLibraryItem(result, queueStatus = 'library') {
+  let item = findCanonicalLibraryItem(result);
+  if (item) return item;
+  const sourceType = result.sourceType === 'tv' ? 'tv' : 'movie';
+  item = {
+    id: makeId(), sourceType, type: sourceType, typeLabel: SOURCE_ITEM_LABELS[sourceType] || getTypeLabel(sourceType), subcategory: '',
+    title: result.title || 'Untitled', provider: 'tmdb', providerId: String(result.providerId || ''), image: result.image || '', subtitle: result.subtitle || '',
+    rating: 0, notes: '', recommended: false, genres: extractItemGenres(sourceType, result, null), releaseDate: extractItemReleaseDate(sourceType, result, null),
+    attachments: [], links: [], date: '', queueStatus, active: queueStatus === 'upnext', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    progress: sourceType === 'tv' ? { nextSeason: 1, nextEpisode: 1 } : {}, raw: result.raw ? { ...result.raw } : {}
+  };
+  state.items.push(item);
+  return item;
+}
+
+function letterboxdHistoryAlreadyExists(item, entry) {
+  return state.history.find(record => {
+    if (record.sourceItemId !== item.id) return false;
+    if (entry.guid && record.letterboxdGuid === entry.guid) return true;
+    const kind = getSourceType(item) === 'tv' ? 'series-watched' : 'movie-watched';
+    return record.kind === kind && entry.watchedDate && record.date === entry.watchedDate;
+  }) || null;
+}
+
+function applyLetterboxdEntry(item, entry, options = {}) {
+  const sourceType = getSourceType(item);
+  const watched = options.watched !== false;
+  if (entry.uri) item.letterboxdUri = entry.uri;
+  item.letterboxdUsername = state.letterboxdPrefs?.username || item.letterboxdUsername || '';
+  if (Number(entry.rating || 0) > 0) item.rating = Math.max(0, Math.min(5, Number(entry.rating)));
+  if (entry.liked) item.recommended = true;
+  item.updatedAt = new Date().toISOString();
+
+  if (!watched) {
+    if (!item.completedAt && !itemHasCompletionRecord(item) && getQueueStatus(item) === 'library') setItemQueueStatus(item, 'tbr');
+    return { historyAdded: false };
+  }
+
+  setItemQueueStatus(item, 'library');
+  const existing = letterboxdHistoryAlreadyExists(item, entry);
+  if (existing) {
+    if (entry.guid && !existing.letterboxdGuid) existing.letterboxdGuid = entry.guid;
+    if (Number(entry.rating || 0) > 0) existing.rating = Number(entry.rating);
+    if (entry.uri && !existing.letterboxdUri) existing.letterboxdUri = entry.uri;
+    return { historyAdded: false };
+  }
+
+  const kind = sourceType === 'tv' ? 'series-watched' : 'movie-watched';
+  addHistoryRecord({
+    sourceItemId: item.id,
+    type: item.type,
+    typeLabel: getItemTypeLabel(item),
+    date: entry.watchedDate || '',
+    showOnCalendar: Boolean(entry.watchedDate),
+    kind,
+    title: item.title,
+    subtitle: item.subtitle || '',
+    notes: '',
+    rating: Number(entry.rating || item.rating || 0),
+    image: item.image || '',
+    provider: item.provider,
+    providerId: item.providerId,
+    rewatch: Boolean(entry.rewatch),
+    letterboxdGuid: entry.guid || '',
+    letterboxdUri: entry.uri || '',
+    importedFrom: 'letterboxd'
+  });
+  if (entry.watchedDate && (!item.completedAt || entry.watchedDate > item.completedAt)) item.completedAt = entry.watchedDate;
+  return { historyAdded: true };
+}
+
+async function syncLetterboxdRecent({ manual = false } = {}) {
+  if (letterboxdSyncBusy) return;
+  if (manual && !saveLetterboxdConnection()) return;
+  const prefs = normalizeLetterboxdPrefs(state.letterboxdPrefs);
+  if (!prefs.username) {
+    if (manual) setLetterboxdStatus('Enter your Letterboxd username first.', true);
+    return;
+  }
+  letterboxdSyncBusy = true;
+  if (els.letterboxdSyncNow) els.letterboxdSyncNow.disabled = true;
+  if (manual) setLetterboxdStatus('Reading recent Letterboxd diary entries…');
+  try {
+    const xml = await fetchLetterboxdRSS(prefs.username);
+    const entries = parseLetterboxdRSS(xml);
+    let added = 0;
+    let updated = 0;
+    let skipped = 0;
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      if (manual) setLetterboxdStatus(`Syncing ${index + 1} of ${entries.length}: ${entry.title}`);
+      try {
+        const result = await resolveLetterboxdTMDBEntry(entry);
+        if (!result) { skipped += 1; continue; }
+        const item = ensureLetterboxdLibraryItem(result, 'library');
+        const outcome = applyLetterboxdEntry(item, entry, { watched: true });
+        if (outcome.historyAdded) added += 1; else updated += 1;
+      } catch (error) {
+        console.warn('[Letterboxd] could not sync entry:', entry.title, error?.message || error);
+        skipped += 1;
+      }
+    }
+    state.letterboxdPrefs = normalizeLetterboxdPrefs({ ...prefs, lastSyncAt: new Date().toISOString() });
+    safeLocalSet(LETTERBOXD_PREFS_KEY, state.letterboxdPrefs);
+    saveItems();
+    saveHistory();
+    renderAll();
+    renderLetterboxdSettings();
+    if (manual) setLetterboxdStatus(`Synced Letterboxd: ${added} new log${added === 1 ? '' : 's'}, ${updated} already known${skipped ? `, ${skipped} skipped` : ''}.`);
+  } catch (error) {
+    if (manual) setLetterboxdStatus(error?.message || 'Letterboxd sync failed.', true);
+    else console.warn('[Letterboxd] automatic sync failed:', error);
+  } finally {
+    letterboxdSyncBusy = false;
+    if (els.letterboxdSyncNow) els.letterboxdSyncNow.disabled = false;
+  }
+}
+
+function parseCSVText(text) {
+  const rows = [];
+  let row = [];
+  let value = '';
+  let quoted = false;
+  const input = String(text || '').replace(/^\uFEFF/, '');
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (input[i + 1] === '"') { value += '"'; i += 1; }
+        else quoted = false;
+      } else if (ch === '\\' && input[i + 1] === '"') { value += '"'; i += 1; }
+      else value += ch;
+      continue;
+    }
+    if (ch === '"') quoted = true;
+    else if (ch === ',') { row.push(value); value = ''; }
+    else if (ch === '\n') { row.push(value.replace(/\r$/, '')); rows.push(row); row = []; value = ''; }
+    else value += ch;
+  }
+  if (value.length || row.length) { row.push(value.replace(/\r$/, '')); rows.push(row); }
+  if (!rows.length) return [];
+  const headers = rows[0].map(header => String(header || '').trim());
+  return rows.slice(1).filter(values => values.some(cell => String(cell || '').trim())).map(values => Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ''])));
+}
+
+function letterboxdCell(row, names) {
+  const normalized = new Map(Object.entries(row || {}).map(([key, value]) => [String(key).toLowerCase().replace(/[^a-z0-9]/g, ''), value]));
+  for (const name of names) {
+    const value = normalized.get(String(name).toLowerCase().replace(/[^a-z0-9]/g, ''));
+    if (value != null && String(value).trim() !== '') return String(value).trim();
+  }
+  return '';
+}
+
+async function inflateZipEntry(bytes, method) {
+  if (method === 0) return bytes;
+  if (method !== 8) throw new Error(`Unsupported ZIP compression method ${method}.`);
+  if (typeof DecompressionStream !== 'function') throw new Error('This browser cannot open ZIP exports. Unzip the Letterboxd export and select the CSV files instead.');
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function readZipTextFiles(file) {
+  const buffer = await file.arrayBuffer();
+  const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  let eocd = -1;
+  for (let offset = Math.max(0, bytes.length - 22); offset >= Math.max(0, bytes.length - 65557); offset -= 1) {
+    if (view.getUint32(offset, true) === 0x06054b50) { eocd = offset; break; }
+  }
+  if (eocd < 0) throw new Error('Could not read the Letterboxd ZIP export.');
+  const entries = view.getUint16(eocd + 10, true);
+  let cursor = view.getUint32(eocd + 16, true);
+  const decoder = new TextDecoder('utf-8');
+  const output = [];
+  for (let index = 0; index < entries; index += 1) {
+    if (view.getUint32(cursor, true) !== 0x02014b50) break;
+    const method = view.getUint16(cursor + 10, true);
+    const compressedSize = view.getUint32(cursor + 20, true);
+    const nameLength = view.getUint16(cursor + 28, true);
+    const extraLength = view.getUint16(cursor + 30, true);
+    const commentLength = view.getUint16(cursor + 32, true);
+    const localOffset = view.getUint32(cursor + 42, true);
+    const name = decoder.decode(bytes.slice(cursor + 46, cursor + 46 + nameLength));
+    if (/\.csv$/i.test(name) && view.getUint32(localOffset, true) === 0x04034b50) {
+      const localNameLength = view.getUint16(localOffset + 26, true);
+      const localExtraLength = view.getUint16(localOffset + 28, true);
+      const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+      const compressed = bytes.slice(dataStart, dataStart + compressedSize);
+      const inflated = await inflateZipEntry(compressed, method);
+      output.push({ name, text: decoder.decode(inflated) });
+    }
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  return output;
+}
+
+async function readLetterboxdImportFiles(fileList) {
+  const output = [];
+  for (const file of [...(fileList || [])]) {
+    if (/\.zip$/i.test(file.name)) output.push(...await readZipTextFiles(file));
+    else if (/\.csv$/i.test(file.name) || /csv/i.test(file.type || '')) output.push({ name: file.name, text: await file.text() });
+  }
+  return output;
+}
+
+function classifyLetterboxdCSV(name) {
+  const base = String(name || '').split('/').pop().toLowerCase();
+  if (base === 'diary.csv') return 'diary';
+  if (base === 'ratings.csv') return 'ratings';
+  if (base === 'watched.csv') return 'watched';
+  if (base === 'watchlist.csv') return 'watchlist';
+  if (base === 'reviews.csv') return 'reviews';
+  return 'generic';
+}
+
+function aggregateLetterboxdCSVFiles(files) {
+  const films = new Map();
+  for (const file of files) {
+    const kind = classifyLetterboxdCSV(file.name);
+    if (!['diary','ratings','watched','watchlist','generic'].includes(kind)) continue;
+    for (const row of parseCSVText(file.text)) {
+      const title = letterboxdCell(row, ['Name','Title','Film']);
+      const year = Number(letterboxdCell(row, ['Year']) || 0);
+      if (!title) continue;
+      const uri = letterboxdCell(row, ['Letterboxd URI','LetterboxdURI','url']);
+      const tmdbID = letterboxdCell(row, ['tmdbID','TMDB ID']);
+      const key = uri || `${normalizeLetterboxdTitle(title)}:${year || ''}`;
+      const film = films.get(key) || { title, year, uri, tmdbMovieId: tmdbID, rating: 0, liked: false, watched: false, watchlist: false, diaries: [] };
+      const rating = Number(letterboxdCell(row, ['Rating']) || 0);
+      if (rating > 0) film.rating = rating;
+      if (tmdbID && !film.tmdbMovieId) film.tmdbMovieId = tmdbID;
+      if (uri && !film.uri) film.uri = uri;
+      const liked = letterboxdCell(row, ['Liked','Like','memberLike']);
+      if (/^(yes|true|1)$/i.test(liked)) film.liked = true;
+      if (kind === 'watchlist') film.watchlist = true;
+      if (['diary','ratings','watched'].includes(kind)) film.watched = true;
+      const watchedDate = letterboxdCell(row, ['Watched Date','WatchedDate']);
+      if (kind === 'diary' || watchedDate) {
+        const date = watchedDate || letterboxdCell(row, ['Date']);
+        if (date) film.diaries.push({
+          title, year, watchedDate: date.slice(0, 10), rating: rating || 0,
+          rewatch: /^(yes|true|1)$/i.test(letterboxdCell(row, ['Rewatch'])), uri,
+          source: 'csv'
+        });
+      }
+      films.set(key, film);
+    }
+  }
+  return [...films.values()];
+}
+
+async function importSelectedLetterboxdFiles() {
+  if (letterboxdImportBusy) return;
+  const selected = [...(els.letterboxdImportFiles?.files || [])];
+  if (!selected.length) { setLetterboxdStatus('Choose the Letterboxd export ZIP or CSV files first.', true); return; }
+  letterboxdImportBusy = true;
+  if (els.letterboxdImportButton) els.letterboxdImportButton.disabled = true;
+  try {
+    setLetterboxdStatus('Reading Letterboxd export…');
+    const files = await readLetterboxdImportFiles(selected);
+    const useful = files.filter(file => ['diary','ratings','watched','watchlist','generic'].includes(classifyLetterboxdCSV(file.name)));
+    if (!useful.length) throw new Error('No diary.csv, ratings.csv, watched.csv, watchlist.csv, or compatible CSV was found.');
+    const films = aggregateLetterboxdCSVFiles(useful);
+    if (!films.length) throw new Error('No films were found in those Letterboxd files.');
+
+    let matched = 0;
+    let unmatched = 0;
+    let logsAdded = 0;
+    let watchlistAdded = 0;
+    const unmatchedTitles = [];
+    for (let index = 0; index < films.length; index += 1) {
+      const film = films[index];
+      setLetterboxdStatus(`Matching ${index + 1} of ${films.length}: ${film.title}${film.year ? ` (${film.year})` : ''}`);
+      try {
+        const result = await resolveLetterboxdTMDBEntry(film);
+        if (!result) { unmatched += 1; unmatchedTitles.push(film.title); continue; }
+        matched += 1;
+        const desiredQueue = film.watched ? 'library' : film.watchlist ? 'tbr' : 'library';
+        const item = ensureLetterboxdLibraryItem(result, desiredQueue);
+        if (film.rating > 0) item.rating = Math.max(0, Math.min(5, Number(film.rating)));
+        if (film.liked) item.recommended = true;
+        if (film.uri) item.letterboxdUri = film.uri;
+        item.letterboxdUsername = state.letterboxdPrefs?.username || item.letterboxdUsername || '';
+
+        if (film.watched) {
+          setItemQueueStatus(item, 'library');
+          if (film.diaries.length) {
+            for (const diary of film.diaries.sort((a,b) => a.watchedDate.localeCompare(b.watchedDate))) {
+              const outcome = applyLetterboxdEntry(item, { ...diary, rating: diary.rating || film.rating, liked: film.liked }, { watched: true });
+              if (outcome.historyAdded) logsAdded += 1;
+            }
+          } else if (!state.history.some(entry => entry.sourceItemId === item.id && ['movie-watched','series-watched'].includes(entry.kind))) {
+            const outcome = applyLetterboxdEntry(item, { title: film.title, rating: film.rating, uri: film.uri, liked: film.liked, watchedDate: '', source: 'csv' }, { watched: true });
+            if (outcome.historyAdded) logsAdded += 1;
+          }
+        } else if (film.watchlist && !itemHasCompletionRecord(item)) {
+          if (getQueueStatus(item) === 'library') setItemQueueStatus(item, 'tbr');
+          watchlistAdded += 1;
+        }
+        item.updatedAt = new Date().toISOString();
+      } catch (error) {
+        console.warn('[Letterboxd] import match failed:', film.title, error?.message || error);
+        unmatched += 1;
+        unmatchedTitles.push(film.title);
+      }
+      if ((index + 1) % 12 === 0) await new Promise(resolve => setTimeout(resolve, 80));
+    }
+
+    state.letterboxdPrefs = normalizeLetterboxdPrefs({ ...state.letterboxdPrefs, lastImportAt: new Date().toISOString() });
+    safeLocalSet(LETTERBOXD_PREFS_KEY, state.letterboxdPrefs);
+    saveItems();
+    saveHistory();
+    renderAll();
+    renderLetterboxdSettings();
+    const unmatchedNote = unmatched ? ` ${unmatched} could not be matched${unmatchedTitles.length ? ` (${unmatchedTitles.slice(0, 3).join(', ')}${unmatchedTitles.length > 3 ? '…' : ''})` : ''}.` : '';
+    setLetterboxdStatus(`Import complete: ${matched} films matched, ${logsAdded} watch log${logsAdded === 1 ? '' : 's'} added${watchlistAdded ? `, ${watchlistAdded} watchlist item${watchlistAdded === 1 ? '' : 's'} added` : ''}.${unmatchedNote}`);
+  } catch (error) {
+    setLetterboxdStatus(error?.message || 'Could not import the Letterboxd export.', true);
+  } finally {
+    letterboxdImportBusy = false;
+    if (els.letterboxdImportButton) els.letterboxdImportButton.disabled = false;
+  }
+}
+
 // ---------------------------
 // SETTINGS / CACHE / STORAGE
 // ---------------------------
@@ -16543,6 +17073,7 @@ function buildCloudState() {
     stickerPrefs: state.stickerPrefs,
     streakPrefs: state.streakPrefs,
     libraryPrefs: normalizeLibraryPrefs(state.libraryPrefs),
+    letterboxdPrefs: normalizeLetterboxdPrefs(state.letterboxdPrefs),
     logTypePrefs: [...enabledLogTypeKeys()]
   };
 }
@@ -16558,6 +17089,7 @@ function hasMeaningfulLocalState(snapshot = buildCloudState()) {
     Object.keys(snapshot.stickerPrefs || {}).length ||
     Object.keys(snapshot.streakPrefs || {}).length ||
     Array.isArray(snapshot.libraryPrefs?.defaultTypeKeys) ||
+    snapshot.letterboxdPrefs?.username ||
     snapshot.discoverPrefs?.streamingProviderIds?.length
   );
 }
@@ -16579,6 +17111,7 @@ async function persistCloudStateLocally(snapshot) {
     ? snapshot.streakPrefs
     : {};
   state.libraryPrefs = normalizeLibraryPrefs(snapshot?.libraryPrefs || DEFAULT_LIBRARY_PREFS);
+  state.letterboxdPrefs = normalizeLetterboxdPrefs(snapshot?.letterboxdPrefs || DEFAULT_LETTERBOXD_PREFS);
   if (Array.isArray(snapshot?.logTypePrefs)) {
     const validLogTypes = snapshot.logTypePrefs.filter(value => DEFAULT_LOG_TYPE_KEYS.includes(value));
     safeLocalSet(logTypePrefsStorageKey(), validLogTypes.length ? validLogTypes : [...DEFAULT_LOG_TYPE_KEYS]);
@@ -16594,6 +17127,7 @@ async function persistCloudStateLocally(snapshot) {
   safeLocalSet(STICKER_PREFS_KEY, state.stickerPrefs);
   safeLocalSet(STREAK_PREFS_KEY, state.streakPrefs);
   safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
+  safeLocalSet(LETTERBOXD_PREFS_KEY, state.letterboxdPrefs);
   await saveLargeState(HISTORY_IDB_KEY, state.history);
   localStorage.removeItem(HISTORY_KEY);
 }
