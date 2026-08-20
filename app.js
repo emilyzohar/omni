@@ -3272,6 +3272,12 @@ async function renderUpNext(options = {}) {
     await renderQueueCalendar();
     return;
   }
+
+  // Playlist/workout state depends on which individual YouTube videos have been
+  // logged. Reconcile that before filtering Up Next so a stale completedAt or
+  // queueStatus from an older build cannot hide an unfinished workout.
+  if (view === 'upnext' && !skipReconcile) await reconcileYouTubePlaylistQueues();
+
   const today = todayString();
   const availableItems = state.items.filter(item => {
     if (getQueueStatus(item) !== view) return false;
@@ -5027,12 +5033,21 @@ function isQueueItemMarkedDone(item) {
   }
 
   if (item.completedAt) return true;
+
+  // A YouTube playlist/workout is not complete when one video is logged.
+  // `youtube-completed` records are per-video progress; only completedAt (set
+  // when the playlist is exhausted) or an explicit whole-item completion means
+  // the playlist itself is done.
+  if (sourceType === 'youtube' && isYouTubePlaylistItem(item)) {
+    return Boolean(item.completedAt);
+  }
+
   const doneKinds = sourceType === 'movie'
     ? new Set(['movie-watched'])
     : ['game', 'video-game', 'board-game'].includes(sourceType)
       ? new Set(['game-played', 'item-completed'])
       : sourceType === 'youtube'
-        ? new Set(['youtube-completed', 'item-completed'])
+        ? new Set(['item-completed'])
         : new Set(['item-completed']);
   return state.history.some(entry => entry.sourceItemId === item.id && doneKinds.has(entry.kind));
 }
@@ -5081,6 +5096,73 @@ function applyReleaseQueueAutomation(item, today = todayString()) {
   return before !== after;
 }
 
+async function reconcileYouTubePlaylistQueues() {
+  let changed = false;
+  const today = todayString();
+  const playlists = state.items.filter(item => getSourceType(item) === 'youtube' && isYouTubePlaylistItem(item) && item.providerId);
+
+  for (const item of playlists) {
+    let itemChanged = false;
+    let playlist;
+    try {
+      playlist = await getPlaylistCached(item.providerId);
+    } catch (error) {
+      console.warn('Could not reconcile YouTube playlist queue:', item.title, error?.message || error);
+      continue;
+    }
+
+    const videos = Array.isArray(playlist?.items) ? playlist.items : [];
+    if (!videos.length) continue;
+
+    let nextIndex = 0;
+    while (nextIndex < videos.length && isYouTubeVideoLogged(item, videos[nextIndex].videoId)) nextIndex += 1;
+    const allLogged = nextIndex >= videos.length;
+    const oldIndex = Math.max(0, Number(item.progress?.currentIndex || 0));
+    if (oldIndex !== nextIndex) {
+      item.progress = { ...item.progress, currentIndex: nextIndex };
+      itemChanged = true;
+      changed = true;
+    }
+
+    const perVideoLogs = state.history.filter(entry => entry.sourceItemId === item.id && entry.kind === 'youtube-completed');
+    const erroneousWholeLog = state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'item-completed');
+    const hadTrackedDateExposure = Boolean(item.date && item.date <= today);
+    const shouldRepairPriorDemotion = item.type === 'workout' && (perVideoLogs.length > 0 || erroneousWholeLog || hadTrackedDateExposure);
+
+    if (allLogged) {
+      if (!item.completedAt) {
+        const lastLoggedDate = perVideoLogs.map(entry => String(entry.date || '').slice(0,10)).filter(Boolean).sort().at(-1) || today;
+        item.completedAt = lastLoggedDate;
+        itemChanged = true;
+        changed = true;
+      }
+      if (getQueueStatus(item) === 'upnext') {
+        setItemQueueStatus(item, 'library');
+        itemChanged = true;
+        changed = true;
+      }
+    } else {
+      // A prior buggy build could set completedAt after logging one workout from
+      // Add. The playlist itself is not complete while any video remains unwatched.
+      if (item.completedAt) {
+        item.completedAt = '';
+        itemChanged = true;
+        changed = true;
+      }
+      if (shouldRepairPriorDemotion && getQueueStatus(item) === 'library') {
+        setItemQueueStatus(item, 'upnext');
+        itemChanged = true;
+        changed = true;
+      }
+    }
+
+    if (itemChanged) item.updatedAt = new Date().toISOString();
+  }
+
+  if (changed) saveItems();
+  return changed;
+}
+
 function reconcileLocalProgressQueues() {
   let changed = false;
   const today = todayString();
@@ -5110,6 +5192,7 @@ function reconcileLocalProgressQueues() {
     const trackedDateOnlyLeak = getQueueStatus(item) === 'upnext'
       && !item.reminder
       && !( ['event','concert'].includes(sourceType) && item.queueCalendarScheduled === true )
+      && !(sourceType === 'youtube' && isYouTubePlaylistItem(item))
       && !hasRealReleaseDate
       && Boolean(item.date && item.date <= today);
     if (trackedDateOnlyLeak) {
@@ -5125,6 +5208,21 @@ function reconcileLocalProgressQueues() {
     }
     if (applyReleaseQueueAutomation(item)) changed = true;
     if (isItemNotReleased(item)) continue;
+
+    // Workout/YouTube playlists are progress queues. Keep an unfinished workout
+    // in Up Next even when it has historical tracked dates or some videos already
+    // logged. `completedAt` is only set after the final playlist video is done.
+    if (sourceType === 'youtube' && isYouTubePlaylistItem(item)) {
+      const hasVideoProgress = Number(item.progress?.currentIndex || 0) > 0 || state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'youtube-completed');
+      const wasVulnerableToTrackedDateBug = Boolean(item.date && item.date <= today);
+      if (!markedDone && item.type === 'workout' && getQueueStatus(item) === 'library' && (hasVideoProgress || wasVulnerableToTrackedDateBug)) {
+        setItemQueueStatus(item, 'upnext');
+        item.updatedAt = new Date().toISOString();
+        changed = true;
+      }
+      continue;
+    }
+
     if (sourceType === 'book') {
       const current = Number(item.progress?.currentPage || 0);
       const total = Number(item.progress?.totalPages || 0);
@@ -5390,6 +5488,21 @@ async function toggleSpecificYouTubeVideo(item, videoId) {
   }
 
   addHistoryRecord(record);
+
+  // Recompute the next unwatched video after any checkbox change, including
+  // out-of-order checks. This keeps queue/completion state tied to the actual
+  // playlist rather than to a tracked date or a single history entry.
+  let nextIndex = 0;
+  while (nextIndex < playlist.items.length && isYouTubeVideoLogged(item, playlist.items[nextIndex].videoId)) nextIndex += 1;
+  item.progress = { ...item.progress, currentIndex: nextIndex };
+  if (nextIndex >= playlist.items.length) {
+    item.completedAt = item.completedAt || todayString();
+    setItemQueueStatus(item, 'library');
+  } else {
+    item.completedAt = '';
+    if (item.type === 'workout' && getQueueStatus(item) === 'library') setItemQueueStatus(item, 'upnext');
+  }
+
   saveItems();
   saveHistory();
   renderAll();
@@ -7381,6 +7494,20 @@ async function saveItemFromForm(event) {
     saveHistory();
   }
 
+  if (logFromAdd && sourceType === 'youtube' && isYouTubePlaylistItem(item) && !item.featureConfig?.repeatableLog) {
+    try {
+      const record = await advanceWorkout(item);
+      record.date = logDate;
+      record.showOnCalendar = true;
+      addHistoryRecord(record);
+      if (!item.completedAt && item.type === 'workout') setItemQueueStatus(item, 'upnext');
+      saveHistory();
+    } catch (error) {
+      console.warn('Could not log next YouTube workout from Add:', error?.message || error);
+      if (!item.completedAt && item.type === 'workout') setItemQueueStatus(item, 'upnext');
+    }
+  }
+
   if (sourceType === 'tv') {
     try {
       const newlySelectedTVKeys = logFromAdd
@@ -7403,7 +7530,7 @@ async function saveItemFromForm(event) {
     }
   }
 
-  if (logFromAdd && !['tv','book','restaurant','recipe','class'].includes(sourceType) && !item.featureConfig?.repeatableLog) {
+  if (logFromAdd && !['tv','book','restaurant','recipe','class'].includes(sourceType) && !(sourceType === 'youtube' && isYouTubePlaylistItem(item)) && !item.featureConfig?.repeatableLog) {
     const kind = sourceType === 'movie'
       ? 'movie-watched'
       : ['video-game','board-game'].includes(sourceType)
