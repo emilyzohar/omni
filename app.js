@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-due-subtypes-log-88';
-import { API_CONFIG } from './config.js?v=omni-due-subtypes-log-88';
+import { TrackerAPI } from './api.js?v=omni-due-subtypes-log-89';
+import { API_CONFIG } from './config.js?v=omni-due-subtypes-log-89';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -3275,9 +3275,9 @@ async function renderUpNext(options = {}) {
   const today = todayString();
   const availableItems = state.items.filter(item => {
     if (getQueueStatus(item) !== view) return false;
-    if (view === 'upnext' && item.reminder) {
-      const dueDate = getNextReminderDueDate(item);
-      return !dueDate || dueDate <= today;
+    if (view === 'upnext') {
+      if (isQueueItemMarkedDone(item)) return false;
+      if (!isQueueItemAvailableNow(item, today)) return false;
     }
     return true;
   });
@@ -4507,7 +4507,7 @@ async function reconcileTVQueueStates() {
   for (const item of tvItems) {
     const alreadyUpNext = getQueueStatus(item) === 'upnext';
     const checkedAt = Date.parse(item.tvMeta?.checkedAt || '');
-    if (alreadyUpNext && Number.isFinite(checkedAt) && Date.now() - checkedAt < 60 * 60 * 1000) {
+    if (alreadyUpNext && !isQueueItemMarkedDone(item) && Number.isFinite(checkedAt) && Date.now() - checkedAt < 60 * 60 * 1000) {
       results.push(false);
       continue;
     }
@@ -5010,6 +5010,47 @@ function setReleaseQueueStatus(item, status) {
   if (sourceType === 'book' && status === 'upnext' && item.bookDisposition === 'paused') item.bookDisposition = '';
 }
 
+function isQueueItemMarkedDone(item) {
+  if (!item) return false;
+  const sourceType = getSourceType(item);
+  if (sourceType === 'reminder') return false;
+
+  // TV completion means "caught up", not permanently finished. If a newly aired
+  // episode has already been discovered, the show is active again.
+  if (sourceType === 'tv') return Boolean(item.completedAt) && item.tvMeta?.hasUnwatched !== true;
+
+  if (sourceType === 'book') {
+    const current = Number(item.progress?.currentPage || 0);
+    const total = Number(item.progress?.totalPages || 0);
+    if (item.completedAt || (total > 0 && current >= total)) return true;
+    return state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'book-finished');
+  }
+
+  if (item.completedAt) return true;
+  const doneKinds = sourceType === 'movie'
+    ? new Set(['movie-watched'])
+    : ['game', 'video-game', 'board-game'].includes(sourceType)
+      ? new Set(['game-played', 'item-completed'])
+      : sourceType === 'youtube'
+        ? new Set(['youtube-completed', 'item-completed'])
+        : new Set(['item-completed']);
+  return state.history.some(entry => entry.sourceItemId === item.id && doneKinds.has(entry.kind));
+}
+
+function isQueueItemAvailableNow(item, today = todayString()) {
+  if (!item || isItemNotReleased(item, today)) return false;
+  if (item.reminder) {
+    const dueDate = getNextReminderDueDate(item);
+    return !dueDate || dueDate <= today;
+  }
+  const sourceType = getSourceType(item);
+  if (['event', 'concert'].includes(sourceType) && item.queueCalendarScheduled === true) {
+    const scheduledDate = item.date || item.eventMeta?.eventDate || '';
+    return !scheduledDate || scheduledDate <= today;
+  }
+  return true;
+}
+
 function applyReleaseQueueAutomation(item, today = todayString()) {
   if (!item) return false;
   const releaseDate = itemReleaseDate(item);
@@ -5024,7 +5065,7 @@ function applyReleaseQueueAutomation(item, today = todayString()) {
     if (supportsQueue) setReleaseQueueStatus(item, desired);
     item.releaseAutomation = { date: releaseDate, stage: desired };
   } else if (supportsQueue && item.releaseAutomation?.date === releaseDate && ['library', 'tbr'].includes(item.releaseAutomation?.stage)) {
-    if (!item.completedAt && libraryDnfState(item) !== 'stopped') setReleaseQueueStatus(item, 'upnext');
+    if (!isQueueItemMarkedDone(item) && libraryDnfState(item) !== 'stopped') setReleaseQueueStatus(item, 'upnext');
     item.releaseAutomation = { date: releaseDate, stage: 'released', activatedAt: today };
   } else if (item.releaseAutomation?.date && item.releaseAutomation.date !== releaseDate) {
     if (releaseDate > today) {
@@ -5044,17 +5085,28 @@ function reconcileLocalProgressQueues() {
   let changed = false;
   const today = todayString();
   for (const item of state.items) {
-    const dueReminder = item.reminder && getNextReminderDueDate(item) && getNextReminderDueDate(item) <= today;
+    const sourceType = getSourceType(item);
+    const markedDone = isQueueItemMarkedDone(item);
+
+    // A stale queueStatus must never resurrect something that has already been
+    // checked/logged as finished. Calendar dates are often historical log dates,
+    // so completion state wins over the fact that the date is in the past.
+    if (markedDone && getQueueStatus(item) === 'upnext') {
+      setItemQueueStatus(item, 'library');
+      item.updatedAt = new Date().toISOString();
+      changed = true;
+    }
+
+    const dueReminder = !markedDone && item.reminder && getNextReminderDueDate(item) && getNextReminderDueDate(item) <= today;
     const scheduledDate = item.date || item.eventMeta?.eventDate || '';
-    const dueScheduledEvent = ['event','concert'].includes(getSourceType(item)) && item.queueCalendarScheduled === true && scheduledDate && scheduledDate <= today;
-    const dueDatedItem = !item.reminder && !['book','tv'].includes(getSourceType(item)) && !item.calendarHidden && item.date && item.date <= today && !item.completedAt;
+    const dueScheduledEvent = !markedDone && ['event','concert'].includes(sourceType) && item.queueCalendarScheduled === true && scheduledDate && scheduledDate <= today;
+    const dueDatedItem = !markedDone && !item.reminder && !['book','tv'].includes(sourceType) && !item.calendarHidden && item.date && item.date <= today;
     if ((dueReminder || dueScheduledEvent || dueDatedItem) && getQueueStatus(item) !== 'upnext') {
       setItemQueueStatus(item, 'upnext');
       item.updatedAt = new Date().toISOString();
       changed = true;
     }
     if (applyReleaseQueueAutomation(item)) changed = true;
-    const sourceType = getSourceType(item);
     if (isItemNotReleased(item)) continue;
     if (sourceType === 'book') {
       const current = Number(item.progress?.currentPage || 0);
