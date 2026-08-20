@@ -16,6 +16,7 @@ const PHOTO_UPLOAD_LOG_KEY = 'zoharTracker.photoUploadLog.v1';
 const ONBOARDING_KEY = 'zoharTracker.onboarding.v1';
 const ONBOARDING_STEP_KEY = 'zoharTracker.onboardingStep.v2';
 const LOG_TYPE_PREFS_KEY = 'zoharTracker.logTypePrefs.v1';
+const TRACKED_DATE_QUEUE_FIX_KEY = 'zoharTracker.trackedDateQueueFix.v1';
 const PHOTO_WEEKLY_LIMIT = 20;
 const ATTACHMENT_DB_NAME = 'zoharTracker.attachments.v1';
 const ATTACHMENT_STORE_NAME = 'files';
@@ -5040,21 +5041,78 @@ function applyReleaseQueueAutomation(item, today = todayString()) {
   return before !== after;
 }
 
+function hasOneOffCompletionRecord(item) {
+  if (!item) return false;
+  const sourceType = getSourceType(item);
+  if (item.completedAt) return true;
+  if (sourceType === 'youtube' && isYouTubePlaylistItem(item)) return false;
+  const completionKinds = new Set(['movie-watched', 'game-played', 'item-completed', 'book-finished', 'series-watched']);
+  return state.history.some(entry => entry.sourceItemId === item.id && completionKinds.has(entry.kind));
+}
+
+function migrateTrackedDateQueueLeak(today = todayString()) {
+  if (loadJSON(TRACKED_DATE_QUEUE_FIX_KEY, false) === true) return false;
+  let changed = false;
+  for (const item of state.items) {
+    if (getQueueStatus(item) !== 'upnext') continue;
+    const sourceType = getSourceType(item);
+    if (['tv', 'book', 'youtube', 'reminder'].includes(sourceType)) continue;
+    const trackedDate = normalizedReleaseDate(item.date);
+    const hasPastTrackedHistory = state.history.some(entry =>
+      entry.sourceItemId === item.id
+      && entry.date
+      && entry.date <= today
+      && entry.showOnCalendar !== false
+    );
+    if ((!trackedDate || trackedDate > today) && !hasPastTrackedHistory) continue;
+
+    // Calendar-only Ticketmaster entries with no historical log are genuinely
+    // scheduled due items. Everything else with a past tracked/logged date was
+    // vulnerable to the old bug that treated history as availability.
+    const scheduledOnlyEvent = ['event', 'concert'].includes(sourceType)
+      && item.queueCalendarScheduled === true
+      && item.calendarQueueOnly === true
+      && item.calendarTracked !== true
+      && !hasPastTrackedHistory
+      && !hasOneOffCompletionRecord(item);
+    if (scheduledOnlyEvent) continue;
+
+    setItemQueueStatus(item, 'library');
+    item.updatedAt = new Date().toISOString();
+    changed = true;
+  }
+  safeLocalSet(TRACKED_DATE_QUEUE_FIX_KEY, true);
+  return changed;
+}
+
 function reconcileLocalProgressQueues() {
   let changed = false;
   const today = todayString();
+  if (migrateTrackedDateQueueLeak(today)) changed = true;
   for (const item of state.items) {
+    const sourceType = getSourceType(item);
+    const completedOneOff = !['tv', 'book', 'reminder'].includes(sourceType) && hasOneOffCompletionRecord(item);
+    if (completedOneOff && getQueueStatus(item) === 'upnext') {
+      setItemQueueStatus(item, 'library');
+      item.updatedAt = new Date().toISOString();
+      changed = true;
+    }
+
     const dueReminder = item.reminder && getNextReminderDueDate(item) && getNextReminderDueDate(item) <= today;
-    const scheduledDate = item.date || item.eventMeta?.eventDate || '';
-    const dueScheduledEvent = ['event','concert'].includes(getSourceType(item)) && item.queueCalendarScheduled === true && scheduledDate && scheduledDate <= today;
-    const dueDatedItem = !item.reminder && !['book','tv'].includes(getSourceType(item)) && !item.calendarHidden && item.date && item.date <= today && !item.completedAt;
-    if ((dueReminder || dueScheduledEvent || dueDatedItem) && getQueueStatus(item) !== 'upnext') {
+    const scheduledDate = item.eventMeta?.eventDate || item.date || '';
+    const dueScheduledEvent = ['event','concert'].includes(sourceType)
+      && item.queueCalendarScheduled === true
+      && !hasOneOffCompletionRecord(item)
+      && scheduledDate
+      && scheduledDate <= today;
+    // item.date is a tracked/logged calendar date. It is NEVER an availability
+    // signal and must not move an ordinary item into Up Next.
+    if ((dueReminder || dueScheduledEvent) && getQueueStatus(item) !== 'upnext') {
       setItemQueueStatus(item, 'upnext');
       item.updatedAt = new Date().toISOString();
       changed = true;
     }
     if (applyReleaseQueueAutomation(item)) changed = true;
-    const sourceType = getSourceType(item);
     if (isItemNotReleased(item)) continue;
     if (sourceType === 'book') {
       const current = Number(item.progress?.currentPage || 0);
@@ -7256,12 +7314,6 @@ async function saveItemFromForm(event) {
   }
 
   applyReleaseQueueAutomation(item);
-
-  // Logging a real date/progress on something that was sitting in TBR means it has started.
-  // Preserve deliberate TBR saves, but do not leave an edited/logged item stranded there.
-  if (editing && getQueueStatus(editing) === 'tbr' && item.date && item.date !== editing.date && getQueueStatus(item) === 'tbr') {
-    resumeTbrItemAfterLog(item);
-  }
 
   if (editing) {
     state.items = state.items.map(existing => existing.id === item.id ? item : existing);
@@ -16750,20 +16802,8 @@ function safeLocalSet(key, value) {
   }
 }
 
-function resumeTbrItemAfterLog(item) {
-  if (!item || getQueueStatus(item) !== 'tbr' || item.completedAt) return;
-  const sourceType = getSourceType(item);
-  if (['event','concert','restaurant','place'].includes(sourceType)) return;
-  if (sourceType === 'tv') item.watchDisposition = 'following';
-  if (sourceType === 'book') item.bookDisposition = '';
-  if (sourceType === 'movie') item.mediaDisposition = '';
-  setItemQueueStatus(item, 'upnext');
-  item.updatedAt = new Date().toISOString();
-}
-
 function addHistoryRecord(record) {
   const source = record?.sourceItemId ? findItem(record.sourceItemId) : null;
-  if (source && record?.date && record?.showOnCalendar !== false) resumeTbrItemAfterLog(source);
   const repeatKey = historyRepeatIdentity(record);
   const priorRepeats = repeatKey ? state.history.filter(entry => historyRepeatIdentity(entry) === repeatKey).length : 0;
   const isRepeat = record?.rewatch == null ? priorRepeats > 0 : Boolean(record.rewatch);
