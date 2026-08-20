@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-goodreads-104';
-import { API_CONFIG } from './config.js?v=omni-goodreads-104';
+import { TrackerAPI } from './api.js?v=omni-goodreads-105';
+import { API_CONFIG } from './config.js?v=omni-goodreads-105';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -30,7 +30,7 @@ const mobileCalendarQuery = window.matchMedia('(max-width: 760px)');
 
 const TYPE_LABELS = {
   tv: 'TV',
-  book: 'Books',
+  book: 'Book',
   movie: 'Movies',
   game: 'Games',
   music: 'Music',
@@ -16515,7 +16515,12 @@ function isBuiltInType(type) {
 }
 
 function getItemTypeLabel(item) {
-  return item?.typeLabel || getTypeLabel(item?.type);
+  const label = item?.typeLabel || getTypeLabel(item?.type);
+  // Goodreads v104 created books with the display label "Books" while older
+  // Omni book items commonly use "Book". They are the same source type and
+  // must never split into separate Library shelves/filter choices.
+  if (getSourceType(item) === 'book' && ['book', 'books'].includes(slugifyType(label))) return 'Book';
+  return label;
 }
 
 function getTypeLabel(type) {
@@ -16546,6 +16551,7 @@ function registerCustomType(type, label, actionCategory = '') {
 }
 
 function libraryTypeGroupKey(item) {
+  if (getSourceType(item) === 'book') return 'book';
   return slugifyType(getItemTypeLabel(item));
 }
 
@@ -17239,7 +17245,7 @@ function ensureGoodreadsLibraryItem(entry, result) {
   let item = findExistingGoodreadsBook(entry, result);
   if (item) return item;
   item = {
-    id: makeId(), sourceType: 'book', type: 'book', typeLabel: 'Books', subcategory: '',
+    id: makeId(), sourceType: 'book', type: 'book', typeLabel: 'Book', subcategory: '',
     title: result?.title || entry.title || 'Untitled', provider: result?.provider || 'googleBooks', providerId: String(result?.providerId || ''),
     image: result?.image || '', subtitle: result?.subtitle || entry.author || '', rating: 0, notes: '', recommended: false,
     genres: result ? extractItemGenres('book', result, null) : [], releaseDate: result ? extractItemReleaseDate('book', result, null) : '',
