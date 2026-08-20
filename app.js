@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-release-only-91';
-import { API_CONFIG } from './config.js?v=omni-release-only-91';
+import { TrackerAPI } from './api.js?v=omni-due-subtypes-log-88';
+import { API_CONFIG } from './config.js?v=omni-due-subtypes-log-88';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -3272,18 +3272,12 @@ async function renderUpNext(options = {}) {
     await renderQueueCalendar();
     return;
   }
-
-  // Playlist/workout state depends on which individual YouTube videos have been
-  // logged. Reconcile that before filtering Up Next so a stale completedAt or
-  // queueStatus from an older build cannot hide an unfinished workout.
-  if (view === 'upnext' && !skipReconcile) await reconcileYouTubePlaylistQueues();
-
   const today = todayString();
   const availableItems = state.items.filter(item => {
     if (getQueueStatus(item) !== view) return false;
-    if (view === 'upnext') {
-      if (isQueueItemMarkedDone(item)) return false;
-      if (!isQueueItemAvailableNow(item, today)) return false;
+    if (view === 'upnext' && item.reminder) {
+      const dueDate = getNextReminderDueDate(item);
+      return !dueDate || dueDate <= today;
     }
     return true;
   });
@@ -4513,7 +4507,7 @@ async function reconcileTVQueueStates() {
   for (const item of tvItems) {
     const alreadyUpNext = getQueueStatus(item) === 'upnext';
     const checkedAt = Date.parse(item.tvMeta?.checkedAt || '');
-    if (alreadyUpNext && !isQueueItemMarkedDone(item) && Number.isFinite(checkedAt) && Date.now() - checkedAt < 60 * 60 * 1000) {
+    if (alreadyUpNext && Number.isFinite(checkedAt) && Date.now() - checkedAt < 60 * 60 * 1000) {
       results.push(false);
       continue;
     }
@@ -5016,56 +5010,6 @@ function setReleaseQueueStatus(item, status) {
   if (sourceType === 'book' && status === 'upnext' && item.bookDisposition === 'paused') item.bookDisposition = '';
 }
 
-function isQueueItemMarkedDone(item) {
-  if (!item) return false;
-  const sourceType = getSourceType(item);
-  if (sourceType === 'reminder') return false;
-
-  // TV completion means "caught up", not permanently finished. If a newly aired
-  // episode has already been discovered, the show is active again.
-  if (sourceType === 'tv') return Boolean(item.completedAt) && item.tvMeta?.hasUnwatched !== true;
-
-  if (sourceType === 'book') {
-    const current = Number(item.progress?.currentPage || 0);
-    const total = Number(item.progress?.totalPages || 0);
-    if (item.completedAt || (total > 0 && current >= total)) return true;
-    return state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'book-finished');
-  }
-
-  if (item.completedAt) return true;
-
-  // A YouTube playlist/workout is not complete when one video is logged.
-  // `youtube-completed` records are per-video progress; only completedAt (set
-  // when the playlist is exhausted) or an explicit whole-item completion means
-  // the playlist itself is done.
-  if (sourceType === 'youtube' && isYouTubePlaylistItem(item)) {
-    return Boolean(item.completedAt);
-  }
-
-  const doneKinds = sourceType === 'movie'
-    ? new Set(['movie-watched'])
-    : ['game', 'video-game', 'board-game'].includes(sourceType)
-      ? new Set(['game-played', 'item-completed'])
-      : sourceType === 'youtube'
-        ? new Set(['item-completed'])
-        : new Set(['item-completed']);
-  return state.history.some(entry => entry.sourceItemId === item.id && doneKinds.has(entry.kind));
-}
-
-function isQueueItemAvailableNow(item, today = todayString()) {
-  if (!item || isItemNotReleased(item, today)) return false;
-  if (item.reminder) {
-    const dueDate = getNextReminderDueDate(item);
-    return !dueDate || dueDate <= today;
-  }
-  const sourceType = getSourceType(item);
-  if (['event', 'concert'].includes(sourceType) && item.queueCalendarScheduled === true) {
-    const scheduledDate = item.date || item.eventMeta?.eventDate || '';
-    return !scheduledDate || scheduledDate <= today;
-  }
-  return true;
-}
-
 function applyReleaseQueueAutomation(item, today = todayString()) {
   if (!item) return false;
   const releaseDate = itemReleaseDate(item);
@@ -5080,7 +5024,7 @@ function applyReleaseQueueAutomation(item, today = todayString()) {
     if (supportsQueue) setReleaseQueueStatus(item, desired);
     item.releaseAutomation = { date: releaseDate, stage: desired };
   } else if (supportsQueue && item.releaseAutomation?.date === releaseDate && ['library', 'tbr'].includes(item.releaseAutomation?.stage)) {
-    if (!isQueueItemMarkedDone(item) && libraryDnfState(item) !== 'stopped') setReleaseQueueStatus(item, 'upnext');
+    if (!item.completedAt && libraryDnfState(item) !== 'stopped') setReleaseQueueStatus(item, 'upnext');
     item.releaseAutomation = { date: releaseDate, stage: 'released', activatedAt: today };
   } else if (item.releaseAutomation?.date && item.releaseAutomation.date !== releaseDate) {
     if (releaseDate > today) {
@@ -5096,133 +5040,22 @@ function applyReleaseQueueAutomation(item, today = todayString()) {
   return before !== after;
 }
 
-async function reconcileYouTubePlaylistQueues() {
-  let changed = false;
-  const today = todayString();
-  const playlists = state.items.filter(item => getSourceType(item) === 'youtube' && isYouTubePlaylistItem(item) && item.providerId);
-
-  for (const item of playlists) {
-    let itemChanged = false;
-    let playlist;
-    try {
-      playlist = await getPlaylistCached(item.providerId);
-    } catch (error) {
-      console.warn('Could not reconcile YouTube playlist queue:', item.title, error?.message || error);
-      continue;
-    }
-
-    const videos = Array.isArray(playlist?.items) ? playlist.items : [];
-    if (!videos.length) continue;
-
-    let nextIndex = 0;
-    while (nextIndex < videos.length && isYouTubeVideoLogged(item, videos[nextIndex].videoId)) nextIndex += 1;
-    const allLogged = nextIndex >= videos.length;
-    const oldIndex = Math.max(0, Number(item.progress?.currentIndex || 0));
-    if (oldIndex !== nextIndex) {
-      item.progress = { ...item.progress, currentIndex: nextIndex };
-      itemChanged = true;
-      changed = true;
-    }
-
-    const perVideoLogs = state.history.filter(entry => entry.sourceItemId === item.id && entry.kind === 'youtube-completed');
-    const erroneousWholeLog = state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'item-completed');
-    const hadTrackedDateExposure = Boolean(item.date && item.date <= today);
-    const shouldRepairPriorDemotion = item.type === 'workout' && (perVideoLogs.length > 0 || erroneousWholeLog || hadTrackedDateExposure);
-
-    if (allLogged) {
-      if (!item.completedAt) {
-        const lastLoggedDate = perVideoLogs.map(entry => String(entry.date || '').slice(0,10)).filter(Boolean).sort().at(-1) || today;
-        item.completedAt = lastLoggedDate;
-        itemChanged = true;
-        changed = true;
-      }
-      if (getQueueStatus(item) === 'upnext') {
-        setItemQueueStatus(item, 'library');
-        itemChanged = true;
-        changed = true;
-      }
-    } else {
-      // A prior buggy build could set completedAt after logging one workout from
-      // Add. The playlist itself is not complete while any video remains unwatched.
-      if (item.completedAt) {
-        item.completedAt = '';
-        itemChanged = true;
-        changed = true;
-      }
-      if (shouldRepairPriorDemotion && getQueueStatus(item) === 'library') {
-        setItemQueueStatus(item, 'upnext');
-        itemChanged = true;
-        changed = true;
-      }
-    }
-
-    if (itemChanged) item.updatedAt = new Date().toISOString();
-  }
-
-  if (changed) saveItems();
-  return changed;
-}
-
 function reconcileLocalProgressQueues() {
   let changed = false;
   const today = todayString();
   for (const item of state.items) {
-    const sourceType = getSourceType(item);
-    const markedDone = isQueueItemMarkedDone(item);
-
-    // A stale queueStatus must never resurrect something that has already been
-    // checked/logged as finished. Calendar dates are often historical log dates,
-    // so completion state wins over the fact that the date is in the past.
-    if (markedDone && getQueueStatus(item) === 'upnext') {
-      setItemQueueStatus(item, 'library');
-      item.updatedAt = new Date().toISOString();
-      changed = true;
-    }
-
-    const dueReminder = !markedDone && item.reminder && getNextReminderDueDate(item) && getNextReminderDueDate(item) <= today;
+    const dueReminder = item.reminder && getNextReminderDueDate(item) && getNextReminderDueDate(item) <= today;
     const scheduledDate = item.date || item.eventMeta?.eventDate || '';
-    const dueScheduledEvent = !markedDone && ['event','concert'].includes(sourceType) && item.queueCalendarScheduled === true && scheduledDate && scheduledDate <= today;
-
-    // `item.date` is a tracked/calendar date, not an availability date. Never use
-    // it by itself to move ordinary items into Up Next. Clean up items that the
-    // previous build already promoted for that reason. Real release dates live in
-    // `releaseDate`; TV uses aired/unwatched episodes; reminders and explicitly
-    // scheduled live events have their own due-date rules.
-    const hasRealReleaseDate = RELEASE_QUEUE_SOURCE_TYPES.has(sourceType) && Boolean(itemReleaseDate(item));
-    const trackedDateOnlyLeak = getQueueStatus(item) === 'upnext'
-      && !item.reminder
-      && !( ['event','concert'].includes(sourceType) && item.queueCalendarScheduled === true )
-      && !(sourceType === 'youtube' && isYouTubePlaylistItem(item))
-      && !hasRealReleaseDate
-      && Boolean(item.date && item.date <= today);
-    if (trackedDateOnlyLeak) {
-      setItemQueueStatus(item, 'library');
-      item.updatedAt = new Date().toISOString();
-      changed = true;
-    }
-
-    if ((dueReminder || dueScheduledEvent) && getQueueStatus(item) !== 'upnext') {
+    const dueScheduledEvent = ['event','concert'].includes(getSourceType(item)) && item.queueCalendarScheduled === true && scheduledDate && scheduledDate <= today;
+    const dueDatedItem = !item.reminder && !['book','tv'].includes(getSourceType(item)) && !item.calendarHidden && item.date && item.date <= today && !item.completedAt;
+    if ((dueReminder || dueScheduledEvent || dueDatedItem) && getQueueStatus(item) !== 'upnext') {
       setItemQueueStatus(item, 'upnext');
       item.updatedAt = new Date().toISOString();
       changed = true;
     }
     if (applyReleaseQueueAutomation(item)) changed = true;
+    const sourceType = getSourceType(item);
     if (isItemNotReleased(item)) continue;
-
-    // Workout/YouTube playlists are progress queues. Keep an unfinished workout
-    // in Up Next even when it has historical tracked dates or some videos already
-    // logged. `completedAt` is only set after the final playlist video is done.
-    if (sourceType === 'youtube' && isYouTubePlaylistItem(item)) {
-      const hasVideoProgress = Number(item.progress?.currentIndex || 0) > 0 || state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'youtube-completed');
-      const wasVulnerableToTrackedDateBug = Boolean(item.date && item.date <= today);
-      if (!markedDone && item.type === 'workout' && getQueueStatus(item) === 'library' && (hasVideoProgress || wasVulnerableToTrackedDateBug)) {
-        setItemQueueStatus(item, 'upnext');
-        item.updatedAt = new Date().toISOString();
-        changed = true;
-      }
-      continue;
-    }
-
     if (sourceType === 'book') {
       const current = Number(item.progress?.currentPage || 0);
       const total = Number(item.progress?.totalPages || 0);
@@ -5488,21 +5321,6 @@ async function toggleSpecificYouTubeVideo(item, videoId) {
   }
 
   addHistoryRecord(record);
-
-  // Recompute the next unwatched video after any checkbox change, including
-  // out-of-order checks. This keeps queue/completion state tied to the actual
-  // playlist rather than to a tracked date or a single history entry.
-  let nextIndex = 0;
-  while (nextIndex < playlist.items.length && isYouTubeVideoLogged(item, playlist.items[nextIndex].videoId)) nextIndex += 1;
-  item.progress = { ...item.progress, currentIndex: nextIndex };
-  if (nextIndex >= playlist.items.length) {
-    item.completedAt = item.completedAt || todayString();
-    setItemQueueStatus(item, 'library');
-  } else {
-    item.completedAt = '';
-    if (item.type === 'workout' && getQueueStatus(item) === 'library') setItemQueueStatus(item, 'upnext');
-  }
-
   saveItems();
   saveHistory();
   renderAll();
@@ -7439,6 +7257,12 @@ async function saveItemFromForm(event) {
 
   applyReleaseQueueAutomation(item);
 
+  // Logging a real date/progress on something that was sitting in TBR means it has started.
+  // Preserve deliberate TBR saves, but do not leave an edited/logged item stranded there.
+  if (editing && getQueueStatus(editing) === 'tbr' && item.date && item.date !== editing.date && getQueueStatus(item) === 'tbr') {
+    resumeTbrItemAfterLog(item);
+  }
+
   if (editing) {
     state.items = state.items.map(existing => existing.id === item.id ? item : existing);
   } else {
@@ -7494,20 +7318,6 @@ async function saveItemFromForm(event) {
     saveHistory();
   }
 
-  if (logFromAdd && sourceType === 'youtube' && isYouTubePlaylistItem(item) && !item.featureConfig?.repeatableLog) {
-    try {
-      const record = await advanceWorkout(item);
-      record.date = logDate;
-      record.showOnCalendar = true;
-      addHistoryRecord(record);
-      if (!item.completedAt && item.type === 'workout') setItemQueueStatus(item, 'upnext');
-      saveHistory();
-    } catch (error) {
-      console.warn('Could not log next YouTube workout from Add:', error?.message || error);
-      if (!item.completedAt && item.type === 'workout') setItemQueueStatus(item, 'upnext');
-    }
-  }
-
   if (sourceType === 'tv') {
     try {
       const newlySelectedTVKeys = logFromAdd
@@ -7530,7 +7340,7 @@ async function saveItemFromForm(event) {
     }
   }
 
-  if (logFromAdd && !['tv','book','restaurant','recipe','class'].includes(sourceType) && !(sourceType === 'youtube' && isYouTubePlaylistItem(item)) && !item.featureConfig?.repeatableLog) {
+  if (logFromAdd && !['tv','book','restaurant','recipe','class'].includes(sourceType) && !item.featureConfig?.repeatableLog) {
     const kind = sourceType === 'movie'
       ? 'movie-watched'
       : ['video-game','board-game'].includes(sourceType)
@@ -11813,29 +11623,32 @@ async function collectLiveDiscoverCandidates(batchNumber, mode = 'for-you') {
 async function collectForYouDiscoverCandidates(batchNumber) {
   const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
   const candidates = [];
-  const add = (results, sourceType, source, boost = 0, exploration = false) => (results || []).forEach(result => candidates.push({
-    ...result,
-    sourceType,
-    _discoverSource: source,
-    _discoverBoost: boost,
-    _discoverExploration: Boolean(exploration)
-  }));
+  const add = (results, sourceType, source, boost = 0, exploration = false, relatedItem = null) => {
+    const relation = relatedItem ? discoverRelationEvidence(relatedItem) : null;
+    (results || []).forEach(result => candidates.push({
+      ...result,
+      sourceType,
+      _discoverSource: source,
+      _discoverBoost: boost,
+      _discoverExploration: Boolean(exploration),
+      _discoverRelatedLibraryItems: relation ? [relation] : []
+    }));
+  };
   const recommendationPage = 1 + ((batchNumber - 1) % 3);
 
+  // Direct recommendation overlap is the strongest For You evidence. Pull from a
+  // wider Library seed set, then preserve every independent seed that recommends
+  // the same candidate instead of throwing those overlaps away during dedupe.
   for (const sourceType of ['tv', 'movie']) {
-    const used = new Set();
-    for (let i = 0; i < 3; i++) {
-      const seed = pickDiscoverSeed(sourceType, used);
-      if (!seed?.providerId) continue;
-      used.add(String(seed.providerId));
-      try {
-        const recs = await getCached(
-          `discover:for-you:${sourceType}:${seed.providerId}:${recommendationPage}`,
-          () => TrackerAPI.getTMDBRecommendations(sourceType, seed.providerId, state.settings, recommendationPage)
-        );
-        add(filterAlreadyKnown(recs, sourceType), sourceType, 'personal', 11 + Number(seed.rating || 0));
-      } catch {}
-    }
+    const seeds = discoverForYouSeeds(sourceType, batchNumber, 10);
+    const settled = await Promise.allSettled(seeds.map(seed => getCached(
+      `discover:for-you:${sourceType}:${seed.providerId}:${recommendationPage}`,
+      () => TrackerAPI.getTMDBRecommendations(sourceType, seed.providerId, state.settings, recommendationPage)
+    )));
+    settled.forEach((response, index) => {
+      if (response.status !== 'fulfilled') return;
+      add(filterAlreadyKnown(response.value, sourceType), sourceType, 'personal', 11, false, seeds[index]);
+    });
   }
 
   const readAuthors = getReadAuthors();
@@ -11849,13 +11662,15 @@ async function collectForYouDiscoverCandidates(batchNumber) {
     }
   }
 
-  const bookSeed = pickDiscoverSeed('book');
-  if (bookSeed?.providerId) {
-    try {
-      const books = await getCached(`discover:for-you:book:${bookSeed.providerId}`, () => TrackerAPI.getBookRecommendations(bookSeed.providerId, state.settings));
-      add(filterAlreadyKnown(books, 'book'), 'book', 'personal', 11 + Number(bookSeed.rating || 0));
-    } catch {}
-  }
+  const bookSeeds = discoverForYouSeeds('book', batchNumber, 6);
+  const bookSettled = await Promise.allSettled(bookSeeds.map(seed => getCached(
+    `discover:for-you:book:${seed.providerId}`,
+    () => TrackerAPI.getBookRecommendations(seed.providerId, state.settings)
+  )));
+  bookSettled.forEach((response, index) => {
+    if (response.status !== 'fulfilled') return;
+    add(filterAlreadyKnown(response.value, 'book'), 'book', 'personal', 11, false, bookSeeds[index]);
+  });
 
   if (selectedProviders.length) {
     const providerPage = 1 + ((batchNumber - 1) % 8);
@@ -11929,7 +11744,23 @@ function dedupeDiscoverCandidatesByBoost(results) {
     const key = discoverResultIdentity(result);
     if (!key) continue;
     const existing = best.get(key);
-    if (!existing || Number(result._discoverBoost || 0) > Number(existing._discoverBoost || 0)) best.set(key, result);
+    if (!existing) {
+      best.set(key, {
+        ...result,
+        _discoverRelatedLibraryItems: mergeDiscoverRelationEvidence(result._discoverRelatedLibraryItems)
+      });
+      continue;
+    }
+
+    const preferred = Number(result._discoverBoost || 0) > Number(existing._discoverBoost || 0) ? result : existing;
+    const relations = mergeDiscoverRelationEvidence(existing._discoverRelatedLibraryItems, result._discoverRelatedLibraryItems);
+    best.set(key, {
+      ...preferred,
+      _discoverBoost: Math.max(Number(existing._discoverBoost || 0), Number(result._discoverBoost || 0)),
+      // A candidate is exploration-only only if every route that found it was exploration.
+      _discoverExploration: Boolean(existing._discoverExploration && result._discoverExploration),
+      _discoverRelatedLibraryItems: relations
+    });
   }
   return [...best.values()];
 }
@@ -11951,27 +11782,132 @@ function chooseDiscoverBookPlan(readAuthors, batchNumber) {
 }
 
 function discoverSeedWeight(item) {
+  // Seed selection should represent the Library first. Ratings/progress are only
+  // mild refinements so one 5-star niche title cannot hijack the candidate pool.
   const rating = Number(item.rating || 0);
-  let weight = rating >= 5 ? 20 : rating >= 4 ? 11 : rating >= 3 ? 4 : rating === 2 ? .45 : rating === 1 ? .12 : 3;
-  if (item.recommended) weight += 9;
-  if (getSourceType(item) === 'tv' && getTVWatchDisposition(item) === 'stopped') weight *= .12;
+  let weight = rating >= 5 ? 1.35 : rating >= 4 ? 1.20 : rating >= 3 ? 1.05 : rating === 2 ? .72 : rating === 1 ? .42 : 1;
+  if (item.recommended) weight *= 1.12;
+  const disposition = libraryDnfState(item);
+  if (disposition === 'stopped') weight *= .10;
+  else if (disposition === 'paused') weight *= .55;
   return Math.max(.05, weight);
+}
+function discoverSeedIsEngaged(item, type = getSourceType(item)) {
+  if (!item?.providerId) return false;
+  if (type === 'tv') return Boolean(item.completedAt) || Number(item.progress?.nextSeason || 1) > 1 || Number(item.progress?.nextEpisode || 1) > 1 || state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched');
+  if (type === 'book') return Boolean(item.completedAt) || Number(item.progress?.currentPage || 0) > 0 || getBookReadingPeriods(item).length > 0;
+  if (type === 'movie') return Boolean(item.completedAt) || state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'movie-watched');
+  return false;
+}
+
+function discoverSeedPool(type, excludedIds = new Set()) {
+  return state.items
+    .filter(item => getSourceType(item) === type && item.providerId && !excludedIds.has(String(item.providerId)))
+    .filter(item => discoverSeedIsEngaged(item, type));
+}
+
+function discoverStableUnit(value) {
+  // Deterministic pseudo-random number in (0,1), stable for a feed batch.
+  let hash = 2166136261;
+  const text = String(value || '');
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) + 1) / 4294967297;
+}
+
+function discoverForYouSeeds(type, batchNumber = 1, limit = 8) {
+  const pool = discoverSeedPool(type);
+  if (pool.length <= limit) return pool;
+
+  // Sample across the whole engaged Library rather than mostly from recent items.
+  // Because each Library item starts near weight 1, genre frequency in the Library
+  // drives how often that genre supplies recommendation seeds. Ratings and status
+  // only nudge the odds; stopped/DNF items are strongly down-weighted.
+  return pool
+    .map(item => {
+      const unit = discoverStableUnit(`${type}:${batchNumber}:${state.discoverFeedSession}:${item.providerId || item.id}`);
+      const weight = discoverSeedWeight(item);
+      return { item, key: -Math.log(Math.max(1e-9, unit)) / weight };
+    })
+    .sort((a, b) => a.key - b.key)
+    .slice(0, limit)
+    .map(entry => entry.item);
+}
+function discoverRelationEvidence(item) {
+  if (!item) return null;
+  const type = getSourceType(item);
+  const rating = Math.max(0, Math.min(5, Number(item.rating || 0)));
+  const disposition = libraryDnfState(item);
+  let strength = disposition === 'stopped' ? .05 : disposition === 'paused' ? .55 : 1;
+  let signal = 0;
+
+  // Rating is intentionally secondary to the number of independent Library
+  // relations. It breaks ties among equally-supported recommendations.
+  if (rating >= 4) signal += (rating - 3) * 4;
+  else if (rating === 3) signal += 1;
+  else if (rating === 2) signal -= 3.5;
+  else if (rating === 1) signal -= 7;
+  if (item.recommended) signal += 4.5;
+
+  if (type === 'tv') {
+    const watched = state.history.filter(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched').length;
+    signal += Math.min(5, Math.log1p(watched) * 1.45);
+    if (item.completedAt) signal += 1.5;
+  } else if (type === 'book') {
+    const current = Math.max(0, Number(item.progress?.currentPage || 0));
+    const total = Math.max(0, Number(item.progress?.totalPages || 0));
+    signal += total ? Math.min(4, (current / total) * 4) : Math.min(3, Math.log1p(current) / 2);
+    if (item.completedAt) signal += 1.5;
+  } else if (type === 'movie') {
+    if (item.completedAt || state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'movie-watched')) signal += 2;
+  }
+
+  if (disposition === 'paused') signal -= 3;
+  if (disposition === 'stopped') signal -= 9;
+
+  return {
+    id: String(item.id || item.providerId || ''),
+    providerId: String(item.providerId || ''),
+    type,
+    title: item.title || '',
+    strength,
+    signal: Math.max(-12, Math.min(12, signal))
+  };
+}
+
+function mergeDiscoverRelationEvidence(...groups) {
+  const byId = new Map();
+  for (const group of groups) {
+    for (const entry of Array.isArray(group) ? group : []) {
+      const id = String(entry?.id || entry?.providerId || '');
+      if (!id) continue;
+      const existing = byId.get(id);
+      if (!existing || Number(entry.signal || 0) > Number(existing.signal || 0)) byId.set(id, entry);
+    }
+  }
+  return [...byId.values()];
+}
+
+function discoverBookAuthorRelations(result) {
+  if (result?.sourceType !== 'book') return [];
+  const candidateAuthors = new Set(bookAuthorNames(result.subtitle || result.raw?.volumeInfo?.authors || []));
+  if (!candidateAuthors.size) return [];
+  return state.items
+    .filter(item => getSourceType(item) === 'book' && discoverSeedIsEngaged(item, 'book'))
+    .filter(item => bookAuthorNames(item.subtitle || item.raw?.volumeInfo?.authors || []).some(author => candidateAuthors.has(author)))
+    .map(discoverRelationEvidence)
+    .filter(Boolean);
 }
 
 function pickDiscoverSeed(type, excludedIds = new Set()) {
-  const pool = state.items
-    .filter(item => getSourceType(item) === type && item.providerId && !excludedIds.has(String(item.providerId)))
-    .filter(item => {
-      if (type === 'tv') return item.completedAt || Number(item.progress?.nextSeason || 1) > 1 || Number(item.progress?.nextEpisode || 1) > 1 || state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched');
-      if (type === 'book') return item.completedAt || Number(item.progress?.currentPage || 0) > 0;
-      if (type === 'movie') return item.completedAt || item.date || state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'movie-watched');
-      return false;
-    });
+  const pool = discoverSeedPool(type, excludedIds);
   if (!pool.length) return null;
 
   // Keep recommendations responsive to recent activity without letting one recent
-  // low-rated item dominate. Ratings, explicit recommendations, and stopped-TV
-  // status determine the lottery weight.
+  // low-rated item dominate. Ratings, explicit recommendations, and stopped/paused
+  // status determine the lottery weight in non-For-You contexts.
   const recent = [...pool]
     .sort((a,b) => String(b.updatedAt || b.completedAt || '').localeCompare(String(a.updatedAt || a.completedAt || '')))
     .slice(0, 24);
@@ -11985,46 +11921,89 @@ function pickDiscoverSeed(type, excludedIds = new Set()) {
   return weighted.at(-1)?.item || null;
 }
 
-function discoverTasteProfile(type) {
-  const profile = new Map();
-  const now = Date.now();
-  for (const item of state.items) {
-    if (getSourceType(item) !== type || !item.genres?.length) continue;
-    const rating = Number(item.rating || 0);
-    const queue = getQueueStatus(item);
-    const queued = queue === 'upnext' || queue === 'tbr';
-    const engaged = Boolean(item.completedAt) || item.recommended || queued ||
-      (type === 'tv' && state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched')) ||
-      (type === 'book' && Number(item.progress?.currentPage || 0) > 0);
-    if (!engaged && !rating) continue;
-
-    let signal = 0;
-    if (rating >= 4) signal += (rating - 3) * 2.2;
-    else if (rating === 3) signal += .5;
-    else if (rating > 0) signal -= (3 - rating) * 2.4;
-    else if (engaged) signal += .7;
-    if (queued && !item.completedAt) signal += .35;
-    if (item.recommended) signal += 3.2;
-    if (type === 'tv' && getTVWatchDisposition(item) === 'stopped') signal -= 3;
-    if (type === 'book' && item.bookDisposition === 'dnf') signal -= 3;
-
-    const activityTime = Date.parse(item.updatedAt || item.completedAt || item.createdAt || '');
-    if (Number.isFinite(activityTime)) {
-      const ageDays = Math.max(0, (now - activityTime) / 86400000);
-      const halfLife = item.recommended ? 1460 : 730;
-      const recency = Math.max(item.recommended ? .72 : .30, Math.exp(-ageDays / halfLife));
-      signal *= recency;
-    }
-
-    for (const genre of item.genres) {
-      const key = String(genre || '').trim().toLowerCase();
-      if (!key) continue;
-      profile.set(key, (profile.get(key) || 0) + signal);
-    }
+function discoverLibraryItemGenreNames(item) {
+  if (!item) return [];
+  const sourceType = getSourceType(item);
+  if (sourceType === 'book') {
+    const values = item.genres || item.categories || item.raw?.volumeInfo?.categories || [];
+    return [...new Set((Array.isArray(values) ? values : [values]).map(value => String(value || '').trim()).filter(Boolean))];
   }
-  return profile;
+  if (sourceType === 'tv' || sourceType === 'movie') {
+    const direct = (item.genres || []).map(genre => typeof genre === 'string' ? genre : genre?.name).filter(Boolean);
+    if (direct.length) return [...new Set(direct)];
+    const map = sourceType === 'tv' ? TMDB_TV_GENRES : TMDB_MOVIE_GENRES;
+    return [...new Set((item.raw?.genre_ids || []).map(id => map[Number(id)]).filter(Boolean))];
+  }
+  return [];
 }
 
+function discoverLibraryCompositionWeight(item) {
+  // Presence in the Library is the baseline. A not-yet-started TBR item is weaker
+  // evidence of taste; paused/stopped/DNF items are weaker still. Rating does not
+  // alter this prevalence count — it is handled separately as quality evidence.
+  const disposition = libraryDnfState(item);
+  if (disposition === 'stopped') return .12;
+  if (disposition === 'paused') return .50;
+  const queue = getQueueStatus(item);
+  const sourceType = getSourceType(item);
+  const engaged = discoverSeedIsEngaged(item, sourceType) || Boolean(item.completedAt);
+  if (queue === 'tbr' && !engaged) return .35;
+  return 1;
+}
+
+function discoverLibraryQualitySignal(item) {
+  const rating = Number(item.rating || 0);
+  let signal = rating >= 5 ? 1 : rating >= 4 ? .55 : rating === 3 ? .10 : rating === 2 ? -.55 : rating === 1 ? -1 : 0;
+  if (item.recommended) signal += .35;
+
+  const sourceType = getSourceType(item);
+  if (sourceType === 'tv') {
+    const watched = state.history.filter(entry => entry.sourceItemId === item.id && entry.kind === 'episode-watched').length;
+    if (watched > 0) signal += Math.min(.25, Math.log1p(watched) / 20);
+  } else if (sourceType === 'book') {
+    const current = Math.max(0, Number(item.progress?.currentPage || 0));
+    const total = Math.max(0, Number(item.progress?.totalPages || 0));
+    if (total > 0) signal += Math.min(.25, (current / total) * .25);
+  }
+  if (item.completedAt) signal += .10;
+
+  const disposition = libraryDnfState(item);
+  if (disposition === 'paused') signal -= .55;
+  if (disposition === 'stopped') signal -= 1.25;
+  return Math.max(-1.5, Math.min(1.5, signal));
+}
+
+function discoverTasteProfile(type) {
+  // TV and movies share one screen-taste profile so the genre mix reflects the
+  // audiovisual Library as a whole. Books retain their own category profile.
+  const acceptedTypes = type === 'tv' || type === 'movie' ? new Set(['tv', 'movie']) : new Set([type]);
+  const stats = new Map();
+  let totalWeight = 0;
+
+  for (const item of state.items) {
+    const sourceType = getSourceType(item);
+    if (!acceptedTypes.has(sourceType)) continue;
+    const genres = discoverLibraryItemGenreNames(item);
+    if (!genres.length) continue;
+
+    const compositionWeight = discoverLibraryCompositionWeight(item);
+    if (compositionWeight <= 0) continue;
+    totalWeight += compositionWeight;
+    const quality = discoverLibraryQualitySignal(item);
+
+    for (const genre of genres) {
+      const key = String(genre || '').trim().toLowerCase();
+      if (!key) continue;
+      const current = stats.get(key) || { count: 0, qualitySum: 0, items: 0 };
+      current.count += compositionWeight;
+      current.qualitySum += quality * compositionWeight;
+      current.items += 1;
+      stats.set(key, current);
+    }
+  }
+
+  return { stats, totalWeight };
+}
 function discoverCandidateGenreNames(result) {
   if (result.sourceType === 'book') {
     return [...new Set((result.categories || result.raw?.volumeInfo?.categories || []).map(value => String(value || '').trim()).filter(Boolean))];
@@ -12040,18 +12019,29 @@ function discoverCandidateGenreNames(result) {
 
 function discoverGenreAffinity(result, profiles) {
   const profile = profiles[result.sourceType];
-  if (!profile?.size) return 0;
-  const values = discoverCandidateGenreNames(result)
-    .map(genre => profile.get(String(genre).toLowerCase()) || 0)
-    .filter(value => value !== 0)
-    .sort((a,b) => Math.abs(b) - Math.abs(a));
-  if (!values.length) return 0;
-  // Two strongest genre signals are enough; cap them so genre history guides
-  // ranking without overwhelming seed-based recommendations.
-  const affinity = values.slice(0, 2).reduce((sum, value) => sum + value, 0);
-  return Math.max(-9, Math.min(12, affinity));
-}
+  if (!profile?.stats?.size || !profile.totalWeight) return 0;
 
+  const matches = discoverCandidateGenreNames(result)
+    .map(genre => {
+      const stat = profile.stats.get(String(genre).toLowerCase());
+      if (!stat) return null;
+      const prevalence = Math.max(0, Math.min(1, stat.count / profile.totalWeight));
+      const quality = stat.count > 0 ? stat.qualitySum / stat.count : 0;
+      return { prevalence, quality };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.prevalence - a.prevalence);
+  if (!matches.length) return 0;
+
+  // Genre prevalence is the primary taste signal. Example: if Drama appears in
+  // 20% of the relevant Library and Horror in 5%, a pure Drama candidate receives
+  // roughly four times the prevalence boost of a pure Horror candidate. Ratings,
+  // recommendations, progress and stopped/DNF history then make a small adjustment.
+  const strongest = matches.slice(0, 2);
+  const prevalence = strongest.reduce((sum, entry) => sum + entry.prevalence, 0) / strongest.length;
+  const quality = strongest.reduce((sum, entry) => sum + entry.quality, 0) / strongest.length;
+  return prevalence * 140 + quality * 5;
+}
 async function rankDiscoverFeedCandidates(results, batchSize) {
   await loadFollowingSocialContext().catch(() => []);
   const readAuthors = getReadAuthors();
@@ -12078,7 +12068,30 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
     }
 
     if (mode === 'for-you') {
+      const relations = mergeDiscoverRelationEvidence(
+        result._discoverRelatedLibraryItems,
+        discoverBookAuthorRelations(result)
+      );
+      const relationCount = relations.length;
+      const relationStrength = relations.reduce((sum, entry) => sum + Math.max(0, Number(entry.strength || 0)), 0);
+      const relationSignal = Math.max(-24, Math.min(24, relations.reduce((sum, entry) => sum + Number(entry.signal || 0), 0)));
+
+      // Direct API relationships are useful evidence, but they are secondary to
+      // the composition of the whole Library. This prevents one highly rated niche
+      // title from flooding For You with that niche when it is rare in the Library.
+      score += relationStrength * 8;
+      score += relationSignal * .55;
       score += discoverGenreAffinity(result, tasteProfiles);
+      result = {
+        ...result,
+        _discoverRelatedLibraryItems: relations,
+        _discoverLibraryRelationCount: relationCount,
+        _discoverLibraryRelationStrength: relationStrength,
+        _discoverLibraryRelationSignal: relationSignal
+      };
+      if (relationCount > 1 && !result.recommendationReason) {
+        result.recommendationReason = `Related to ${relationCount} specific items in your Library`;
+      }
     }
 
     if (mode === 'popular') {
@@ -12153,10 +12166,15 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
   const annotations = new Map([...tvAnnotated, ...movieAnnotated].map(result => [discoverResultIdentity(result), result]));
   selected = selected.map(result => annotations.get(discoverResultIdentity(result)) || result);
 
-  // Availability is resolved only for the cards in this batch to keep API work
-  // bounded, but it should still affect their order rather than being display-only.
+  // Streaming availability remains useful, but it must not override the Library
+  // relationship hierarchy. Treat it as a modest secondary bonus instead of a
+  // primary sort key, so one extra independent Library relation always wins.
   if ((state.discoverPrefs.streamingProviderIds || []).length) {
-    selected.sort((a,b) => Number(b.preferredStreaming) - Number(a.preferredStreaming) || Number(b._discoverScore || 0) - Number(a._discoverScore || 0));
+    selected = selected.map(result => ({
+      ...result,
+      _discoverScore: Number(result._discoverScore || 0) + (result.preferredStreaming ? 6 : 0)
+    }));
+    selected.sort((a,b) => Number(b._discoverScore || 0) - Number(a._discoverScore || 0) || Number(b.preferredStreaming) - Number(a.preferredStreaming));
     selected = diversifyDiscoverFeed(selected);
   }
   return selected;
@@ -13992,20 +14010,25 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
     </div>
     ${discoverTVPersonalMetadataMarkup(existing, key)}
     <section class="detail-section streaming-detail"><h3>Streaming</h3><p>${escapeHtml(providerText)}</p>${availability.link ? `<a href="${escapeAttr(availability.link)}" target="_blank" rel="noopener">See availability ↗</a>` : ''}</section>
-    <details class="detail-section discover-seasons-details" data-tv-watch-picker>
+    <details class="detail-section discover-seasons-details" data-tv-watch-picker open>
       <summary class="discover-seasons-summary">
         <span>Seasons</span>
-        <small>${seasons.length} season${seasons.length === 1 ? '' : 's'} · tap to browse</small>
+        <small>${seasons.length} season${seasons.length === 1 ? '' : 's'} · tap to collapse</small>
       </summary>
       <div class="discover-seasons-panel">
         <p class="discover-history-note">✓ marks the whole season · → opens episodes. Watched selections go to Library history only.</p>
         <div class="season-list season-list-rows">${seasonRows || 'No seasons found.'}</div>
       </div>
     </details>
-    <section class="detail-section">
-      <h3>Season ${seasonNumber} episodes</h3>
-      <div class="episode-list">${episodeRows || 'No episodes found.'}</div>
-    </section>`;
+    <details class="detail-section discover-seasons-details discover-episodes-details">
+      <summary class="discover-seasons-summary">
+        <span>Season ${seasonNumber} episodes</span>
+        <small>${(season.episodes || []).filter(ep => Number(ep.episode_number) > 0).length} episode${(season.episodes || []).filter(ep => Number(ep.episode_number) > 0).length === 1 ? '' : 's'} · tap to browse</small>
+      </summary>
+      <div class="discover-seasons-panel">
+        <div class="episode-list">${episodeRows || 'No episodes found.'}</div>
+      </div>
+    </details>`;
   await appendSocialFollowerContext(result, () => state.openDiscoverKey === key && Boolean(els.detailModal?.open));
 }
 
@@ -16727,8 +16750,20 @@ function safeLocalSet(key, value) {
   }
 }
 
+function resumeTbrItemAfterLog(item) {
+  if (!item || getQueueStatus(item) !== 'tbr' || item.completedAt) return;
+  const sourceType = getSourceType(item);
+  if (['event','concert','restaurant','place'].includes(sourceType)) return;
+  if (sourceType === 'tv') item.watchDisposition = 'following';
+  if (sourceType === 'book') item.bookDisposition = '';
+  if (sourceType === 'movie') item.mediaDisposition = '';
+  setItemQueueStatus(item, 'upnext');
+  item.updatedAt = new Date().toISOString();
+}
+
 function addHistoryRecord(record) {
   const source = record?.sourceItemId ? findItem(record.sourceItemId) : null;
+  if (source && record?.date && record?.showOnCalendar !== false) resumeTbrItemAfterLog(source);
   const repeatKey = historyRepeatIdentity(record);
   const priorRepeats = repeatKey ? state.history.filter(entry => historyRepeatIdentity(entry) === repeatKey).length : 0;
   const isRepeat = record?.rewatch == null ? priorRepeats > 0 : Boolean(record.rewatch);
