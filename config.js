@@ -69,5 +69,14 @@ export const API_CONFIG = {
     || (() => {
       const supabaseUrl = import.meta.env.EXPO_PUBLIC_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL || '';
       return supabaseUrl ? `${String(supabaseUrl).replace(/\/$/, '')}/functions/v1/game-catalogue` : '';
+    })(),
+  // Public Edge Function used to read Letterboxd's RSS feed server-side. The
+  // browser calls this with a simple GET so GitHub Pages never needs to make a
+  // cross-origin request to Letterboxd itself and no CORS preflight is needed.
+  letterboxdRssProxyUrl: import.meta.env.EXPO_PUBLIC_LETTERBOXD_RSS_PROXY_URL
+    || import.meta.env.VITE_LETTERBOXD_RSS_PROXY_URL
+    || (() => {
+      const supabaseUrl = import.meta.env.EXPO_PUBLIC_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL || '';
+      return supabaseUrl ? `${String(supabaseUrl).replace(/\/$/, '')}/functions/v1/letterboxd-rss` : '';
     })()
 };

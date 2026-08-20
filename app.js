@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-due-subtypes-log-88';
-import { API_CONFIG } from './config.js?v=omni-due-subtypes-log-88';
+import { TrackerAPI } from './api.js?v=omni-letterboxd-101';
+import { API_CONFIG } from './config.js?v=omni-letterboxd-101';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -16599,28 +16599,37 @@ function scheduleLetterboxdAutoSync() {
 async function fetchLetterboxdRSS(username) {
   const clean = String(username || '').trim().replace(/^@/, '').toLowerCase();
   if (!validLetterboxdUsername(clean)) throw new Error('Enter a valid Letterboxd username first.');
-  const url = `https://letterboxd.com/${encodeURIComponent(clean)}/rss/`;
-  let directError = null;
-  try {
-    const response = await fetch(url, { headers: { Accept: 'application/rss+xml, application/xml, text/xml, */*' } });
-    if (response.ok) return await response.text();
-    directError = new Error(`Letterboxd returned ${response.status}.`);
-  } catch (error) {
-    directError = error;
+
+  const proxyBase = String(API_CONFIG.letterboxdRssProxyUrl || '').trim();
+  if (!proxyBase) {
+    throw new Error('Letterboxd sync proxy is not configured. Make sure EXPO_PUBLIC_SUPABASE_URL is present in the GitHub Pages build.');
   }
 
-  if (supabase && !localOnlyMode) {
-    try {
-      const { data, error } = await supabase.functions.invoke('letterboxd-rss', { body: { username: clean } });
-      if (error) throw error;
-      if (typeof data === 'string' && data.trim().startsWith('<')) return data;
-      if (data?.xml) return String(data.xml);
-    } catch (error) {
-      console.warn('[Letterboxd] Supabase RSS proxy unavailable:', error?.message || error);
-    }
+  // Do not try letterboxd.com from the browser: Letterboxd does not send CORS
+  // headers for its RSS feed, so that request will always be blocked on GitHub
+  // Pages. The public Edge Function performs the server-side fetch instead.
+  const proxyUrl = new URL(proxyBase);
+  proxyUrl.searchParams.set('username', clean);
+
+  let response;
+  try {
+    response = await fetch(proxyUrl.toString(), {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store'
+    });
+  } catch (error) {
+    throw new Error(`Could not reach the Letterboxd sync proxy (${error?.message || 'network error'}). Check the “Deploy Letterboxd RSS proxy” GitHub Action and Supabase Edge Function logs.`);
   }
-  const suffix = directError?.message ? ` (${directError.message})` : '';
-  throw new Error(`Could not read the Letterboxd RSS feed${suffix}. Deploy the included Supabase letterboxd-rss function if your browser blocks direct RSS access.`);
+
+  let payload = null;
+  try { payload = await response.json(); } catch {}
+  if (!response.ok) {
+    const detail = payload?.error || `HTTP ${response.status}`;
+    throw new Error(`Letterboxd sync proxy failed: ${detail}`);
+  }
+  if (!payload?.xml) throw new Error('Letterboxd sync proxy returned no RSS data.');
+  return String(payload.xml);
 }
 
 function letterboxdXmlText(node, tagName) {

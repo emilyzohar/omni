@@ -1,7 +1,7 @@
 const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 }
 
 type LetterboxdRequestBody = {
@@ -31,30 +31,34 @@ function cleanUsername(value: unknown): string {
     : ''
 }
 
-const edgeRuntime = globalThis as typeof globalThis & {
-  Deno: {
-    serve: (handler: (req: Request) => Response | Promise<Response>) => unknown
-  }
-}
+async function requestUsername(req: Request): Promise<string> {
+  const url = new URL(req.url)
+  if (req.method === 'GET') return cleanUsername(url.searchParams.get('username'))
 
-edgeRuntime.Deno.serve(async (req: Request): Promise<Response> => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
-
-  if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405)
-  }
-
-  try {
+  if (req.method === 'POST') {
     let body: LetterboxdRequestBody = {}
     try {
       body = (await req.json()) as LetterboxdRequestBody
     } catch {
-      return jsonResponse({ error: 'Request body must be valid JSON.' }, 400)
+      return ''
     }
+    return cleanUsername(body.username)
+  }
 
-    const username = cleanUsername(body.username)
+  return ''
+}
+
+async function handler(req: Request): Promise<Response> {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: corsHeaders })
+  }
+
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    return jsonResponse({ error: 'Method not allowed.' }, 405)
+  }
+
+  try {
+    const username = await requestUsername(req)
     if (!/^[a-z0-9][a-z0-9_-]{0,29}$/i.test(username)) {
       return jsonResponse({ error: 'Invalid Letterboxd username.' }, 400)
     }
@@ -92,4 +96,9 @@ edgeRuntime.Deno.serve(async (req: Request): Promise<Response> => {
     console.error('[letterboxd-rss]', error)
     return jsonResponse({ error: errorMessage(error) }, 500)
   }
-})
+}
+
+// Supabase Edge Functions accept the standard fetch-handler export. Using this
+// form avoids editor errors for the Deno global while remaining deployable by
+// the Supabase CLI/runtime.
+export default { fetch: handler }
