@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-tracked-date-96" />
+  <link rel="stylesheet" href="style.css?v=omni-goodreads-106" />
 </head> 
 <body class="library-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -83,7 +83,6 @@
                 <span class="sr-only">Search Library</span>
                 <input id="librarySearch" type="search" autocomplete="off" placeholder="Search Library…" />
               </label>
-              <button id="openLetterboxd" class="library-add-button library-icon-button" type="button" aria-label="Letterboxd integration" title="Letterboxd integration">LB</button>
               <button id="openLibraryAdd" class="library-add-button library-icon-button" type="button" aria-label="Add item" title="Add item">+</button>
             </div>
             <div class="library-filter-row">
@@ -139,26 +138,7 @@
     </section>
   </main>
 
-  <dialog id="letterboxdModal" class="modal small-modal letterboxd-modal">
-    <button class="modal-x" type="button" data-close="letterboxdModal" aria-label="Close">×</button>
-    <div class="modal-heading">
-      <p class="modal-eyebrow">INTEGRATION</p>
-      <h2>Letterboxd</h2>
-      <p>One-way sync from Letterboxd into Omni. Recent diary entries use your public RSS feed; a Letterboxd export imports the rest of your history and watchlist.</p>
-    </div>
-    <section class="settings-section">
-      <label class="field"><span>Letterboxd username</span><input id="letterboxdUsername" type="text" autocomplete="off" placeholder="your-username" /></label>
-      <label class="checkbox-field"><input id="letterboxdAutoSync" type="checkbox" checked /><span><strong>Automatic recent sync</strong><small>Check the public Letterboxd RSS feed when Omni opens, at most once every six hours.</small></span></label>
-      <p id="letterboxdLastSync" class="settings-note">Not synced yet.</p>
-      <div class="modal-actions end-only"><div class="actions-right"><button id="letterboxdSaveConnection" class="secondary-button" type="button">Save connection</button><button id="letterboxdSyncNow" class="primary-button" type="button">Sync now</button></div></div>
-    </section>
-    <section class="settings-section">
-      <div><h3>Import existing history</h3><p class="settings-note">Choose the ZIP from Letterboxd → Settings → Import &amp; Export → Export Your Data. You can also select extracted diary.csv, ratings.csv, watched.csv, and watchlist.csv files.</p></div>
-      <label class="field"><span>Letterboxd export</span><input id="letterboxdImportFiles" type="file" accept=".zip,.csv,text/csv,application/zip" multiple /></label>
-      <div class="modal-actions end-only"><div class="actions-right"><button id="letterboxdImportButton" class="primary-button" type="button">Import selected files</button></div></div>
-    </section>
-    <p id="letterboxdStatus" class="form-message" hidden></p>
-  </dialog>
+
 
   <!-- TRACK SETTINGS -->
   <dialog id="stickerSettingsModal" class="modal sticker-settings-modal track-settings-modal">
@@ -699,6 +679,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-letterboxd-97"></script>
+  <script type="module" src="app.js?v=omni-goodreads-106"></script>
 </body>
 </html>

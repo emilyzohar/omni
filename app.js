@@ -549,6 +549,23 @@ const els = {
   bookPauseResume: $('#bookPauseResume')
 };
 
+// Letterboxd used to live beside Library search as a compact "LB" button.
+// Keep Library's original controls intact even if an older cached library.html is
+// briefly served during a deploy. Integrations now belong in Discover > Settings.
+function removeLegacyLibraryIntegrationButtons() {
+  if (!document.body?.classList.contains('library-page')) return;
+  const legacyLetterboxd = document.getElementById('openLetterboxd');
+  if (legacyLetterboxd) legacyLetterboxd.remove();
+
+  // Preserve the original Library search-row ordering: search, then Add (+).
+  const searchRow = document.querySelector('.library-search-row');
+  const searchControl = searchRow?.querySelector('.library-search-control');
+  const addButton = document.getElementById('openLibraryAdd');
+  if (searchRow && searchControl && addButton) searchRow.appendChild(addButton);
+}
+
+removeLegacyLibraryIntegrationButtons();
+
 bootstrapAuth();
 
 async function bootstrapAuth() {
