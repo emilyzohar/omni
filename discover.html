@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-due-subtypes-log-88" />
+  <link rel="stylesheet" href="style.css?v=omni-tracked-date-96" />
 </head>
 <body class="discover-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -239,6 +239,17 @@
         <span>Show only English-language TV shows</span>
       </label>
 
+      <section class="settings-section">
+        <div>
+          <h3>Integrations</h3>
+          <p class="settings-note">Bring activity and ratings from services you already use into Omni.</p>
+        </div>
+        <div class="settings-integration-actions">
+          <button id="openLetterboxd" class="secondary-button" type="button">Sync Letterboxd</button>
+          <button id="openGoodreads" class="secondary-button" type="button">Sync Goodreads</button>
+        </div>
+      </section>
+
       <div class="modal-actions">
         <button id="clearStreamingProviders" class="quiet-button" type="button">Clear services</button>
         <div class="actions-right">
@@ -247,6 +258,44 @@
         </div>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="letterboxdModal" class="modal small-modal letterboxd-modal">
+    <button class="modal-x" type="button" data-close="letterboxdModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">INTEGRATION</p>
+      <h2>Sync Letterboxd</h2>
+      <p>One-way sync from Letterboxd into Omni. Recent diary entries use your public RSS feed; a Letterboxd export imports the rest of your history and watchlist.</p>
+    </div>
+    <section class="settings-section">
+      <label class="field"><span>Letterboxd username</span><input id="letterboxdUsername" type="text" autocomplete="off" placeholder="your-username" /></label>
+      <label class="checkbox-field"><input id="letterboxdAutoSync" type="checkbox" checked /><span><strong>Automatic recent sync</strong><small>Check the public Letterboxd RSS feed when Omni opens, at most once every six hours.</small></span></label>
+      <p id="letterboxdLastSync" class="settings-note">Not synced yet.</p>
+      <div class="modal-actions end-only"><div class="actions-right"><button id="letterboxdSaveConnection" class="secondary-button" type="button">Save connection</button><button id="letterboxdSyncNow" class="primary-button" type="button">Sync now</button></div></div>
+    </section>
+    <section class="settings-section">
+      <div><h3>Import existing history</h3><p class="settings-note">Choose the ZIP from Letterboxd → Settings → Import &amp; Export → Export Your Data. You can also select extracted diary.csv, ratings.csv, watched.csv, and watchlist.csv files.</p></div>
+      <label class="field"><span>Letterboxd export</span><input id="letterboxdImportFiles" type="file" accept=".zip,.csv,text/csv,application/zip" multiple /></label>
+      <div class="modal-actions end-only"><div class="actions-right"><button id="letterboxdImportButton" class="primary-button" type="button">Import selected files</button></div></div>
+    </section>
+    <p id="letterboxdStatus" class="form-message" hidden></p>
+  </dialog>
+
+  <dialog id="goodreadsModal" class="modal small-modal letterboxd-modal">
+    <button class="modal-x" type="button" data-close="goodreadsModal" aria-label="Close">×</button>
+    <div class="modal-heading">
+      <p class="modal-eyebrow">INTEGRATION</p>
+      <h2>Sync Goodreads</h2>
+      <p>Import your Goodreads library into Omni. Re-import a fresh export whenever you want to sync changes; existing books are updated rather than duplicated.</p>
+    </div>
+    <section class="settings-section">
+      <div><h3>Import library</h3><p class="settings-note">In Goodreads, open My Books → Import and export → Export Library. Choose the generated <strong>goodreads_export.csv</strong> here.</p></div>
+      <label class="field"><span>Goodreads export</span><input id="goodreadsImportFile" type="file" accept=".csv,text/csv" /></label>
+      <p id="goodreadsLastImport" class="settings-note">Not imported yet.</p>
+      <p class="settings-note">Read → Library · Currently Reading → Up Next · Want to Read → TBR. Ratings, Date Read, DNF/on-hold shelves, page counts, and reviews are preserved when available. Date Added is never treated as a tracked date.</p>
+      <div class="modal-actions end-only"><div class="actions-right"><button id="goodreadsImportButton" class="primary-button" type="button">Import Goodreads CSV</button></div></div>
+    </section>
+    <p id="goodreadsStatus" class="form-message" hidden></p>
   </dialog>
 
   <!-- ADD / EDIT -->
@@ -788,6 +837,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-due-subtypes-log-88"></script>
+  <script type="module" src="app.js?v=omni-goodreads-104"></script>
 </body>
 </html>

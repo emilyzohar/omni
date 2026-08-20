@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-letterboxd-101';
-import { API_CONFIG } from './config.js?v=omni-letterboxd-101';
+import { TrackerAPI } from './api.js?v=omni-goodreads-104';
+import { API_CONFIG } from './config.js?v=omni-goodreads-104';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -11,6 +11,7 @@ const STICKER_PREFS_KEY = 'zoharTracker.stickerPrefs.v1';
 const STREAK_PREFS_KEY = 'zoharTracker.streakPrefs.v1';
 const LIBRARY_PREFS_KEY = 'zoharTracker.libraryPrefs.v1';
 const LETTERBOXD_PREFS_KEY = 'zoharTracker.letterboxdPrefs.v1';
+const GOODREADS_PREFS_KEY = 'zoharTracker.goodreadsPrefs.v1';
 const ALBUMS_KEY = 'zoharTracker.albums.v1';
 const TYPE_USAGE_KEY = 'zoharTracker.typeUsage.v1';
 const PHOTO_UPLOAD_LOG_KEY = 'zoharTracker.photoUploadLog.v1';
@@ -159,6 +160,14 @@ function normalizeLetterboxdPrefs(value = {}) {
     lastImportAt: String(value?.lastImportAt || '')
   };
 }
+const DEFAULT_GOODREADS_PREFS = { lastImportAt: '' };
+function normalizeGoodreadsPrefs(value = {}) {
+  return {
+    ...DEFAULT_GOODREADS_PREFS,
+    ...(value && typeof value === 'object' ? value : {}),
+    lastImportAt: String(value?.lastImportAt || '')
+  };
+}
 let currentUser = null;
 let appStarted = false;
 let localOnlyMode = false;
@@ -184,6 +193,7 @@ const state = {
   streakPrefs: loadJSON(STREAK_PREFS_KEY, {}),
   libraryPrefs: loadJSON(LIBRARY_PREFS_KEY, DEFAULT_LIBRARY_PREFS),
   letterboxdPrefs: normalizeLetterboxdPrefs(loadJSON(LETTERBOXD_PREFS_KEY, DEFAULT_LETTERBOXD_PREFS)),
+  goodreadsPrefs: normalizeGoodreadsPrefs(loadJSON(GOODREADS_PREFS_KEY, DEFAULT_GOODREADS_PREFS)),
   watchProviderCatalog: [],
   discoverProviderDraft: new Map(),
   selectedSource: null,
@@ -328,6 +338,12 @@ const els = {
   letterboxdImportButton: $('#letterboxdImportButton'),
   letterboxdStatus: $('#letterboxdStatus'),
   letterboxdLastSync: $('#letterboxdLastSync'),
+  openGoodreads: $('#openGoodreads'),
+  goodreadsModal: $('#goodreadsModal'),
+  goodreadsImportFile: $('#goodreadsImportFile'),
+  goodreadsImportButton: $('#goodreadsImportButton'),
+  goodreadsStatus: $('#goodreadsStatus'),
+  goodreadsLastImport: $('#goodreadsLastImport'),
   statsSummary: $('#statsSummary'),
   statsTypes: $('#statsTypes'),
   statsGenres: $('#statsGenres'),
@@ -1728,6 +1744,8 @@ function bindEvents() {
   els.letterboxdSaveConnection?.addEventListener('click', saveLetterboxdConnection);
   els.letterboxdSyncNow?.addEventListener('click', () => syncLetterboxdRecent({ manual: true }));
   els.letterboxdImportButton?.addEventListener('click', importSelectedLetterboxdFiles);
+  els.openGoodreads?.addEventListener('click', openGoodreadsSettings);
+  els.goodreadsImportButton?.addEventListener('click', importSelectedGoodreadsFile);
   els.refreshDiscover?.addEventListener('click', () => renderDiscover(true));
   els.discoverCalendarPrevious?.addEventListener('click', () => shiftDiscoverCalendarMonth(-1));
   els.discoverCalendarToday?.addEventListener('click', () => jumpDiscoverCalendarToToday());
@@ -5068,6 +5086,22 @@ function applyReleaseQueueAutomation(item, today = todayString()) {
 
   const after = JSON.stringify({ queueStatus: getQueueStatus(item), watchDisposition: item.watchDisposition || '', bookDisposition: item.bookDisposition || '', releaseAutomation: item.releaseAutomation || null });
   return before !== after;
+}
+
+function itemHasCompletionRecord(item) {
+  if (!item) return false;
+  if (item.completedAt) return true;
+  const sourceType = getSourceType(item);
+  if (sourceType === 'book') {
+    const current = Number(item.progress?.currentPage || 0);
+    const total = Number(item.progress?.totalPages || 0);
+    return (total > 0 && current >= total) || state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'book-finished');
+  }
+  if (sourceType === 'tv') return state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'series-watched');
+  if (sourceType === 'movie') return state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'movie-watched');
+  if (sourceType === 'youtube') return state.history.some(entry => entry.sourceItemId === item.id && ['youtube-completed','item-completed'].includes(entry.kind));
+  if (['game','video-game','board-game'].includes(sourceType)) return state.history.some(entry => entry.sourceItemId === item.id && ['game-played','item-completed'].includes(entry.kind));
+  return state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'item-completed');
 }
 
 function hasOneOffCompletionRecord(item) {
@@ -15864,6 +15898,7 @@ function saveCurrentLibraryFilterAsDefault() {
   state.libraryPrefs = { ...normalizeLibraryPrefs(state.libraryPrefs), defaultTypeKeys: [...new Set(selected)] };
   safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
   safeLocalSet(LETTERBOXD_PREFS_KEY, state.letterboxdPrefs);
+  safeLocalSet(GOODREADS_PREFS_KEY, state.goodreadsPrefs);
   scheduleCloudSync();
   libraryFilterStatus('Default saved');
 }
@@ -15874,6 +15909,7 @@ function resetLibraryFilterDefault() {
   state.libraryVisibleTypes = new Set(core);
   safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
   safeLocalSet(LETTERBOXD_PREFS_KEY, state.letterboxdPrefs);
+  safeLocalSet(GOODREADS_PREFS_KEY, state.goodreadsPrefs);
   scheduleCloudSync();
   refreshTypeFilter();
   renderLibrary();
@@ -16562,6 +16598,7 @@ function openLetterboxdSettings() {
   renderLetterboxdSettings();
   setLetterboxdStatus('');
   if (els.letterboxdImportFiles) els.letterboxdImportFiles.value = '';
+  if (els.discoverSettingsModal?.open) els.discoverSettingsModal.close();
   showDialogAtTop(els.letterboxdModal);
 }
 
@@ -17032,6 +17069,361 @@ async function importSelectedLetterboxdFiles() {
   }
 }
 
+
+// ---------------------------
+// GOODREADS
+// ---------------------------
+let goodreadsImportBusy = false;
+
+function setGoodreadsStatus(message, error = false) {
+  if (!els.goodreadsStatus) return;
+  els.goodreadsStatus.textContent = message || '';
+  els.goodreadsStatus.hidden = !message;
+  els.goodreadsStatus.classList.toggle('is-error', Boolean(error));
+}
+
+function renderGoodreadsSettings() {
+  state.goodreadsPrefs = normalizeGoodreadsPrefs(state.goodreadsPrefs);
+  if (els.goodreadsLastImport) {
+    els.goodreadsLastImport.textContent = state.goodreadsPrefs.lastImportAt
+      ? `Last import: ${formatLetterboxdTimestamp(state.goodreadsPrefs.lastImportAt)}`
+      : 'Not imported yet.';
+  }
+}
+
+function openGoodreadsSettings() {
+  renderGoodreadsSettings();
+  setGoodreadsStatus('');
+  if (els.goodreadsImportFile) els.goodreadsImportFile.value = '';
+  if (els.discoverSettingsModal?.open) els.discoverSettingsModal.close();
+  showDialogAtTop(els.goodreadsModal);
+}
+
+function goodreadsCell(row, names) {
+  const wanted = new Set((names || []).map(name => String(name).trim().toLowerCase()));
+  for (const [key, value] of Object.entries(row || {})) {
+    if (wanted.has(String(key).trim().toLowerCase())) return String(value ?? '').trim();
+  }
+  return '';
+}
+
+function normalizeGoodreadsISBN(value) {
+  return String(value || '')
+    .replace(/^=\s*/, '')
+    .replace(/["']/g, '')
+    .replace(/[^0-9Xx]/g, '')
+    .toUpperCase();
+}
+
+function normalizeGoodreadsShelf(value) {
+  return String(value || '').trim().toLowerCase().replace(/[_\s]+/g, '-');
+}
+
+function goodreadsShelfInfo(row) {
+  const exclusive = normalizeGoodreadsShelf(goodreadsCell(row, ['Exclusive Shelf', 'Exclusive shelf']));
+  const shelves = goodreadsCell(row, ['Bookshelves', 'Bookshelves with positions'])
+    .split(',')
+    .map(normalizeGoodreadsShelf)
+    .filter(Boolean);
+  const all = new Set([exclusive, ...shelves].filter(Boolean));
+  const dnf = [...all].some(value => ['dnf','did-not-finish','didnt-finish','abandoned','abandon'].includes(value));
+  const paused = [...all].some(value => ['paused','on-hold','onhold','hold'].includes(value));
+  return { exclusive, shelves: [...all], dnf, paused };
+}
+
+function normalizeGoodreadsDate(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) return '';
+  const date = new Date(parsed);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function parseGoodreadsExport(text) {
+  return parseCSVText(text).map(row => {
+    const shelf = goodreadsShelfInfo(row);
+    return {
+      bookId: goodreadsCell(row, ['Book Id', 'Book ID']),
+      title: goodreadsCell(row, ['Title']),
+      author: goodreadsCell(row, ['Author', 'Author l-f']),
+      isbn: normalizeGoodreadsISBN(goodreadsCell(row, ['ISBN'])),
+      isbn13: normalizeGoodreadsISBN(goodreadsCell(row, ['ISBN13', 'ISBN 13'])),
+      rating: Math.max(0, Math.min(5, Number(goodreadsCell(row, ['My Rating']) || 0))),
+      averageRating: Number(goodreadsCell(row, ['Average Rating']) || 0),
+      pageCount: Math.max(0, Number(goodreadsCell(row, ['Number of Pages', 'Page Count']) || 0)),
+      year: Number(goodreadsCell(row, ['Original Publication Year', 'Year Published']) || 0),
+      dateRead: normalizeGoodreadsDate(goodreadsCell(row, ['Date Read'])),
+      dateAdded: normalizeGoodreadsDate(goodreadsCell(row, ['Date Added'])),
+      review: goodreadsCell(row, ['My Review', 'Review']),
+      readCount: Math.max(0, Number(goodreadsCell(row, ['Read Count']) || 0)),
+      exclusiveShelf: shelf.exclusive,
+      shelves: shelf.shelves,
+      dnf: shelf.dnf,
+      paused: shelf.paused
+    };
+  }).filter(entry => entry.title);
+}
+
+function goodreadsBookResult(raw) {
+  if (!raw) return null;
+  const info = raw.raw?.volumeInfo || raw.volumeInfo || raw.raw || {};
+  return {
+    ...raw,
+    sourceType: 'book',
+    provider: raw.provider || 'googleBooks',
+    providerId: String(raw.providerId || raw.id || ''),
+    title: raw.title || info.title || 'Untitled',
+    subtitle: raw.subtitle || (info.authors || []).join(', '),
+    pageCount: Number(raw.pageCount || info.pageCount || 0),
+    categories: raw.categories || info.categories || [],
+    raw: raw.raw || raw
+  };
+}
+
+async function resolveGoodreadsBookEntry(entry) {
+  const isbn = entry.isbn13 || entry.isbn;
+  const trySearch = async query => {
+    try { return await TrackerAPI.searchCatalogue(query, 'book', state.settings); }
+    catch { return []; }
+  };
+
+  if (isbn) {
+    const byIsbn = await trySearch(`isbn:${isbn}`);
+    if (byIsbn.length) return goodreadsBookResult(byIsbn[0]);
+  }
+
+  const query = [entry.title, entry.author ? `inauthor:${entry.author}` : ''].filter(Boolean).join(' ');
+  const results = await trySearch(query);
+  const wantedTitle = normalizeSearchText(entry.title).replace(/^the\s+/, '');
+  const wantedAuthor = normalizeSearchText(entry.author);
+  const ranked = (results || []).map(result => {
+    const title = normalizeSearchText(result.title || result.raw?.volumeInfo?.title || '').replace(/^the\s+/, '');
+    const authors = normalizeSearchText(result.subtitle || (result.raw?.volumeInfo?.authors || []).join(' '));
+    const published = Number(String(result.raw?.volumeInfo?.publishedDate || result.publishedDate || '').slice(0, 4) || 0);
+    let score = 0;
+    if (title === wantedTitle) score += 14;
+    else if (title.includes(wantedTitle) || wantedTitle.includes(title)) score += 6;
+    if (wantedAuthor && authors.includes(wantedAuthor)) score += 8;
+    if (entry.year && published === entry.year) score += 4;
+    else if (entry.year && published && Math.abs(published - entry.year) <= 1) score += 1;
+    return { result, score };
+  }).sort((a, b) => b.score - a.score);
+  if (!ranked.length || ranked[0].score < (wantedAuthor ? 18 : 12)) return null;
+  return goodreadsBookResult(ranked[0].result);
+}
+
+function findExistingGoodreadsBook(entry, resolved = null) {
+  if (resolved) {
+    const canonical = findCanonicalLibraryItem(resolved);
+    if (canonical) return canonical;
+  }
+  const wantedTitle = normalizeSearchText(entry.title);
+  const wantedAuthor = normalizeSearchText(entry.author);
+  return state.items.find(item => {
+    if (getSourceType(item) !== 'book') return false;
+    const title = normalizeSearchText(item.title || '');
+    if (title !== wantedTitle) return false;
+    if (!wantedAuthor) return true;
+    const author = normalizeSearchText(item.subtitle || item.raw?.volumeInfo?.authors?.join(' ') || '');
+    return author.includes(wantedAuthor) || wantedAuthor.includes(author);
+  }) || null;
+}
+
+function ensureGoodreadsLibraryItem(entry, result) {
+  let item = findExistingGoodreadsBook(entry, result);
+  if (item) return item;
+  item = {
+    id: makeId(), sourceType: 'book', type: 'book', typeLabel: 'Books', subcategory: '',
+    title: result?.title || entry.title || 'Untitled', provider: result?.provider || 'googleBooks', providerId: String(result?.providerId || ''),
+    image: result?.image || '', subtitle: result?.subtitle || entry.author || '', rating: 0, notes: '', recommended: false,
+    genres: result ? extractItemGenres('book', result, null) : [], releaseDate: result ? extractItemReleaseDate('book', result, null) : '',
+    attachments: [], links: [], date: '', queueStatus: 'library', active: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    progress: { currentPage: 0, totalPages: Number(result?.pageCount || entry.pageCount || 0), readingPeriods: [] }, raw: result?.raw ? { ...result.raw } : {}
+  };
+  state.items.push(item);
+  return item;
+}
+
+function goodreadsCompletionHistory(item) {
+  return state.history.find(record => record.sourceItemId === item.id && record.kind === 'book-finished' && record.goodreadsImported === true) || null;
+}
+
+function applyGoodreadsBook(entry, item) {
+  const totalPages = Math.max(Number(item.progress?.totalPages || 0), Number(entry.pageCount || 0));
+  item.progress = { ...item.progress, totalPages, readingPeriods: getBookReadingPeriods(item) };
+  item.goodreadsBookId = entry.bookId || item.goodreadsBookId || '';
+  item.goodreadsExclusiveShelf = entry.exclusiveShelf || '';
+  item.goodreadsShelves = [...entry.shelves];
+  item.goodreadsReadCount = entry.readCount;
+  item.goodreadsReview = entry.review || '';
+  item.goodreadsDateAdded = entry.dateAdded || '';
+  if (entry.isbn) item.goodreadsISBN = entry.isbn;
+  if (entry.isbn13) item.goodreadsISBN13 = entry.isbn13;
+
+  if (entry.rating > 0) {
+    const previousImported = Number(item.goodreadsRating || 0);
+    if (!Number(item.rating || 0) || !previousImported || Number(item.rating || 0) === previousImported) item.rating = entry.rating;
+    item.goodreadsRating = entry.rating;
+  }
+
+  const oldImportedHistory = goodreadsCompletionHistory(item);
+  const isReadShelf = entry.exclusiveShelf === 'read' || entry.readCount > 0 || Boolean(entry.dateRead);
+  if (!isReadShelf) {
+    if (item.goodreadsCompletedPagesApplied && Number(item.progress?.currentPage || 0) >= Number(item.progress?.totalPages || 0)) {
+      item.progress.currentPage = 0;
+    }
+    delete item.goodreadsCompletedPagesApplied;
+    if (item.goodreadsCompletionDate && item.completedAt === item.goodreadsCompletionDate) item.completedAt = '';
+    delete item.goodreadsCompletionDate;
+  }
+  if (entry.dnf) {
+    item.bookDisposition = 'dnf';
+    setItemQueueStatus(item, 'library');
+    item.completedAt = '';
+    if (oldImportedHistory) state.history = state.history.filter(record => record !== oldImportedHistory);
+  } else if (entry.paused) {
+    item.bookDisposition = 'paused';
+    setItemQueueStatus(item, 'tbr');
+    item.completedAt = '';
+    if (oldImportedHistory) state.history = state.history.filter(record => record !== oldImportedHistory);
+  } else if (entry.exclusiveShelf === 'currently-reading') {
+    item.bookDisposition = '';
+    item.completedAt = '';
+    setItemQueueStatus(item, 'upnext');
+    if (oldImportedHistory) state.history = state.history.filter(record => record !== oldImportedHistory);
+  } else if (entry.exclusiveShelf === 'to-read') {
+    item.bookDisposition = '';
+    item.completedAt = '';
+    setItemQueueStatus(item, 'tbr');
+    if (oldImportedHistory) state.history = state.history.filter(record => record !== oldImportedHistory);
+  } else if (isReadShelf) {
+    item.bookDisposition = '';
+    setItemQueueStatus(item, 'library');
+    if (totalPages > 0) {
+      item.progress.currentPage = totalPages;
+      item.goodreadsCompletedPagesApplied = true;
+    }
+    if (entry.dateRead) {
+      item.completedAt = entry.dateRead;
+      item.goodreadsCompletionDate = entry.dateRead;
+    } else if (oldImportedHistory?.date && /^\d{4}-\d{2}-\d{2}$/.test(oldImportedHistory.date)) {
+      item.completedAt = oldImportedHistory.date;
+      item.goodreadsCompletionDate = oldImportedHistory.date;
+    }
+
+    const manualCompletion = !oldImportedHistory && state.history.find(record =>
+      record.sourceItemId === item.id &&
+      record.kind === 'book-finished' &&
+      (entry.dateRead ? record.date === entry.dateRead : true)
+    );
+    if (!manualCompletion) {
+      const record = oldImportedHistory || {
+        sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), kind: 'book-finished',
+        title: item.title, subtitle: totalPages ? `Finished · ${totalPages} pages` : 'Finished', notes: item.notes || '',
+        rating: Number(item.rating || 0), image: item.image || '', provider: item.provider, providerId: item.providerId,
+        goodreadsImported: true
+      };
+      record.date = entry.dateRead || '';
+      record.showOnCalendar = Boolean(entry.dateRead);
+      record.rating = Number(item.rating || 0);
+      record.goodreadsBookId = entry.bookId || '';
+      if (!oldImportedHistory) state.history.push(record);
+    }
+  }
+  item.updatedAt = new Date().toISOString();
+}
+
+async function importSelectedGoodreadsFile() {
+  if (goodreadsImportBusy) return;
+  const file = els.goodreadsImportFile?.files?.[0] || null;
+  if (!file) { setGoodreadsStatus('Choose your Goodreads CSV export first.', true); return; }
+  if (!/\.csv$/i.test(file.name) && !/csv/i.test(file.type || '')) {
+    setGoodreadsStatus('Choose the goodreads_export.csv file.', true);
+    return;
+  }
+  goodreadsImportBusy = true;
+  if (els.goodreadsImportButton) els.goodreadsImportButton.disabled = true;
+  try {
+    setGoodreadsStatus('Reading Goodreads export…');
+    const books = parseGoodreadsExport(await file.text());
+    if (!books.length) throw new Error('No books were found in that Goodreads export.');
+
+    let matched = 0;
+    let titleMatched = 0;
+    let unmatched = 0;
+    let read = 0;
+    let reading = 0;
+    let toRead = 0;
+    let dnf = 0;
+    const unmatchedTitles = [];
+
+    for (let index = 0; index < books.length; index += 1) {
+      const entry = books[index];
+      setGoodreadsStatus(`Syncing ${index + 1} of ${books.length}: ${entry.title}`);
+      try {
+        let result = null;
+        const existing = findExistingGoodreadsBook(entry, null);
+        if (!existing || !existing.providerId) result = await resolveGoodreadsBookEntry(entry);
+        else result = { sourceType: 'book', provider: existing.provider, providerId: existing.providerId, title: existing.title, subtitle: existing.subtitle, image: existing.image, pageCount: existing.progress?.totalPages || entry.pageCount, raw: existing.raw || {} };
+
+        if (!result && !existing) {
+          unmatched += 1;
+          unmatchedTitles.push(entry.title);
+          // Preserve the Goodreads library even if Google Books cannot resolve it.
+          const item = ensureGoodreadsLibraryItem(entry, null);
+          applyGoodreadsBook(entry, item);
+          titleMatched += 1;
+        } else {
+          const item = ensureGoodreadsLibraryItem(entry, result);
+          // Enrich an existing manual/Goodreads-only book once Google Books resolves it.
+          if (result?.providerId && !item.providerId) {
+            item.provider = result.provider || 'googleBooks';
+            item.providerId = String(result.providerId);
+            item.image = item.image || result.image || '';
+            item.subtitle = item.subtitle || result.subtitle || entry.author || '';
+            item.raw = result.raw ? { ...result.raw } : item.raw;
+            item.genres = [...new Set([...(item.genres || []), ...extractItemGenres('book', result, null)])];
+            item.releaseDate = item.releaseDate || extractItemReleaseDate('book', result, null);
+          }
+          applyGoodreadsBook(entry, item);
+          matched += 1;
+        }
+
+        if (entry.dnf) dnf += 1;
+        else if (entry.exclusiveShelf === 'currently-reading') reading += 1;
+        else if (entry.exclusiveShelf === 'to-read') toRead += 1;
+        else if (entry.exclusiveShelf === 'read' || entry.readCount > 0 || entry.dateRead) read += 1;
+      } catch (error) {
+        console.warn('[Goodreads] import failed:', entry.title, error?.message || error);
+        unmatched += 1;
+        unmatchedTitles.push(entry.title);
+      }
+      if ((index + 1) % 10 === 0) await new Promise(resolve => setTimeout(resolve, 80));
+    }
+
+    state.goodreadsPrefs = normalizeGoodreadsPrefs({ ...state.goodreadsPrefs, lastImportAt: new Date().toISOString() });
+    safeLocalSet(GOODREADS_PREFS_KEY, state.goodreadsPrefs);
+    saveItems();
+    saveHistory();
+    scheduleCloudSync();
+    renderAll();
+    renderGoodreadsSettings();
+    const unresolved = unmatched ? ` ${unmatched} could not be fully matched to Google Books${unmatchedTitles.length ? ` (${unmatchedTitles.slice(0, 3).join(', ')}${unmatchedTitles.length > 3 ? '…' : ''})` : ''}; they were still kept in Omni by title.` : '';
+    setGoodreadsStatus(`Goodreads sync complete: ${books.length} books processed · ${read} read · ${reading} currently reading · ${toRead} to-read${dnf ? ` · ${dnf} DNF` : ''}.${unresolved}`);
+  } catch (error) {
+    setGoodreadsStatus(error?.message || 'Could not import the Goodreads export.', true);
+  } finally {
+    goodreadsImportBusy = false;
+    if (els.goodreadsImportButton) els.goodreadsImportButton.disabled = false;
+  }
+}
+
 // ---------------------------
 // SETTINGS / CACHE / STORAGE
 // ---------------------------
@@ -17083,6 +17475,7 @@ function buildCloudState() {
     streakPrefs: state.streakPrefs,
     libraryPrefs: normalizeLibraryPrefs(state.libraryPrefs),
     letterboxdPrefs: normalizeLetterboxdPrefs(state.letterboxdPrefs),
+    goodreadsPrefs: normalizeGoodreadsPrefs(state.goodreadsPrefs),
     logTypePrefs: [...enabledLogTypeKeys()]
   };
 }
@@ -17099,6 +17492,7 @@ function hasMeaningfulLocalState(snapshot = buildCloudState()) {
     Object.keys(snapshot.streakPrefs || {}).length ||
     Array.isArray(snapshot.libraryPrefs?.defaultTypeKeys) ||
     snapshot.letterboxdPrefs?.username ||
+    snapshot.goodreadsPrefs?.lastImportAt ||
     snapshot.discoverPrefs?.streamingProviderIds?.length
   );
 }
@@ -17121,6 +17515,7 @@ async function persistCloudStateLocally(snapshot) {
     : {};
   state.libraryPrefs = normalizeLibraryPrefs(snapshot?.libraryPrefs || DEFAULT_LIBRARY_PREFS);
   state.letterboxdPrefs = normalizeLetterboxdPrefs(snapshot?.letterboxdPrefs || DEFAULT_LETTERBOXD_PREFS);
+  state.goodreadsPrefs = normalizeGoodreadsPrefs(snapshot?.goodreadsPrefs || DEFAULT_GOODREADS_PREFS);
   if (Array.isArray(snapshot?.logTypePrefs)) {
     const validLogTypes = snapshot.logTypePrefs.filter(value => DEFAULT_LOG_TYPE_KEYS.includes(value));
     safeLocalSet(logTypePrefsStorageKey(), validLogTypes.length ? validLogTypes : [...DEFAULT_LOG_TYPE_KEYS]);
@@ -17137,6 +17532,7 @@ async function persistCloudStateLocally(snapshot) {
   safeLocalSet(STREAK_PREFS_KEY, state.streakPrefs);
   safeLocalSet(LIBRARY_PREFS_KEY, state.libraryPrefs);
   safeLocalSet(LETTERBOXD_PREFS_KEY, state.letterboxdPrefs);
+  safeLocalSet(GOODREADS_PREFS_KEY, state.goodreadsPrefs);
   await saveLargeState(HISTORY_IDB_KEY, state.history);
   localStorage.removeItem(HISTORY_KEY);
 }
