@@ -12056,10 +12056,14 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
   box-shadow: 0 10px 24px rgba(27,31,24,.14);
 }
 .subtype-compact-popover .field { margin: 0; }
+.subtype-compact-popover { display: grid; gap: 7px; }
+.subtype-compact-popover select,
 .subtype-compact-popover input,
 .soft-entry-field input {
+  width: 100%;
   background: rgba(21,36,58,.045) !important;
 }
+.subtype-new-field[hidden] { display: none !important; }
 
 /* Search source is just an arrow until the user opens it. */
 .item-modal .find-it-combo { grid-template-columns: 44px minmax(0,1fr) auto; }

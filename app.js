@@ -1,5 +1,5 @@
-import { TrackerAPI } from './api.js?v=omni-other-layout-87';
-import { API_CONFIG } from './config.js?v=omni-other-layout-87';
+import { TrackerAPI } from './api.js?v=omni-due-subtypes-log-88';
+import { API_CONFIG } from './config.js?v=omni-due-subtypes-log-88';
 import { supabase, hasSupabaseConfig } from './supabase.js';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
@@ -395,6 +395,8 @@ const els = {
   displayTypeBlock: $('#displayTypeBlock'),
   itemDisplayType: $('#itemDisplayType'),
   itemSubcategory: $('#itemSubcategory'),
+  itemSubcategorySelect: $('#itemSubcategorySelect'),
+  itemSubcategoryNewField: $('#itemSubcategoryNewField'),
   itemSubcategoryDisclosure: $('#itemSubcategoryDisclosure'),
   itemSubcategorySummary: $('#itemSubcategorySummary'),
   displayTypeLabel: $('#displayTypeLabel'),
@@ -1571,6 +1573,19 @@ function bindEvents() {
     clearSourceSelectionForTypeChange();
     updateItemFormForType();
   });
+  els.itemSubcategorySelect?.addEventListener('change', () => {
+    const value = els.itemSubcategorySelect.value || '';
+    const creating = value === '__new__';
+    els.itemSubcategorySelect.dataset.creatingNew = creating ? 'true' : 'false';
+    els.itemSubcategorySelect.dataset.explicitNone = !creating && !value ? 'true' : 'false';
+    if (els.itemSubcategoryNewField) els.itemSubcategoryNewField.hidden = !creating;
+    if (els.itemSubcategory) {
+      els.itemSubcategory.value = creating ? '' : value;
+      if (creating) requestAnimationFrame(() => els.itemSubcategory?.focus());
+    }
+    clearSourceSelectionForTypeChange();
+    updateItemFormForType();
+  });
   els.itemFindSource?.addEventListener('change', () => {
     clearSourceSelectionForTypeChange();
     syncItemFindSourceSummary();
@@ -1616,7 +1631,12 @@ function bindEvents() {
     renderItemPeopleSuggestions();
     syncItemPeopleDisclosure();
   });
-  els.itemSubcategory?.addEventListener('input', () => { syncItemSubcategoryDisclosure(); updateItemFormForType(); });
+  els.itemSubcategory?.addEventListener('input', () => {
+    if (els.itemSubcategorySelect?.dataset.creatingNew === 'true') els.itemSubcategorySelect.value = '__new__';
+    if (els.itemSubcategorySelect) els.itemSubcategorySelect.dataset.explicitNone = 'false';
+    syncItemSubcategoryDisclosure();
+    updateItemFormForType();
+  });
   els.itemBuddyWatchToggle?.addEventListener('change', syncItemBuddyWatchToggle);
   els.deleteItem?.addEventListener('click', deleteEditingItem);
   document.addEventListener('click', event => {
@@ -3733,7 +3753,14 @@ async function buildQueueCalendarEntries() {
   const followedTV = state.items.filter(item => getSourceType(item) === 'tv' && item.providerId && item.watchDisposition !== 'watch-later' && item.watchDisposition !== 'stopped');
   const tvSettled = await Promise.allSettled(followedTV.map(async item => {
     const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
-    return { item, episode: details?.next_episode_to_air || null };
+    // TMDB may roll next_episode_to_air forward as soon as today's episode airs.
+    // Prefer an unlogged episode airing today before the later next episode so the
+    // queue Calendar and Up Next stay aligned throughout the day.
+    const candidates = [details?.last_episode_to_air, details?.next_episode_to_air]
+      .filter(ep => ep?.air_date && ep.air_date >= today)
+      .filter(ep => !isTVEpisodeLogged(item, Number(ep.season_number), Number(ep.episode_number)))
+      .sort((a,b) => String(a.air_date).localeCompare(String(b.air_date)));
+    return { item, episode: candidates[0] || null };
   }));
   for (const result of tvSettled) {
     if (result.status !== 'fulfilled' || !result.value.episode?.air_date) continue;
@@ -4466,28 +4493,43 @@ async function reconcileSingleTVItem(item, prefetchedDetails = null) {
 }
 
 async function reconcileTVQueueStates() {
-  // Reconcile only TV that is actually in Up Next. The previous implementation
-  // refreshed every TV title in the Library in parallel, which could launch 100+
-  // TMDB requests at once and immediately hit 429 rate limits.
+  // Up Next shows still get a full reconciliation. In addition, scan followed TV
+  // that is currently resting in Library: if TMDB says an unlogged episode has
+  // aired by today, reconcile that show so it can automatically re-enter Up Next.
+  // Requests remain serialized to avoid the large burst that the older version caused.
+  const today = todayString();
   const tvItems = state.items.filter(item =>
     getSourceType(item) === 'tv' &&
     item.providerId &&
-    getQueueStatus(item) === 'upnext'
+    (getQueueStatus(item) === 'upnext' || getTVWatchDisposition(item) === 'following')
   );
   const results = [];
   for (const item of tvItems) {
+    const alreadyUpNext = getQueueStatus(item) === 'upnext';
     const checkedAt = Date.parse(item.tvMeta?.checkedAt || '');
-    if (Number.isFinite(checkedAt) && Date.now() - checkedAt < 60 * 60 * 1000) {
+    if (alreadyUpNext && Number.isFinite(checkedAt) && Date.now() - checkedAt < 60 * 60 * 1000) {
       results.push(false);
       continue;
     }
     try {
+      if (!alreadyUpNext) {
+        const details = await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
+        const candidates = [details?.last_episode_to_air, details?.next_episode_to_air].filter(Boolean);
+        const dueUnlogged = candidates.some(ep =>
+          ep?.air_date && ep.air_date <= today &&
+          !isTVEpisodeLogged(item, Number(ep.season_number), Number(ep.episode_number))
+        );
+        if (!dueUnlogged) {
+          results.push(false);
+          await new Promise(resolve => setTimeout(resolve, 90));
+          continue;
+        }
+      }
       results.push(await reconcileSingleTVItem(item));
     } catch (error) {
       console.warn(`Could not refresh TV status for ${item.title}:`, error);
       results.push(false);
     }
-    // Avoid a burst even when several Up Next shows need fresh metadata.
     await new Promise(resolve => setTimeout(resolve, 175));
   }
   const changed = results.some(Boolean);
@@ -5000,7 +5042,17 @@ function applyReleaseQueueAutomation(item, today = todayString()) {
 
 function reconcileLocalProgressQueues() {
   let changed = false;
+  const today = todayString();
   for (const item of state.items) {
+    const dueReminder = item.reminder && getNextReminderDueDate(item) && getNextReminderDueDate(item) <= today;
+    const scheduledDate = item.date || item.eventMeta?.eventDate || '';
+    const dueScheduledEvent = ['event','concert'].includes(getSourceType(item)) && item.queueCalendarScheduled === true && scheduledDate && scheduledDate <= today;
+    const dueDatedItem = !item.reminder && !['book','tv'].includes(getSourceType(item)) && !item.calendarHidden && item.date && item.date <= today && !item.completedAt;
+    if ((dueReminder || dueScheduledEvent || dueDatedItem) && getQueueStatus(item) !== 'upnext') {
+      setItemQueueStatus(item, 'upnext');
+      item.updatedAt = new Date().toISOString();
+      changed = true;
+    }
     if (applyReleaseQueueAutomation(item)) changed = true;
     const sourceType = getSourceType(item);
     if (isItemNotReleased(item)) continue;
@@ -5705,6 +5757,12 @@ function resetItemForm(defaultQueueStatus = 'library') {
   setUnderlyingFormTypeForKind(preferredAdd.kind);
   els.itemDisplayType.value = 'Workout';
   if (els.itemSubcategory) els.itemSubcategory.value = '';
+  if (els.itemSubcategorySelect) {
+    els.itemSubcategorySelect.value = '';
+    els.itemSubcategorySelect.dataset.creatingNew = 'false';
+    els.itemSubcategorySelect.dataset.explicitNone = 'false';
+  }
+  if (els.itemSubcategoryNewField) els.itemSubcategoryNewField.hidden = true;
   if (els.itemSubcategoryDisclosure) els.itemSubcategoryDisclosure.open = false;
   if (els.itemDateOptionsDisclosure) els.itemDateOptionsDisclosure.open = false;
   if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.open = false;
@@ -5807,6 +5865,10 @@ function formSubtypeForItem(sourceType, item = null) {
 
 function configureItemSubtype(reset = false, sourceTypeHint = '', item = null) {
   if (!els.itemSubtypeBlock || !els.itemSubtype) return;
+  if (reset && els.itemSubcategorySelect) {
+    els.itemSubcategorySelect.dataset.creatingNew = 'false';
+    els.itemSubcategorySelect.dataset.explicitNone = 'false';
+  }
   const parent = formParentType();
   const options = FORM_SUBTYPE_OPTIONS[parent] || [];
   // The hidden select keeps the behavioural subtype separate from the visible,
@@ -5824,8 +5886,20 @@ function configureItemSubtype(reset = false, sourceTypeHint = '', item = null) {
   els.itemSubtype.value = options.some(option => option.value === preferred) ? preferred : fallback;
 }
 
-function syncSubtypeSuggestionsForType() {
-  if (!els.itemSubcategory) return;
+function itemMatchesCurrentSubtypeType(entry, parent = formParentType(), rawType = String(els.itemSourceType?.value || '')) {
+  if (!entry) return false;
+  const customType = rawType.startsWith('custom:') ? rawType.slice(7) : '';
+  if (customType) return String(entry.type || '') === customType;
+  const sourceType = getSourceType(entry);
+  if (parent === 'game') return entry.type === 'game' || ['game','video-game','board-game'].includes(sourceType);
+  if (parent === 'music') return entry.type === 'music' || ['music','artist','song','concert'].includes(sourceType);
+  if (parent === 'food') return entry.type === 'food' || ['food','restaurant','recipe'].includes(sourceType);
+  if (parent === 'event') return entry.type === 'event' || ['event','concert'].includes(sourceType);
+  if (parent === 'shopping') return entry.type === 'shopping' || sourceType === 'place' || sourceType === 'shopping';
+  return entry.type === parent || sourceType === parent;
+}
+
+function savedSubtypeValuesForCurrentType() {
   const parent = formParentType();
   const builtIns = {
     music: ['Artist'],
@@ -5834,20 +5908,43 @@ function syncSubtypeSuggestionsForType() {
     event: ['Live Event', 'Personal Event']
   }[parent] || [];
   const rawType = String(els.itemSourceType?.value || '');
-  const customType = rawType.startsWith('custom:') ? rawType.slice(7) : '';
-  const saved = new Set();
+  const saved = new Map();
   for (const entry of [...(state.items || []), ...(state.history || [])]) {
-    const entryParent = customType
-      ? (String(entry?.type || '') === customType)
-      : (entry?.type === parent || getSourceType(entry) === parent || (parent === 'game' && ['video-game','board-game'].includes(getSourceType(entry))) || (parent === 'music' && ['music','artist','song','concert'].includes(getSourceType(entry))) || (parent === 'food' && ['food','restaurant','recipe'].includes(getSourceType(entry))));
-    if (!entryParent) continue;
+    if (!itemMatchesCurrentSubtypeType(entry, parent, rawType)) continue;
     const value = cleanTypeLabel(entry?.subcategory || '');
-    if (value) saved.add(value);
+    if (value) saved.set(value.toLowerCase(), value);
   }
-  const values = [...new Set([...builtIns, ...saved])];
+  for (const value of builtIns) if (!saved.has(value.toLowerCase())) saved.set(value.toLowerCase(), value);
+  return [...saved.values()].sort((a,b) => a.localeCompare(b));
+}
+
+function syncSubtypeSuggestionsForType() {
+  if (!els.itemSubcategory) return;
+  const values = savedSubtypeValuesForCurrentType();
+  const current = cleanTypeLabel(els.itemSubcategory.value || '');
+  const creatingNew = els.itemSubcategorySelect?.dataset.creatingNew === 'true' || els.itemSubcategorySelect?.value === '__new__';
   const list = document.querySelector('#itemSubtypeSuggestions');
   if (list) list.innerHTML = values.map(value => `<option value="${escapeAttr(value)}"></option>`).join('');
-  els.itemSubcategory.placeholder = values.length ? `e.g. ${values.slice(0, 2).join(', ')}` : 'Optional subtype';
+
+  if (els.itemSubcategorySelect) {
+    const options = [...values];
+    if (current && !creatingNew && !options.some(value => value.toLowerCase() === current.toLowerCase())) options.push(current);
+    els.itemSubcategorySelect.innerHTML = [
+      '<option value="">No subtype</option>',
+      ...options.map(value => `<option value="${escapeAttr(value)}">${escapeHtml(value)}</option>`),
+      '<option value="__new__">Create new…</option>'
+    ].join('');
+    if (creatingNew) {
+      els.itemSubcategorySelect.value = '__new__';
+      els.itemSubcategorySelect.dataset.creatingNew = 'true';
+    } else {
+      const match = options.find(value => value.toLowerCase() === current.toLowerCase()) || '';
+      els.itemSubcategorySelect.value = match;
+      els.itemSubcategorySelect.dataset.creatingNew = 'false';
+    }
+  }
+  if (els.itemSubcategoryNewField) els.itemSubcategoryNewField.hidden = !creatingNew;
+  els.itemSubcategory.placeholder = values.length ? `e.g. ${values.slice(0, 2).join(', ')}` : 'New subtype';
 }
 
 const FIND_SOURCE_CONFIG = Object.freeze({
@@ -5885,14 +5982,37 @@ function automaticFormSourceType() {
   return parent;
 }
 
-function defaultFindSourceForType(sourceType = automaticFormSourceType()) {
-  if (formParentType() === 'event' && /personal/.test(cleanTypeLabel(els.itemSubcategory?.value || '').toLowerCase())) return 'manual';
+function findSourceForSourceType(sourceType = '') {
   return ({
     tv: 'tmdb-tv', movie: 'tmdb-movie', book: 'google-books',
     'video-game': 'igdb-games', 'board-game': 'bgg-games',
-    music: 'lastfm-artists', artist: 'lastfm-artists', song: 'apple-songs', concert: 'ticketmaster-concerts',
+    music: 'apple-albums', artist: 'lastfm-artists', song: 'apple-songs', concert: 'ticketmaster-concerts',
     event: 'ticketmaster-events', restaurant: 'google-places', place: 'google-places', shopping: 'google-places', youtube: 'youtube-videos'
   })[sourceType] || 'manual';
+}
+
+function learnedFindSourceForCurrentSubtype() {
+  const parent = formParentType();
+  const rawType = String(els.itemSourceType?.value || '');
+  const subtype = cleanTypeLabel(els.itemSubcategory?.value || '').toLowerCase();
+  const candidates = (state.items || [])
+    .filter(item => itemMatchesCurrentSubtypeType(item, parent, rawType))
+    .filter(item => cleanTypeLabel(item.subcategory || '').toLowerCase() === subtype)
+    .sort((a,b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
+  for (const item of candidates) {
+    const saved = String(item.featureConfig?.findSource || '');
+    if (saved && saved !== 'auto' && (saved === 'manual' || FIND_SOURCE_CONFIG[saved])) return saved;
+    const inferred = findSourceForSourceType(getSourceType(item));
+    if (inferred) return inferred;
+  }
+  return '';
+}
+
+function defaultFindSourceForType(sourceType = automaticFormSourceType()) {
+  if (formParentType() === 'event' && /personal/.test(cleanTypeLabel(els.itemSubcategory?.value || '').toLowerCase())) return 'manual';
+  const learned = learnedFindSourceForCurrentSubtype();
+  if (learned) return learned;
+  return findSourceForSourceType(sourceType);
 }
 
 function selectedLookupSourceType() {
@@ -6113,7 +6233,6 @@ function syncTVDraftHistoryVisibility(sourceType = selectedFormSourceType()) {
 
 function updateItemFormForType() {
   configureItemSubtype(false);
-  syncSubtypeSuggestionsForType();
   const savedType = selectedSavedTypeEntry();
   const parentType = formParentType();
   const visibleSubtype = cleanTypeLabel(els.itemSubcategory?.value || '');
@@ -6191,12 +6310,15 @@ function updateItemFormForType() {
 
   if (els.itemSubcategory) {
     els.itemSubcategory.readOnly = false;
-    if (!els.editingId.value && !els.itemSubcategory.value) {
+    const creatingNewSubtype = els.itemSubcategorySelect?.dataset.creatingNew === 'true';
+    const explicitNoSubtype = els.itemSubcategorySelect?.dataset.explicitNone === 'true';
+    if (!els.editingId.value && !els.itemSubcategory.value && !creatingNewSubtype && !explicitNoSubtype) {
       if (parentType === 'music') els.itemSubcategory.value = 'Artist';
       else if (parentType === 'game') els.itemSubcategory.value = 'Video Game';
       else if (parentType === 'event') els.itemSubcategory.value = 'Live Event';
     }
   }
+  syncSubtypeSuggestionsForType();
   syncItemSubcategoryDisclosure();
 
   if (creatingNewType) {
@@ -6681,6 +6803,9 @@ async function loadPlaylistPreview() {
 
 async function saveItemFromForm(event) {
   event.preventDefault();
+  const logFromAdd = event.submitter?.dataset?.itemSubmitAction === 'log';
+  if (logFromAdd && els.itemDate && !els.itemDateField?.hidden && !els.itemDate.value) els.itemDate.value = todayString();
+  const logDate = els.itemDate?.value || todayString();
   const startBuddyAfterSave = Boolean(els.itemBuddyWatchToggle?.checked);
   const buddyFriendId = startBuddyAfterSave ? (els.itemBuddyWatchPerson?.value || '') : '';
   const sourceType = selectedFormSourceType();
@@ -6819,6 +6944,13 @@ async function saveItemFromForm(event) {
     showFormMessage('Choose a Find it result first, or switch Find it to Manual.', true);
     return;
   }
+  if (logFromAdd && sourceType === 'tv') {
+    const newlySelectedTVKeys = [...state.tvDraftWatched].filter(key => !state.tvDraftInitialWatched.has(key));
+    if (!newlySelectedTVKeys.length) {
+      showFormMessage('Select at least one newly watched episode to log.', true);
+      return;
+    }
+  }
   if (sourceType === 'class' && !els.itemDate?.value) {
     showFormMessage('Choose the date for this class.', true);
     return;
@@ -6901,8 +7033,8 @@ async function saveItemFromForm(event) {
     coverAttachmentId: '',
     links: state.attachmentDraft.links.map(link => ({ ...link })),
     date: (sourceType === 'activity' || els.itemUseDateRange?.checked) ? (els.activityStartDate?.value || els.itemDate?.value || '') : (['event','concert'].includes(sourceType) ? (els.itemDate.value || state.selectedSource?.eventDate || editing?.date || '') : (els.itemDate.value || '')),
-    queueStatus: els.itemQueueStatus?.value || 'library',
-    active: (els.itemQueueStatus?.value || 'library') === 'upnext',
+    queueStatus: logFromAdd ? 'library' : (els.itemQueueStatus?.value || 'library'),
+    active: !logFromAdd && (els.itemQueueStatus?.value || 'library') === 'upnext',
     featureConfig: {
       findSource: requestedFindSource,
       progressMode: effectiveItemProgressMode(sourceType),
@@ -6915,7 +7047,7 @@ async function saveItemFromForm(event) {
     completedAt: editing?.completedAt || '',
     progress: { ...(editing?.progress || {}) },
     ...(sourceType === 'tv' ? {
-      watchDisposition: editing?.watchDisposition || ((els.itemQueueStatus.value || 'library') === 'tbr' ? 'watch-later' : 'following'),
+      watchDisposition: editing?.watchDisposition || ((!logFromAdd && (els.itemQueueStatus.value || 'library') === 'tbr') ? 'watch-later' : 'following'),
       tvMeta: { ...(editing?.tvMeta || {}) }
     } : {}),
     ...(['event', 'concert'].includes(sourceType) ? {
@@ -6982,11 +7114,12 @@ async function saveItemFromForm(event) {
     item.progress.readingPeriods = sanitizeBookReadingPeriods(priorPeriods);
     // Books use reading periods for the calendar rather than a one-day item date.
     item.date = '';
-    if (item.progress.totalPages > 0 && item.progress.currentPage >= item.progress.totalPages) {
-      item.completedAt = editing?.completedAt || todayString();
+    if (logFromAdd && item.progress.totalPages > 0 && item.progress.currentPage < item.progress.totalPages) item.progress.currentPage = item.progress.totalPages;
+    if (logFromAdd || (item.progress.totalPages > 0 && item.progress.currentPage >= item.progress.totalPages)) {
+      item.completedAt = editing?.completedAt || logDate || todayString();
       setItemQueueStatus(item, 'library');
       const latest = item.progress.readingPeriods.at(-1);
-      if (latest && !latest.endDate) latest.endDate = todayString();
+      if (latest && !latest.endDate) latest.endDate = logFromAdd ? logDate : todayString();
     } else {
       item.completedAt = '';
       if (editing && getQueueStatus(editing) === 'tbr' && item.progress.currentPage > 0) {
@@ -7136,11 +7269,11 @@ async function saveItemFromForm(event) {
     state.items.push(item);
   }
 
-  if (!editing && item.featureConfig?.repeatableLog) {
-    const logDate = els.itemDate?.value || todayString();
+  if ((!editing || logFromAdd) && item.featureConfig?.repeatableLog) {
+    const repeatLogDate = els.itemDate?.value || todayString();
     addHistoryRecord({
       sourceItemId: item.id, sourceType, type: item.type, typeLabel: getItemTypeLabel(item),
-      subcategory: item.subcategory || '', date: logDate, showOnCalendar: true, kind: 'repeatable-log',
+      subcategory: item.subcategory || '', date: repeatLogDate, showOnCalendar: true, kind: 'repeatable-log',
       title: cleanTypeLabel(els.itemLogEntryTitle?.value || '') || item.title,
       subtitle: item.title, notes: item.notes || '', comment: item.comment || '', people: item.people || [],
       rating: Number(item.rating || 0), image: item.image || '', provider: item.provider, providerId: item.providerId
@@ -7178,7 +7311,7 @@ async function saveItemFromForm(event) {
 
   if (sourceType === 'book' && item.completedAt && !state.history.some(entry => entry.sourceItemId === item.id && entry.kind === 'book-finished')) {
     addHistoryRecord({
-      sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: '', showOnCalendar: false,
+      sourceItemId: item.id, type: item.type, typeLabel: getItemTypeLabel(item), date: logFromAdd ? logDate : '', showOnCalendar: Boolean(logFromAdd),
       kind: 'book-finished', title: item.title, subtitle: item.progress.totalPages ? `Finished · ${item.progress.totalPages} pages` : 'Finished',
       notes: item.notes || '', rating: Number(item.rating || 0), image: item.image || '', provider: item.provider, providerId: item.providerId
     });
@@ -7187,11 +7320,44 @@ async function saveItemFromForm(event) {
 
   if (sourceType === 'tv') {
     try {
+      const newlySelectedTVKeys = logFromAdd
+        ? new Set([...state.tvDraftWatched].filter(key => !state.tvDraftInitialWatched.has(key)))
+        : new Set();
       await persistTVDraftWatchHistory(item);
+      if (logFromAdd && newlySelectedTVKeys.size) {
+        for (const entry of state.history) {
+          if (entry.sourceItemId !== item.id || entry.kind !== 'episode-watched') continue;
+          const key = tvDraftEpisodeKey(entry.seasonNumber, entry.episodeNumber);
+          if (!newlySelectedTVKeys.has(key)) continue;
+          entry.date = logDate;
+          entry.showOnCalendar = true;
+          entry.imported = false;
+        }
+      }
       saveHistory();
     } catch (error) {
       console.warn('Could not fully reconcile TV watch history:', error);
     }
+  }
+
+  if (logFromAdd && !['tv','book','restaurant','recipe','class'].includes(sourceType) && !item.featureConfig?.repeatableLog) {
+    const kind = sourceType === 'movie'
+      ? 'movie-watched'
+      : ['video-game','board-game'].includes(sourceType)
+        ? 'game-played'
+        : 'item-completed';
+    addHistoryRecord({
+      ...genericCompletionRecord(item, true),
+      sourceType,
+      date: logDate,
+      showOnCalendar: true,
+      kind,
+      comment: item.comment || '',
+      people: item.people || []
+    });
+    item.completedAt = item.completedAt || logDate;
+    setItemQueueStatus(item, 'library');
+    saveHistory();
   }
 
   recordTypeUse(item);

@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=omni-fast-add-84" />
+  <link rel="stylesheet" href="style.css?v=omni-due-subtypes-log-88" />
 </head>
 <body class="discover-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -274,9 +274,16 @@
         <details id="itemSubcategoryDisclosure" class="subtype-compact-disclosure">
           <summary><span class="compact-add-plus" aria-hidden="true">+</span><span>Subtype</span><small id="itemSubcategorySummary"></small></summary>
           <div class="subtype-compact-popover">
-            <label class="field soft-entry-field">
-              <span class="sr-only">Subtype</span>
-              <input id="itemSubcategory" type="text" autocomplete="off" list="itemSubtypeSuggestions" placeholder="Add subtype" />
+            <label class="field subtype-select-field">
+              <span class="sr-only">Choose subtype</span>
+              <select id="itemSubcategorySelect" aria-label="Choose subtype">
+                <option value="">No subtype</option>
+                <option value="__new__">Create new…</option>
+              </select>
+            </label>
+            <label id="itemSubcategoryNewField" class="field soft-entry-field subtype-new-field" hidden>
+              <span class="sr-only">New subtype</span>
+              <input id="itemSubcategory" type="text" autocomplete="off" list="itemSubtypeSuggestions" placeholder="New subtype" />
               <datalist id="itemSubtypeSuggestions"></datalist>
             </label>
           </div>
@@ -575,6 +582,7 @@
         <button id="deleteItem" class="delete-button" type="button" hidden>Delete</button>
         <div class="actions-right">
           <button class="quiet-button" type="button" data-close="itemModal">Cancel</button>
+          <button class="secondary-button" type="submit" data-item-submit-action="log">Log</button>
           <button class="primary-button" type="submit">Save</button>
         </div>
       </div>
@@ -780,6 +788,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-fast-add-84"></script>
+  <script type="module" src="app.js?v=omni-due-subtypes-log-88"></script>
 </body>
 </html>
