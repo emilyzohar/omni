@@ -12712,6 +12712,93 @@ h1,h2,h3 { font-family:var(--serif); font-weight:700; letter-spacing:-.025em; }
 .social-feed>.social-feed-card { border-radius:18px 24px 20px 16px; }
 .social-feed>.social-feed-card:nth-of-type(even) { border-radius:24px 17px 23px 19px; }
 .social-feed>.social-feed-card .social-feed-image { filter:saturate(.9) contrast(.97); }
+
+/* Compact sheets, rounded sticker icons, and a denser pin-style feed. */
+.sticker-star,
+.sticker-heart {
+  display:grid;
+  place-items:center;
+  line-height:1;
+}
+.sticker-symbol-svg {
+  display:block;
+  width:88%;
+  height:88%;
+  fill:currentColor;
+  overflow:visible;
+}
+.sticker-star .sticker-symbol-svg path {
+  stroke:currentColor;
+  stroke-width:1.35;
+  stroke-linejoin:round;
+}
+.sticker-heart .sticker-symbol-svg { width:84%; height:84%; }
+
+.social-feed > .social-feed-card .social-feed-content { order:0; }
+.social-feed > .social-feed-card .social-feed-person { order:1; }
+.social-feed > .social-feed-card .social-tag-list { order:2; }
+.social-feed > .social-feed-card .tag-invite { order:3; }
+.social-feed > .social-feed-card .social-feed-person > span:last-child { min-width:0; }
+.social-feed > .social-feed-card .social-feed-person strong,
+.social-feed > .social-feed-card .social-feed-person small {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+@media (min-width:761px) {
+  .social-feed { columns:4 190px; column-gap:13px; }
+  .social-feed > .social-feed-card { margin-bottom:13px; }
+}
+
+@media (max-width:760px) {
+  .library-section { padding-top:18px !important; }
+  .library-heading { gap:10px !important; margin-bottom:16px !important; }
+  .library-title-block h1 { font-size:2.35rem !important; line-height:.95 !important; }
+  .library-controls { gap:8px !important; }
+  .library-search-row { grid-template-columns:minmax(0,1fr) 38px !important; gap:8px !important; }
+  .library-search-row input,
+  .library-filter-row summary,
+  .library-filter-row select { min-height:38px !important; height:38px !important; padding-block:6px !important; font-size:.78rem !important; }
+  .library-search-row .library-icon-button,
+  .library-filter-row .library-icon-button { width:38px !important; min-width:38px !important; height:38px !important; min-height:38px !important; }
+  .library-filter-row { grid-template-columns:minmax(0,1fr) 38px minmax(92px,.68fr) !important; gap:8px !important; }
+  .library-filter-row .filter-control > span { position:absolute !important; width:1px !important; height:1px !important; padding:0 !important; margin:-1px !important; overflow:hidden !important; clip:rect(0,0,0,0) !important; white-space:nowrap !important; border:0 !important; }
+  .library-folder-tabs-mobile { min-height:36px !important; height:36px !important; margin:0 0 8px !important; }
+  .library-folder-tab { min-height:32px !important; padding:5px 12px !important; font-size:.72rem !important; }
+
+  dialog.modal[open],
+  .modal[open] {
+    max-height:88dvh !important;
+    padding:16px 16px calc(18px + env(safe-area-inset-bottom)) !important;
+    border-radius:20px 20px 0 0 !important;
+  }
+  dialog.modal[open]::before,
+  .modal[open]::before { width:40px !important; height:4px !important; margin:0 auto 9px !important; }
+  .modal-heading { min-height:0 !important; margin:0 0 12px !important; padding-right:36px !important; }
+  .modal-heading h2 { margin:0 !important; font-size:1.55rem !important; line-height:1 !important; }
+  .modal-heading p { margin:4px 0 0 !important; font-size:.7rem !important; }
+  .modal-x { top:9px !important; right:10px !important; width:32px !important; height:32px !important; min-width:32px !important; min-height:32px !important; padding:0 !important; font-size:1.1rem !important; box-shadow:none !important; }
+  .stats-catalogue-grid { max-height:calc(88dvh - 92px) !important; row-gap:10px !important; column-gap:8px !important; padding-bottom:8px !important; }
+
+  .social-feed { columns:3 !important; column-gap:7px !important; }
+  .social-feed > * { margin-bottom:7px !important; }
+  .social-feed > .social-feed-card { border-radius:12px 15px 13px 11px !important; }
+  .social-feed > .social-feed-card:nth-of-type(even) { border-radius:15px 11px 14px 12px !important; }
+  .social-feed > .social-feed-card .social-feed-copy { padding:7px !important; }
+  .social-feed > .social-feed-card .social-feed-copy strong { font-size:.68rem !important; line-height:1.15; }
+  .social-feed > .social-feed-card .social-feed-copy small,
+  .social-feed > .social-feed-card .social-feed-comment { font-size:.54rem !important; line-height:1.25; }
+  .social-feed > .social-feed-card .social-feed-comment { -webkit-line-clamp:2; margin-top:3px; }
+  .social-feed > .social-feed-card .social-feed-person { padding:6px !important; gap:4px !important; }
+  .social-feed > .social-feed-card .social-feed-person .social-avatar { width:18px !important; height:18px !important; font-size:.5rem !important; }
+  .social-feed > .social-feed-card .social-feed-person strong { font-size:.56rem; }
+  .social-feed > .social-feed-card .social-feed-person small { display:block !important; font-size:.46rem !important; }
+  .social-feed > .social-feed-card .social-feed-badges { margin-top:4px; gap:2px !important; }
+  .social-feed > .social-feed-card .social-feed-badges b { padding:2px 4px !important; font-size:.46rem !important; }
+  .social-feed > .social-feed-card .social-tag-list { padding:0 6px 6px !important; }
+  .social-feed > .social-feed-card .social-tag-list button { padding:3px 4px !important; font-size:.45rem !important; }
+}
 .stats-rating-bar { border-radius:13px 13px 5px 5px; }
 
 .track-section + .library-section,
