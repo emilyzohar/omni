@@ -12655,3 +12655,88 @@ h1, h2, h3 { font-weight: 720; letter-spacing: -.045em; }
   .stat-card span { font-size:.67rem; }
   .stats-rating-histogram { height:230px; gap:7px; }
 }
+
+/* Calendar-led visual system: soft editorial headings, muted paper surfaces,
+   gentle irregularity, and the same tactile restraint across every view. */
+:root {
+  --serif:"Libre Caslon Text", Georgia, serif;
+  --cream:#efe7d8;
+  --cream-2:#f7f1e8;
+  --paper:#fffaf1;
+  --ink:#263348;
+  --muted:#747168;
+  --line:rgba(54,62,67,.12);
+  --shadow:0 9px 24px rgba(77,63,51,.09), 0 2px 5px rgba(77,63,51,.05);
+}
+
+body {
+  background:
+    radial-gradient(circle at 8% 7%,rgba(200,185,223,.16),transparent 24rem),
+    radial-gradient(circle at 92% 18%,rgba(246,223,124,.13),transparent 22rem),
+    var(--cream);
+}
+h1,h2,h3 { font-family:var(--serif); font-weight:700; letter-spacing:-.025em; }
+.nav,.field,.stat-card,.social-feed-copy,.library-card-shell,.discover-card-copy { font-family:var(--sans); }
+.eyebrow,.modal-eyebrow { letter-spacing:.11em; }
+
+.upnext-section,.library-section,.discover-section,.stats-section,.social-section {
+  background:transparent !important;
+}
+.upnext-card,.library-card-shell,.discover-poster-wrap,.discover-text-card,
+.stat-card,.social-profile-card,.social-feed-card,.auth-card,.modal {
+  border:1px solid rgba(86,76,65,.08);
+  box-shadow:var(--shadow);
+}
+.upnext-card,.stat-card,.discover-text-card { border-radius:18px 24px 20px 16px; }
+.library-card-shell:nth-child(3n+1),.discover-card:nth-child(3n+1) .discover-poster-wrap { transform:rotate(-.25deg); }
+.library-card-shell:nth-child(3n+2),.discover-card:nth-child(3n+2) .discover-poster-wrap { transform:rotate(.2deg); }
+.library-card-shell:hover,.discover-card:hover .discover-poster-wrap { transform:translateY(-3px) rotate(0); }
+.library-card-shell,.discover-poster-wrap { transition:transform .18s ease,box-shadow .18s ease; }
+
+.primary-button,.secondary-button,.quiet-button,.status-text-button,.social-tab,
+.calendar-tool-button,.library-settings-button,.discover-add-button {
+  border-radius:999px;
+}
+.secondary-button,.social-tab,.calendar-tool-button,.library-settings-button {
+  background:rgba(255,250,241,.68);
+  border-color:rgba(63,70,75,.14);
+}
+.primary-button { background:#344359; }
+.field input,.field select,.field textarea,.search-row input {
+  background:rgba(255,252,245,.76);
+  border-color:rgba(69,75,76,.13);
+  border-radius:12px 16px 13px 11px;
+}
+.modal { background:linear-gradient(145deg,#fffaf1,#f7efe3); border-radius:24px 30px 25px 22px; }
+.social-page .social-section { background:transparent !important; }
+.social-feed>.social-feed-card { border-radius:18px 24px 20px 16px; }
+.social-feed>.social-feed-card:nth-of-type(even) { border-radius:24px 17px 23px 19px; }
+.social-feed>.social-feed-card .social-feed-image { filter:saturate(.9) contrast(.97); }
+.stats-rating-bar { border-radius:13px 13px 5px 5px; }
+
+.track-section + .library-section,
+.library-section + .stats-section { border-top:1px solid rgba(62,72,74,.08); }
+.section-title-row h1,.library-heading h1,.stats-heading h1,.discover-heading h1,.social-heading h1 {
+  position:relative;
+  width:max-content;
+}
+.section-title-row h1::after,.library-heading h1::after,.stats-heading h1::after,
+.discover-heading h1::after,.social-heading h1::after {
+  content:"";
+  position:absolute;
+  left:2px;
+  right:12%;
+  bottom:-7px;
+  height:3px;
+  border-radius:50%;
+  background:rgba(139,153,202,.35);
+  transform:rotate(-1deg);
+}
+
+@media (max-width:760px) {
+  .library-card-shell:nth-child(n),.discover-card:nth-child(n) .discover-poster-wrap { transform:none; }
+  .upnext-card,.stat-card,.discover-text-card { border-radius:16px 20px 17px 14px; }
+  .modal { border-radius:22px 22px 0 0; }
+  .section-title-row h1::after,.library-heading h1::after,.stats-heading h1::after,
+  .discover-heading h1::after,.social-heading h1::after { bottom:-5px; height:2px; }
+}

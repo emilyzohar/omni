@@ -8321,7 +8321,8 @@ async function renderArtistDetails(item) {
   const liveAlbums = (data.results || []).filter(result => result.wrapperType === 'collection');
   const savedAlbums = artistFavoritesFor(item, 'albums');
   const albums = mergeArtistCatalogWithFavorites(liveAlbums, savedAlbums, entry => entry.collectionId || entry.id);
-  const image = (liveAlbums.find(album => album.artworkUrl100)?.artworkUrl100 || savedAlbums.find(album => album.image)?.image || item.image || '').replace('100x100bb', '600x600bb');
+  const newestLiveAlbum = [...liveAlbums].filter(album => album.artworkUrl100).sort((a,b) => String(b.releaseDate || '').localeCompare(String(a.releaseDate || '')))[0];
+  const image = (item.image || newestLiveAlbum?.artworkUrl100 || savedAlbums.find(album => album.image)?.image || '').replace('100x100bb', '600x600bb');
   if (!item.image && image) { item.image = image; saveItems(); }
   const artistUrl = artist.artistLinkUrl || artist.artistViewUrl || item.artistViewUrl || '';
   const albumRows = albums.slice(0, 24).map(album => artistAlbumRowMarkup(item, album)).join('');
@@ -11026,8 +11027,8 @@ async function resolveLastFmArtistCandidate(lastfmArtist) {
   const normalized = normalizeArtistName(artistName);
   try {
     const albums = await itunesAlbumsForArtistName(artistName);
-    const firstAlbum = albums[0];
-    const artistId = String(firstAlbum?.artistId || firstAlbum?.raw?.artistId || '');
+    const latestAlbum = [...albums].sort((a,b) => String(b.releaseDate || b.raw?.releaseDate || '').localeCompare(String(a.releaseDate || a.raw?.releaseDate || '')))[0];
+    const artistId = String(latestAlbum?.artistId || latestAlbum?.raw?.artistId || '');
     if (artistId) {
       return {
         sourceType: 'artist',
@@ -11036,13 +11037,13 @@ async function resolveLastFmArtistCandidate(lastfmArtist) {
         artistId,
         artistName,
         title: artistName,
-        subtitle: firstAlbum?.raw?.primaryGenreName || firstAlbum?.description || 'Artist',
-        description: firstAlbum?.raw?.primaryGenreName || '',
-        image: firstAlbum?.image || '',
+        subtitle: latestAlbum?.raw?.primaryGenreName || latestAlbum?.description || 'Artist',
+        description: latestAlbum?.raw?.primaryGenreName || '',
+        image: latestAlbum?.image || '',
         raw: {
           artistId,
           artistName,
-          primaryGenreName: firstAlbum?.raw?.primaryGenreName || '',
+          primaryGenreName: latestAlbum?.raw?.primaryGenreName || '',
           lastfmMbid: lastfmArtist?.mbid || '',
           lastfmMatch: Number(lastfmArtist?.match || 0)
         }
@@ -14455,7 +14456,8 @@ async function renderDiscoverArtistDetail(key) {
       albums = (data.results || []).filter(r => r.wrapperType === 'collection');
     }
   } catch (error) { metadataError = error?.message || String(error); }
-  const image = (albums.find(album => album.artworkUrl100)?.artworkUrl100 || result.image || '').replace('100x100bb','600x600bb');
+  const newestAlbum = [...albums].filter(album => album.artworkUrl100).sort((a,b) => String(b.releaseDate || '').localeCompare(String(a.releaseDate || '')))[0];
+  const image = (result.image || newestAlbum?.artworkUrl100 || '').replace('100x100bb','600x600bb');
   if (!result.image && image) result.image = image;
   const externalUrl = result.lastfmUrl || result.raw?.lastfmUrl || '';
   els.detailBody.innerHTML = `
