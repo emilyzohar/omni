@@ -12564,3 +12564,94 @@ h1, h2, h3 { font-weight: 720; letter-spacing: -.045em; }
 .week-weekday {
   font-weight: 400 !important;
 }
+
+/* Final responsive pass: dense mobile controls, true masonry social cards,
+   stable desktop stickers, and non-overlapping actions. */
+.actions-right,
+.detail-actions,
+.discover-detail-actions,
+.calendar-tool-buttons,
+.library-controls,
+.discover-heading-actions,
+.social-buddy-invite-actions,
+.buddy-watch-actions { gap: 10px !important; }
+
+.stats-detail-modal { width:min(760px,calc(100% - 30px)); }
+.stats-detail-modal .modal-heading p { margin:6px 0 0; color:var(--muted); font-size:.8rem; }
+.stats-rating-histogram { height:280px; display:grid; grid-template-columns:repeat(5,1fr); align-items:end; gap:12px; padding:24px 8px 6px; }
+.stats-rating-histogram button { height:100%; display:grid; grid-template-rows:minmax(0,1fr) auto auto; align-items:end; gap:7px; border:0; background:transparent; cursor:pointer; }
+.stats-rating-bar { width:min(54px,80%); height:var(--bar-height); min-height:8px; justify-self:center; border-radius:12px 12px 4px 4px; background:linear-gradient(180deg,var(--gold),#c98b58); transition:transform .15s ease; }
+.stats-rating-histogram button:hover .stats-rating-bar { transform:translateY(-3px); }
+.stats-rating-histogram strong { font-size:.9rem; }
+.stats-rating-histogram small { color:var(--muted); font-size:.68rem; }
+.stats-detail-list { display:grid; }
+.stats-detail-list > div { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 2px; border-bottom:1px solid var(--line); }
+.stats-detail-list span { min-width:0; display:grid; gap:2px; }
+.stats-detail-list strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.86rem; }
+.stats-detail-list small { color:var(--muted); font-size:.7rem; }
+.stats-detail-list b { font-size:1rem; }
+.stat-card-action { width:100%; border:0; text-align:left; cursor:pointer; color:inherit; }
+.stat-card-action:hover { transform:translateY(-2px); box-shadow:0 9px 22px rgba(27,31,24,.1); }
+
+/* Calendar colour follows each feed author. */
+.social-feed-card[data-social-profile-theme="blue"] { --feed-card:#e2e6f1; --feed-soft:#d2d9ea; }
+.social-feed-card[data-social-profile-theme="burgundy"] { --feed-card:#eadde1; --feed-soft:#dbc4ca; }
+.social-feed-card[data-social-profile-theme="slate"] { --feed-card:#e0e5e9; --feed-soft:#ced7de; }
+.social-feed-card[data-social-profile-theme="charcoal"] { --feed-card:#e2e3e5; --feed-soft:#d0d2d5; }
+.social-feed-card[data-social-profile-theme="forest"] { --feed-card:#e0e8e2; --feed-soft:#cad8cd; }
+.social-feed-card[data-social-profile-theme="espresso"] { --feed-card:#e9e1dd; --feed-soft:#dacdc7; }
+.social-feed { display:block !important; columns:3 250px; column-gap:15px; }
+.social-feed > .social-feed-card { display:inline-grid; width:100%; margin:0 0 15px; break-inside:avoid; background:var(--feed-card,#fffdf8) !important; border:0; border-radius:20px; box-shadow:0 5px 16px rgba(59,45,38,.10); }
+.social-feed > .social-feed-card .social-feed-person { background:transparent; }
+.social-feed > .social-feed-card .social-feed-content { grid-template-columns:1fr; padding:0; gap:0; }
+.social-feed > .social-feed-card .social-feed-image { width:100%; height:auto; min-height:0; aspect-ratio:auto; border-radius:0; object-fit:cover; }
+.social-feed > .social-feed-card .social-feed-image-placeholder { aspect-ratio:4/3; background:var(--feed-soft,#e5d4c4); }
+.social-feed > .social-feed-card .social-feed-copy { padding:12px 13px; }
+.social-feed > .social-feed-card .social-feed-person { order:0; border-top:1px solid rgba(70,55,47,.08); padding:10px 12px; }
+.social-feed > .social-feed-card .social-tag-list { padding:0 12px 10px; }
+.social-feed-network,
+.social-buddy-invite { display:inline-grid; width:100%; break-inside:avoid; margin:0 0 15px; }
+
+@media (min-width:761px) {
+  /* Restore the original desktop sticker geometry. */
+  .tracker-grid .sticker { width:23px; height:23px; font-size:.66rem; }
+  .tracker-grid .sticker-circle { width:19px; height:19px; }
+  .tracker-grid .sticker-star { width:24px; height:24px; font-size:1.45rem; }
+  .tracker-grid .sticker-heart { width:25px; height:25px; font-size:1.5rem; }
+  .tracker-grid .sticker-square { border-radius:3px; }
+}
+
+@media (max-width:760px) {
+  h1 { font-size:clamp(2rem,10vw,2.7rem); }
+  h2 { font-size:clamp(1.65rem,8vw,2.2rem); }
+  .upnext-section,.library-section,.discover-section,.stats-section { padding-top:30px; padding-bottom:52px; }
+  .social-feed { columns:2; column-gap:9px; }
+  .social-feed > .social-feed-card { margin-bottom:9px; border-radius:16px; }
+  .social-feed > .social-feed-card .social-feed-copy { padding:9px 10px; gap:3px; }
+  .social-feed > .social-feed-card .social-feed-copy strong { font-size:.82rem; }
+  .social-feed > .social-feed-card .social-feed-copy small,
+  .social-feed > .social-feed-card .social-feed-comment { font-size:.65rem; }
+  .social-feed > .social-feed-card .social-feed-person { padding:8px 9px; font-size:.67rem; gap:6px; }
+  .social-feed > .social-feed-card .social-feed-person .social-avatar { width:22px; height:22px; font-size:.6rem; }
+  .social-feed > .social-feed-card .social-feed-badges { min-height:0; gap:3px; }
+  .social-feed > .social-feed-card .social-feed-badges b { padding:3px 5px; font-size:.55rem; }
+  .social-feed > .social-feed-card .social-tag-list { padding:0 9px 8px; gap:3px; }
+  .social-feed > .social-feed-card .social-tag-list button { padding:4px 6px; font-size:.56rem; }
+  .social-tabs { margin-bottom:2px; }
+  .social-tab { min-height:34px; padding:7px 10px; font-size:.69rem; }
+  .calendar-tool-buttons > *,
+  .discover-heading-actions > *,
+  .library-filter-row button { margin:0 !important; }
+  .primary-button,.secondary-button,.quiet-button { min-height:36px; padding:7px 10px; font-size:.74rem; }
+  .item-modal { padding-inline:16px !important; }
+  .item-form { gap:10px; }
+  .item-form .field > span,.rating-fieldset legend { font-size:.68rem; }
+  .item-form input,.item-form select,.item-form textarea { padding:8px 9px; }
+  .star-picker .clear-rating,
+  .library-detail-rating-picker .clear-rating { display:none !important; }
+  .stats-summary { gap:8px; }
+  .stat-card { padding:12px; min-height:76px; }
+  .stat-card strong { font-size:1.55rem; }
+  .stat-card span { font-size:.67rem; }
+  .stats-rating-histogram { height:230px; gap:7px; }
+}

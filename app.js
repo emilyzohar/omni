@@ -2983,6 +2983,15 @@ function openStatsOtherGenres(labels = []) {
 }
 
 function handleStatsBreakdownClick(event) {
+  const summary = event.target.closest('[data-stats-summary]');
+  if (summary) {
+    const kind = summary.dataset.statsSummary;
+    if (kind === 'library') openStatsCatalogue('Library', state.items);
+    else if (kind === 'ratings') openStatsRatingHistogram();
+    else if (kind === 'repeats') openStatsRepeatBreakdown();
+    else if (kind === 'watch-hours') openStatsWatchBreakdown();
+    return;
+  }
   const recentButton = event.target.closest('[data-stats-recent]');
   if (recentButton) {
     openStatsRecentHistory(Number(recentButton.dataset.statsRecent || 30));
@@ -3002,6 +3011,65 @@ function handleStatsBreakdownClick(event) {
     if (genreTarget.dataset.statsGenreOther === 'true') openStatsOtherGenres(labels);
     else openStatsCatalogue(labels[0] || 'Genre', statsGenreItems(labels));
   }
+}
+
+function ensureStatsDetailModal() {
+  let modal = $('#statsDetailModal');
+  if (modal) return modal;
+  modal = document.createElement('dialog');
+  modal.id = 'statsDetailModal';
+  modal.className = 'modal stats-detail-modal';
+  modal.innerHTML = `<button class="modal-x" type="button" aria-label="Close">×</button><div class="modal-heading"><h2 id="statsDetailTitle">Stats</h2><p id="statsDetailSubtitle"></p></div><div id="statsDetailBody"></div>`;
+  modal.querySelector('.modal-x')?.addEventListener('click', () => modal.close());
+  modal.addEventListener('click', event => {
+    const rating = event.target.closest('[data-stats-rating]');
+    if (!rating) return;
+    const value = Number(rating.dataset.statsRating || 0);
+    modal.close();
+    openStatsCatalogue(`${value}-star ratings`, state.items.filter(item => Number(item.rating || 0) === value));
+  });
+  document.body.appendChild(modal);
+  return modal;
+}
+
+function showStatsDetail(title, subtitle, markup) {
+  const modal = ensureStatsDetailModal();
+  $('#statsDetailTitle').textContent = title;
+  $('#statsDetailSubtitle').textContent = subtitle || '';
+  $('#statsDetailBody').innerHTML = markup;
+  showDialogAtTop(modal);
+}
+
+function openStatsRatingHistogram() {
+  const counts = [1,2,3,4,5].map(value => ({ value, count: state.items.filter(item => Number(item.rating || 0) === value).length }));
+  const max = Math.max(1, ...counts.map(entry => entry.count));
+  const rated = counts.reduce((sum, entry) => sum + entry.count, 0);
+  showStatsDetail('Rating distribution', `${rated} rated ${rated === 1 ? 'item' : 'items'}`, `<div class="stats-rating-histogram">${counts.map(entry => `<button type="button" data-stats-rating="${entry.value}" aria-label="${entry.value} stars, ${entry.count} items"><span class="stats-rating-bar" style="--bar-height:${Math.max(5, Math.round(entry.count / max * 100))}%"></span><strong>${entry.count}</strong><small>${entry.value} star</small></button>`).join('')}</div>`);
+}
+
+function openStatsRepeatBreakdown() {
+  const repeatEntries = state.history.filter(entry => entry.rewatch);
+  const counts = new Map();
+  repeatEntries.forEach(entry => {
+    const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
+    const key = source?.id || entry.title || entry.id;
+    const current = counts.get(key) || { title: source?.title || entry.title || 'Untitled', type: source ? getItemTypeLabel(source) : (entry.typeLabel || getTypeLabel(entry.type)), count: 0 };
+    current.count += 1;
+    counts.set(key, current);
+  });
+  const rows = [...counts.values()].sort((a,b) => b.count - a.count || a.title.localeCompare(b.title));
+  showStatsDetail('Rewatches and rereads', `${repeatEntries.length} repeat ${repeatEntries.length === 1 ? 'log' : 'logs'}`, rows.length ? `<div class="stats-detail-list">${rows.map(row => `<div><span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.type || 'Item')}</small></span><b>${row.count}</b></div>`).join('')}</div>` : '<p class="empty-state">No repeat logs yet.</p>');
+}
+
+function openStatsWatchBreakdown() {
+  const watchTypes = new Set(['movie','tv','youtube']);
+  const groups = new Map();
+  state.items.filter(item => watchTypes.has(getSourceType(item))).forEach(item => {
+    const label = getItemTypeLabel(item);
+    groups.set(label, (groups.get(label) || 0) + 1);
+  });
+  const rows = [...groups.entries()].sort((a,b) => b[1] - a[1]);
+  showStatsDetail('Watch hours', 'Estimated from saved runtimes and watched progress', `<div class="stats-detail-list">${rows.map(([label,count]) => `<div><span><strong>${escapeHtml(label)}</strong><small>Tracked titles</small></span><b>${count}</b></div>`).join('')}</div>`);
 }
 
 function recentTrackedEntries(days = 30) {
@@ -3150,11 +3218,11 @@ async function renderStats() {
   const requestToken = `${state.items.length}:${state.history.length}:${Date.now()}`;
   els.statsSummary.dataset.renderToken = requestToken;
   els.statsSummary.innerHTML = `
-    <div class="stat-card"><strong>${escapeHtml(String(state.items.length))}</strong><span>Library</span></div>
+    <button class="stat-card stat-card-action" type="button" data-stats-summary="library"><strong>${escapeHtml(String(state.items.length))}</strong><span>Library</span></button>
     <button class="stat-card stat-card-action" type="button" data-stats-recent="30" aria-label="Open activity from the last 30 days"><strong>${escapeHtml(String(logged30))}</strong><span>Last 30 days</span></button>
-    <div class="stat-card"><strong>${escapeHtml(avg ? avg.toFixed(1) : '—')}</strong><span>Average rating</span></div>
-    <div class="stat-card"><strong>${escapeHtml(String(repeats))}</strong><span>Rewatches / rereads</span></div>
-    <div class="stat-card"><strong>${escapeHtml(formatWatchHours(storedMinutes))}</strong><span>Watch hours</span></div>`;
+    <button class="stat-card stat-card-action" type="button" data-stats-summary="ratings"><strong>${escapeHtml(avg ? avg.toFixed(1) : '—')}</strong><span>Average rating</span></button>
+    <button class="stat-card stat-card-action" type="button" data-stats-summary="repeats"><strong>${escapeHtml(String(repeats))}</strong><span>Rewatches / rereads</span></button>
+    <button class="stat-card stat-card-action" type="button" data-stats-summary="watch-hours"><strong>${escapeHtml(formatWatchHours(storedMinutes))}</strong><span>Watch hours</span></button>`;
   if (els.statsTypes) {
     const groups = new Map();
     state.items.forEach(item => {
@@ -14586,7 +14654,11 @@ function openStickerSettings() {
 }
 
 function getRecognizedStickerTargets() {
-  const parents = getRecognizedTypes();
+  const usedTypes = new Set([
+    ...state.items.map(item => item.type),
+    ...state.history.map(entry => entry.type)
+  ].filter(Boolean));
+  const parents = getRecognizedTypes().filter(parent => usedTypes.has(parent.type));
   const targets = [];
   for (const parent of parents) {
     targets.push({ type: parent.type, label: parent.label, subcategory: '', key: parent.type });
@@ -18691,7 +18763,7 @@ function renderSocialFeed() {
     const items = row?.payload?.sections?.activity || [];
     for (const item of items) {
       if (!item?.trackedDate) continue;
-      entries.push({ profile, item, date: item.trackedDate });
+      entries.push({ profile, item, date: item.trackedDate, theme: row?.payload?.theme || 'blue' });
     }
   }
   entries.sort((a,b) => String(b.date).localeCompare(String(a.date)));
@@ -18701,6 +18773,10 @@ function renderSocialFeed() {
   const requestsMarkup = requests.length ? `<section class="social-feed-network"><div class="social-feed-network-heading"><strong>Follow requests</strong></div><div class="social-feed-network-list">${requests.map(profile => `<article class="social-feed-network-person"><button type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}</small></span></button><div><button class="primary-button social-small-button" type="button" data-social-accept-follow="${escapeAttr(profile.user_id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-social-decline-follow="${escapeAttr(profile.user_id)}">Decline</button></div></article>`).join('')}</div></section>` : '';
   const followersMarkup = followers.length ? `<section class="social-feed-network"><div class="social-feed-network-heading"><strong>Followers</strong><small>${followers.length}</small></div><div class="social-feed-follower-strip">${followers.map(profile => `<button class="social-feed-follower" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span>${escapeHtml(profile.display_name || profile.username)}</span></button>`).join('')}</div></section>` : '';
   host.innerHTML = requestsMarkup + followersMarkup + invites.map(socialBuddyInviteMarkup).join('') + entries.slice(0,120).map(socialFeedCardMarkup).join('');
+  host.querySelectorAll('.social-feed-card').forEach((card, index) => {
+    const theme = entries[index]?.theme || 'blue';
+    card.dataset.socialProfileTheme = SOCIAL_PROFILE_THEME_IDS.has(String(theme)) ? String(theme) : 'blue';
+  });
   if ($('#socialFeedEmpty')) $('#socialFeedEmpty').hidden = requests.length > 0 || followers.length > 0 || invites.length > 0 || entries.length > 0;
 }
 

@@ -9,6 +9,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(process.cwd(), 'index.html'),
+        fallback: resolve(process.cwd(), '404.html'),
         discover: resolve(process.cwd(), 'discover.html'),
         social: resolve(process.cwd(), 'social.html'),
         library: resolve(import.meta.dirname, 'library.html')
