@@ -1,17 +1,8 @@
 {
-  "name": "omni-tracker",
+  "name": "omni-app",
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.57.0"
-  },
-  "devDependencies": {
-    "vite": "^7.1.2"
-  }
+  "scripts": { "dev": "vite", "build": "vite build" },
+  "dependencies": { "@supabase/supabase-js": "latest", "vite": "latest" }
 }

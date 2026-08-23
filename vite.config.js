@@ -11,7 +11,7 @@ export default defineConfig({
         main: resolve(process.cwd(), 'index.html'),
         discover: resolve(process.cwd(), 'discover.html'),
         social: resolve(process.cwd(), 'social.html'),
-        library: resolve(__dirname, 'library.html')
+        library: resolve(import.meta.dirname, 'library.html')
       }
     }
   }

@@ -11,8 +11,8 @@
   --rust: #97280c;
   --line: rgba(21, 36, 58, .13);
   --shadow: 8px 10px 19px rgba(27, 31, 24, .24);
-  --serif: "Times New Roman", Times, serif;
-  --sans: "DM Sans", system-ui, sans-serif;
+  --serif: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -11021,6 +11021,91 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
 .stat-type-row strong,
 .stats-genre-legend-row strong {
   font-weight: 400 !important;
+}
+
+/* =========================================================
+   App refresh — warm Pinterest whimsy with iOS-like restraint
+   ========================================================= */
+:root {
+  --maroon: #6f1726;
+  --cream: #f2eadf;
+  --cream-2: #f8f3eb;
+  --paper: #fffdf8;
+  --ink: #282522;
+  --muted: #77716a;
+  --blue: #9ca9c8;
+  --blue-deep: #7887ad;
+  --gold: #deb867;
+  --rust: #a65038;
+  --line: rgba(66,54,47,.12);
+  --shadow: 0 12px 34px rgba(78,58,45,.10), 0 2px 7px rgba(78,58,45,.06);
+}
+
+html { background: var(--cream-2); }
+body { letter-spacing: -.012em; padding-bottom: env(safe-area-inset-bottom); }
+h1, h2, h3 { font-weight: 720; letter-spacing: -.045em; }
+.nav { font-family: var(--sans); font-size: .88rem; font-weight: 700; letter-spacing: -.01em; }
+.nav a:hover, .nav a.active { font-style: normal; }
+.site-header { position: sticky; top: 0; z-index: 100; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+.primary-button, .secondary-button, .quiet-button, .social-tab { min-height: 42px; }
+.modal, .upnext-card, .library-card, .social-profile-card { box-shadow: var(--shadow); }
+
+/* Feed cards stay compact and flow vertically like pins. */
+.social-page { --social-bg:#efe8e0; --social-paper:#fffdf8; --social-ink:#282522; --social-accent:#9b6f76; --social-accent-deep:#6f1726; }
+.social-page .social-section { background: radial-gradient(circle at 8% 0%, rgba(220,184,103,.16), transparent 26%), linear-gradient(180deg,#f5eee6,#eee5dc); }
+.social-page .social-shell { max-width: 1040px; }
+.social-page .social-heading h1::after { content:"  ·  moments from your circle"; color:var(--muted); font-size:.8rem; font-weight:550; letter-spacing:0; vertical-align:middle; }
+.social-feed { columns: 3 250px; column-gap: 14px; }
+.social-feed > * { break-inside: avoid; margin: 0 0 14px; }
+.social-feed-card { display:inline-grid; width:100%; border:1px solid rgba(72,53,45,.08); border-radius:22px; background:rgba(255,253,248,.9); box-shadow:var(--shadow); overflow:hidden; }
+.social-feed-person { order:-1; border:0; padding:12px 13px 9px; background:transparent; text-align:left; }
+.social-feed-person > span:last-child { display:grid; gap:1px; }
+.social-feed-person small { color:var(--muted); font-size:.65rem; font-weight:550; }
+.social-feed-content { grid-template-columns:84px minmax(0,1fr); align-items:stretch; padding:0 12px 12px; gap:11px; }
+.social-feed-image, .social-feed-image-placeholder { width:84px; height:112px; border-radius:14px; object-fit:cover; background:linear-gradient(145deg,#e5d4c4,#d9b9ad); }
+.social-feed-copy { align-self:center; padding:5px 0; }
+.social-feed-copy strong { font-size:.94rem; line-height:1.2; }
+.social-feed-comment { margin-top:7px; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; font-size:.75rem; line-height:1.42; }
+.social-feed-badges { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
+.social-feed-badges b { border-radius:999px; padding:4px 7px; background:#f1e5da; color:#6f1726; font-size:.61rem; }
+.social-tag-list { display:flex; flex-wrap:wrap; gap:5px; padding:0 12px 11px; }
+.social-tag-list button { border:0; border-radius:999px; padding:5px 8px; background:#ebe8f2; color:#5a5571; cursor:pointer; font-size:.64rem; font-weight:700; }
+.social-tag-list button:hover { background:#ddd8e9; }
+.tag-invite { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 12px 12px; padding:10px; border-radius:14px; background:#f4e8c8; }
+.tag-invite span { display:grid; gap:2px; }
+.tag-invite strong { font-size:.72rem; }
+.tag-invite small { color:#76654d; font-size:.64rem; }
+
+/* One neutral line icon replaces the former Buddy Watch emoji. */
+.app-icon { display:inline-block; width:18px; height:18px; color:currentColor; }
+.app-icon-people { position:relative; border:1.8px solid currentColor; border-radius:999px; transform:rotate(-35deg); }
+.app-icon-people::after { content:""; position:absolute; width:7px; height:3px; right:-6px; top:6px; border-top:1.8px solid currentColor; }
+.buddy-queue-link-icon { flex:0 0 18px; }
+
+@media (max-width: 760px) {
+  body { padding-bottom:calc(78px + env(safe-area-inset-bottom)); }
+  .shell { width:min(100% - 28px, 1160px); }
+  .site-header { position:fixed; inset:auto 0 0; top:auto; background:rgba(255,253,248,.88) !important; border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom); }
+  .site-header .nav { width:100%; height:68px; padding:8px 10px; display:grid; grid-template-columns:repeat(4,1fr); gap:2px; color:var(--ink) !important; }
+  .site-header .nav a { display:grid; place-items:center; border-radius:12px; font-size:.68rem; }
+  .site-header .nav a.active { background:rgba(111,23,38,.09); color:var(--maroon); }
+  .nav-spacer, .sync-status, .user-email, .sign-out-button { display:none !important; }
+  .social-section { padding-top:24px; }
+  .social-feed { columns:2 145px; column-gap:10px; }
+  .social-feed > * { margin-bottom:10px; }
+  .social-feed-card { border-radius:17px; }
+  .social-feed-content { grid-template-columns:1fr; padding:0 9px 10px; }
+  .social-feed-image, .social-feed-image-placeholder { width:100%; height:auto; aspect-ratio:4/5; }
+  .social-feed-person { padding:9px; }
+  .social-feed-person .social-avatar { width:24px; height:24px; }
+  .social-feed-person small { display:none; }
+  .tag-invite { align-items:stretch; flex-direction:column; margin:0 9px 9px; }
+  .tag-invite button { width:100%; }
+}
+
+@media (display-mode: standalone) {
+  body { overscroll-behavior-y:none; }
+  .site-header { user-select:none; -webkit-user-select:none; }
 }
 
 /* DNF uses the same close control and heading spacing as every other dialog. */

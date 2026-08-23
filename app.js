@@ -420,6 +420,7 @@ const els = {
   historyEditDate: $('#historyEditDate'),
   historyEditRating: $('#historyEditRating'),
   historyEditNote: $('#historyEditNote'),
+  historyEditPeople: $('#historyEditPeople'),
   historyEditShowCalendar: $('#historyEditShowCalendar'),
   historyEditDelete: $('#historyEditDelete'),
   historyRatingPicker: $('#historyRatingPicker'),
@@ -3924,7 +3925,7 @@ function buddyQueueMarkup(item) {
   if (!context) return '';
   const person = context.other?.profile?.display_name || context.other?.profile?.username || 'Buddy';
   const positions = [context.mine?.progress_text ? `You: ${context.mine.progress_text}` : '', context.theirs?.progress_text ? `${person}: ${context.theirs.progress_text}` : ''].filter(Boolean).join(' · ');
-  return `<div class="buddy-queue-link" aria-label="Buddy Watch with ${escapeAttr(person)}"><span class="buddy-queue-link-icon" aria-hidden="true">🔗</span><span>${escapeHtml(person)}${positions ? ` · ${escapeHtml(positions)}` : ''}</span></div>`;
+  return `<div class="buddy-queue-link" aria-label="Buddy Watch with ${escapeAttr(person)}"><span class="buddy-queue-link-icon app-icon app-icon-people" aria-hidden="true"></span><span>${escapeHtml(person)}${positions ? ` · ${escapeHtml(positions)}` : ''}</span></div>`;
 }
 
 function queueCardMarkup(item, info) {
@@ -6424,10 +6425,9 @@ function updateItemFormForType() {
   if (els.itemLogModeHint) els.itemLogModeHint.hidden = !Boolean(els.itemUseRepeatLog?.checked);
 
   const bookDisplay = parentType === 'book' || sourceType === 'book';
-  if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.hidden = bookDisplay;
-  if (els.itemPeopleBlock) els.itemPeopleBlock.hidden = bookDisplay;
-  if (els.itemPeopleSuggestions && bookDisplay) els.itemPeopleSuggestions.hidden = true;
-  else if (els.itemPeopleSuggestions && els.itemModal?.open) refreshItemPeopleSuggestions().catch(() => {});
+  if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.hidden = false;
+  if (els.itemPeopleBlock) els.itemPeopleBlock.hidden = false;
+  if (els.itemPeopleSuggestions && els.itemModal?.open) refreshItemPeopleSuggestions().catch(() => {});
 
   const creatingNewType = parentType === 'other' && !savedType && els.itemKindChoice?.value === 'new-type';
   if (els.displayTypeBlock) els.displayTypeBlock.hidden = !creatingNewType;
@@ -9913,6 +9913,7 @@ function openHistoryEdit(id) {
   els.historyEditSubtitle.value = entry.subtitle || '';
   els.historyEditDate.value = entry.date || '';
   els.historyEditNote.value = entry.notes || '';
+  if (els.historyEditPeople) els.historyEditPeople.value = (entry.people || source?.people || []).join(', ');
   els.historyEditShowCalendar.checked = entry.showOnCalendar !== false;
   setHistoryRating(Number(entry.rating ?? source?.rating ?? 0));
   syncHistoryRecommendHeart(source);
@@ -9975,6 +9976,7 @@ function saveHistoryEdit(event) {
   entry.date = els.historyEditDate.value || '';
   entry.rating = Number(els.historyEditRating.value || 0);
   entry.notes = els.historyEditNote.value.trim();
+  entry.people = parseItemPeople(els.historyEditPeople?.value || '');
   entry.showOnCalendar = Boolean(els.historyEditShowCalendar.checked && entry.date);
   entry.updatedAt = new Date().toISOString();
 
@@ -18667,7 +18669,10 @@ function socialFeedCardMarkup(entry) {
   const badge = socialFeedProgressBadge(item);
   const rating = Number(item.rating || 0);
   const meta = [item.typeLabel || getTypeLabel(item.type), badge].filter(Boolean).join(' · ');
-  return `<article class="social-feed-card"><button class="social-feed-content" type="button" data-social-open-item="${escapeAttr(item.key)}" data-social-profile-id="${escapeAttr(profile.user_id)}">${item.image ? `<img class="social-feed-image" src="${escapeAttr(item.image)}" alt=""/>` : ''}<span class="social-feed-copy"><strong>${escapeHtml(item.title || 'Untitled')}</strong>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}<span class="social-feed-badges">${rating ? `<b>${escapeHtml(String(rating))}★</b>` : ''}${item.recommended ? '<b>♥</b>' : ''}</span>${item.comment ? `<span class="social-feed-comment">${escapeHtml(item.comment)}</span>` : ''}</span></button><button class="social-feed-person" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span>${escapeHtml(profile.display_name || profile.username)}</span></button></article>`;
+  const tagged = (Array.isArray(item.people) ? item.people : []).map(value => String(value).replace(/^@/, '').toLowerCase()).includes(String(socialState.profile?.username || '').toLowerCase());
+  const people = (Array.isArray(item.people) ? item.people : []).map(value => String(value).trim()).filter(Boolean);
+  const peopleMarkup = people.length ? `<div class="social-tag-list" aria-label="Tagged people">${people.map(value => `<button type="button" data-social-view-username="${escapeAttr(value.replace(/^@/, ''))}">@${escapeHtml(value.replace(/^@/, ''))}</button>`).join('')}</div>` : '';
+  return `<article class="social-feed-card"><button class="social-feed-person" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}</small></span></button><button class="social-feed-content" type="button" data-social-open-item="${escapeAttr(item.key)}" data-social-profile-id="${escapeAttr(profile.user_id)}">${item.image ? `<img class="social-feed-image" src="${escapeAttr(item.image)}" alt=""/>` : '<span class="social-feed-image social-feed-image-placeholder"></span>'}<span class="social-feed-copy"><strong>${escapeHtml(item.title || 'Untitled')}</strong>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}<span class="social-feed-badges">${rating ? `<b>${escapeHtml(String(rating))} / 5</b>` : ''}${item.recommended ? '<b>Recommended</b>' : ''}</span>${item.comment ? `<span class="social-feed-comment">${escapeHtml(item.comment)}</span>` : ''}</span></button>${peopleMarkup}${tagged ? `<aside class="tag-invite"><span><strong>${escapeHtml(profile.display_name || profile.username)} tagged you</strong><small>Add this event to your Track?</small></span><button class="secondary-button social-small-button" type="button" data-add-tagged-event="${escapeAttr(item.key)}" data-social-profile-id="${escapeAttr(profile.user_id)}">Add to Track</button></aside>` : ''}</article>`;
 }
 
 function socialBuddyInviteMarkup(watch) {
@@ -18724,6 +18729,30 @@ async function handleSocialPeopleSearch(event) {
 }
 
 async function handleSocialActionClick(event) {
+  const taggedPerson = event.target.closest('[data-social-view-username]');
+  if (taggedPerson && supabase) {
+    const username = String(taggedPerson.dataset.socialViewUsername || '').trim();
+    const result = await supabase.from('profiles').select('user_id').ilike('username', username).maybeSingle();
+    if (result.data?.user_id) await openSocialProfileView(result.data.user_id);
+    return;
+  }
+  const addTagged = event.target.closest('[data-add-tagged-event]');
+  if (addTagged) {
+    const ownerId = addTagged.dataset.socialProfileId || '';
+    const row = socialState.followingSnapshots.get(ownerId);
+    const shared = (row?.payload?.sections?.activity || []).find(item => String(item.key) === String(addTagged.dataset.addTaggedEvent));
+    if (shared) {
+      const exists = state.items.some(item => String(item.title || '').toLowerCase() === String(shared.title || '').toLowerCase() && String(item.date || '') === String(shared.trackedDate || ''));
+      if (!exists) {
+        state.items.push({ id: makeId(), sourceType: shared.sourceType || shared.type || 'activity', type: shared.type || 'activity', typeLabel: shared.typeLabel || getTypeLabel(shared.type || 'activity'), title: shared.title || 'Shared event', subtitle: shared.subtitle || '', image: shared.image || '', rating: 0, notes: '', comment: '', people: [], recommended: false, date: shared.trackedDate || todayString(), queueStatus: 'library', active: false, progress: {}, featureConfig: { findSource: 'manual', progressMode: 'none', dateRange: false }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        saveItems();
+        renderAll();
+      }
+      addTagged.textContent = exists ? 'Already added' : 'Added';
+      addTagged.disabled = true;
+    }
+    return;
+  }
   const buddyAccept = event.target.closest('[data-buddy-accept]');
   if (buddyAccept) { await respondBuddyInvite(buddyAccept.dataset.buddyAccept, true); renderSocialFeed(); return; }
   const buddyDecline = event.target.closest('[data-buddy-decline]');
@@ -19914,4 +19943,3 @@ async function saveBuddyWatchProgress(event) {
   $('#buddyWatchProgressModal')?.close();
   await loadBuddyWatches();
 }
-
