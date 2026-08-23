@@ -11,8 +11,8 @@
   --rust: #97280c;
   --line: rgba(21, 36, 58, .13);
   --shadow: 8px 10px 19px rgba(27, 31, 24, .24);
-  --serif: "Times New Roman", Times, serif;
-  --sans: "DM Sans", system-ui, sans-serif;
+  --serif: "Inter", system-ui, sans-serif;
+  --sans: "Inter", system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -6608,7 +6608,7 @@ dialog.modal:not([open]) {
   }
 }
 
-/* Omni: consistent Library detail actions + visible tracked dates + month navigation */
+/* Folio: consistent Library detail actions + visible tracked dates + month navigation */
 .track-month-title {
   display: inline-flex;
   align-items: center;
@@ -6766,7 +6766,7 @@ dialog.modal:not([open]) {
   opacity: .7;
 }
 
-/* Omni: release workflow + consistent DNF popup */
+/* Folio: release workflow + consistent DNF popup */
 .library-not-released-shelf {
   border-top: 1px solid rgba(21,36,58,.08);
   padding-top: 14px;
@@ -6784,7 +6784,7 @@ dialog.modal:not([open]) {
 }
 
 /* =========================================================
-   Omni: compact Track controls + unified Track settings + Library hierarchy
+   Folio: compact Track controls + unified Track settings + Library hierarchy
    ========================================================= */
 .icon-tool-button,
 .library-icon-button {
@@ -7038,7 +7038,7 @@ dialog.modal:not([open]) {
 
 
 /* =========================================================
-   OMNI — MOBILE LIBRARY / TEXT ICON CLEANUP
+   FOLIO — MOBILE LIBRARY / TEXT ICON CLEANUP
    ========================================================= */
 .text-gear-icon {
   font-family: Georgia, "Times New Roman", serif;
@@ -7213,7 +7213,7 @@ dialog.modal:not([open]) {
 
 
 /* =========================================================
-   OMNI — CONTROL ALIGNMENT PASS
+   FOLIO — CONTROL ALIGNMENT PASS
    ========================================================= */
 /* Library controls use matched heights and explicit columns so labels and
    controls stay on one baseline instead of flex-shrinking independently. */
@@ -7370,7 +7370,7 @@ dialog.modal:not([open]) {
 
 
 /* =========================================================
-   OMNI — MOBILE LIBRARY TABS BESIDE TYPES
+   FOLIO — MOBILE LIBRARY TABS BESIDE TYPES
    ========================================================= */
 .library-folder-tabs-mobile { display: none; }
 
@@ -7437,7 +7437,7 @@ dialog.modal:not([open]) {
 }
 
 /* =========================================================
-   OMNI — LIBRARY CONTROL ALIGNMENT FINAL OVERRIDE
+   FOLIO — LIBRARY CONTROL ALIGNMENT FINAL OVERRIDE
    ========================================================= */
 
 /* Desktop/tablet: keep row spacing unchanged, only move labels
@@ -7569,7 +7569,7 @@ dialog.modal:not([open]) {
 }
 
 /* =========================================================
-   OMNI — PHONE-FIRST LIBRARY CONTROLS
+   FOLIO — PHONE-FIRST LIBRARY CONTROLS
    Final mobile structure:
    1. Search + add
    2. Types (full width)
@@ -7733,7 +7733,7 @@ dialog.modal:not([open]) {
 }
 
 /* =========================================================
-   OMNI — MOBILE LIBRARY: TYPES + SETTINGS LEFT, VIEW RIGHT
+   FOLIO — MOBILE LIBRARY: TYPES + SETTINGS LEFT, VIEW RIGHT
    Phone-first final override.
    ========================================================= */
 @media (max-width: 760px) {
@@ -7853,7 +7853,7 @@ dialog.modal:not([open]) {
 }
 
 /* =========================================================
-   OMNI — MOBILE LIBRARY TWO-ROW CONTROL GRID
+   FOLIO — MOBILE LIBRARY TWO-ROW CONTROL GRID
    Row 1: All/Recommended | Types | Settings
    Row 2: Search          | +     | Sort
    The first-column controls intentionally share the same width.
@@ -8032,7 +8032,7 @@ dialog.modal:not([open]) {
 }
 
 /* =========================================================
-   Omni Library details + Activity + recommendations update
+   Folio Library details + Activity + recommendations update
    ========================================================= */
 .detail-disclosure-row {
   display: flex;
@@ -9134,7 +9134,7 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
 
 
 /* =========================================================
-   Social Library view — familiar Omni shelves with a distinct social tint
+   Social Library view — familiar Folio shelves with a distinct social tint
    ========================================================= */
 .social-page {
   --social-bg: #e8eaf2;
@@ -9355,7 +9355,7 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
 .social-profile-library-window { grid-template-columns: 1fr; align-items: stretch; }
 
 /* =========================================================
-   Social profile refinement — Omni palette + themed profile surfaces
+   Social profile refinement — Folio palette + themed profile surfaces
    ========================================================= */
 .social-page {
   --social-bg: var(--cream-2);
@@ -9434,7 +9434,7 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
 .social-profile-theme-choice[data-social-profile-theme-choice="espresso"] .social-profile-theme-dot { background: #665149; }
 
 /* The chosen profile colour is deliberately softer than Track so the Library
-   remains readable and still feels like Omni. */
+   remains readable and still feels like Folio. */
 .social-profile-surface,
 .social-profile-library-window {
   --profile-bg: #eef0f7;
@@ -9673,7 +9673,7 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
   border-top: 1px solid rgba(21,36,58,.08);
 }
 .social-item-own-actions::before {
-  content: 'Add to your Omni';
+  content: 'Add to your Folio';
   align-self: center;
   margin-right: 4px;
   color: #7b7a72;
@@ -10327,7 +10327,7 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
 }
 
 /* =========================================================
-   Omni structure overhaul v20
+   Folio structure overhaul v20
    ========================================================= */
 
 .find-it-block { display:grid; gap:8px; }
@@ -10506,7 +10506,7 @@ body.calendar-row-drag-active .calendar-row-chip-handle { cursor: grabbing; }
 }
 
 
-/* Typography restored to the earlier Omni weights; Times New Roman remains the display face. */
+/* Typography restored to the earlier Folio weights; Inter is the display face. */
 
 
 /* Library albums, category maps, and richer Stats v28 */
@@ -12478,4 +12478,200 @@ button[aria-busy="true"] { animation:omni-button-working 1.05s ease-in-out infin
 .tracker-category,
 .week-weekday {
   font-weight: 400 !important;
+}
+
+/* =========================================================
+   Folio visual system: Discover + Social
+   ========================================================= */
+html, body, button, input, select, textarea {
+  font-family: "Inter", system-ui, sans-serif;
+  font-variant-emoji: text;
+}
+h1, h2, h3, .nav, .auth-mark { font-family: "Inter", system-ui, sans-serif; }
+.nav a:hover, .nav a.active { font-style: normal; font-weight: 700; }
+
+body.discover-page,
+body.social-page { background: var(--maroon); }
+.discover-page .site-header,
+.social-page .site-header { background: var(--cream); }
+.discover-page .nav,
+.social-page .nav { color: var(--maroon); }
+.discover-section,
+.social-section { min-height: calc(100vh - 72px); background: var(--maroon); color: var(--cream); }
+.discover-section > .shell,
+.social-section > .shell { padding-top: 48px; padding-bottom: 80px; }
+.discover-heading,
+.social-heading { align-items: center; margin-bottom: 28px; }
+.discover-heading h1,
+.social-heading h1 { color: var(--cream); font-size: clamp(2.2rem, 5vw, 3.2rem); font-weight: 700; letter-spacing: -.045em; }
+
+.discover-heading-actions,
+.social-heading-actions { display: flex; align-items: center; gap: 8px; }
+.discover-icon-button,
+.social-profile-button {
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--cream);
+  color: var(--maroon);
+  box-shadow: none;
+  font-size: 1.35rem;
+  font-variant-emoji: text;
+}
+.discover-icon-button:hover,
+.social-profile-button:hover { background: var(--paper); transform: translateY(-1px); }
+
+.discover-search-form { max-width: none; grid-template-columns: minmax(0, 1fr) auto auto; }
+.discover-search-field input,
+.discover-search-button,
+.discover-multi-filter > summary,
+.discover-type-filter select,
+.social-search-form input,
+.social-search-form button,
+.social-find-button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--cream);
+  color: var(--maroon);
+  box-shadow: none;
+}
+.discover-toolbar { color: var(--cream); }
+.discover-mode-tabs { border-color: rgba(240,233,208,.32); }
+.discover-mode-tab { color: var(--cream); }
+.discover-mode-tab.is-active { background: var(--cream); color: var(--maroon); }
+.discover-status,
+.discover-feed-intro,
+.discover-feed-message,
+.watch-provider-attribution { color: rgba(240,233,208,.78); }
+
+.discover-card,
+.discover-card.discover-text-card {
+  background: var(--cream);
+  color: var(--maroon);
+  border: 0;
+  box-shadow: none;
+}
+.discover-card-copy,
+.discover-card-meta,
+.discover-card-subtitle,
+.discover-text-card-meta { color: var(--maroon); }
+.discover-card .discover-add-button,
+.discover-card .discover-complete-button { border-color: rgba(114,0,20,.18); color: var(--maroon); }
+
+/* Social uses the same artwork-first card language as Discover. */
+.social-tabs { margin: 0 0 18px; border: 0; }
+.social-tabs .social-tab[data-social-tab="feed"] {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: rgba(240,233,208,.76);
+  font-size: .8rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.social-find-button { padding: 0 18px; font-weight: 650; }
+.social-find-button span { margin-left: 12px; font-size: 1.15rem; }
+.text-profile-icon {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  display: block;
+  border: 1.7px solid currentColor;
+  border-radius: 50%;
+}
+.text-profile-icon::before {
+  content: "";
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  left: 4.7px;
+  top: 2.5px;
+  border: 1.4px solid currentColor;
+  border-radius: 50%;
+}
+.text-profile-icon::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 5px;
+  left: 2.3px;
+  bottom: 2px;
+  border: 1.4px solid currentColor;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+}
+.social-panel { color: var(--maroon); }
+.social-feed,
+.social-profile-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 16px; align-items: start; }
+.social-feed-card,
+.social-profile-card,
+.social-feed-network,
+.social-buddy-invite,
+.social-profile-surface,
+.social-search-form {
+  margin: 0;
+  border: 0;
+  border-radius: 18px;
+  background: var(--cream);
+  color: var(--maroon);
+  box-shadow: none;
+  overflow: hidden;
+}
+.social-feed-card { display: grid; }
+.social-feed-content { display: grid; padding: 0; }
+.social-feed-image { width: 100%; aspect-ratio: 2 / 3; height: auto; object-fit: cover; border-radius: 0; }
+.social-feed-copy { padding: 12px; color: var(--maroon); }
+.social-feed-person { margin: 0 12px 12px; padding-top: 10px; border-top: 1px solid rgba(114,0,20,.12); color: var(--maroon); }
+.social-feed-network { grid-column: span 2; padding: 16px; }
+.social-buddy-invite { grid-column: span 2; padding: 16px; }
+.social-profile-card { padding: 14px; }
+.social-search-form { padding: 12px; }
+.social-profile-surface { padding: 20px; }
+.social-profile-network { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 16px 0 20px; }
+.social-profile-network-group { padding: 14px; border-radius: 14px; background: rgba(255,255,255,.42); }
+.social-profile-network-group > strong { display: block; font-size: 1.3rem; }
+.social-profile-network-group > span { display: block; margin-bottom: 9px; color: var(--muted); font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.social-profile-network-list { display: flex; gap: 7px; overflow-x: auto; }
+.social-profile-network-list button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; cursor: pointer; padding: 2px; }
+.social-profile-network-list small { color: var(--muted); }
+.social-page .empty-state { color: var(--cream); }
+
+@media (max-width: 900px) {
+  .social-feed,
+  .social-profile-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+
+@media (max-width: 760px) {
+  .shell { width: min(100% - 28px, 1160px); }
+  .discover-section > .shell,
+  .social-section > .shell { padding-top: 26px; padding-bottom: 52px; }
+  .discover-heading,
+  .social-heading { margin-bottom: 18px; gap: 12px; }
+  .discover-heading h1,
+  .social-heading h1,
+  h1 { font-size: 2rem; line-height: 1; }
+  h2 { font-size: 1.65rem; }
+  h3 { font-size: 1.15rem; }
+  .discover-heading-actions { gap: 6px; }
+  .discover-icon-button,
+  .social-profile-button { width: 38px; min-width: 38px; height: 38px; }
+  .social-find-button { min-height: 38px; padding-inline: 13px; font-size: .78rem; }
+  .discover-search-form { grid-template-columns: minmax(0,1fr) auto; gap: 7px; }
+  .discover-search-clear { grid-column: 1 / -1; justify-self: end; }
+  .discover-search-field input { min-height: 40px; }
+  .discover-toolbar { gap: 10px; }
+  .social-feed,
+  .social-profile-grid { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+  .social-feed-network,
+  .social-buddy-invite { grid-column: 1 / -1; }
+  .social-feed-copy { padding: 9px; }
+  .social-feed-person { margin: 0 9px 9px; }
+  .social-profile-network { grid-template-columns: 1fr; }
 }

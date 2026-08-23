@@ -164,7 +164,14 @@ export const TrackerAPI = (() => {
   async function searchArtists(query, settings) {
     const country = (settings.itunesCountry || 'CA').toUpperCase();
     const url = `${ITUNES_ROOT}/search?term=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&media=music&entity=musicArtist&limit=50`;
-    const data = await fetchJson(url);
+    const albumUrl = `${ITUNES_ROOT}/search?term=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&media=music&entity=album&limit=200`;
+    const [data, albumData] = await Promise.all([fetchJson(url), fetchJson(albumUrl).catch(() => ({ results: [] }))]);
+    const artworkByArtist = new Map();
+    for (const album of albumData.results || []) {
+      const artistKey = String(album.artistName || '').trim().toLowerCase();
+      if (!artistKey || artworkByArtist.has(artistKey) || !album.artworkUrl100) continue;
+      artworkByArtist.set(artistKey, String(album.artworkUrl100).replace('100x100bb', '600x600bb'));
+    }
     const seen = new Set();
     return (data.results || []).filter(result => {
       if (!result.artistId || seen.has(String(result.artistId))) return false;
@@ -178,7 +185,7 @@ export const TrackerAPI = (() => {
       subtitle: result.primaryGenreName || 'Artist',
       artistName: result.artistName || '',
       artistId: String(result.artistId),
-      image: '',
+      image: artworkByArtist.get(String(result.artistName || '').trim().toLowerCase()) || '',
       description: result.primaryGenreName || '',
       raw: result
     }));

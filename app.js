@@ -807,7 +807,7 @@ function ensureOnboardingColorModal() {
   modal = document.createElement('dialog');
   modal.id = 'onboardingColorModal';
   modal.className = 'modal small-modal onboarding-color-modal';
-  modal.innerHTML = `<div class="modal-heading"><p class="modal-eyebrow">WELCOME TO OMNI</p><h2>Pick your colour</h2></div><div class="onboarding-color-picker" role="radiogroup" aria-label="Choose your Omni colour"></div><div class="modal-actions"><button class="quiet-button" type="button" data-onboarding-skip>Skip tour</button><div class="actions-right"><button class="primary-button" type="button" data-onboarding-colour-continue>Continue</button></div></div>`;
+  modal.innerHTML = `<div class="modal-heading"><p class="modal-eyebrow">WELCOME TO FOLIO</p><h2>Pick your colour</h2></div><div class="onboarding-color-picker" role="radiogroup" aria-label="Choose your Folio colour"></div><div class="modal-actions"><button class="quiet-button" type="button" data-onboarding-skip>Skip tour</button><div class="actions-right"><button class="primary-button" type="button" data-onboarding-colour-continue>Continue</button></div></div>`;
   document.body.appendChild(modal);
   const picker = modal.querySelector('.onboarding-color-picker');
   const render = () => {
@@ -836,7 +836,7 @@ function ensureOnboardingLogTypesModal() {
   modal = document.createElement('dialog');
   modal.id = 'onboardingLogTypesModal';
   modal.className = 'modal small-modal onboarding-log-types-modal';
-  modal.innerHTML = `<div class="modal-heading"><p class="modal-eyebrow">WELCOME TO OMNI</p><h2>What do you want to log?</h2><p>Pick the main Types you use. Add will stay simple and show only these. You can change this later in Profile settings.</p></div><div class="onboarding-log-type-grid"></div><div class="modal-actions"><button class="quiet-button" type="button" data-onboarding-log-all>Use all</button><div class="actions-right"><button class="primary-button" type="button" data-onboarding-log-continue>Continue</button></div></div>`;
+  modal.innerHTML = `<div class="modal-heading"><p class="modal-eyebrow">WELCOME TO FOLIO</p><h2>What do you want to log?</h2><p>Pick the main Types you use. Add will stay simple and show only these. You can change this later in Profile settings.</p></div><div class="onboarding-log-type-grid"></div><div class="modal-actions"><button class="quiet-button" type="button" data-onboarding-log-all>Use all</button><div class="actions-right"><button class="primary-button" type="button" data-onboarding-log-continue>Continue</button></div></div>`;
   document.body.appendChild(modal);
   const render = () => {
     const grid = modal.querySelector('.onboarding-log-type-grid');
@@ -1286,7 +1286,7 @@ function canonicalLibraryIdentity(value) {
   const subtitle = normalizeSearchText(value.artistName || value.subtitle || '');
   const providerId = String(value.providerId || '').trim();
 
-  // Prefer semantic identities where Omni can encounter the same catalogue entity
+  // Prefer semantic identities where Folio can encounter the same catalogue entity
   // through more than one provider (e.g. Last.fm vs iTunes artists).
   if (sourceType === 'book') {
     const signature = bookTitleAuthorSignature(
@@ -3924,7 +3924,7 @@ function buddyQueueMarkup(item) {
   if (!context) return '';
   const person = context.other?.profile?.display_name || context.other?.profile?.username || 'Buddy';
   const positions = [context.mine?.progress_text ? `You: ${context.mine.progress_text}` : '', context.theirs?.progress_text ? `${person}: ${context.theirs.progress_text}` : ''].filter(Boolean).join(' · ');
-  return `<div class="buddy-queue-link" aria-label="Buddy Watch with ${escapeAttr(person)}"><span class="buddy-queue-link-icon" aria-hidden="true">🔗</span><span>${escapeHtml(person)}${positions ? ` · ${escapeHtml(positions)}` : ''}</span></div>`;
+  return `<div class="buddy-queue-link" aria-label="Buddy Watch with ${escapeAttr(person)}"><span class="buddy-queue-link-icon" aria-hidden="true">link</span><span>${escapeHtml(person)}${positions ? ` · ${escapeHtml(positions)}` : ''}</span></div>`;
 }
 
 function queueCardMarkup(item, info) {
@@ -7667,7 +7667,7 @@ const LOADING_TIPS = [
   },
   () => 'Use Collections to group items from different types into one shelf.',
   () => 'A half-star works too: tap the left half of a star to save a .5 rating.',
-  () => 'Add a date when you log something and Omni can use it for Calendar and Recent sorting.',
+  () => 'Add a date when you log something and Folio can use it for Calendar and Recent sorting.',
   () => 'For TV, logging an episode can spot friends watching the same show and offer a Buddy Watch.'
 ];
 
@@ -15651,7 +15651,7 @@ function renderItemPeopleSuggestions() {
     .map(profile => {
       const tag = socialPeopleTagValue(profile);
       const active = selected.has(tag.toLowerCase());
-      const label = profile.display_name || profile.username || 'Omni user';
+      const label = profile.display_name || profile.username || 'Folio user';
       return `<button class="people-tag-suggestion${active ? ' is-selected' : ''}" type="button" data-item-people-tag="${escapeAttr(tag)}" aria-pressed="${active}"><span class="people-tag-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(label)}</strong><small>@${escapeHtml(profile.username || '')}</small></span></button>`;
     }).join('');
   host.hidden = false;
@@ -16096,11 +16096,11 @@ function libraryTextCardWidth(itemOrTitle) {
     const canvas = libraryTextCardWidth.canvas || (libraryTextCardWidth.canvas = document.createElement('canvas'));
     const context = canvas.getContext('2d');
     if (context) {
-      context.font = '700 14.4px "DM Sans", system-ui, sans-serif';
+      context.font = '700 14.4px "Inter", system-ui, sans-serif';
       const titleWidth = context.measureText(title).width + 34;
       let noteWidth = 0;
       if (notes) {
-        context.font = '500 11.5px "DM Sans", system-ui, sans-serif';
+        context.font = '500 11.5px "Inter", system-ui, sans-serif';
         // Aim to fit the note in roughly three lines so the fixed-height text
         // card can show the full note instead of truncating it.
         noteWidth = context.measureText(notes.replace(/\s+/g, ' ')).width / 3 + 34;
@@ -16534,7 +16534,7 @@ function isBuiltInType(type) {
 function getItemTypeLabel(item) {
   const label = item?.typeLabel || getTypeLabel(item?.type);
   // Goodreads v104 created books with the display label "Books" while older
-  // Omni book items commonly use "Book". They are the same source type and
+  // Folio book items commonly use "Book". They are the same source type and
   // must never split into separate Library shelves/filter choices.
   if (getSourceType(item) === 'book' && ['book', 'books'].includes(slugifyType(label))) return 'Book';
   return label;
@@ -17437,7 +17437,7 @@ async function importSelectedGoodreadsFile() {
     scheduleCloudSync();
     renderAll();
     renderGoodreadsSettings();
-    const unresolved = unmatched ? ` ${unmatched} could not be fully matched to Google Books${unmatchedTitles.length ? ` (${unmatchedTitles.slice(0, 3).join(', ')}${unmatchedTitles.length > 3 ? '…' : ''})` : ''}; they were still kept in Omni by title.` : '';
+    const unresolved = unmatched ? ` ${unmatched} could not be fully matched to Google Books${unmatchedTitles.length ? ` (${unmatchedTitles.slice(0, 3).join(', ')}${unmatchedTitles.length > 3 ? '…' : ''})` : ''}; they were still kept in Folio by title.` : '';
     setGoodreadsStatus(`Goodreads sync complete: ${books.length} books processed · ${read} read · ${reading} currently reading · ${toRead} to-read${dnf ? ` · ${dnf} DNF` : ''}.${unresolved}`);
   } catch (error) {
     setGoodreadsStatus(error?.message || 'Could not import the Goodreads export.', true);
@@ -17988,11 +17988,11 @@ async function ensureSocialProfile() {
     if (prefsResult.error) throw prefsResult.error;
     return { ...data, share_settings: prefsResult.data?.share_settings || emptySocialShareSettings() };
   }
-  // Create the social profile in the background on any Omni page. Sharing remains
+  // Create the social profile in the background on any Folio page. Sharing remains
   // opt-in/off by default, but Buddy Watch shortcuts can then work from Add,
   // Up Next, and Library without requiring a prior visit to Social.
   const candidate = socialDefaultUsername(currentUser);
-  const display = String(currentUser.email || '').split('@')[0] || 'Omni user';
+  const display = String(currentUser.email || '').split('@')[0] || 'Folio user';
   const insert = {
     user_id: currentUser.id,
     username: candidate,
@@ -18057,7 +18057,7 @@ function socialTypeLabel(type) {
 function socialIsTbrOnlyItem(item) {
   if (!item || getQueueStatus(item) !== 'tbr') return false;
   // Paused/in-progress titles and not-yet-released titles are already treated as
-  // part of Library elsewhere in Omni. Only pure watch/read-later entries need
+  // part of Library elsewhere in Folio. Only pure watch/read-later entries need
   // the extra social TBR permission.
   return libraryDnfState(item) !== 'paused' && !isItemNotReleased(item);
 }
@@ -18648,6 +18648,7 @@ async function loadSocialFollowing() {
   }
   await loadAcceptedSocialConnections();
   renderSocialFeed();
+  if (socialState.activeTab === 'me') renderSocialMyProfile();
 }
 
 async function loadSocialFeed() {
@@ -19017,6 +19018,10 @@ function socialProfileViewMarkup(profile, snapshot, relation = null, isSelf = fa
   const profileId = profile.user_id || currentUser?.id || 'self';
   const profileTheme = SOCIAL_PROFILE_THEME_IDS.has(String(payload.theme || '')) ? String(payload.theme) : 'blue';
   const followButton = isSelf ? '<button class="secondary-button" type="button" data-social-open-settings>Profile & sharing</button>' : socialFollowButtonMarkup(profile, relation);
+  const networkMarkup = isSelf ? `<section class="social-profile-network" aria-label="Your network">
+    <div class="social-profile-network-group"><strong>${socialState.followingProfiles.length}</strong><span>Following</span><div class="social-profile-network-list">${socialState.followingProfiles.map(person => `<button type="button" data-social-view-profile="${escapeAttr(person.user_id)}"><span class="social-avatar social-avatar-small">${escapeHtml(socialProfileInitial(person))}</span><span>${escapeHtml(person.display_name || person.username)}</span></button>`).join('') || '<small>No one yet</small>'}</div></div>
+    <div class="social-profile-network-group"><strong>${socialState.followerProfiles.length}</strong><span>Followers</span><div class="social-profile-network-list">${socialState.followerProfiles.map(person => `<button type="button" data-social-view-profile="${escapeAttr(person.user_id)}"><span class="social-avatar social-avatar-small">${escapeHtml(socialProfileInitial(person))}</span><span>${escapeHtml(person.display_name || person.username)}</span></button>`).join('') || '<small>No one yet</small>'}</div></div>
+  </section>` : '';
   const totals = payload.totals || [];
   const totalMarkup = totals.length ? `<div class="social-total-summary" aria-label="Shared tracked totals">${totals.map(total => `<span class="social-total-pill"><strong>${Number(total.count || 0)}</strong><span>${escapeHtml(total.label || total.type)}</span></span>`).join('')}</div>` : '';
   const privateMessage = !canSee && profile.is_private ? '<p class="social-private-message">This profile is private. Follow to see the sections they choose to share.</p>' : '';
@@ -19030,7 +19035,7 @@ function socialProfileViewMarkup(profile, snapshot, relation = null, isSelf = fa
   const noSearchMatches = canSee && !isSelf && searchQuery && !upNextMarkup && !ratingMarkup && !libraryMarkup
     ? `<p class="empty-state social-profile-search-empty">No shared items match “${escapeHtml(searchQuery)}”.</p>`
     : '';
-  return `<div class="social-profile-surface" data-social-profile-theme="${escapeAttr(profileTheme)}"><div class="social-profile-hero"><span class="social-avatar social-avatar-large">${escapeHtml(socialProfileInitial(profile))}</span><div><h2>${escapeHtml(profile.display_name || profile.username)}</h2><p>@${escapeHtml(profile.username)}${profile.is_private ? ' · private' : ''}</p>${profile.bio ? `<div class="social-profile-bio">${escapeHtml(profile.bio)}</div>` : ''}</div><div class="social-profile-hero-action">${followButton}</div></div>${privateMessage}${searchMarkup}${totalMarkup}${streakMarkup}${noSearchMatches}${upNextMarkup}${ratingMarkup}${libraryMarkup}</div>`;
+  return `<div class="social-profile-surface" data-social-profile-theme="${escapeAttr(profileTheme)}"><div class="social-profile-hero"><span class="social-avatar social-avatar-large">${escapeHtml(socialProfileInitial(profile))}</span><div><h2>${escapeHtml(profile.display_name || profile.username)}</h2><p>@${escapeHtml(profile.username)}${profile.is_private ? ' · private' : ''}</p>${profile.bio ? `<div class="social-profile-bio">${escapeHtml(profile.bio)}</div>` : ''}</div><div class="social-profile-hero-action">${followButton}</div></div>${networkMarkup}${privateMessage}${searchMarkup}${totalMarkup}${streakMarkup}${noSearchMatches}${upNextMarkup}${ratingMarkup}${libraryMarkup}</div>`;
 }
 
 function socialSharedSectionMarkup(section, entries) {
@@ -19166,7 +19171,7 @@ function socialSharedItemOwnActionsMarkup(item) {
     }
   }
   const tbrLabel = current === 'tbr' ? 'In TBR' : 'TBR';
-  return `<div class="detail-actions library-detail-actions social-item-own-actions"><div class="queue-toggle-buttons" aria-label="Add to your Omni"><button class="secondary-button queue-toggle-button${own ? ' is-selected' : ''}" type="button" data-social-own-queue="upnext">${escapeHtml(trackLabel)}</button><button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-social-own-queue="tbr" ${completed ? 'disabled' : ''}>${tbrLabel}</button></div></div>`;
+  return `<div class="detail-actions library-detail-actions social-item-own-actions"><div class="queue-toggle-buttons" aria-label="Add to your Folio"><button class="secondary-button queue-toggle-button${own ? ' is-selected' : ''}" type="button" data-social-own-queue="upnext">${escapeHtml(trackLabel)}</button><button class="secondary-button queue-toggle-button${current === 'tbr' ? ' is-selected' : ''}" type="button" data-social-own-queue="tbr" ${completed ? 'disabled' : ''}>${tbrLabel}</button></div></div>`;
 }
 
 function socialSharedItemDetailMarkup(item, ownerProfile) {
@@ -19453,7 +19458,7 @@ function socialFollowerContextMarkup(rows) {
       return `<article class="social-follower-item-row">
         <span class="social-avatar social-avatar-small">${escapeHtml(socialProfileInitial(profile))}</span>
         <div class="social-follower-item-copy">
-          <div class="social-follower-item-head"><strong>${escapeHtml(profile.display_name || profile.username || 'Omni user')}</strong><span>${escapeHtml(status)}${rating ? ` · ★ ${escapeHtml(formatPersonalRating(rating))}` : ''}</span></div>
+          <div class="social-follower-item-head"><strong>${escapeHtml(profile.display_name || profile.username || 'Folio user')}</strong><span>${escapeHtml(status)}${rating ? ` · ★ ${escapeHtml(formatPersonalRating(rating))}` : ''}</span></div>
           ${item.notes ? `<p>${escapeHtml(item.notes)}</p>` : ''}
         </div>
       </article>`;
@@ -19714,9 +19719,9 @@ function renderBuddyWatches() {
 function buddyWatchMarkup(watch) {
   const item = watch.item || {};
   const pending = watch.myMembership?.status === 'pending';
-  const memberText = watch.members.map(member => member.profile?.display_name || member.profile?.username || 'Omni user').join(' + ');
-  const progressRows = watch.progress.length ? watch.progress.map(row => `<div class="buddy-progress-row"><span class="social-avatar">${escapeHtml(socialProfileInitial(row.profile || {}))}</span><div><strong>${escapeHtml(row.profile?.display_name || row.profile?.username || 'Omni user')}</strong><span>${escapeHtml(row.progress_text || 'No update yet')}${row.completed ? ' · finished' : ''}</span>${row.note ? `<small>${escapeHtml(row.note)}</small>` : ''}</div></div>`).join('') : '<p class="buddy-no-progress">No progress updates yet.</p>';
-  const history = watch.updates.length ? `<details class="buddy-update-history"><summary>Recent updates</summary>${watch.updates.map(update => `<div class="buddy-update-row"><strong>${escapeHtml(update.profile?.display_name || update.profile?.username || 'Omni user')}</strong><span>${escapeHtml(update.progress_text)}${update.completed ? ' · finished' : ''}</span>${update.note ? `<small>${escapeHtml(update.note)}</small>` : ''}</div>`).join('')}</details>` : '';
+  const memberText = watch.members.map(member => member.profile?.display_name || member.profile?.username || 'Folio user').join(' + ');
+  const progressRows = watch.progress.length ? watch.progress.map(row => `<div class="buddy-progress-row"><span class="social-avatar">${escapeHtml(socialProfileInitial(row.profile || {}))}</span><div><strong>${escapeHtml(row.profile?.display_name || row.profile?.username || 'Folio user')}</strong><span>${escapeHtml(row.progress_text || 'No update yet')}${row.completed ? ' · finished' : ''}</span>${row.note ? `<small>${escapeHtml(row.note)}</small>` : ''}</div></div>`).join('') : '<p class="buddy-no-progress">No progress updates yet.</p>';
+  const history = watch.updates.length ? `<details class="buddy-update-history"><summary>Recent updates</summary>${watch.updates.map(update => `<div class="buddy-update-row"><strong>${escapeHtml(update.profile?.display_name || update.profile?.username || 'Folio user')}</strong><span>${escapeHtml(update.progress_text)}${update.completed ? ' · finished' : ''}</span>${update.note ? `<small>${escapeHtml(update.note)}</small>` : ''}</div>`).join('')}</details>` : '';
   return `<article class="buddy-watch-card" data-buddy-watch-id="${escapeAttr(watch.id)}">
     <div class="buddy-watch-head">${item.image ? `<img src="${escapeAttr(item.image)}" alt="" />` : '<div class="buddy-watch-placeholder"></div>'}<div><h3>${escapeHtml(watch.title)}</h3><p>${escapeHtml(memberText)}</p></div>${pending ? '<span class="buddy-invite-badge">Invite</span>' : ''}</div>
     ${pending ? `<div class="buddy-invite-actions"><button class="primary-button" type="button" data-buddy-accept="${escapeAttr(watch.id)}">Accept Buddy Watch</button><button class="quiet-button" type="button" data-buddy-decline="${escapeAttr(watch.id)}">Decline</button></div>` : `<div class="buddy-progress-list">${progressRows}</div><div class="buddy-watch-actions"><button class="secondary-button" type="button" data-buddy-update="${escapeAttr(watch.id)}">Update my progress</button></div>${history}`}
@@ -19800,7 +19805,7 @@ function parseBuddyTVProgress(value) {
 
 async function markBuddyTVEpisodeWatched(watch, seasonNumber, episodeNumber) {
   const item = ensureLocalItemForBuddyWatch(watch);
-  if (!item || getSourceType(item) !== 'tv') throw new Error('This Buddy Watch is not linked to a TV show in Omni.');
+  if (!item || getSourceType(item) !== 'tv') throw new Error('This Buddy Watch is not linked to a TV show in Folio.');
   const season = Math.max(1, Number(seasonNumber || 0));
   const episodeNo = Math.max(1, Number(episodeNumber || 0));
   if (!season || !episodeNo) throw new Error('Choose a valid season and episode.');
@@ -19914,4 +19919,3 @@ async function saveBuddyWatchProgress(event) {
   $('#buddyWatchProgressModal')?.close();
   await loadBuddyWatches();
 }
-
