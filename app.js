@@ -3023,10 +3023,19 @@ function ensureStatsDetailModal() {
   modal.querySelector('.modal-x')?.addEventListener('click', () => modal.close());
   modal.addEventListener('click', event => {
     const rating = event.target.closest('[data-stats-rating]');
-    if (!rating) return;
-    const value = Number(rating.dataset.statsRating || 0);
+    if (rating) {
+      const value = Number(rating.dataset.statsRating || 0);
+      modal.close();
+      openStatsCatalogue(`${value}-star ratings`, state.items.filter(item => Number(item.rating || 0) === value));
+      return;
+    }
+    const catalogue = event.target.closest('[data-stats-item-ids]');
+    if (!catalogue) return;
+    let ids = [];
+    try { ids = JSON.parse(catalogue.dataset.statsItemIds || '[]'); } catch {}
+    const wanted = new Set(ids.map(String));
     modal.close();
-    openStatsCatalogue(`${value}-star ratings`, state.items.filter(item => Number(item.rating || 0) === value));
+    openStatsCatalogue(catalogue.dataset.statsCatalogueTitle || 'Items', state.items.filter(item => wanted.has(String(item.id))));
   });
   document.body.appendChild(modal);
   return modal;
@@ -3053,12 +3062,13 @@ function openStatsRepeatBreakdown() {
   repeatEntries.forEach(entry => {
     const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
     const key = source?.id || entry.title || entry.id;
-    const current = counts.get(key) || { title: source?.title || entry.title || 'Untitled', type: source ? getItemTypeLabel(source) : (entry.typeLabel || getTypeLabel(entry.type)), count: 0 };
+    const current = counts.get(key) || { title: source?.title || entry.title || 'Untitled', type: source ? getItemTypeLabel(source) : (entry.typeLabel || getTypeLabel(entry.type)), count: 0, itemIds: [] };
     current.count += 1;
+    if (source?.id && !current.itemIds.includes(source.id)) current.itemIds.push(source.id);
     counts.set(key, current);
   });
   const rows = [...counts.values()].sort((a,b) => b.count - a.count || a.title.localeCompare(b.title));
-  showStatsDetail('Rewatches and rereads', `${repeatEntries.length} repeat ${repeatEntries.length === 1 ? 'log' : 'logs'}`, rows.length ? `<div class="stats-detail-list">${rows.map(row => `<div><span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.type || 'Item')}</small></span><b>${row.count}</b></div>`).join('')}</div>` : '<p class="empty-state">No repeat logs yet.</p>');
+  showStatsDetail('Rewatches and rereads', `${repeatEntries.length} repeat ${repeatEntries.length === 1 ? 'log' : 'logs'}`, rows.length ? `<div class="stats-detail-list">${rows.map(row => `<button type="button" data-stats-item-ids="${escapeAttr(JSON.stringify(row.itemIds))}" data-stats-catalogue-title="${escapeAttr(row.title)}" ${row.itemIds.length ? '' : 'disabled'}><span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.type || 'Item')}</small></span><b>${row.count}</b></button>`).join('')}</div>` : '<p class="empty-state">No repeat logs yet.</p>');
 }
 
 function openStatsWatchBreakdown() {
@@ -3066,10 +3076,11 @@ function openStatsWatchBreakdown() {
   const groups = new Map();
   state.items.filter(item => watchTypes.has(getSourceType(item))).forEach(item => {
     const label = getItemTypeLabel(item);
-    groups.set(label, (groups.get(label) || 0) + 1);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(item);
   });
-  const rows = [...groups.entries()].sort((a,b) => b[1] - a[1]);
-  showStatsDetail('Watch hours', 'Estimated from saved runtimes and watched progress', `<div class="stats-detail-list">${rows.map(([label,count]) => `<div><span><strong>${escapeHtml(label)}</strong><small>Tracked titles</small></span><b>${count}</b></div>`).join('')}</div>`);
+  const rows = [...groups.entries()].sort((a,b) => b[1].length - a[1].length);
+  showStatsDetail('Watch hours', 'Estimated from saved runtimes and watched progress', `<div class="stats-detail-list">${rows.map(([label,items]) => `<button type="button" data-stats-item-ids="${escapeAttr(JSON.stringify(items.map(item => item.id)))}" data-stats-catalogue-title="${escapeAttr(label)}"><span><strong>${escapeHtml(label)}</strong><small>Tracked titles</small></span><b>${items.length}</b></button>`).join('')}</div>`);
 }
 
 function recentTrackedEntries(days = 30) {
@@ -11145,7 +11156,10 @@ async function collectLastFmResolvedArtists(lastfmArtists, limit = 6) {
     const key = normalizeArtistName(artist?.name);
     if (!key || knownNames.has(key) || seen.has(key)) continue;
     seen.add(key);
-    const candidate = lastFmArtistDiscoverCandidate(artist);
+    // iTunes artist records do not carry useful artwork, so resolve the latest
+    // album and use its cover. Fall back to the Last.fm record only if iTunes
+    // cannot identify the artist.
+    const candidate = await resolveLastFmArtistCandidate(artist) || lastFmArtistDiscoverCandidate(artist);
     if (!candidate || knownIds.has(String(candidate.providerId))) continue;
     output.push(candidate);
     if (output.length >= limit) break;
@@ -11154,7 +11168,7 @@ async function collectLastFmResolvedArtists(lastfmArtists, limit = 6) {
     supplied: lastfmArtists?.length || 0,
     mapped: output.length,
     target: limit,
-    iTunesRequests: 0
+    iTunesRequests: output.length
   });
   return output;
 }
