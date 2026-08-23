@@ -12,19 +12,19 @@
     body.auth-locked > main { display: none !important; }
     [hidden] { display: none !important; }
   </style>
-  <title>Discover · Folio</title>
+  <title>Discover · Omni</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=omni-tracked-date-96" />
 </head>
 <body class="discover-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
     <div class="auth-card">
       <div class="auth-brand">
-        <span class="auth-mark">folio</span>
+        <span class="auth-mark">omni</span>
         <div>
-          <p class="eyebrow">FOLIO</p>
+          <p class="eyebrow">OMNI</p>
           <h1>Your tracker</h1>
         </div>
       </div>
@@ -73,9 +73,9 @@
           <div>
             <h1>Discover</h1>
           </div>
-          <div class="discover-heading-actions" aria-label="Discover tools">
-            <button id="refreshDiscover" class="secondary-button discover-icon-button" type="button" aria-label="Shuffle recommendations" title="Shuffle"><span aria-hidden="true">&#8635;</span></button>
-            <button id="openDiscoverSettings" class="secondary-button discover-icon-button" type="button" aria-label="Discover settings" title="Settings"><span aria-hidden="true">&#9881;&#65038;</span></button>
+          <div class="discover-heading-actions">
+            <button id="openDiscoverSettings" class="secondary-button" type="button">Settings</button>
+            <button id="refreshDiscover" class="secondary-button" type="button">Shuffle</button>
           </div>
         </div>
 
@@ -242,7 +242,7 @@
       <section class="settings-section">
         <div>
           <h3>Integrations</h3>
-          <p class="settings-note">Bring activity and ratings from services you already use into Folio.</p>
+          <p class="settings-note">Bring activity and ratings from services you already use into Omni.</p>
         </div>
         <div class="settings-integration-actions">
           <button id="openLetterboxd" class="secondary-button" type="button">Sync Letterboxd</button>
@@ -265,11 +265,11 @@
     <div class="modal-heading">
       <p class="modal-eyebrow">INTEGRATION</p>
       <h2>Sync Letterboxd</h2>
-      <p>One-way sync from Letterboxd into Folio. Recent diary entries use your public RSS feed; a Letterboxd export imports the rest of your history and watchlist.</p>
+      <p>One-way sync from Letterboxd into Omni. Recent diary entries use your public RSS feed; a Letterboxd export imports the rest of your history and watchlist.</p>
     </div>
     <section class="settings-section">
       <label class="field"><span>Letterboxd username</span><input id="letterboxdUsername" type="text" autocomplete="off" placeholder="your-username" /></label>
-      <label class="checkbox-field"><input id="letterboxdAutoSync" type="checkbox" checked /><span><strong>Automatic recent sync</strong><small>Check the public Letterboxd RSS feed when Folio opens, at most once every six hours.</small></span></label>
+      <label class="checkbox-field"><input id="letterboxdAutoSync" type="checkbox" checked /><span><strong>Automatic recent sync</strong><small>Check the public Letterboxd RSS feed when Omni opens, at most once every six hours.</small></span></label>
       <p id="letterboxdLastSync" class="settings-note">Not synced yet.</p>
       <div class="modal-actions end-only"><div class="actions-right"><button id="letterboxdSaveConnection" class="secondary-button" type="button">Save connection</button><button id="letterboxdSyncNow" class="primary-button" type="button">Sync now</button></div></div>
     </section>
@@ -286,7 +286,7 @@
     <div class="modal-heading">
       <p class="modal-eyebrow">INTEGRATION</p>
       <h2>Sync Goodreads</h2>
-      <p>Import your Goodreads library into Folio. Re-import a fresh export whenever you want to sync changes; existing books are updated rather than duplicated.</p>
+      <p>Import your Goodreads library into Omni. Re-import a fresh export whenever you want to sync changes; existing books are updated rather than duplicated.</p>
     </div>
     <section class="settings-section">
       <div><h3>Import library</h3><p class="settings-note">In Goodreads, open My Books → Import and export → Export Library. Choose the generated <strong>goodreads_export.csv</strong> here.</p></div>

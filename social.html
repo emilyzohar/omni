@@ -12,19 +12,19 @@
     body.auth-locked > main { display: none !important; }
     [hidden] { display: none !important; }
   </style>
-  <title>Social · Folio</title>
+  <title>Social · Omni</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=omni-due-subtypes-log-88" />
 </head>
 <body class="social-page auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
     <div class="auth-card">
       <div class="auth-brand">
-        <span class="auth-mark">folio</span>
+        <span class="auth-mark">omni</span>
         <div>
-          <p class="eyebrow">FOLIO</p>
+          <p class="eyebrow">OMNI</p>
           <h1>Your tracker</h1>
         </div>
       </div>
@@ -60,19 +60,18 @@
       <div class="shell social-shell">
         <div class="social-heading">
           <div><h1>Social</h1></div>
-          <div class="social-heading-actions" role="tablist" aria-label="Social tools">
-            <button class="social-tab social-find-button" type="button" role="tab" data-social-tab="people" aria-selected="false">Find people <span aria-hidden="true">+</span></button>
-            <button class="social-tab social-profile-button" type="button" role="tab" data-social-tab="me" aria-selected="false" aria-label="Profile" title="Profile"><span class="text-profile-icon" aria-hidden="true"></span></button>
-          </div>
         </div>
 
         <div id="socialSetupNotice" class="social-setup-notice" hidden>
           <strong>Social tables are not set up yet.</strong>
-          <span>Run <code>SUPABASE_SOCIAL_SETUP.sql</code> once in the Supabase SQL Editor. Your existing Folio data is not migrated or replaced.</span>
+          <span>Run <code>SUPABASE_SOCIAL_SETUP.sql</code> once in the Supabase SQL Editor. Your existing Omni data is not migrated or replaced.</span>
         </div>
 
-        <div class="social-tabs" role="tablist" aria-label="Social feed">
-          <button class="social-tab is-active" type="button" role="tab" data-social-tab="feed" aria-selected="true">Activity</button>
+        <div class="social-tabs" role="tablist" aria-label="Social">
+          <button class="social-tab is-active" type="button" role="tab" data-social-tab="feed" aria-selected="true">Feed</button>
+          <button class="social-tab" type="button" role="tab" data-social-tab="following" aria-selected="false">Following</button>
+          <button class="social-tab" type="button" role="tab" data-social-tab="people" aria-selected="false">People</button>
+          <button class="social-tab" type="button" role="tab" data-social-tab="me" aria-selected="false">Profile</button>
         </div>
 
         <section class="social-panel" data-social-panel="feed">
@@ -160,7 +159,7 @@
         <label class="field"><span>Season</span><input id="buddyWatchSeasonNumber" type="number" min="1" step="1" inputmode="numeric" /></label>
         <label class="field"><span>Episode watched</span><input id="buddyWatchEpisodeNumber" type="number" min="1" step="1" inputmode="numeric" /></label>
       </div>
-      <p id="buddyWatchTVSyncNote" class="buddy-watch-sync-note" hidden>Posting a TV update marks that episode watched in your normal Folio too and advances Up Next.</p>
+      <p id="buddyWatchTVSyncNote" class="buddy-watch-sync-note" hidden>Posting a TV update marks that episode watched in your normal Omni too and advances Up Next.</p>
       <label class="field"><span>Note <em>optional</em></span><textarea id="buddyWatchProgressNote" maxlength="240" rows="3" placeholder="Anything you want your buddy to know"></textarea></label>
       <label class="checkbox-field"><input id="buddyWatchProgressComplete" type="checkbox" /><span>I'm finished</span></label>
       <p id="buddyWatchProgressMessage" class="form-message" hidden></p>
