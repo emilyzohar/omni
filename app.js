@@ -420,7 +420,6 @@ const els = {
   historyEditDate: $('#historyEditDate'),
   historyEditRating: $('#historyEditRating'),
   historyEditNote: $('#historyEditNote'),
-  historyEditPeople: $('#historyEditPeople'),
   historyEditShowCalendar: $('#historyEditShowCalendar'),
   historyEditDelete: $('#historyEditDelete'),
   historyRatingPicker: $('#historyRatingPicker'),
@@ -2983,15 +2982,6 @@ function openStatsOtherGenres(labels = []) {
 }
 
 function handleStatsBreakdownClick(event) {
-  const summary = event.target.closest('[data-stats-summary]');
-  if (summary) {
-    const kind = summary.dataset.statsSummary;
-    if (kind === 'library') openStatsCatalogue('Library', state.items);
-    else if (kind === 'ratings') openStatsRatingHistogram();
-    else if (kind === 'repeats') openStatsRepeatBreakdown();
-    else if (kind === 'watch-hours') openStatsWatchBreakdown();
-    return;
-  }
   const recentButton = event.target.closest('[data-stats-recent]');
   if (recentButton) {
     openStatsRecentHistory(Number(recentButton.dataset.statsRecent || 30));
@@ -3011,76 +3001,6 @@ function handleStatsBreakdownClick(event) {
     if (genreTarget.dataset.statsGenreOther === 'true') openStatsOtherGenres(labels);
     else openStatsCatalogue(labels[0] || 'Genre', statsGenreItems(labels));
   }
-}
-
-function ensureStatsDetailModal() {
-  let modal = $('#statsDetailModal');
-  if (modal) return modal;
-  modal = document.createElement('dialog');
-  modal.id = 'statsDetailModal';
-  modal.className = 'modal stats-detail-modal';
-  modal.innerHTML = `<button class="modal-x" type="button" aria-label="Close">×</button><div class="modal-heading"><h2 id="statsDetailTitle">Stats</h2><p id="statsDetailSubtitle"></p></div><div id="statsDetailBody"></div>`;
-  modal.querySelector('.modal-x')?.addEventListener('click', () => modal.close());
-  modal.addEventListener('click', event => {
-    const rating = event.target.closest('[data-stats-rating]');
-    if (rating) {
-      const value = Number(rating.dataset.statsRating || 0);
-      modal.close();
-      openStatsCatalogue(`${value}-star ratings`, state.items.filter(item => Number(item.rating || 0) === value));
-      return;
-    }
-    const catalogue = event.target.closest('[data-stats-item-ids]');
-    if (!catalogue) return;
-    let ids = [];
-    try { ids = JSON.parse(catalogue.dataset.statsItemIds || '[]'); } catch {}
-    const wanted = new Set(ids.map(String));
-    modal.close();
-    openStatsCatalogue(catalogue.dataset.statsCatalogueTitle || 'Items', state.items.filter(item => wanted.has(String(item.id))));
-  });
-  document.body.appendChild(modal);
-  return modal;
-}
-
-function showStatsDetail(title, subtitle, markup) {
-  const modal = ensureStatsDetailModal();
-  $('#statsDetailTitle').textContent = title;
-  $('#statsDetailSubtitle').textContent = subtitle || '';
-  $('#statsDetailBody').innerHTML = markup;
-  showDialogAtTop(modal);
-}
-
-function openStatsRatingHistogram() {
-  const counts = [1,2,3,4,5].map(value => ({ value, count: state.items.filter(item => Number(item.rating || 0) === value).length }));
-  const max = Math.max(1, ...counts.map(entry => entry.count));
-  const rated = counts.reduce((sum, entry) => sum + entry.count, 0);
-  showStatsDetail('Rating distribution', `${rated} rated ${rated === 1 ? 'item' : 'items'}`, `<div class="stats-rating-histogram">${counts.map(entry => `<button type="button" data-stats-rating="${entry.value}" aria-label="${entry.value} stars, ${entry.count} items"><span class="stats-rating-bar" style="--bar-height:${Math.max(5, Math.round(entry.count / max * 100))}%"></span><strong>${entry.count}</strong><small>${entry.value} star</small></button>`).join('')}</div>`);
-}
-
-function openStatsRepeatBreakdown() {
-  const repeatEntries = state.history.filter(entry => entry.rewatch);
-  const counts = new Map();
-  repeatEntries.forEach(entry => {
-    const source = entry.sourceItemId ? findItem(entry.sourceItemId) : null;
-    const key = source?.id || entry.title || entry.id;
-    const current = counts.get(key) || { title: source?.title || entry.title || 'Untitled', type: source ? getItemTypeLabel(source) : (entry.typeLabel || getTypeLabel(entry.type)), count: 0, itemIds: [] };
-    current.count += 1;
-    if (source?.id && !current.itemIds.includes(source.id)) current.itemIds.push(source.id);
-    counts.set(key, current);
-  });
-  const rows = [...counts.values()].sort((a,b) => b.count - a.count || a.title.localeCompare(b.title));
-  showStatsDetail('Rewatches and rereads', `${repeatEntries.length} repeat ${repeatEntries.length === 1 ? 'log' : 'logs'}`, rows.length ? `<div class="stats-detail-list">${rows.map(row => `<button type="button" data-stats-item-ids="${escapeAttr(JSON.stringify(row.itemIds))}" data-stats-catalogue-title="${escapeAttr(row.title)}" ${row.itemIds.length ? '' : 'disabled'}><span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.type || 'Item')}</small></span><b>${row.count}</b></button>`).join('')}</div>` : '<p class="empty-state">No repeat logs yet.</p>');
-}
-
-function openStatsWatchBreakdown() {
-  const watchTypes = new Set(['movie','tv','youtube']);
-  const groups = new Map();
-  state.items.filter(item => watchTypes.has(getSourceType(item))).forEach(item => {
-    const label = getItemTypeLabel(item);
-    if (!groups.has(label)) groups.set(label, []);
-    groups.get(label).push(item);
-  });
-  const rows = [...groups.entries()].sort((a,b) => b[1].length - a[1].length);
-  showStatsDetail('Watch hours', 'Estimated from saved runtimes and watched progress', `<div class="stats-detail-list">${rows.map(([label,items]) => `<button type="button" data-stats-item-ids="${escapeAttr(JSON.stringify(items.map(item => item.id)))}" data-stats-catalogue-title="${escapeAttr(label)}"><span><strong>${escapeHtml(label)}</strong><small>Tracked titles</small></span><b>${items.length}</b></button>`).join('')}</div>`);
 }
 
 function recentTrackedEntries(days = 30) {
@@ -3229,11 +3149,11 @@ async function renderStats() {
   const requestToken = `${state.items.length}:${state.history.length}:${Date.now()}`;
   els.statsSummary.dataset.renderToken = requestToken;
   els.statsSummary.innerHTML = `
-    <button class="stat-card stat-card-action" type="button" data-stats-summary="library"><strong>${escapeHtml(String(state.items.length))}</strong><span>Library</span></button>
+    <div class="stat-card"><strong>${escapeHtml(String(state.items.length))}</strong><span>Library</span></div>
     <button class="stat-card stat-card-action" type="button" data-stats-recent="30" aria-label="Open activity from the last 30 days"><strong>${escapeHtml(String(logged30))}</strong><span>Last 30 days</span></button>
-    <button class="stat-card stat-card-action" type="button" data-stats-summary="ratings"><strong>${escapeHtml(avg ? avg.toFixed(1) : '—')}</strong><span>Average rating</span></button>
-    <button class="stat-card stat-card-action" type="button" data-stats-summary="repeats"><strong>${escapeHtml(String(repeats))}</strong><span>Rewatches / rereads</span></button>
-    <button class="stat-card stat-card-action" type="button" data-stats-summary="watch-hours"><strong>${escapeHtml(formatWatchHours(storedMinutes))}</strong><span>Watch hours</span></button>`;
+    <div class="stat-card"><strong>${escapeHtml(avg ? avg.toFixed(1) : '—')}</strong><span>Average rating</span></div>
+    <div class="stat-card"><strong>${escapeHtml(String(repeats))}</strong><span>Rewatches / rereads</span></div>
+    <div class="stat-card"><strong>${escapeHtml(formatWatchHours(storedMinutes))}</strong><span>Watch hours</span></div>`;
   if (els.statsTypes) {
     const groups = new Map();
     state.items.forEach(item => {
@@ -4004,7 +3924,7 @@ function buddyQueueMarkup(item) {
   if (!context) return '';
   const person = context.other?.profile?.display_name || context.other?.profile?.username || 'Buddy';
   const positions = [context.mine?.progress_text ? `You: ${context.mine.progress_text}` : '', context.theirs?.progress_text ? `${person}: ${context.theirs.progress_text}` : ''].filter(Boolean).join(' · ');
-  return `<div class="buddy-queue-link" aria-label="Buddy Watch with ${escapeAttr(person)}"><span class="buddy-queue-link-icon app-icon app-icon-people" aria-hidden="true"></span><span>${escapeHtml(person)}${positions ? ` · ${escapeHtml(positions)}` : ''}</span></div>`;
+  return `<div class="buddy-queue-link" aria-label="Buddy Watch with ${escapeAttr(person)}"><span class="buddy-queue-link-icon" aria-hidden="true">🔗</span><span>${escapeHtml(person)}${positions ? ` · ${escapeHtml(positions)}` : ''}</span></div>`;
 }
 
 function queueCardMarkup(item, info) {
@@ -6504,9 +6424,10 @@ function updateItemFormForType() {
   if (els.itemLogModeHint) els.itemLogModeHint.hidden = !Boolean(els.itemUseRepeatLog?.checked);
 
   const bookDisplay = parentType === 'book' || sourceType === 'book';
-  if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.hidden = false;
-  if (els.itemPeopleBlock) els.itemPeopleBlock.hidden = false;
-  if (els.itemPeopleSuggestions && els.itemModal?.open) refreshItemPeopleSuggestions().catch(() => {});
+  if (els.itemPeopleDisclosure) els.itemPeopleDisclosure.hidden = bookDisplay;
+  if (els.itemPeopleBlock) els.itemPeopleBlock.hidden = bookDisplay;
+  if (els.itemPeopleSuggestions && bookDisplay) els.itemPeopleSuggestions.hidden = true;
+  else if (els.itemPeopleSuggestions && els.itemModal?.open) refreshItemPeopleSuggestions().catch(() => {});
 
   const creatingNewType = parentType === 'other' && !savedType && els.itemKindChoice?.value === 'new-type';
   if (els.displayTypeBlock) els.displayTypeBlock.hidden = !creatingNewType;
@@ -8332,8 +8253,7 @@ async function renderArtistDetails(item) {
   const liveAlbums = (data.results || []).filter(result => result.wrapperType === 'collection');
   const savedAlbums = artistFavoritesFor(item, 'albums');
   const albums = mergeArtistCatalogWithFavorites(liveAlbums, savedAlbums, entry => entry.collectionId || entry.id);
-  const newestLiveAlbum = [...liveAlbums].filter(album => album.artworkUrl100).sort((a,b) => String(b.releaseDate || '').localeCompare(String(a.releaseDate || '')))[0];
-  const image = (item.image || newestLiveAlbum?.artworkUrl100 || savedAlbums.find(album => album.image)?.image || '').replace('100x100bb', '600x600bb');
+  const image = (liveAlbums.find(album => album.artworkUrl100)?.artworkUrl100 || savedAlbums.find(album => album.image)?.image || item.image || '').replace('100x100bb', '600x600bb');
   if (!item.image && image) { item.image = image; saveItems(); }
   const artistUrl = artist.artistLinkUrl || artist.artistViewUrl || item.artistViewUrl || '';
   const albumRows = albums.slice(0, 24).map(album => artistAlbumRowMarkup(item, album)).join('');
@@ -9799,9 +9719,7 @@ function calendarStickerMarkup(type, entry = {}) {
   const shapeClass = `sticker-${config.shape}`;
   const paletteClass = `sticker-palette-${config.color}`;
   const tiltClass = `sticker-tilt-${config.tilt}`;
-  const roundedStar = '<svg class="sticker-symbol-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.1 14.7 8.6 20.8 9.5 16.4 13.8 17.4 19.9 12 17 6.6 19.9 7.6 13.8 3.2 9.5 9.3 8.6Z"/></svg>';
-  const roundedHeart = '<svg class="sticker-symbol-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.2S4 15.4 4 9.5C4 6.8 5.8 5 8.3 5c1.6 0 3 1 3.7 2.2C12.7 6 14.1 5 15.7 5 18.2 5 20 6.8 20 9.5c0 5.9-8 10.7-8 10.7Z"/></svg>';
-  const text = config.shape === 'star' ? roundedStar : config.shape === 'heart' ? roundedHeart : escapeHtml(config.label || '');
+  const text = config.shape === 'star' ? '★' : config.shape === 'heart' ? '♥' : escapeHtml(config.label || '');
   const ariaLabel = [getTypeLabel(type), cleanTypeLabel(entry?.subcategory || '')].filter(Boolean).join(' · ');
   const aria = escapeAttr(`${ariaLabel} sticker`);
   return `<span class="sticker ${shapeClass} ${paletteClass} ${tiltClass}" aria-label="${aria}">${text}</span>`;
@@ -9995,7 +9913,6 @@ function openHistoryEdit(id) {
   els.historyEditSubtitle.value = entry.subtitle || '';
   els.historyEditDate.value = entry.date || '';
   els.historyEditNote.value = entry.notes || '';
-  if (els.historyEditPeople) els.historyEditPeople.value = (entry.people || source?.people || []).join(', ');
   els.historyEditShowCalendar.checked = entry.showOnCalendar !== false;
   setHistoryRating(Number(entry.rating ?? source?.rating ?? 0));
   syncHistoryRecommendHeart(source);
@@ -10058,7 +9975,6 @@ function saveHistoryEdit(event) {
   entry.date = els.historyEditDate.value || '';
   entry.rating = Number(els.historyEditRating.value || 0);
   entry.notes = els.historyEditNote.value.trim();
-  entry.people = parseItemPeople(els.historyEditPeople?.value || '');
   entry.showOnCalendar = Boolean(els.historyEditShowCalendar.checked && entry.date);
   entry.updatedAt = new Date().toISOString();
 
@@ -11040,8 +10956,8 @@ async function resolveLastFmArtistCandidate(lastfmArtist) {
   const normalized = normalizeArtistName(artistName);
   try {
     const albums = await itunesAlbumsForArtistName(artistName);
-    const latestAlbum = [...albums].sort((a,b) => String(b.releaseDate || b.raw?.releaseDate || '').localeCompare(String(a.releaseDate || a.raw?.releaseDate || '')))[0];
-    const artistId = String(latestAlbum?.artistId || latestAlbum?.raw?.artistId || '');
+    const firstAlbum = albums[0];
+    const artistId = String(firstAlbum?.artistId || firstAlbum?.raw?.artistId || '');
     if (artistId) {
       return {
         sourceType: 'artist',
@@ -11050,13 +10966,13 @@ async function resolveLastFmArtistCandidate(lastfmArtist) {
         artistId,
         artistName,
         title: artistName,
-        subtitle: latestAlbum?.raw?.primaryGenreName || latestAlbum?.description || 'Artist',
-        description: latestAlbum?.raw?.primaryGenreName || '',
-        image: latestAlbum?.image || '',
+        subtitle: firstAlbum?.raw?.primaryGenreName || firstAlbum?.description || 'Artist',
+        description: firstAlbum?.raw?.primaryGenreName || '',
+        image: firstAlbum?.image || '',
         raw: {
           artistId,
           artistName,
-          primaryGenreName: latestAlbum?.raw?.primaryGenreName || '',
+          primaryGenreName: firstAlbum?.raw?.primaryGenreName || '',
           lastfmMbid: lastfmArtist?.mbid || '',
           lastfmMatch: Number(lastfmArtist?.match || 0)
         }
@@ -11156,10 +11072,7 @@ async function collectLastFmResolvedArtists(lastfmArtists, limit = 6) {
     const key = normalizeArtistName(artist?.name);
     if (!key || knownNames.has(key) || seen.has(key)) continue;
     seen.add(key);
-    // iTunes artist records do not carry useful artwork, so resolve the latest
-    // album and use its cover. Fall back to the Last.fm record only if iTunes
-    // cannot identify the artist.
-    const candidate = await resolveLastFmArtistCandidate(artist) || lastFmArtistDiscoverCandidate(artist);
+    const candidate = lastFmArtistDiscoverCandidate(artist);
     if (!candidate || knownIds.has(String(candidate.providerId))) continue;
     output.push(candidate);
     if (output.length >= limit) break;
@@ -11168,7 +11081,7 @@ async function collectLastFmResolvedArtists(lastfmArtists, limit = 6) {
     supplied: lastfmArtists?.length || 0,
     mapped: output.length,
     target: limit,
-    iTunesRequests: output.length
+    iTunesRequests: 0
   });
   return output;
 }
@@ -14472,8 +14385,7 @@ async function renderDiscoverArtistDetail(key) {
       albums = (data.results || []).filter(r => r.wrapperType === 'collection');
     }
   } catch (error) { metadataError = error?.message || String(error); }
-  const newestAlbum = [...albums].filter(album => album.artworkUrl100).sort((a,b) => String(b.releaseDate || '').localeCompare(String(a.releaseDate || '')))[0];
-  const image = (result.image || newestAlbum?.artworkUrl100 || '').replace('100x100bb','600x600bb');
+  const image = (albums.find(album => album.artworkUrl100)?.artworkUrl100 || result.image || '').replace('100x100bb','600x600bb');
   if (!result.image && image) result.image = image;
   const externalUrl = result.lastfmUrl || result.raw?.lastfmUrl || '';
   els.detailBody.innerHTML = `
@@ -14672,11 +14584,7 @@ function openStickerSettings() {
 }
 
 function getRecognizedStickerTargets() {
-  const usedTypes = new Set([
-    ...state.items.map(item => item.type),
-    ...state.history.map(entry => entry.type)
-  ].filter(Boolean));
-  const parents = getRecognizedTypes().filter(parent => usedTypes.has(parent.type));
+  const parents = getRecognizedTypes();
   const targets = [];
   for (const parent of parents) {
     targets.push({ type: parent.type, label: parent.label, subcategory: '', key: parent.type });
@@ -18759,11 +18667,7 @@ function socialFeedCardMarkup(entry) {
   const badge = socialFeedProgressBadge(item);
   const rating = Number(item.rating || 0);
   const meta = [item.typeLabel || getTypeLabel(item.type), badge].filter(Boolean).join(' · ');
-  const tagged = (Array.isArray(item.people) ? item.people : []).map(value => String(value).replace(/^@/, '').toLowerCase()).includes(String(socialState.profile?.username || '').toLowerCase());
-  const people = (Array.isArray(item.people) ? item.people : []).map(value => String(value).trim()).filter(Boolean);
-  const peopleMarkup = people.length ? `<div class="social-tag-list" aria-label="Tagged people">${people.map(value => `<button type="button" data-social-view-username="${escapeAttr(value.replace(/^@/, ''))}">@${escapeHtml(value.replace(/^@/, ''))}</button>`).join('')}</div>` : '';
-  const personProgress = [badge, `@${profile.username}`].filter(Boolean).join(' · ');
-  return `<article class="social-feed-card"><button class="social-feed-person" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>${escapeHtml(personProgress)}</small></span></button><button class="social-feed-content" type="button" data-social-open-item="${escapeAttr(item.key)}" data-social-profile-id="${escapeAttr(profile.user_id)}">${item.image ? `<img class="social-feed-image" src="${escapeAttr(item.image)}" alt=""/>` : '<span class="social-feed-image social-feed-image-placeholder"></span>'}<span class="social-feed-copy"><strong>${escapeHtml(item.title || 'Untitled')}</strong>${item.typeLabel ? `<small>${escapeHtml(item.typeLabel)}</small>` : ''}<span class="social-feed-badges">${rating ? `<b>${escapeHtml(String(rating))} / 5</b>` : ''}${item.recommended ? '<b>Recommended</b>' : ''}</span>${item.comment ? `<span class="social-feed-comment">${escapeHtml(item.comment)}</span>` : ''}</span></button>${peopleMarkup}${tagged ? `<aside class="tag-invite"><span><strong>${escapeHtml(profile.display_name || profile.username)} tagged you</strong><small>Add this event to your Track?</small></span><button class="secondary-button social-small-button" type="button" data-add-tagged-event="${escapeAttr(item.key)}" data-social-profile-id="${escapeAttr(profile.user_id)}">Add to Track</button></aside>` : ''}</article>`;
+  return `<article class="social-feed-card"><button class="social-feed-content" type="button" data-social-open-item="${escapeAttr(item.key)}" data-social-profile-id="${escapeAttr(profile.user_id)}">${item.image ? `<img class="social-feed-image" src="${escapeAttr(item.image)}" alt=""/>` : ''}<span class="social-feed-copy"><strong>${escapeHtml(item.title || 'Untitled')}</strong>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}<span class="social-feed-badges">${rating ? `<b>${escapeHtml(String(rating))}★</b>` : ''}${item.recommended ? '<b>♥</b>' : ''}</span>${item.comment ? `<span class="social-feed-comment">${escapeHtml(item.comment)}</span>` : ''}</span></button><button class="social-feed-person" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span>${escapeHtml(profile.display_name || profile.username)}</span></button></article>`;
 }
 
 function socialBuddyInviteMarkup(watch) {
@@ -18782,7 +18686,7 @@ function renderSocialFeed() {
     const items = row?.payload?.sections?.activity || [];
     for (const item of items) {
       if (!item?.trackedDate) continue;
-      entries.push({ profile, item, date: item.trackedDate, theme: row?.payload?.theme || 'blue' });
+      entries.push({ profile, item, date: item.trackedDate });
     }
   }
   entries.sort((a,b) => String(b.date).localeCompare(String(a.date)));
@@ -18792,10 +18696,6 @@ function renderSocialFeed() {
   const requestsMarkup = requests.length ? `<section class="social-feed-network"><div class="social-feed-network-heading"><strong>Follow requests</strong></div><div class="social-feed-network-list">${requests.map(profile => `<article class="social-feed-network-person"><button type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}</small></span></button><div><button class="primary-button social-small-button" type="button" data-social-accept-follow="${escapeAttr(profile.user_id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-social-decline-follow="${escapeAttr(profile.user_id)}">Decline</button></div></article>`).join('')}</div></section>` : '';
   const followersMarkup = followers.length ? `<section class="social-feed-network"><div class="social-feed-network-heading"><strong>Followers</strong><small>${followers.length}</small></div><div class="social-feed-follower-strip">${followers.map(profile => `<button class="social-feed-follower" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span>${escapeHtml(profile.display_name || profile.username)}</span></button>`).join('')}</div></section>` : '';
   host.innerHTML = requestsMarkup + followersMarkup + invites.map(socialBuddyInviteMarkup).join('') + entries.slice(0,120).map(socialFeedCardMarkup).join('');
-  host.querySelectorAll('.social-feed-card').forEach((card, index) => {
-    const theme = entries[index]?.theme || 'blue';
-    card.dataset.socialProfileTheme = SOCIAL_PROFILE_THEME_IDS.has(String(theme)) ? String(theme) : 'blue';
-  });
   if ($('#socialFeedEmpty')) $('#socialFeedEmpty').hidden = requests.length > 0 || followers.length > 0 || invites.length > 0 || entries.length > 0;
 }
 
@@ -18824,30 +18724,6 @@ async function handleSocialPeopleSearch(event) {
 }
 
 async function handleSocialActionClick(event) {
-  const taggedPerson = event.target.closest('[data-social-view-username]');
-  if (taggedPerson && supabase) {
-    const username = String(taggedPerson.dataset.socialViewUsername || '').trim();
-    const result = await supabase.from('profiles').select('user_id').ilike('username', username).maybeSingle();
-    if (result.data?.user_id) await openSocialProfileView(result.data.user_id);
-    return;
-  }
-  const addTagged = event.target.closest('[data-add-tagged-event]');
-  if (addTagged) {
-    const ownerId = addTagged.dataset.socialProfileId || '';
-    const row = socialState.followingSnapshots.get(ownerId);
-    const shared = (row?.payload?.sections?.activity || []).find(item => String(item.key) === String(addTagged.dataset.addTaggedEvent));
-    if (shared) {
-      const exists = state.items.some(item => String(item.title || '').toLowerCase() === String(shared.title || '').toLowerCase() && String(item.date || '') === String(shared.trackedDate || ''));
-      if (!exists) {
-        state.items.push({ id: makeId(), sourceType: shared.sourceType || shared.type || 'activity', type: shared.type || 'activity', typeLabel: shared.typeLabel || getTypeLabel(shared.type || 'activity'), title: shared.title || 'Shared event', subtitle: shared.subtitle || '', image: shared.image || '', rating: 0, notes: '', comment: '', people: [], recommended: false, date: shared.trackedDate || todayString(), queueStatus: 'library', active: false, progress: {}, featureConfig: { findSource: 'manual', progressMode: 'none', dateRange: false }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-        saveItems();
-        renderAll();
-      }
-      addTagged.textContent = exists ? 'Already added' : 'Added';
-      addTagged.disabled = true;
-    }
-    return;
-  }
   const buddyAccept = event.target.closest('[data-buddy-accept]');
   if (buddyAccept) { await respondBuddyInvite(buddyAccept.dataset.buddyAccept, true); renderSocialFeed(); return; }
   const buddyDecline = event.target.closest('[data-buddy-decline]');
@@ -20038,3 +19914,4 @@ async function saveBuddyWatchProgress(event) {
   $('#buddyWatchProgressModal')?.close();
   await loadBuddyWatches();
 }
+

@@ -166,29 +166,11 @@ export const TrackerAPI = (() => {
     const url = `${ITUNES_ROOT}/search?term=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&media=music&entity=musicArtist&limit=50`;
     const data = await fetchJson(url);
     const seen = new Set();
-    const artists = (data.results || []).filter(result => {
+    return (data.results || []).filter(result => {
       if (!result.artistId || seen.has(String(result.artistId))) return false;
       seen.add(String(result.artistId));
       return true;
-    });
-    // iTunes artist rows rarely contain artwork. Resolve the newest album for
-    // all returned artists in one lookup and use that cover as their visual.
-    const latestAlbumByArtist = new Map();
-    const ids = artists.map(result => String(result.artistId)).filter(Boolean);
-    if (ids.length) {
-      try {
-        const lookupUrl = `${ITUNES_ROOT}/lookup?id=${encodeURIComponent(ids.join(','))}&country=${encodeURIComponent(country)}&entity=album&limit=5&sort=recent`;
-        const lookup = await fetchJson(lookupUrl);
-        (lookup.results || []).filter(result => result.wrapperType === 'collection' && result.artistId).forEach(album => {
-          const key = String(album.artistId);
-          const current = latestAlbumByArtist.get(key);
-          if (!current || String(album.releaseDate || '') > String(current.releaseDate || '')) latestAlbumByArtist.set(key, album);
-        });
-      } catch {}
-    }
-    return artists.map(result => {
-      const latestAlbum = latestAlbumByArtist.get(String(result.artistId));
-      return ({
+    }).map(result => ({
       sourceType: 'artist',
       provider: 'itunes',
       providerId: String(result.artistId),
@@ -196,11 +178,10 @@ export const TrackerAPI = (() => {
       subtitle: result.primaryGenreName || 'Artist',
       artistName: result.artistName || '',
       artistId: String(result.artistId),
-      image: String(result.artworkUrl100 || latestAlbum?.artworkUrl100 || '').replace('100x100bb', '600x600bb'),
+      image: '',
       description: result.primaryGenreName || '',
-      raw: { ...result, latestAlbum: latestAlbum || null }
-    });
-    });
+      raw: result
+    }));
   }
 
   async function searchSongs(query, settings) {

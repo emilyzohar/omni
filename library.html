@@ -15,9 +15,7 @@
   <title>Library · Omni</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Libre+Caslon+Text:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=omni-goodreads-106" />
 </head> 
 <body class="library-page auth-pending">
@@ -546,7 +544,7 @@
         <button id="deleteItem" class="delete-button" type="button" hidden>Delete</button>
         <div class="actions-right">
           <button class="quiet-button" type="button" data-close="itemModal">Cancel</button>
-          <button class="secondary-button" type="submit" data-item-submit-action="log">Add to log</button>
+          <button class="secondary-button" type="submit" data-item-submit-action="log">Log</button>
           <button class="primary-button" type="submit">Save</button>
         </div>
       </div>
@@ -601,10 +599,6 @@
       <label class="field">
         <span>Notes <em>optional</em></span>
         <textarea id="historyEditNote" rows="5" placeholder="Anything you want to remember"></textarea>
-      </label>
-      <label class="field">
-        <span>People <em>optional</em></span>
-        <input id="historyEditPeople" type="text" autocomplete="off" placeholder="Names, separated by commas or @username" />
       </label>
       <label class="history-calendar-toggle">
         <input id="historyEditShowCalendar" type="checkbox" checked />
@@ -685,7 +679,6 @@
     </form>
   </dialog>
 
-  <script type="module" src="app.js?v=omni-app-1"></script>
-  <script>if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));</script>
+  <script type="module" src="app.js?v=omni-goodreads-106"></script>
 </body>
 </html>
