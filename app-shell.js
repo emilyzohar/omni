@@ -1,0 +1,69 @@
+import './notifications.js';
+import './release-push.js';
+const Browser={open:async({url})=>{window.open(url,'_blank','noopener,noreferrer');}};
+const native = true;
+document.body.classList.add(native ? 'native-app' : 'web-app');
+const add = document.querySelector('[data-app-add]');
+function syncAdd() { if (add) add.disabled = document.body.dataset.appReady !== 'true'; }
+syncAdd();
+new MutationObserver(syncAdd).observe(document.body,{attributes:true,attributeFilter:['data-app-ready']});
+add?.addEventListener('click', () => document.dispatchEvent(new CustomEvent('omni:add-content')));
+// Preserve selected destinations and tab state when switching app pages.
+if (native) {
+  document.querySelectorAll('.app-bottom-nav a').forEach(link => {
+    if (new URLSearchParams(location.search).has('app-preview')) {
+      const url = new URL(link.href); url.searchParams.set('app-preview','1'); link.href = url.href;
+    }
+    const selected = document.body.dataset.appView === 'library' ? link.href.includes('social.html') : link.getAttribute('aria-current') === 'page';
+    if (selected) link.setAttribute('aria-current','page');
+  });
+}
+function restoreSocialTab() {
+  if (document.body.dataset.appReady !== 'true' || document.body.dataset.appView !== 'social') return;
+  const tab = new URLSearchParams(location.search).get('tab') || (native ? sessionStorage.getItem('omni.socialTab') : null);
+  if (tab) document.querySelector(`[data-social-tab="${CSS.escape(tab)}"]`)?.click();
+}
+document.querySelectorAll('[data-social-tab]').forEach(button=>button.addEventListener('click',()=>{if(native)sessionStorage.setItem('omni.socialTab',button.dataset.socialTab);}));
+restoreSocialTab();
+new MutationObserver(restoreSocialTab).observe(document.body,{attributes:true,attributeFilter:['data-app-ready']});
+if (native) {
+  document.body.classList.add('native-app');
+  if (document.body.dataset.appView === 'library') {
+    const target = new URL('social.html', location.href); target.searchParams.set('tab','library');
+    if (new URLSearchParams(location.search).has('app-preview')) target.searchParams.set('app-preview','1');
+    location.replace(target.href);
+  }
+  document.addEventListener('click', event => {
+    const link = event.target.closest('a[href]');
+    if (!link || link.hasAttribute('download')) return;
+    const target = new URL(link.href,location.href);
+    if (['http:','https:'].includes(target.protocol) && target.origin !== location.origin) {
+      event.preventDefault(); Browser.open({url:target.href}).catch(console.error);
+    }
+  });
+
+}
+{
+  // Service workers are for the website; native apps ship their assets locally.
+  if ('serviceWorker' in navigator && window.isSecureContext) {
+    window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(console.warn));
+  }
+  let installPrompt;
+  const install = document.createElement('button');
+  install.type='button'; install.textContent='Install'; install.className='app-install-button'; install.hidden=true;
+  document.querySelector('.site-header .nav')?.append(install);
+  window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;install.hidden=false;});
+  window.addEventListener('appinstalled',()=>{install.hidden=true;installPrompt=null;});
+  install.addEventListener('click',async()=>{if(!installPrompt)return;await installPrompt.prompt();installPrompt=null;install.hidden=true;});
+}
+
+// Keep background scrolling locked while any modal is open.
+function syncModalLock() { document.body.classList.toggle('modal-open', Boolean(document.querySelector('dialog[open]'))); }
+new MutationObserver(syncModalLock).observe(document.body,{subtree:true,attributes:true,attributeFilter:['open']});
+syncModalLock();
+document.querySelectorAll('[data-calendar-library]').forEach(link => {
+  if (!native) return;
+  const url = new URL('social.html',location.href); url.searchParams.set('tab','library');
+  if (new URLSearchParams(location.search).has('app-preview')) url.searchParams.set('app-preview','1');
+  link.href=url.href;
+});

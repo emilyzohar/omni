@@ -1,4 +1,4 @@
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.52.1/+esm';
+import { createClient } from '@supabase/supabase-js';
 import { PUBLIC_RUNTIME_CONFIG } from './runtime-config.js';
 
 const env = { ...PUBLIC_RUNTIME_CONFIG, ...(import.meta.env || {}) };

@@ -1,0 +1,2 @@
+[functions.send-web-releases]
+verify_jwt = false

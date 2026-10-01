@@ -1,7 +1,9 @@
+import { disableReleasePush } from './release-push.js';
 import { TrackerAPI } from './api.js?v=omni-clean-108';
 import { API_CONFIG } from './config.js?v=omni-clean-108';
 import { supabase, hasSupabaseConfig } from './supabase.js?v=omni-clean-108';
 
+let notifiedQueueSnapshot;
 const ITEMS_KEY = 'zoharTracker.items.v4';
 const CACHE_KEY = 'zoharTracker.apiCache.v1';
 const CUSTOM_TYPES_KEY = 'zoharTracker.customTypes.v1';
@@ -716,6 +718,7 @@ function friendlyAuthError(error, action) {
 async function handleSignOut() {
   if (!supabase) return;
   setSyncStatus('Signing out…');
+  try { await disableReleasePush(); } catch { setSyncStatus('Could not turn off release alerts. Retry before signing out.', true); return; }
   await supabase.auth.signOut();
 }
 
@@ -1344,6 +1347,7 @@ function mergeLibraryItemRecords(primary, duplicate) {
   }
   if (!primary.notes && duplicate.notes) primary.notes = duplicate.notes;
   if (!Number(primary.rating || 0) && Number(duplicate.rating || 0)) primary.rating = Number(duplicate.rating || 0);
+  primary.episodeRatings = { ...(duplicate.episodeRatings || {}), ...(primary.episodeRatings || {}) };
   primary.recommended = Boolean(primary.recommended || duplicate.recommended);
   primary.people = [...new Set([...(primary.people || []), ...(duplicate.people || [])].filter(Boolean))];
   primary.genres = [...new Set([...(primary.genres || []), ...(duplicate.genres || [])].filter(Boolean))];
@@ -1493,6 +1497,12 @@ function init() {
   state.calendarWeekStart = startOfWeek(now);
 
   bindEvents();
+  document.addEventListener('omni:add-content', () => {
+    if (!document.body.classList.contains('auth-locked')) openItemModal('', document.body.dataset.appView === 'upnext' ? 'upnext' : 'library');
+  });
+  notifiedQueueSnapshot = new Set(state.items.filter(item => getQueueStatus(item) === 'upnext').map(item => item.id));
+  document.body.dataset.appReady = 'true';
+  document.dispatchEvent(new CustomEvent('omni:release-watchlist', {detail:state.items}));
   initSocialPage();
   renderAll();
 }
@@ -1731,7 +1741,7 @@ function bindEvents() {
     renderTracker();
   });
   mobileCalendarQuery.addEventListener?.('change', () => {
-    if (els.trackerGrid) renderTracker();
+    if (els.trackerGrid && !(window.Capacitor?.isNativePlatform?.() && document.body.dataset.appView === 'upnext')) renderTracker();
     if (els.upNextList && state.queueView === 'tbr') renderUpNext();
   });
   els.typeFilterOptions?.addEventListener('change', handleLibraryTypeFilterChange);
@@ -2982,6 +2992,8 @@ function openStatsOtherGenres(labels = []) {
 }
 
 function handleStatsBreakdownClick(event) {
+  const summary = event.target.closest('[data-stats-category]');
+  if (summary) { openStatsSummaryCategory(summary.dataset.statsCategory); return; }
   const recentButton = event.target.closest('[data-stats-recent]');
   if (recentButton) {
     openStatsRecentHistory(Number(recentButton.dataset.statsRecent || 30));
@@ -3149,11 +3161,11 @@ async function renderStats() {
   const requestToken = `${state.items.length}:${state.history.length}:${Date.now()}`;
   els.statsSummary.dataset.renderToken = requestToken;
   els.statsSummary.innerHTML = `
-    <div class="stat-card"><strong>${escapeHtml(String(state.items.length))}</strong><span>Library</span></div>
+    <button class="stat-card stat-card-action" type="button" data-stats-category="library"><strong>${escapeHtml(String(state.items.length))}</strong><span>Library</span></button>
     <button class="stat-card stat-card-action" type="button" data-stats-recent="30" aria-label="Open activity from the last 30 days"><strong>${escapeHtml(String(logged30))}</strong><span>Last 30 days</span></button>
-    <div class="stat-card"><strong>${escapeHtml(avg ? avg.toFixed(1) : '—')}</strong><span>Average rating</span></div>
-    <div class="stat-card"><strong>${escapeHtml(String(repeats))}</strong><span>Rewatches / rereads</span></div>
-    <div class="stat-card"><strong>${escapeHtml(formatWatchHours(storedMinutes))}</strong><span>Watch hours</span></div>`;
+    <button class="stat-card stat-card-action" type="button" data-stats-category="rated"><strong>${escapeHtml(avg ? avg.toFixed(1) : '—')}</strong><span>Average rating</span></button>
+    <button class="stat-card stat-card-action" type="button" data-stats-category="repeats"><strong>${escapeHtml(String(repeats))}</strong><span>Rewatches / rereads</span></button>
+    <button class="stat-card stat-card-action" type="button" data-stats-category="hours"><strong>${escapeHtml(formatWatchHours(storedMinutes))}</strong><span>Watch hours</span></button>`;
   if (els.statsTypes) {
     const groups = new Map();
     state.items.forEach(item => {
@@ -3293,9 +3305,9 @@ async function openLibraryMap(groupKey = '', groupLabel = '', subcategory = '') 
 
 function renderAll() {
   reconcileLocalProgressQueues();
-  if (els.upNextList) renderUpNext();
-  if (els.trackerGrid) renderTracker();
-  if (els.trackStreakSummary) renderTrackStreakSummary();
+  if (els.upNextList && !(window.Capacitor?.isNativePlatform?.() && document.body.dataset.appView === 'calendar')) renderUpNext();
+  if (els.trackerGrid && !(window.Capacitor?.isNativePlatform?.() && document.body.dataset.appView === 'upnext')) renderTracker();
+  if (els.trackStreakSummary && !(window.Capacitor?.isNativePlatform?.() && document.body.dataset.appView === 'upnext')) renderTrackStreakSummary();
   if (els.libraryGroups) renderLibrary();
   if (els.albumsGrid) renderAlbums();
   if (els.statsSummary) renderStats();
@@ -3529,7 +3541,7 @@ async function renderQueueCalendar() {
   if (!els.upNextList || !els.upNextEmpty) return;
   els.upNextList.classList.remove('tbr-thumbnail-grid');
   els.upNextList.classList.add('queue-calendar-list');
-  if (els.queueHeading) els.queueHeading.textContent = 'Calendar';
+  if (els.queueHeading) els.queueHeading.textContent = 'Upcoming';
   els.queueTabs?.forEach(tab => {
     const active = tab.dataset.queueTab === 'calendar';
     tab.classList.toggle('is-active', active);
@@ -3881,7 +3893,7 @@ function queueCalendarEntryMarkup(entry) {
   const art = entry.image ? `<img src="${escapeAttr(entry.image)}" alt="" />` : `<div class="queue-calendar-thumb placeholder">${escapeHtml(label?.[0] || '•')}</div>`;
   const openAction = entry.url
     ? `<a class="upnext-arrow" href="${escapeAttr(entry.url)}" target="_blank" rel="noopener" aria-label="Open event">→</a>`
-    : `<button class="upnext-arrow" type="button" data-action="details" data-id="${escapeAttr(entry.item.id)}" aria-label="Open details">→</button>`;
+    : `<button class="upnext-arrow" type="button" data-action="details" data-id="${escapeAttr(entry.item.id)}" aria-label="Open details"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button>`;
   const sourceType = getSourceType(entry.item);
   const canToggleTracked = ['event', 'concert'].includes(sourceType) && entry.item?.queueCalendarScheduled === true && !String(entry.item?.id || '').startsWith('live:');
   const tracked = canToggleTracked && entry.item.calendarTracked === true && !entry.item.calendarHidden;
@@ -3959,7 +3971,7 @@ function queueCardMarkup(item, info) {
         ${!isTBR ? buddyQueueMarkup(item) : ''}
         ${info.error ? `<div class="queue-error">${escapeHtml(info.error)}</div>` : ''}
       </div>
-      <button class="upnext-arrow" type="button" data-action="details" data-id="${item.id}" aria-label="Open details">→</button>
+      <button class="upnext-arrow" type="button" data-action="details" data-id="${item.id}" aria-label="Open details"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button>
     </div>
     <div class="upnext-actions">${action}</div>
   `;
@@ -4104,6 +4116,7 @@ async function getUpNextInfo(item) {
   return { title: item.title, meta: item.subtitle || '', image: item.image };
 }
 
+const queueCompletionsInFlight = new Set();
 async function handleUpNextClick(event) {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
@@ -4147,10 +4160,13 @@ async function handleUpNextClick(event) {
   }
 
   if (button.dataset.action === 'complete') {
+
     if (getSourceType(item) === 'book') {
       openBookProgress(item);
       return;
     }
+    if (queueCompletionsInFlight.has(item.id)) return;
+    queueCompletionsInFlight.add(item.id);
     button.disabled = true;
     try {
       let completed = null;
@@ -4179,6 +4195,8 @@ async function handleUpNextClick(event) {
     } catch (error) {
       alert(error.message);
       button.disabled = false;
+    } finally {
+      queueCompletionsInFlight.delete(item.id);
     }
   }
 }
@@ -4677,7 +4695,7 @@ async function markWholeTVSeriesComplete(item, options = {}) {
     saveHistory();
     renderAll();
     onProgress?.({ phase: 'done', completed: 1, total: 1 });
-    if (els.detailModal?.open && state.openDetailId === item.id) await renderTVDetails(item);
+    if (els.detailModal?.open && state.openDetailId === item.id) { await renderTVDetails(item); appendLibraryPersonalMetadata(item); }
     return;
   }
 
@@ -7148,6 +7166,7 @@ async function saveItemFromForm(event) {
 
   const item = {
     id: editing?.id || makeId(),
+    ...(editing?.episodeRatings ? { episodeRatings: { ...editing.episodeRatings } } : {}),
     sourceType,
     type,
     typeLabel,
@@ -7858,6 +7877,7 @@ async function renderTVDetails(item) {
       <div><div class="list-title">E${ep.episode_number} · ${escapeHtml(ep.name || 'Episode')}</div><div class="list-meta">${escapeHtml(shorten(ep.overview || '', 120))}</div></div>
       <div class="episode-row-actions">
         <span class="watched-label">${isLogged ? 'WATCHED' : ep.episode_number === episodeNumber ? 'NEXT' : ''}</span>
+        ${inlineEpisodeRatingMarkup(item, seasonNumber, ep.episode_number)}
         <button class="episode-check-button${isLogged ? ' is-checked' : ''}" type="button" data-check-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" aria-label="${isLogged ? `Mark episode ${ep.episode_number} not watched` : `Mark episode ${ep.episode_number} watched`}" title="${isLogged ? 'Mark not watched' : 'Mark watched'}">✓</button>
         <button class="detail-arrow-button" type="button" data-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" aria-label="Open episode ${ep.episode_number}">→</button>
       </div>
@@ -7873,6 +7893,8 @@ async function renderTVDetails(item) {
     ${tvDetailControls(item)}
     <section class="detail-section"><div class="detail-section-heading"><h3>Seasons</h3></div><div class="season-list season-list-rows">${seasons || '—'}</div></section>
   `;
+  appendLibraryPersonalMetadata(item);
+
 }
 
 async function renderTVSeasonDetail(item, seasonNumber) {
@@ -7897,7 +7919,8 @@ async function renderTVSeasonDetail(item, seasonNumber) {
         </div>
         <div class="episode-row-actions">
           <span class="watched-label">${isLogged ? 'WATCHED' : isNext ? 'NEXT' : ''}</span>
-          <button class="episode-check-button${isLogged ? ' is-checked' : ''}" type="button" data-check-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" aria-label="${isLogged ? `Mark episode ${ep.episode_number} not watched` : `Mark episode ${ep.episode_number} watched`}" title="${isLogged ? 'Mark not watched' : 'Mark watched'}">✓</button>
+          ${inlineEpisodeRatingMarkup(item, seasonNumber, ep.episode_number)}
+        <button class="episode-check-button${isLogged ? ' is-checked' : ''}" type="button" data-check-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" aria-label="${isLogged ? `Mark episode ${ep.episode_number} not watched` : `Mark episode ${ep.episode_number} watched`}" title="${isLogged ? 'Mark not watched' : 'Mark watched'}">✓</button>
           <button class="detail-arrow-button" type="button" data-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-item-id="${item.id}" aria-label="Open episode ${ep.episode_number}">→</button>
         </div>
       </div>`;
@@ -7919,6 +7942,8 @@ async function renderTVSeasonDetail(item, seasonNumber) {
   } catch (error) {
     els.detailBody.innerHTML = `<button class="detail-back-button" type="button" data-tv-series="true" data-item-id="${item.id}">← Series</button><div class="api-error">${escapeHtml(error.message)}</div>`;
   }
+  appendLibraryPersonalMetadata(item);
+
 }
 
 async function renderTVEpisodeDetail(item, seasonNumber, episodeNumber) {
@@ -7951,6 +7976,10 @@ async function renderTVEpisodeDetail(item, seasonNumber, episodeNumber) {
   } catch (error) {
     els.detailBody.innerHTML = `<button class="detail-back-button" type="button" data-tv-season="${seasonNumber}" data-item-id="${item.id}">← Season ${seasonNumber}</button><div class="api-error">${escapeHtml(error.message)}</div>`;
   }
+  const episodeActions = els.detailBody.querySelector('.detail-actions');
+  if (episodeActions) episodeActions.insertAdjacentHTML('afterbegin', inlineEpisodeRatingMarkup(item, seasonNumber, episodeNumber));
+  else appendEpisodeRatingPicker(item, seasonNumber, episodeNumber);
+
 }
 
 async function renderWorkoutDetails(item) {
@@ -8636,7 +8665,8 @@ function libraryPersonalMetadataMarkup(item) {
   const calendarFootnote = libraryCalendarToggleButton(item);
   return `<div class="library-personal-meta" data-library-personal-meta="${escapeAttr(item.id)}" data-pending-rating="${rating}">
     <div class="library-personal-meta-row">
-      <div class="star-picker library-detail-rating-picker rating-with-heart" aria-label="Your rating out of five stars">
+
+      <div class="star-picker library-detail-rating-picker rating-with-heart" aria-label="${getSourceType(item) === 'tv' ? 'Overall show rating' : 'Your rating'} out of five stars">
         ${[1,2,3,4,5].map(value => `<button type="button" data-library-rating="${value}" data-item-id="${escapeAttr(item.id)}" class="${starFillClass(value, rating)}" aria-label="${value} star${value === 1 ? '' : 's'}">★</button>`).join('')}
         <button class="rating-heart-button${item.recommended ? ' is-recommended' : ''}" type="button" data-toggle-recommended="${escapeAttr(item.id)}" aria-label="${item.recommended ? 'Remove from Recommended' : 'Add to Recommended'}" aria-pressed="${Boolean(item.recommended)}" title="Recommended">${item.recommended ? '♥' : '♡'}</button>
         <button class="clear-rating" type="button" data-clear-library-rating data-item-id="${escapeAttr(item.id)}">clear</button>
@@ -8651,6 +8681,8 @@ function libraryPersonalMetadataMarkup(item) {
 }
 
 function appendLibraryPersonalMetadata(item) {
+  appendLibraryRepeatSummary(item);
+
   if (!els.detailBody || !item || els.detailBody.querySelector(`[data-library-personal-meta="${CSS.escape(item.id)}"]`)) return;
   const markup = libraryPersonalMetadataMarkup(item);
   const disclosure = els.detailBody.querySelector('.detail-disclosure-row');
@@ -8691,6 +8723,7 @@ function saveLibraryRating(itemId, value) {
   saveItems();
   saveHistory();
   renderLibrary();
+  if (els.statsSummary) renderStats();
 
   const status = section.querySelector('.library-meta-status');
   if (status) {
@@ -10248,7 +10281,7 @@ function setDiscoverMode(mode) {
   if (state.discoverMode === next && state.discoverFeedInitialized) return;
   state.discoverMode = next;
   updateDiscoverModeUI();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  (document.body.classList.contains('native-app') ? document.querySelector('main') : window)?.scrollTo({ top: 0, behavior: 'smooth' });
   resetDiscoverFeed(false);
   loadMoreDiscoverFeed();
 }
@@ -14122,6 +14155,7 @@ async function renderDiscoverTVDetail(key, requestedSeason = null) {
       </div>
       <div class="episode-row-actions">
         <span class="watched-label">${watched ? 'WATCHED' : ''}</span>
+        ${existing ? inlineEpisodeRatingMarkup(existing, seasonNumber, ep.episode_number) : ''}
         <button class="episode-check-button${watched ? ' is-checked' : ''}" type="button" data-discover-check-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-discover-key="${escapeAttr(key)}" aria-label="${watched ? `Mark episode ${ep.episode_number} not watched` : `Mark episode ${ep.episode_number} watched`}" title="${watched ? 'Mark not watched' : 'Mark watched'}">✓</button>
         <button class="detail-arrow-button" type="button" data-discover-tv-episode="${ep.episode_number}" data-tv-season-number="${seasonNumber}" data-discover-key="${escapeAttr(key)}" aria-label="Open episode ${ep.episode_number}">→</button>
       </div>
@@ -14187,6 +14221,7 @@ async function renderDiscoverTVEpisodeDetail(key, seasonNumber, episodeNumber) {
       overview: episode.overview || ''
     })}
     <div class="detail-actions">
+      ${existing ? inlineEpisodeRatingMarkup(existing, seasonNumber, episodeNumber) : ''}
       <button class="primary-button${watched ? ' is-complete' : ''}" type="button" data-discover-check-tv-episode="${episodeNumber}" data-tv-season-number="${seasonNumber}" data-discover-key="${escapeAttr(key)}">${watched ? '✓ Mark not watched' : '✓ Mark watched'}</button>
     </div>`;
   await appendSocialFollowerContext(result, () => state.openDiscoverKey === key && Boolean(els.detailModal?.open));
@@ -16121,7 +16156,7 @@ function makeLibraryPoster(item) {
   poster.className = 'library-poster-button';
   poster.dataset.detailsId = item.id;
   poster.setAttribute('aria-label', `Open ${item.title}`);
-  poster.title = [item.title, item.rating ? `${item.rating}/5` : '', item.genres?.[0] || ''].filter(Boolean).join(' · ');
+  poster.title = [item.title, item.rating ? `${item.rating}/5` : '', item.genres?.[0] || '', itemRepeatSummaryText(item)].filter(Boolean).join(' · ');
   const personalRating = Math.max(0, Math.min(5, Number(item.rating || 0)));
   const directImage = String(item.image || '').trim();
   const coverAttachmentId = directImage ? '' : attachmentCoverIdForItem(item);
@@ -17468,6 +17503,13 @@ function cachePut(key, value) {
 }
 
 function saveItems() {
+  document.dispatchEvent(new CustomEvent('omni:release-watchlist', {detail:state.items}));
+  const nextQueue = new Set(state.items.filter(item => getQueueStatus(item) === 'upnext').map(item => item.id));
+  if (document.body.dataset.appReady === 'true' && notifiedQueueSnapshot) {
+    const additions = state.items.filter(item => nextQueue.has(item.id) && !notifiedQueueSnapshot.has(item.id));
+    if (additions.length) document.dispatchEvent(new CustomEvent('omni:upnext-added', { detail: additions.map(item => ({id:item.id, title:item.title || item.name || 'New content'})) }));
+  }
+  notifiedQueueSnapshot = nextQueue;
   safeLocalSet(ITEMS_KEY, state.items);
   scheduleCloudSync();
 }
@@ -17650,7 +17692,10 @@ async function refreshCloudProfile() {
     if (!lastCloudUpdatedAt || new Date(data.updated_at) > new Date(lastCloudUpdatedAt)) {
       await persistCloudStateLocally(data.state);
       lastCloudUpdatedAt = data.updated_at;
-      if (appStarted) renderAll();
+      if (appStarted) {
+        document.dispatchEvent(new CustomEvent('omni:release-watchlist', {detail:state.items}));
+        renderAll();
+      }
       setSyncStatus('Synced');
     }
   } catch (error) {
@@ -17766,6 +17811,10 @@ function safeLocalSet(key, value) {
 
 function addHistoryRecord(record) {
   const source = record?.sourceItemId ? findItem(record.sourceItemId) : null;
+  if (record?.kind === 'episode-watched' && source?.episodeRatings?.[episodeRatingKey(record.seasonNumber,record.episodeNumber)]) {
+    const rating = source.episodeRatings[episodeRatingKey(record.seasonNumber,record.episodeNumber)];
+    record = { ...record, rating, episodeRating: rating };
+  }
   const repeatKey = historyRepeatIdentity(record);
   const priorRepeats = repeatKey ? state.history.filter(entry => historyRepeatIdentity(entry) === repeatKey).length : 0;
   const isRepeat = record?.rewatch == null ? priorRepeats > 0 : Boolean(record.rewatch);
@@ -18326,7 +18375,7 @@ function initSocialPage() {
 }
 
 function setSocialTab(tabName) {
-  socialState.activeTab = ['feed','following','people','me'].includes(tabName) ? tabName : 'feed';
+  socialState.activeTab = ['feed','following','people','me','library'].includes(tabName) ? tabName : 'feed';
   $$('.social-tab[data-social-tab]').forEach(tab => {
     const active = tab.dataset.socialTab === socialState.activeTab;
     tab.classList.toggle('is-active', active);
@@ -19913,3 +19962,111 @@ async function saveBuddyWatchProgress(event) {
   await loadBuddyWatches();
 }
 
+
+// Library statistics and independent episode ratings.
+function itemRepeatSummaryText(item) {
+  const entries=state.history.filter(e=>e.sourceItemId===item.id && e.rewatch);
+  const type=getSourceType(item);
+  if(type==='tv')return `${entries.filter(e=>e.kind==='episode-watched').length} episode rewatches · ${entries.filter(e=>e.kind==='series-watched').length} full-show rewatches`;
+  return `${entries.length} ${type==='book'?'rereads':['movie','youtube'].includes(type)?'rewatches':'repeat logs'}`;
+}
+function appendLibraryRepeatSummary(item) {
+  if(!els.detailBody || !item)return;
+  let node=els.detailBody.querySelector('[data-item-repeat-summary]');
+  if(!node){node=document.createElement('p');node.className='item-repeat-summary';node.dataset.itemRepeatSummary=item.id;const hero=els.detailBody.querySelector('.detail-hero');if(hero)hero.insertAdjacentElement('afterend',node);else els.detailBody.append(node);}
+  node.textContent=itemRepeatSummaryText(item);
+  let controls = els.detailBody.querySelector('[data-rewatch-controls]');
+  if (controls) controls.remove();
+  const repeats = state.history.filter(entry=>entry.sourceItemId===item.id && entry.rewatch);
+  if (repeats.length) {
+    controls=document.createElement('details'); controls.dataset.rewatchControls=item.id; controls.className='rewatch-controls';
+    controls.innerHTML=`<summary>Manage rewatches / rereads</summary>${repeats.map(entry=>`<div class="rewatch-log-row"><span>${escapeHtml(entry.kind==='episode-watched'?`S${entry.seasonNumber} E${entry.episodeNumber}`:repeatConsumptionLabel(entry))}<small>${escapeHtml(entry.date?formatShortCalendarDate(entry.date):'No date')}</small></span><button class="quiet-button" type="button" data-remove-rewatch="${escapeAttr(entry.id)}">Remove duplicate</button></div>`).join('')}<p class="episode-rating-label">Removing a duplicate keeps the original watched/read record.</p>`;
+    node.insertAdjacentElement('afterend',controls);
+  }
+}
+function openStatsSummaryCategory(category) {
+  if(category==='library')return openStatsCatalogue('Library',state.items);
+  if(category==='rated')return openStatsCatalogue('Rated titles',state.items.filter(i=>Number(i.rating)>0).sort((a,b)=>Number(b.rating)-Number(a.rating)));
+  if(category==='hours'){
+    const items=state.items.filter(i=>{
+      const t=getSourceType(i),h=state.history.filter(e=>e.sourceItemId===i.id);
+      if(t==='movie')return i.completedAt || h.some(e=>e.kind==='movie-watched');
+      if(t==='tv')return h.some(e=>e.kind==='episode-watched');
+      if(t==='youtube')return isYouTubePlaylistItem(i)?h.some(e=>e.kind==='youtube-completed'):i.completedAt || h.some(e=>e.kind==='item-completed');
+      return false;
+    });
+    openStatsCatalogue('Watched titles',items);const note=document.createElement('p');note.className='episode-rating-label';note.textContent='Titles considered for watch hours. Missing runtime metadata contributes no minutes to the estimate.';$('#statsCatalogueGrid').prepend(note);return;
+  }
+  if(category!=='repeats')return;
+  const entries=state.history.filter(e=>e.rewatch).sort((a,b)=>String(b.date||b.createdAt||'').localeCompare(String(a.date||a.createdAt||'')));
+  const modal=ensureStatsRecentModal();$('#statsRecentTitle').textContent='Rewatches / rereads';$('#statsRecentCount').textContent=`${entries.length} repeat logs · TV episodes count individually`;
+  const host=$('#statsRecentDays');host.innerHTML='';
+  for(const e of entries){const item=findItem(e.sourceItemId),row=document.createElement('button');row.type='button';row.className='stats-repeat-row';if(item)row.dataset.detailsId=item.id;else row.dataset.recentHistoryEdit=e.id;
+    const detail=e.kind==='episode-watched'?`S${e.seasonNumber} E${e.episodeNumber}`:e.kind==='series-watched'?'Full show':repeatConsumptionLabel(e);
+    row.innerHTML=`<span><strong>${escapeHtml(item?.title||e.title||'Untitled')}</strong><small>${escapeHtml(detail)}${e.repeatIndex?` · watch/read ${Number(e.repeatIndex)}`:''}</small></span><small>${escapeHtml(e.date?formatShortCalendarDate(e.date):'No date')}</small>`;host.append(row);
+  }
+  if(!entries.length)host.innerHTML='<p class="empty-state">No rewatches or rereads logged yet.</p>';showDialogAtTop(modal);
+}
+function episodeRatingKey(season,episode){return `${Number(season)}:${Number(episode)}`;}
+function episodeRatingFormMarkup(item,season=1,episode=1){
+  const value=Number(item.episodeRatings?.[episodeRatingKey(season,episode)]||0);
+  return `<form class="episode-rating-form" data-episode-rating-form data-item-id="${escapeAttr(item.id)}"><label class="field"><span>Season</span><input name="season" type="number" min="0" max="999" step="1" required value="${season}" /></label><label class="field"><span>Episode</span><input name="episode" type="number" min="1" max="9999" step="1" required value="${episode}" /></label><label class="field"><span>Your rating</span><select name="rating">${Array.from({length:11},(_,i)=>i/2).map(r=>`<option value="${r}" ${r===value?'selected':''}>${r?`★ ${r} / 5`:'Unrated'}</option>`).join('')}</select></label><button class="primary-button" type="submit">Save</button></form><span class="episode-rating-status" role="status"></span>`;
+}
+function episodeRatingListMarkup(item){return Object.entries(item.episodeRatings||{}).filter(([k,v])=>/^\d+:\d+$/.test(k)&&Number(v)>0).sort(([a],[b])=>{const [as,ae]=a.split(':').map(Number),[bs,be]=b.split(':').map(Number);return as-bs||ae-be;}).map(([k,v])=>{const [s,e]=k.split(':');return `<div class="episode-rating-row"><span>S${s} E${e}</span><strong>★ ${escapeHtml(String(v))} / 5</strong><button class="quiet-button" type="button" data-edit-episode-rating="${escapeAttr(k)}" data-item-id="${escapeAttr(item.id)}">Edit</button></div>`;}).join('')||'<p class="episode-rating-label">No episode ratings yet.</p>';}
+function appendEpisodeRatings(item){
+  if(!els.detailBody||els.detailBody.querySelector('[data-show-episode-ratings]'))return;
+  const section=document.createElement('section');section.className='detail-section';section.dataset.showEpisodeRatings=item.id;
+  section.innerHTML=`<h3>Episode ratings</h3><p class="episode-rating-label">Rate an episode independently. This does not change your overall show rating or mark it watched.</p>${episodeRatingFormMarkup(item)}<div class="episode-rating-list">${episodeRatingListMarkup(item)}</div>`;els.detailBody.append(section);
+}
+function appendEpisodeRatingPicker(item,season,episode){const section=document.createElement('section');section.className='detail-section';section.dataset.singleEpisodeRating=item.id;section.innerHTML=`<h3>Your episode rating</h3>${episodeRatingFormMarkup(item,season,episode)}`;els.detailBody.append(section);}
+function refreshEpisodeRatingValue(form){const item=findItem(form.dataset.itemId);if(item)form.elements.rating.value=String(item.episodeRatings?.[episodeRatingKey(form.elements.season.value,form.elements.episode.value)]||0);}
+document.addEventListener('change',event=>{const form=event.target.closest('[data-episode-rating-form]');if(form&&['season','episode'].includes(event.target.name))refreshEpisodeRatingValue(form);});
+document.addEventListener('click',event=>{const edit=event.target.closest('[data-edit-episode-rating]');if(!edit)return;const form=edit.closest('[data-show-episode-ratings]')?.querySelector('form');if(!form)return;const [s,e]=edit.dataset.editEpisodeRating.split(':');form.elements.season.value=s;form.elements.episode.value=e;refreshEpisodeRatingValue(form);form.elements.rating.focus();});
+document.addEventListener('submit',event=>{
+  const form=event.target.closest('[data-episode-rating-form]');if(!form)return;event.preventDefault();
+  const item=findItem(form.dataset.itemId);if(!item||!form.reportValidity())return;
+  const season=Number(form.elements.season.value),episode=Number(form.elements.episode.value),rating=Number(form.elements.rating.value);
+  if(!Number.isInteger(season)||season<0||!Number.isInteger(episode)||episode<1||!Number.isFinite(rating)||rating<0||rating>5||rating*2!==Math.round(rating*2))return;
+  const key=episodeRatingKey(season,episode);item.episodeRatings={...(item.episodeRatings||{})};if(rating)item.episodeRatings[key]=rating;else delete item.episodeRatings[key];item.updatedAt=new Date().toISOString();
+  for(const e of state.history)if(e.sourceItemId===item.id&&e.kind==='episode-watched'&&Number(e.seasonNumber)===season&&Number(e.episodeNumber)===episode){e.episodeRating=rating;e.rating=rating;}
+  saveItems();saveHistory();const list=form.closest('[data-show-episode-ratings]')?.querySelector('.episode-rating-list');if(list)list.innerHTML=episodeRatingListMarkup(item);const status=form.parentElement.querySelector('.episode-rating-status');if(status)status.textContent=rating?'Episode rating saved':'Episode rating cleared';
+});
+
+function inlineEpisodeRatingMarkup(item,season,episode) {
+  const value=Number(item.episodeRatings?.[episodeRatingKey(season,episode)]||0);
+  return `<label class="inline-episode-rating"><span aria-hidden="true">★</span><select data-inline-episode-rating data-item-id="${escapeAttr(item.id)}" data-season="${season}" data-episode="${episode}" aria-label="Your rating for season ${season} episode ${episode}">${Array.from({length:11},(_,i)=>i/2).map(r=>`<option value="${r}" ${r===value?'selected':''}>${r||'Rate'}</option>`).join('')}</select></label>`;
+}
+document.addEventListener('change',event=>{
+  const select=event.target.closest('[data-inline-episode-rating]');if(!select)return;
+  const item=findItem(select.dataset.itemId);if(!item)return;
+  const season=Number(select.dataset.season),episode=Number(select.dataset.episode),rating=Number(select.value);
+  if(!Number.isFinite(rating)||rating<0||rating>5||rating*2!==Math.round(rating*2))return;
+  const key=episodeRatingKey(season,episode);item.episodeRatings={...(item.episodeRatings||{})};if(rating)item.episodeRatings[key]=rating;else delete item.episodeRatings[key];
+  item.updatedAt=new Date().toISOString();
+  for(const entry of state.history)if(entry.sourceItemId===item.id&&entry.kind==='episode-watched'&&Number(entry.seasonNumber)===season&&Number(entry.episodeNumber)===episode){entry.episodeRating=rating;entry.rating=rating;}
+  saveItems();saveHistory();
+  document.querySelectorAll('[data-inline-episode-rating]').forEach(node=>{if(node.dataset.itemId===item.id&&Number(node.dataset.season)===season&&Number(node.dataset.episode)===episode)node.value=String(rating);});
+});
+let removedRewatchUndo=null;
+document.addEventListener('click',event=>{
+  const button=event.target.closest('[data-remove-rewatch]');
+  if(button){
+    const index=state.history.findIndex(entry=>entry.id===button.dataset.removeRewatch && entry.rewatch);if(index<0)return;
+    const entry=state.history[index],item=findItem(entry.sourceItemId);
+    removedRewatchUndo={entry:{...entry},index,itemId:item?.id,completedAt:item?.completedAt};
+    state.history.splice(index,1);
+    if(item && ['movie-watched','book-finished','series-watched','item-completed'].includes(entry.kind)){
+      const remaining=state.history.filter(row=>row.sourceItemId===item.id&&row.kind===entry.kind).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+      if(remaining.length && item.completedAt===entry.date)item.completedAt=remaining[0].date||item.completedAt;
+    }
+    annotateRepeatedHistoryRecords();saveHistory();saveItems();renderAll();if(item)appendLibraryRepeatSummary(item);
+    let notice=document.querySelector('#rewatchUndoNotice');
+    if(!notice){notice=document.createElement('div');notice.id='rewatchUndoNotice';notice.className='rewatch-undo-notice';notice.setAttribute('role','status');const anchor=els.detailModal?.open ? els.detailBody.querySelector('[data-item-repeat-summary]') : null;if(anchor)anchor.insertAdjacentElement('afterend',notice);else document.body.append(notice);}
+    notice.innerHTML='<span>Duplicate removed</span><button type="button" class="quiet-button" data-undo-rewatch>Undo</button>';
+    return;
+  }
+  if(event.target.closest('[data-undo-rewatch]') && removedRewatchUndo){
+    const saved=removedRewatchUndo;state.history.splice(Math.min(saved.index,state.history.length),0,saved.entry);const item=findItem(saved.itemId);if(item)item.completedAt=saved.completedAt;
+    annotateRepeatedHistoryRecords();saveHistory();saveItems();renderAll();if(item)appendLibraryRepeatSummary(item);removedRewatchUndo=null;document.querySelector('#rewatchUndoNotice')?.remove();
+  }
+});

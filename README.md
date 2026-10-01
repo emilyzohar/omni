@@ -1,58 +1,56 @@
-# Omni — clean app refresh
+# Omni installable web app
 
-## Install
+This package preserves the supplied tracker, calendar, Discover and Social/Library screens. The web app uses the app layout, fixed bottom navigation, content-only scrolling, episode ratings and modal scrolling fixes. Source filenames have been normalized. Social was converted from the supplied built HTML to use the supplied source modules. Placeholder Omni icons are included because original icons were not supplied.
 
-Copy the files in this ZIP into the root of your existing Omni project, replacing the corresponding files. Add both `ui.css` and `ui.js`; all four pages reference them. Use your existing dependency installation, environment variables, assets, manifest and normal build/deployment process. This ZIP is an update to the supplied project files, not a standalone replacement repository. No database migration is needed for these changes. Keep your existing social-table setup.
+## 1. Configure and host
 
-The API file is unchanged. Configuration now supports both Vite environment variables and optional public runtime settings. Treat this ZIP as private if your project configuration contains credentials. Open the app through your existing Vite server rather than by double-clicking an HTML file.
+Edit runtime-config.js: add your existing public Supabase URL and publishable/anon key inside PUBLIC_RUNTIME_CONFIG. Copy your existing browser-safe catalogue settings there too (TMDB, Last.fm and other settings used by config.js). The uploaded config had no active credentials. Use the same Supabase project as the current app; existing tracker database tables and policies must already be installed. This package does not replace your tracker database.
 
-## What changed
+Upload the web files to your existing HTTPS static host. Keep all filenames and folders intact. The supabase folder and README are setup files, not required public web assets. Opening index.html as a local file will not support login or push. Add your HTTPS app URL to the existing Supabase Auth redirect allowlist. No build is needed; the Supabase client loads from the existing pinned CDN import map. Initial launch needs network; offline catalogue queries and sync are not supported.
 
-- Neutral gray surfaces, Inter typography, smaller navigation and simpler controls; your original blue accents retain a playful feel.
-- Artwork softly tints queue, Discover and social cards using the actual cover image. This is a blurred artwork treatment, not dominant-color extraction. It avoids canvas/CORS restrictions and reuses the same image URL.
-- Social highlights become compact cover-and-copy cards. Names and dates are secondary, comments are limited to two lines, and ratings only occupy space when present. Item detail and profile action hooks remain unchanged.
-- Followers no longer occupy the highlights grid; existing follower/profile controls remain available elsewhere. Follow requests and Buddy Watch invitations retain their actions and span the grid.
-- Sticker geometry, images, calendar data, drag logic and theme code are unchanged. The original `style.css` is byte-for-byte unchanged; `ui.css` provides the refresh without editing sticker rules.
-- Feed and Discover images load lazily; decoding is asynchronous. Card rendering uses CSS content visibility on browsers that support it.
-- Artwork enhancement batches DOM updates into animation frames and only observes new nodes or changed image sources.
-- Service worker caches only explicitly listed same-origin app files, ignores private/no-store responses, retains unrelated caches and tolerates individual precache failures. API responses, external requests and arbitrary GETs no longer enter its cache.
+On iPhone (iOS 16.4+): open the hosted URL in Safari, Share > Add to Home Screen, then open Omni from its icon. Sign in, open Calendar, tap New-release alerts and allow notifications. No Apple developer account, APNs key or App Store submission is required for Web Push. On supported desktop/Android browsers, use the Install button or browser's install menu.
 
-## Audit and remaining work
+## 2. Set up alerts while closed
 
-The supplied application JS is about 978 KB and the stylesheet about 353 KB before compression. Both contain many accumulated features/overrides. This update preserves those systems to avoid breaking calendar/sticker behavior. It does not claim a measured improvement in Lighthouse scores or reduce the size of that legacy application bundle. A future performance pass should split page-specific JavaScript, consolidate the CSS with visual regression coverage, and measure cold-load performance in production.
+Run supabase/web-push.sql once in your existing Supabase project's SQL Editor. These are separate web-push tables, protected so users can access only their own subscription and watchlist. Existing native push tables are unaffected.
 
-The previous worker cached every successful GET, including third-party/API responses, and its all-or-nothing precache depended on a manifest not supplied here. These were concrete reliability and cache-scope issues; the replacement corrects them. Confirm that your existing deployment actually registers `sw.js`; no new registration flow is introduced.
+Generate a VAPID key pair locally:
 
-Large social cards cropped artwork to landscape and gave follower lists equal grid priority. The replacement emphasizes short updates and preserves portrait covers. The feed still shows the existing maximum of 120 entries; there is no new pagination behavior or fabricated social data.
+    npx web-push generate-vapid-keys
 
-## Validation
+Put only the PUBLIC key in runtime-config.js as VITE_WEB_PUSH_PUBLIC_KEY. In Supabase Edge Function secrets set:
 
-Passed JS syntax checks and fixture checks for HTML escaping, item/profile action hooks, missing artwork, optional metadata, service-worker API/external exclusions, page asset references, and unchanged base/sticker CSS.
+- WEB_PUSH_PUBLIC_KEY: the same public key
+- WEB_PUSH_PRIVATE_KEY: the private key
+- WEB_PUSH_SUBJECT: mailto:your-real-email@example.com
+- WEB_PUSH_CRON_SECRET: a long random secret (generate with openssl rand -hex 32)
+- WEB_PUSH_TIMEZONE: America/Toronto (optional)
+- TMDB_READ_ACCESS_TOKEN: your TMDB token, required for automatic TV episode checks
 
-Browser visual testing was attempted but the installed Playwright package has no browser executable in this environment. The mobile/desktop CSS has not been visually verified in a live browser. Authentication, Supabase syncing, real artwork, API results, drag interactions and offline navigation require a smoke test in the existing deployed project. A system font fallback is provided when Google Fonts cannot load.
+Supabase provides SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to the Edge Function. Never put server credentials into runtime-config.js or public web files.
 
-Suggested smoke test: Home queue actions; calendar drag/sticker shapes; Library detail/edit; Discover add/complete; Social item/profile opening and invitations; sign-in/sign-out; 390px and desktop widths.
+With the Supabase CLI installed, sign in and deploy from this folder:
 
-## Module-resolution fix (107)
+    supabase login
+    supabase link --project-ref YOUR_PROJECT_REF
+    supabase functions deploy send-web-releases --no-verify-jwt
 
-The original Supabase file imported a bare npm package and both configuration files read `import.meta.env` without a fallback. These only work after Vite processes the files. Supabase now imports a pinned browser ESM URL, and both configuration files safely merge optional public runtime settings with Vite variables. Cache versions have been bumped.
+The function checks a separate cron secret. It does not accept an unauthenticated send request. Enable pg_cron and pg_net; create the two Vault secrets described in supabase/schedule.sql, then run that SQL to schedule checks every 15 minutes.
 
-For your existing Vite deployment, retain the environment variables and run your normal build. If hosting the source files directly, supply your project URL and publishable/anon key in `runtime-config.js`. The uploaded files contained no actual Supabase URL or key, so these cannot be filled in automatically. Missing configuration is not a working sign-in setup. Other API settings likewise need appropriate browser-safe runtime settings or your existing Vite build.
+Open Calendar after enabling alerts so the latest watchlist syncs. Revisit the app after changing your library to sync those changes. Each device has a separate subscription; switching alerts off on one does not disable another. Sign-out removes this device's backend subscription before clearing the session.
 
-Errors naming `zotero_config.js`, `pageSaving.js`, `TranslateWeb`, etc. are not from files in this project. Verify by temporarily disabling Zotero Connector and reloading, or using a browser profile without that extension. No app code has been altered to suppress extension errors.
+## 3. Verify delivery
 
-## Blue accents and Live Server (108)
+First verify sign-in, Discover search, adding a title, progress, episode ratings, Social/Library and Calendar using your real configuration. Enable New-release alerts from the installed app. Confirm rows appear for your account in web_push_devices and web_release_watchlists. Then close the app and test a tracked release whose date is today. Invoke the function using POST with x-cron-secret (from a private server-side tool) or wait for the scheduled run. Inspect function logs, cron logs and web_push_deliveries. Tap the notification: it should open Up Next.
 
-Restored the original blue values `#8b99ca` and `#7889c2`, with pale blue selected controls. Purple UI accents have been removed. Cover-derived colors still reflect each content image.
+“In-app Up Next alerts” is a separate feature for additions detected while the app is open. “New-release alerts” uses browser push and the scheduled sender while closed.
 
-Live Server serves source files and does not read `.env` or inject Vite environment variables. If your Last.fm key is in `.env`, launch your existing project using its Vite development script (usually `npm run dev`), or build with Vite and deploy the `dist` output. Restart Vite after editing `.env`.
+## Limits and updates
 
-If intentionally using Live Server, uncomment `EXPO_PUBLIC_LASTFM_API_KEY` in `runtime-config.js` and put your Last.fm key there. Supabase also needs its project URL and public key there for unbundled hosting. This file is publicly served; only browser-safe settings belong in it. The supplied attachments do not contain these values, so no keys have been invented or populated.
+Release dates are date-level, checked in Toronto time, not precise streaming availability times. The sender checks fixed release dates already saved in Omni and TV last/next episodes from TMDB; it does not discover new YouTube uploads or new music/book releases without a saved release date. It does not mutate your tracker data while closed; the existing app refreshes Up Next when reopened. TV polling uses last/next episodes and can miss episodes during an extended sender outage. Delivery retries can rarely duplicate an alert if recording delivery fails after a successful push; tags collapse duplicate notifications where supported. The function has a 45-second batch budget for a small personal app, and reports a failure if it needs scaling. Supported push endpoints: Apple, Firefox and Chrome/FCM.
 
-## Original star and heart silhouettes (109)
+For an update, change the CACHE version in sw.js when editing app files. The complete new shell activates after old app windows close. CDN dependencies must have loaded at least once for the cached shell to be useful offline.
 
-These stickers use font glyphs rather than vector outlines. The global Inter switch changed their appearance despite leaving the base sticker CSS intact. DM Sans is now loaded alongside Inter and explicitly used for star/heart stickers and rating symbols. Their original weights, sizes, transforms and shadows remain unchanged. Interface text stays in Inter.
+Validation completed locally: JavaScript syntax, local dependency/page/asset links, service-worker push/click behavior, release-watch extraction and backend authorization/source checks. Browser visual checks were unavailable because this environment has no installed browser executable. No live Supabase deployment or real device delivery was possible with the blank runtime settings supplied. Do not treat push as live until the verification above succeeds.
 
-## Navigation hover (110)
-
-Restored transparent navigation links with the original italic hover/active treatment and animated underline. Removed the filled highlight box. This ZIP does not yet split Up Next and Calendar or add an app bottom bar.
+References: https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/ and https://supabase.com/docs/guides/database/postgres/row-level-security

@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="theme-color" content="#f4f4f5" />
   <style>
     body.auth-pending > .site-header,
@@ -13,12 +14,12 @@
     [hidden] { display: none !important; }
   </style>
   <title>Omni</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="ui.css" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-
+  <link rel="stylesheet" href="app-shell.css" />
 <script type="importmap">{"imports": {"@supabase/supabase-js": "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.52.1/+esm", "@capacitor/core": "https://cdn.jsdelivr.net/npm/@capacitor/core@8.5.2/+esm", "@capacitor/app": "https://cdn.jsdelivr.net/npm/@capacitor/app@8/+esm", "@capacitor/browser": "https://cdn.jsdelivr.net/npm/@capacitor/browser@8/+esm"}}</script>
-  <script type="module" crossorigin src="./assets/app-shell-9owihLUK.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/app-shell-B6zE6GIW.css">
 </head>
 <body data-app-view="upnext" class="auth-pending">
   <section id="authScreen" class="auth-screen" hidden>
@@ -78,7 +79,7 @@
             <div class="queue-tabs" role="tablist" aria-label="Queue">
               <button class="queue-tab is-active" type="button" data-queue-tab="upnext" role="tab" aria-selected="true">Up Next</button>
               <button class="queue-tab" type="button" data-queue-tab="tbr" role="tab" aria-selected="false">TBR</button>
-              <button class="queue-tab web-calendar-tab" type="button" data-queue-tab="calendar" role="tab" aria-selected="false">Calendar</button>
+              <button class="queue-tab upcoming-calendar-tab" type="button" data-queue-tab="calendar" role="tab" aria-selected="false">Upcoming</button>
             </div>
             <label class="queue-type-filter">
               <span>Type</span>
@@ -116,6 +117,11 @@
               <button id="nextWeek" class="week-nav-button" type="button" aria-label="Next week">→</button>
             </div>
             <div class="calendar-tool-buttons" aria-label="Calendar tools">
+              <a class="calendar-library-button quiet-button" href="library.html" data-calendar-library>Library</a>
+              <button class="quiet-button upnext-alert-button" type="button" data-upnext-alerts aria-pressed="false">Up Next alerts</button>
+              <span class="alert-status" data-alert-status role="status"></span>
+              <button class="quiet-button release-alert-button" type="button" data-release-alerts aria-pressed="false" hidden>New-release alerts</button>
+              <span class="alert-status" data-release-alert-status role="status"></span>
               <button id="openTrackAdd" class="calendar-tool-button track-add-item-button icon-tool-button" type="button" aria-label="Add item" title="Add item">+</button>
               <button id="openStickerSettings" class="calendar-tool-button icon-tool-button" type="button" aria-label="Track settings" title="Track settings"><span class="text-gear-icon" aria-hidden="true">⚙︎</span></button>
             </div>
@@ -690,6 +696,9 @@
     </form>
   </dialog>
 
+  <script type="module" src="app.js"></script>
+  <script type="module" src="ui.js"></script>
 <nav class="app-bottom-nav" aria-label="App navigation"><a href="index.html" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m8 5 10 7-10 7Z"/></svg><span>Up Next</span></a><a href="calendar.html"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4m8-4v4M4 10h16"/></svg><span>Calendar</span></a><button class="app-add-button" type="button" aria-label="Add content" data-app-add><span aria-hidden="true">+</span></button><a href="discover.html"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><span>Discover</span></a><a href="social.html"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2m1-15a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v2"/></svg><span>Social</span></a></nav>
+  <script type="module" src="app-shell.js"></script>
 </body>
 </html>

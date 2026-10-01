@@ -1,19 +1,17 @@
-const CACHE = 'omni-shell-ce7a45e62517';
-const SHELL = ["./assets/app-shell-9owihLUK.js","./assets/app-shell-B6zE6GIW.css","./assets/dm-sans-latin-400-normal-BwCSEQnW.woff","./assets/dm-sans-latin-400-normal-CW0RaeGs.woff2","./assets/dm-sans-latin-500-normal-B9HHJjqV.woff2","./assets/dm-sans-latin-500-normal-Dr3UlScf.woff","./assets/dm-sans-latin-600-normal-Aqo67rzb.woff2","./assets/dm-sans-latin-600-normal-BmdmIIQ2.woff","./assets/dm-sans-latin-700-normal-CUSSCpQX.woff","./assets/dm-sans-latin-700-normal-DvUfVpUG.woff2","./assets/inter-latin-400-normal-C38fXH4l.woff2","./assets/inter-latin-400-normal-CyCys3Eg.woff","./assets/inter-latin-500-normal-BL9OpVg8.woff","./assets/inter-latin-500-normal-Cerq10X2.woff2","./assets/inter-latin-600-normal-CiBQ2DWP.woff","./assets/inter-latin-600-normal-LgqL8muc.woff2","./assets/inter-latin-700-normal-BLAVimhd.woff","./assets/inter-latin-700-normal-Yt3aPRUw.woff2","./assets/web-YWSwpDnR.js","./assets/web-nIOJr7os.js","./calendar.html","./discover.html","./icons/icon-1024.png","./icons/icon-192.png","./icons/icon-512.png","./index.html","./library.html","./manifest.webmanifest","./social.html"];
-const allowed = new Set(SHELL.map(path=>new URL(path,self.registration.scope).pathname));
-self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL))));
-// Activate on the next normal launch, avoiding a mid-session mixed-version app.
-self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('omni-shell-')&&key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
-self.addEventListener('fetch',event=>{
- const url=new URL(event.request.url);
- if(event.request.method!=='GET'||url.origin!==self.location.origin)return;
- const root=new URL('./',self.registration.scope).pathname;
- const path=url.pathname===root?new URL('./index.html',self.registration.scope).pathname:url.pathname;
- if(!allowed.has(path))return;
- event.respondWith(fetch(event.request).then(response=>{
-  if(response.ok&&!/private|no-store/i.test(response.headers.get('Cache-Control')||'')){
-   const copy=response.clone();event.waitUntil(caches.open(CACHE).then(cache=>cache.put(path,copy)).catch(()=>{}));
-  }
-  return response;
- }).catch(()=>caches.match(path).then(response=>response||Response.error())));
+const CACHE='omni-web-v1';
+const SHELL=['index.html','calendar.html','discover.html','social.html','library.html','style.css','ui.css','app-shell.css','app.js','ui.js','app-shell.js','api.js','config.js','supabase.js','runtime-config.js','notifications.js','release-push.js','release-watches.js','manifest.webmanifest','icons/icon-192.png','icons/icon-512.png'].map(p=>new URL(p,self.registration.scope).href);
+self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL))));
+self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>(k.startsWith('omni-shell-')||k.startsWith('omni-web-'))&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
+self.addEventListener('fetch',e=>{
+ const u=new URL(e.request.url);u.search='';if(e.request.method!=='GET'||u.origin!==self.location.origin)return;
+ if(u.href===self.registration.scope)u.pathname+='index.html';if(!SHELL.includes(u.href))return;
+ // Serve a consistent cached app version; updates install as a complete shell.
+ e.respondWith(caches.match(u.href).then(r=>r||fetch(e.request)));
+});
+self.addEventListener('push',e=>{
+ let p={};try{p=e.data?.json()||{};}catch{p={body:e.data?.text()||''};}
+ e.waitUntil(self.registration.showNotification(p.title||'New in Up Next',{body:p.body||'A new release is available.',icon:new URL('icons/icon-192.png',self.registration.scope).href,tag:p.tag||'omni-release',data:{url:'index.html'}}));
+});
+self.addEventListener('notificationclick',e=>{
+ e.notification.close();e.waitUntil((async()=>{const target=new URL('index.html',self.registration.scope).href;const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true});const c=windows.find(c=>c.url.startsWith(self.registration.scope));if(c){await c.navigate(target);return c.focus();}return self.clients.openWindow(target);})());
 });
