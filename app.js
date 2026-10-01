@@ -1,6 +1,6 @@
-import { TrackerAPI } from './api.js?v=omni-goodreads-105';
-import { API_CONFIG } from './config.js?v=omni-goodreads-105';
-import { supabase, hasSupabaseConfig } from './supabase.js';
+import { TrackerAPI } from './api.js?v=omni-clean-108';
+import { API_CONFIG } from './config.js?v=omni-clean-108';
+import { supabase, hasSupabaseConfig } from './supabase.js?v=omni-clean-108';
 
 const ITEMS_KEY = 'zoharTracker.items.v4';
 const CACHE_KEY = 'zoharTracker.apiCache.v1';
@@ -3930,7 +3930,7 @@ function buddyQueueMarkup(item) {
 function queueCardMarkup(item, info) {
   const image = info.image || item.image;
   const art = image
-    ? `<img class="upnext-art" src="${escapeAttr(image)}" alt="" />`
+    ? `<img class="upnext-art" decoding="async" src="${escapeAttr(image)}" alt="" />`
     : `<div class="upnext-art placeholder">${escapeHtml(getItemTypeLabel(item)?.[0] || '•')}</div>`;
   const sourceType = getSourceType(item);
   const isTBR = Boolean(info.tbr);
@@ -18667,7 +18667,7 @@ function socialFeedCardMarkup(entry) {
   const badge = socialFeedProgressBadge(item);
   const rating = Number(item.rating || 0);
   const meta = [item.typeLabel || getTypeLabel(item.type), badge].filter(Boolean).join(' · ');
-  return `<article class="social-feed-card"><button class="social-feed-content" type="button" data-social-open-item="${escapeAttr(item.key)}" data-social-profile-id="${escapeAttr(profile.user_id)}">${item.image ? `<img class="social-feed-image" src="${escapeAttr(item.image)}" alt=""/>` : ''}<span class="social-feed-copy"><strong>${escapeHtml(item.title || 'Untitled')}</strong>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}<span class="social-feed-badges">${rating ? `<b>${escapeHtml(String(rating))}★</b>` : ''}${item.recommended ? '<b>♥</b>' : ''}</span>${item.comment ? `<span class="social-feed-comment">${escapeHtml(item.comment)}</span>` : ''}</span></button><button class="social-feed-person" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span>${escapeHtml(profile.display_name || profile.username)}</span></button></article>`;
+  return `<article class="social-feed-card"><button class="social-feed-person" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span>${escapeHtml(profile.display_name || profile.username || 'Omni user')}</span><time datetime="${escapeAttr(entry.date)}">${escapeHtml(formatLongDate(entry.date))}</time></button><button class="social-feed-content" type="button" data-social-open-item="${escapeAttr(item.key)}" data-social-profile-id="${escapeAttr(profile.user_id)}">${item.image ? `<img class="social-feed-image" src="${escapeAttr(item.image)}" alt="" loading="lazy" decoding="async" width="64" height="88"/>` : '<span class="social-feed-image social-art-placeholder" aria-hidden="true">✦</span>'}<span class="social-feed-copy"><strong>${escapeHtml(item.title || 'Untitled')}</strong>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}${rating || item.recommended ? `<span class="social-feed-badges">${rating ? `<b>★ ${escapeHtml(String(rating))}</b>` : ''}${item.recommended ? '<b>♥ Recommended</b>' : ''}</span>` : ''}${item.comment ? `<span class="social-feed-comment">${escapeHtml(item.comment)}</span>` : ''}</span></button></article>`;
 }
 
 function socialBuddyInviteMarkup(watch) {
@@ -18692,11 +18692,9 @@ function renderSocialFeed() {
   entries.sort((a,b) => String(b.date).localeCompare(String(a.date)));
   const invites = (socialState.buddyWatches || []).filter(watch => watch.myMembership?.status === 'pending');
   const requests = socialState.followRequestProfiles || [];
-  const followers = socialState.followerProfiles || [];
   const requestsMarkup = requests.length ? `<section class="social-feed-network"><div class="social-feed-network-heading"><strong>Follow requests</strong></div><div class="social-feed-network-list">${requests.map(profile => `<article class="social-feed-network-person"><button type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span><strong>${escapeHtml(profile.display_name || profile.username)}</strong><small>@${escapeHtml(profile.username)}</small></span></button><div><button class="primary-button social-small-button" type="button" data-social-accept-follow="${escapeAttr(profile.user_id)}">Accept</button><button class="quiet-button social-small-button" type="button" data-social-decline-follow="${escapeAttr(profile.user_id)}">Decline</button></div></article>`).join('')}</div></section>` : '';
-  const followersMarkup = followers.length ? `<section class="social-feed-network"><div class="social-feed-network-heading"><strong>Followers</strong><small>${followers.length}</small></div><div class="social-feed-follower-strip">${followers.map(profile => `<button class="social-feed-follower" type="button" data-social-view-profile="${escapeAttr(profile.user_id)}"><span class="social-avatar">${escapeHtml(socialProfileInitial(profile))}</span><span>${escapeHtml(profile.display_name || profile.username)}</span></button>`).join('')}</div></section>` : '';
-  host.innerHTML = requestsMarkup + followersMarkup + invites.map(socialBuddyInviteMarkup).join('') + entries.slice(0,120).map(socialFeedCardMarkup).join('');
-  if ($('#socialFeedEmpty')) $('#socialFeedEmpty').hidden = requests.length > 0 || followers.length > 0 || invites.length > 0 || entries.length > 0;
+  host.innerHTML = requestsMarkup + invites.map(socialBuddyInviteMarkup).join('') + entries.slice(0,120).map(socialFeedCardMarkup).join('');
+  if ($('#socialFeedEmpty')) $('#socialFeedEmpty').hidden = requests.length > 0 || invites.length > 0 || entries.length > 0;
 }
 
 async function handleSocialPeopleSearch(event) {
