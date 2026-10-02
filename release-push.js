@@ -19,7 +19,7 @@ export async function disableReleasePush(){
 }
 buttons.forEach(b=>b.addEventListener('click',async()=>{
  b.disabled=true;let created;
- try{
+ try{ 
   if(!supported())throw Error('On iPhone, add Omni to your Home Screen and open it there to enable alerts.');
   if(!supabase)throw Error('Add your public Supabase settings to runtime-config.js first.');
   const key=PUBLIC_RUNTIME_CONFIG.VITE_WEB_PUSH_PUBLIC_KEY;
