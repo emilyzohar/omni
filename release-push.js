@@ -5,10 +5,16 @@ const buttons=[...document.querySelectorAll('[data-release-alerts]')];
 let items=[],timer;
 function status(text){document.querySelectorAll('[data-release-alert-status]').forEach(n=>n.textContent=text);}
 const supported=()=>window.isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
-async function registration(){return navigator.serviceWorker.register('./sw.js').then(()=>navigator.serviceWorker.ready);}
+async function registration(){
+ if(!supported())throw Error('Open Omni from its Home Screen icon to enable push notifications.');
+ const reg=await navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'});
+ const ready=await navigator.serviceWorker.ready;
+ if(!ready?.pushManager)throw Error('Push notifications are unavailable here. Open the installed Home Screen app.');
+ return ready;
+}
 async function session(){const {data,error}=await supabase.auth.getSession();if(error)throw error;if(!data.session)throw Error('Sign in to enable alerts.');return data.session;}
 async function render(){let on=false;try{on=!!await (await registration()).pushManager.getSubscription();}catch{}buttons.forEach(b=>{b.hidden=false;b.setAttribute('aria-pressed',String(on));b.textContent=on?'Release alerts on':'New-release alerts';});}
-async function sync(){if(!supabase||document.body.dataset.appReady!=='true')return;const auth=await session();const sub=await (await registration()).pushManager.getSubscription();if(!sub)return;const {error}=await supabase.from('web_release_watchlists').upsert({user_id:auth.user.id,watches:releaseWatches(items),updated_at:new Date().toISOString()});if(error)throw error;}
+async function sync(){if(!supported()||!supabase||document.body.dataset.appReady!=='true')return;const auth=await session();const sub=await (await registration()).pushManager.getSubscription();if(!sub)return;const {error}=await supabase.from('web_release_watchlists').upsert({user_id:auth.user.id,watches:releaseWatches(items),updated_at:new Date().toISOString()});if(error)throw error;}
 export async function disableReleasePush(){
  if(!supported())return;
  const sub=await (await registration()).pushManager.getSubscription();if(!sub)return;
@@ -19,10 +25,11 @@ export async function disableReleasePush(){
 }
 buttons.forEach(b=>b.addEventListener('click',async()=>{
  b.disabled=true;let created;
- try{ 
+ try{
   if(!supported())throw Error('On iPhone, add Omni to your Home Screen and open it there to enable alerts.');
   if(!supabase)throw Error('Add your public Supabase settings to runtime-config.js first.');
-  const key=PUBLIC_RUNTIME_CONFIG.VITE_WEB_PUSH_PUBLIC_KEY;
+  const env={...PUBLIC_RUNTIME_CONFIG,...(import.meta.env||{})};
+  const key=String(env.VITE_WEB_PUSH_PUBLIC_KEY||env.EXPO_PUBLIC_WEB_PUSH_PUBLIC_KEY||'').trim();
   if(!key)throw Error('Set the public Web Push key in runtime-config.js first.');
   if(b.getAttribute('aria-pressed')==='true'){await disableReleasePush();return;}
   // Request permission directly from this tap, before any network operation.
