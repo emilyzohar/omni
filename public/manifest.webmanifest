@@ -1,14 +1,1 @@
-{
-  "name": "Omni — Your life, tracked",
-  "short_name": "Omni",
-  "description": "A personal, social tracker for everything you watch, read, play, visit, and do.",
-  "start_url": "./index.html",
-  "scope": "./",
-  "display": "standalone",
-  "background_color": "#f6f0e6",
-  "theme_color": "#6f1726",
-  "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
-  ]
-}
+{"name":"Omni — your tracker","short_name":"Omni","id":"./","start_url":"./index.html","scope":"./","display":"standalone","background_color":"#f4f4f5","theme_color":"#8b99ca","icons":[{"src":"icons/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any"},{"src":"icons/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any"}]}

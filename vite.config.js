@@ -1,18 +1,13 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
-
+import { webAppServiceWorker } from './build-service-worker.mjs';
 export default defineConfig({
   envPrefix: ['VITE_', 'EXPO_PUBLIC_'],
-  // Relative asset paths keep GitHub Pages working if the repository path changes.
   base: './',
+  plugins: [webAppServiceWorker()],
   build: {
     rollupOptions: {
-      input: {
-        main: resolve(process.cwd(), 'index.html'),
-        discover: resolve(process.cwd(), 'discover.html'),
-        social: resolve(process.cwd(), 'social.html'),
-        library: resolve(__dirname, 'library.html')
-      }
+      input: Object.fromEntries(['index','calendar','discover','social','library'].map(name=>[name,resolve(process.cwd(),`${name}.html`)]))
     }
   }
 });
