@@ -1,14 +1,32 @@
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 export function webAppServiceWorker(){
- let out;
+ let out,publicSource;
  return {
   name:'omni-web-app-service-worker',
   apply:'build',
-  configResolved(c){out=resolve(c.root,c.build.outDir);},
+  configResolved(c){out=resolve(c.root,c.build.outDir);publicSource=c.publicDir||resolve(c.root,'public');},
   closeBundle(){
+   // Copy stable public assets explicitly before constructing the cache inventory.
+   for(const file of ['manifest.webmanifest','icons/icon-192.png','icons/icon-512.png','assets/index.html']){
+    const source=resolve(publicSource,file);
+    if(!existsSync(source))throw Error(`Missing source asset: ${source}. Copy the patch's public folder into the project root.`);
+    const destination=resolve(out,file);
+    mkdirSync(resolve(destination,'..'),{recursive:true});copyFileSync(source,destination);
+   }
    function walk(dir){return readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(resolve(dir,e.name)):[resolve(dir,e.name)]);}
+   // Normalize final HTML before cache hashes are computed; never cache a bad launch link.
+   for(const name of ['index','calendar','discover','social','library']){
+    const page=resolve(out,name+'.html');let html=readFileSync(page,'utf8');
+    html=html.replace(/<link\b[^>]*>\s*/gi,tag=>{
+     const rel=tag.match(/\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+     const values=(rel?.[1]||rel?.[2]||rel?.[3]||'').toLowerCase().split(/\s+/);
+     return values.some(v=>['manifest','apple-touch-icon'].includes(v))?'':tag;
+    });
+    html=html.replace(/<\/head\s*>/i,'<link rel="manifest" href="/omni/manifest.webmanifest">\n<link rel="apple-touch-icon" href="/omni/icons/icon-192.png">\n</head>');
+    writeFileSync(page,html);
+   }
    const files=walk(out).filter(f=>/\.(?:html|js|css|woff2?|png|svg|webmanifest)$/.test(f)&&relative(out,f)!=='sw.js').sort();
    for(const required of ['index.html','calendar.html','discover.html','social.html','library.html','manifest.webmanifest','icons/icon-192.png','icons/icon-512.png']) {
     if(!files.some(f=>relative(out,f).replaceAll('\\','/')===required))throw Error(`Missing built web app file: ${required}`);

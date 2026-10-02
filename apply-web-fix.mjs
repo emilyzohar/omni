@@ -1,15 +1,15 @@
 import { readFileSync,writeFileSync } from 'node:fs';
-for (const name of ['index','calendar','discover','social','library']) {
- const file=`${name}.html`;let html=readFileSync(file,'utf8');
-html=html.replace('</head>','<link rel="manifest" href="/omni/manifest.webmanifest">\n<link rel="apple-touch-icon" href="/omni/icons/icon-192.png">\n<meta name="mobile-web-app-capable" content="yes">\n</head>');
- html=html.replace('</head>','<link rel="manifest" href="%BASE_URL%manifest.webmanifest">\n<link rel="apple-touch-icon" href="%BASE_URL%icons/icon-192.png">\n<meta name="mobile-web-app-capable" content="yes">\n</head>');
- // Register even if the old shell restricted service workers to desktop mode.
- html=html.replace(/<script\b[^>]*\bdata-omni-sw-fix[^>]*>[\s\S]*?<\/script>\r?\n?/gi,'');
- html=html.replace('</body>',`<script data-omni-sw-fix>
-if('serviceWorker' in navigator && window.isSecureContext) {
- window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).catch(console.error));
+export function fixManifestLinks(html){
+ html=html.replace(/<link\b[^>]*>\s*/gi,tag=>{
+  const rel=tag.match(/\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+  const values=(rel?.[1]||rel?.[2]||rel?.[3]||'').toLowerCase().split(/\s+/);
+  return values.some(v=>['manifest','apple-touch-icon'].includes(v))?'':tag;
+ });
+ html=html.replace(/<meta\b[^>]*\bname\s*=\s*["']mobile-web-app-capable["'][^>]*>\s*/gi,'');
+ if(!/<\/head\s*>/i.test(html))throw Error('Missing closing head tag');
+ return html.replace(/<\/head\s*>/i,'<link rel="manifest" href="/omni/manifest.webmanifest">\n<link rel="apple-touch-icon" href="/omni/icons/icon-192.png">\n<meta name="mobile-web-app-capable" content="yes">\n</head>');
 }
-</script>\n</body>`);
- writeFileSync(file,html);
+for(const name of ['index','calendar','discover','social','library']){
+ const file=`${name}.html`;writeFileSync(file,fixManifestLinks(readFileSync(file,'utf8')));
 }
-console.log('Updated all five pages: stable manifest/icon links and service worker registration.');
+console.log('Replaced duplicate manifest/icon links on all five pages.');
