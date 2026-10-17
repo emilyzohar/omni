@@ -64,3 +64,15 @@ console.log('PASS: mobile forces seven-day week with named person piles, shared 
  input.value='e';await vm.runInContext('handleSocialPeopleSearch()',searchContext);assert.equal(host.innerHTML,'');
  console.log('PASS: partial username and display-name queries, @ prefix, deduplication, follow status, literal wildcard escaping, short-query clearing, and stale-response protection');
 })().catch(error=>{console.error(error);process.exitCode=1});
+
+// Saved social cards replace the add menu with a filled, accessible check.
+const priorOwnLookup=c.socialOwnItemForShared;c.socialOwnItemForShared=()=>({id:'saved',queueStatus:'library'});
+c.savedEntry={profile:people[0],item:{key:'tv:2',type:'tv',title:'Saved show'},date:'2026-10-16'};
+const savedCard=vm.runInContext('socialFeedCardMarkup(savedEntry)',c);assert.ok(savedCard.includes('social-card-queue-button is-saved'));assert.ok(savedCard.includes('data-social-card-own="saved"'));assert.ok(!savedCard.includes('social-card-add-menu'));assert.ok(!savedCard.includes('>In Library<'));c.socialOwnItemForShared=priorOwnLookup;
+console.log('PASS: saved cards show a filled check instead of a truncated In Library menu');
+const uiSource=fs.readFileSync(path.join(__dirname,'..','ui.js'),'utf8');
+const contrast=vm.createContext({getComputedStyle:node=>({backgroundColor:node.background})});
+const from=uiSource.indexOf('function controlBackgroundRGBA');const until=uiSource.indexOf('const contrastControlSelector',from);vm.runInContext(uiSource.slice(from,until),contrast);
+for(const [background,expected] of [['rgb(34, 35, 41)',true],['rgb(255, 255, 255)',false],['rgb(139, 153, 202)',false],['rgba(21, 36, 58, 0.95)',true]]){contrast.control={background,parentElement:null};assert.equal(vm.runInContext('controlHasDarkBackground(control)',contrast),expected,background)}
+contrast.control={background:'rgba(0, 0, 0, 0)',parentElement:{background:'rgb(34, 35, 41)',parentElement:null}};assert.equal(vm.runInContext('controlHasDarkBackground(control)',contrast),true);
+console.log('PASS: contrast follows actual dark/light backgrounds, translucent controls, and dark parent surfaces');

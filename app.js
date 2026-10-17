@@ -18870,7 +18870,6 @@ function socialFeedCardMarkup(entry) {
   const ownQueue = own ? getQueueStatus(own) : '';
   const person = profile.display_name || profile.username || 'Omni user';
   const common = `data-social-open-item="${escapeAttr(item.key)}" data-social-profile-id="${escapeAttr(profile.user_id)}"`;
-  const queueLabel = ownQueue === 'tbr' ? 'In TBR' : ownQueue === 'upnext' ? 'In Up Next' : own ? 'In Library' : '+ Add';
   return `<article class="discover-card social-discover-card">
     <button class="discover-card-open" type="button" ${common} aria-label="Open ${escapeAttr(item.title || 'item')}">
       <div class="discover-poster-wrap">
@@ -18888,9 +18887,9 @@ function socialFeedCardMarkup(entry) {
       <time class="social-card-date" datetime="${escapeAttr(entry.date)}">${escapeHtml(formatLongDate(entry.date))}</time>
       ${item.comment ? `<p class="social-card-comment">${escapeHtml(item.comment)}</p>` : ''}
       <div class="discover-card-actions">
-        <details class="social-card-add-menu"><summary class="discover-add-button">${queueLabel}</summary><div class="social-card-add-options" role="group" aria-label="Add to your Omni">
+        ${own ? `<button class="social-card-queue-button is-saved" type="button" data-social-card-own="${escapeAttr(own.id)}" aria-label="Saved in ${ownQueue === 'tbr' ? 'TBR' : ownQueue === 'upnext' ? 'Up Next' : 'Library'}" title="Open your saved item"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg></button>` : `<details class="social-card-add-menu"><summary class="social-card-queue-button" aria-label="Add to your Omni" title="Add"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></summary><div class="social-card-add-options" role="group" aria-label="Add to your Omni">
           ${[['tbr','TBR'],['upnext','Up Next'],['library','Library']].map(([queue,label]) => `<button type="button" data-social-card-add="${queue}" data-social-item-key="${escapeAttr(item.key)}" data-social-profile-id="${escapeAttr(profile.user_id)}" ${ownQueue === queue ? 'disabled' : ''}>${label}${ownQueue === queue ? ' ✓' : ''}</button>`).join('')}
-        </div></details>
+        </div></details>`}
       </div>
     </div>
   </article>`;
@@ -19134,6 +19133,8 @@ function openSocialCalendarDay(ownerId, date) {
 }
 
 async function handleSocialActionClick(event) {
+  const saved = event.target.closest('[data-social-card-own]');
+  if (saved) { await openDetails(saved.dataset.socialCardOwn); return; }
   const add = event.target.closest('[data-social-card-add]');
   if (add) {
     add.disabled = true;
