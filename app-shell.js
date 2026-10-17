@@ -41,7 +41,22 @@ if (native) {
 {
   // Service workers are for the website; native apps ship their assets locally.
   if ('serviceWorker' in navigator && window.isSecureContext) {
-    window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(console.warn));
+    let refreshingVersion = false;
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || refreshingVersion) return;
+      // Keep unsynced work and open editors intact during an app update.
+      const pending = Object.keys(localStorage).some(key => key.startsWith('omni.pendingSync:') && localStorage.getItem(key));
+      if (pending || document.querySelector('dialog[open]')) return;
+      refreshingVersion = true;
+      location.reload();
+    });
+    window.addEventListener('load', async () => {
+      try {
+        const registration = await navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
+        await registration.update();
+      } catch (error) { console.warn(error); }
+    });
   }
   let installPrompt;
   const install = document.createElement('button');

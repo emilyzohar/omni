@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "node apply-web-fix.mjs && vite build",
     "preview": "vite preview",
-    "test": "node tests/performance.cjs"
+    "test": "node tests/performance.cjs && node tests/social.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0"

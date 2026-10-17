@@ -137,3 +137,77 @@ body[data-app-view="upnext"] #track { display:block; margin-top:28px; }
 .upnext-card.is-completing { opacity:.7; }
 @keyframes completion-spin { to { transform:rotate(360deg); } }
 @media(prefers-reduced-motion:reduce) { .completion-spinner { animation:none; } }
+/* Social: type shelves with readable ratings/comments, plus a people-by-date calendar. */
+.social-feed-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:20px 0 28px; }
+.social-feed-controls > input { flex:1; min-width:180px; }
+.social-feed-controls input,.social-feed-controls select,.social-calendar-controls input,.social-calendar-controls select { border:1px solid var(--line,#ddd); border-radius:12px; padding:10px 12px; background:var(--paper,#fff); color:inherit; font:inherit; }
+.social-feed-controls label { display:flex; align-items:center; gap:7px; font-size:.8rem; }
+.social-feed-controls input[type=checkbox] { width:16px; height:16px; }
+#socialFeed.social-feed { display:block; }
+.social-feed-type-group { margin:0 0 36px; }
+.social-feed-type-heading { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.social-feed-type-heading h2 { margin:0; font-size:1.3rem; }
+.social-feed-type-heading > span { color:var(--muted,#666); font-size:.75rem; }
+.social-feed-type-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:18px; align-items:start; }
+.social-discover-card .discover-card-open { display:block; width:100%; }
+.social-discover-card .discover-card-copy { padding:14px; }
+.social-discover-card .discover-poster-wrap { border-radius:18px 18px 10px 10px; box-shadow:none; }
+.social-discover-card .discover-poster { display:block; }
+.social-discover-card .social-card-rating { left:auto; right:8px; bottom:8px; }
+.social-discover-card .library-recommended-badge { top:9px; right:9px; width:28px; height:28px; font-size:1rem; }
+.social-card-placeholder { display:grid !important; place-items:center; color:#7889c2; font-size:3rem; }
+.social-card-person { display:flex; align-items:center; gap:6px; border:0; padding:0; margin:10px 0 6px; background:transparent; color:var(--muted); text-align:left; font:inherit; font-size:.72rem; line-height:1.4; cursor:pointer; }
+.social-card-person strong { color:var(--ink); font-weight:600; }
+.social-card-person .social-avatar { width:22px; height:22px; flex:none; font-size:.6rem; }
+.social-discover-card .social-card-episode { margin:4px 0; color:var(--ink); font-weight:600; }
+.social-card-date { display:block; margin-top:5px; color:var(--muted); font-size:.68rem; }
+.social-card-comment { margin:10px 0 0; padding-top:9px; border-top:1px solid var(--line); font-size:.76rem; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
+.social-card-add-menu { width:100%; }
+.social-card-add-menu > summary { display:inline-flex; list-style:none; align-items:center; }
+.social-card-add-menu > summary::-webkit-details-marker { display:none; }
+.social-card-add-options { display:grid; gap:4px; margin-top:8px; padding:5px; border:1px solid var(--line); border-radius:12px; background:var(--paper); }
+.social-card-add-options button { border:0; border-radius:8px; padding:8px 10px; text-align:left; background:transparent; color:var(--ink); font:inherit; font-size:.75rem; cursor:pointer; }
+.social-card-add-options button:hover:not(:disabled) { background:#e0e5f1; }
+.social-card-add-options button:disabled { color:var(--muted); cursor:default; }
+.social-feed-type-group > button { margin-top:14px; }
+/* Social calendar uses the same track, grid, cell and pile classes as Up Next. */
+.social-calendar-panel.track-section { padding:32px 0 !important; box-shadow:0 0 0 100vmax var(--track-bg); clip-path:inset(0 -100vmax); }
+.social-calendar-panel .track-heading { display:flex; justify-content:space-between; align-items:center; gap:20px; flex-wrap:wrap; }
+.social-calendar-name { border:0; background:transparent; color:inherit; font:inherit; text-transform:inherit; text-align:right; padding:0; cursor:pointer; overflow-wrap:anywhere; }
+.social-grouping-tabs { margin-left:auto; }
+.social-calendar-day-items { display:grid; gap:14px; }
+@media(max-width:760px) {
+ .social-feed-type-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+ .social-tabs { overflow:auto; flex-wrap:nowrap; }
+ .social-tabs > button { flex:none; }
+ .social-calendar-panel .tracker-scroll { overflow-x:auto; }
+ .social-following-calendar.tracker-month-grid { display:grid; min-width:650px !important; grid-template-columns:110px repeat(var(--days),minmax(28px,1fr)) !important; }
+ .social-calendar-panel .track-heading { align-items:flex-start; }
+ .social-grouping-tabs { margin-left:0; }
+}
+/* Pill toggles: keep selected text legible on the dark active background. */
+.social-page .library-folder-tab.is-active,
+.social-page .library-folder-tab[aria-pressed="true"] {
+  color:#fff9ea;
+}
+.social-page .library-folder-tab:not(.is-active):not([aria-pressed="true"]) {
+  color:var(--muted,#606a78);
+}
+
+.social-discover-card .social-card-episode-tag { position:absolute; right:8px; bottom:8px; z-index:3; border-radius:999px; padding:5px 8px; background:var(--blue-deep,#7889c2); color:#fff9ea; font:800 .7rem/1 var(--sans); box-shadow:0 2px 7px #0002; }
+.social-discover-card .social-card-rating.has-episode { bottom:40px; }
+.social-shelf-controls { display:flex; align-items:center; gap:12px; color:var(--muted); font-size:.75rem; }
+.social-feed-type-grid.social-feed-carousel { display:flex; gap:18px; overflow-x:auto; scroll-snap-type:x proximity; padding-bottom:12px; overscroll-behavior-x:contain; }
+.social-feed-carousel > .social-discover-card { flex:0 0 200px; scroll-snap-align:start; }
+@media(max-width:760px) { .social-feed-carousel > .social-discover-card { flex-basis:165px; } }
+
+.social-shared-audience-list { display:grid; gap:12px; }
+.social-shared-friend { padding:16px; border:1px solid var(--line); border-radius:16px; background:rgba(255,255,255,.45); }
+.social-shared-friend-heading { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+.social-shared-friend-heading > strong { font-size:.95rem; }
+.social-shared-friend-badges { display:flex; flex-wrap:wrap; gap:6px; margin-left:auto; }
+.social-shared-friend-info { margin:10px 0 0; display:grid; gap:6px; font-size:.84rem; line-height:1.5; }
+.social-shared-friend-info p { margin:0; }
+.social-shared-friend-episode { font-weight:700; color:var(--ink); }
+.social-shared-friend-info time { color:var(--muted); font-size:.75rem; }
+.social-shared-friend-comment { padding-top:8px; border-top:1px solid var(--line); white-space:pre-wrap; overflow-wrap:anywhere; }

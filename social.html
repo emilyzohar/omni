@@ -72,8 +72,9 @@
         </div>
 
         <div class="social-tabs" role="tablist" aria-label="Social">
-          <button class="social-tab is-active" type="button" role="tab" data-social-tab="feed" aria-selected="true">Highlights</button>
-          <button class="social-tab" type="button" role="tab" data-social-tab="library" aria-selected="false">Library</button>
+          <button class="social-tab is-active" type="button" role="tab" data-social-tab="feed" aria-selected="true">Recent</button>
+          <button class="social-tab" type="button" role="tab" data-social-tab="calendar" aria-selected="false">Calendar</button>
+          <button class="social-tab" type="button" role="tab" data-social-tab="library" aria-selected="false">My Library</button>
           <button class="social-tab" type="button" role="tab" data-social-tab="following" aria-selected="false">Following</button>
           <button class="social-tab" type="button" role="tab" data-social-tab="people" aria-selected="false">People</button>
           <button class="social-tab" type="button" role="tab" data-social-tab="me" aria-selected="false">Profile</button>
@@ -81,8 +82,26 @@
         </div>
 
         <section class="social-panel" data-social-panel="feed">
+          <div id="socialFeedControls" class="social-feed-controls">
+            <div class="library-folder-tabs" role="group" aria-label="Shared activity filter"><button class="library-folder-tab is-active" type="button" data-social-feed-filter="all" aria-pressed="true">All</button><button class="library-folder-tab" type="button" data-social-feed-filter="recommended" aria-pressed="false">Recommended</button></div>
+            <select id="socialFeedType" aria-label="Filter shared activity by type"><option value="all">All types</option></select>
+            <div class="library-folder-tabs social-grouping-tabs" role="group" aria-label="Activity order"><button class="library-folder-tab" type="button" data-social-feed-grouping="type" aria-pressed="false">By type</button><button class="library-folder-tab is-active" type="button" data-social-feed-grouping="recent" aria-pressed="true">Recent</button></div>
+          </div>
           <div id="socialFeed" class="social-feed"></div>
-          <p id="socialFeedEmpty" class="empty-state" hidden>Your circle is quiet. Follow someone in People to see their latest highlights.</p>
+          <p id="socialFeedEmpty" class="empty-state" hidden>Your circle is quiet. Follow someone in People to see their recent activity. Try another filter if nothing matches.</p>
+        </section>
+
+        <section class="social-panel track-section social-calendar-panel" data-social-panel="calendar" hidden>
+          <div class="track-heading">
+            <div class="track-month-title"><button class="month-nav-button" type="button" data-social-calendar-step="-1" aria-label="Previous period">‹</button><h1 id="socialCalendarLabel">Calendar</h1><button class="month-nav-button" type="button" data-social-calendar-step="1" aria-label="Next period">›</button></div>
+            <div id="socialCalendarControls" class="calendar-controls">
+              <button class="week-today-button" type="button" data-social-calendar-step="0">Today</button>
+              <select id="socialCalendarMode" class="month-picker" aria-label="Social calendar view"><option value="week">Week</option><option value="month">Month</option></select>
+              <input id="socialCalendarMonth" class="month-picker" type="month" aria-label="Social calendar month" />
+            </div>
+          </div>
+          <div class="tracker-scroll" tabindex="0" role="region" aria-label="Following activity calendar"><div id="socialCalendarGrid" class="tracker-grid tracker-month-grid social-following-calendar"></div></div>
+          <p id="socialCalendarEmpty" class="empty-state" hidden>Follow someone in People to see their shared calendar activity.</p>
         </section>
 
         <section class="social-panel" data-social-panel="following" hidden>
