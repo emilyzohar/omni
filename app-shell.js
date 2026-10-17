@@ -14,7 +14,7 @@ if (native) {
     if (new URLSearchParams(location.search).has('app-preview')) {
       const url = new URL(link.href); url.searchParams.set('app-preview','1'); link.href = url.href;
     }
-    const selected = document.body.dataset.appView === 'library' ? link.href.includes('social.html') : link.getAttribute('aria-current') === 'page';
+    const selected = link.getAttribute('aria-current') === 'page';
     if (selected) link.setAttribute('aria-current','page');
   });
 }
@@ -28,11 +28,6 @@ restoreSocialTab();
 new MutationObserver(restoreSocialTab).observe(document.body,{attributes:true,attributeFilter:['data-app-ready']});
 if (native) {
   document.body.classList.add('native-app');
-  if (document.body.dataset.appView === 'library') {
-    const target = new URL('social.html', location.href); target.searchParams.set('tab','library');
-    if (new URLSearchParams(location.search).has('app-preview')) target.searchParams.set('app-preview','1');
-    location.replace(target.href);
-  }
   document.addEventListener('click', event => {
     const link = event.target.closest('a[href]');
     if (!link || link.hasAttribute('download')) return;
@@ -61,9 +56,5 @@ if (native) {
 function syncModalLock() { document.body.classList.toggle('modal-open', Boolean(document.querySelector('dialog[open]'))); }
 new MutationObserver(syncModalLock).observe(document.body,{subtree:true,attributes:true,attributeFilter:['open']});
 syncModalLock();
-document.querySelectorAll('[data-calendar-library]').forEach(link => {
-  if (!native) return;
-  const url = new URL('social.html',location.href); url.searchParams.set('tab','library');
-  if (new URLSearchParams(location.search).has('app-preview')) url.searchParams.set('app-preview','1');
-  link.href=url.href;
-});
+// Keep old calendar bookmarks on the combined Up Next page.
+if (document.body.dataset.appView === 'calendar') location.replace(new URL('index.html#track', location.href));

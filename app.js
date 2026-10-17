@@ -736,13 +736,26 @@ async function startForUser(user) {
   setAuthMessage('Loading your profile…', false);
   try {
     await hydrateLargeLocalState();
-    await hydrateCloudProfile(user.id);
+    const cachedProfile = await loadLargeState(`profile:${user.id}`).catch(() => null);
+    if (cachedProfile?.state) {
+      await persistCloudStateLocally(cachedProfile.state);
+      lastCloudUpdatedAt = cachedProfile.updatedAt || '';
+    } else {
+      await hydrateCloudProfile(user.id);
+      await saveLargeState(`profile:${user.id}`, { state: buildCloudState(), updatedAt: lastCloudUpdatedAt });
+    }
     unlockApp();
     startAppOnce();
     scheduleLetterboxdAutoSync();
     initializeSocialForUser().catch(error => console.warn('[Social] background initialization failed:', error));
     maybeShowOnboarding(user);
-    setSyncStatus('Synced');
+    setSyncStatus(cachedProfile ? 'Checking for updates…' : 'Synced');
+    if (localStorage.getItem(`omni.pendingSync:${user.id}`)) scheduleCloudSync();
+    else if (cachedProfile) refreshCloudProfile();
+    window.addEventListener('online', () => {
+      if (localStorage.getItem(`omni.pendingSync:${currentUser?.id}`)) scheduleCloudSync();
+      else refreshCloudProfile();
+    });
     window.addEventListener('focus', refreshCloudProfile);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') refreshCloudProfile();
@@ -3475,7 +3488,9 @@ async function renderUpNext(options = {}) {
   // Show the existing queue immediately. TV reconciliation can be expensive
   // because it may inspect several seasons, so run it after the skeleton cards
   // are already on screen and refresh the queue only if membership changed.
-  const reconciliation = skipReconcile ? Promise.resolve(false) : reconcileTVQueueStates();
+  if (!skipReconcile) reconcileTVQueueStates().then(changed => {
+    if (changed) { if (els.libraryGroups) renderLibrary(); renderUpNext({ skipReconcile: true }); }
+  }).catch(error => console.warn('Queue refresh failed:', error));
 
   const nonTV = items.filter(item => getSourceType(item) !== 'tv');
   await Promise.all(nonTV.map(async item => {
@@ -3498,13 +3513,6 @@ async function renderUpNext(options = {}) {
       });
     }
   }));
-
-  const changed = await reconciliation;
-  if (changed && !skipReconcile) {
-    if (els.libraryGroups) renderLibrary();
-    await renderUpNext({ skipReconcile: true });
-    return;
-  }
 
   const tvItems = items.filter(item => getSourceType(item) === 'tv');
   // TV cards can each inspect multiple TMDB endpoints. Enrich them serially so
@@ -4049,14 +4057,11 @@ async function countRemainingAvailableTVEpisodes(item) {
 
 async function getUpNextInfo(item) {
   if (getSourceType(item) === 'tv') {
-    const checkedAt = Date.parse(item.tvMeta?.checkedAt || '');
-    if (!Number.isFinite(checkedAt) || Date.now() - checkedAt > 60 * 60 * 1000) {
-      await syncTVProgressToFirstUnwatched(item);
-    }
-    const episode = await getCached(`tv:${item.providerId}:s${item.progress?.nextSeason || 1}e${item.progress?.nextEpisode || 1}`, () =>
-      TrackerAPI.getTVEpisode(item.providerId, item.progress?.nextSeason || 1, item.progress?.nextEpisode || 1, state.settings)
-    );
-    const remaining = await countRemainingAvailableTVEpisodes(item);
+    // The queue reconciles in the background; only fetch the current season here.
+    // Sharing this cache with advanceTV makes checking off a loaded episode local.
+    const episode = await getTVEpisodeFromSeason(item, Number(item.progress?.nextSeason || 1), Number(item.progress?.nextEpisode || 1));
+    if (!episode) return { title: item.title, meta: progressFallback(item), image: item.image || '' };
+    const remaining = Number(item.tvMeta?.remainingAvailableCount || 0);
     return {
       title: item.title,
       meta: `S${episode.season_number} E${episode.episode_number} · ${episode.name || 'Episode'}${remaining ? ` · + ${remaining}` : ''}`,
@@ -4168,6 +4173,12 @@ async function handleUpNextClick(event) {
     if (queueCompletionsInFlight.has(item.id)) return;
     queueCompletionsInFlight.add(item.id);
     button.disabled = true;
+    const previousMarkup = button.innerHTML;
+    button.setAttribute('aria-busy', 'true');
+    button.innerHTML = '<span class="completion-spinner" aria-hidden="true"></span><span>Saving…</span>';
+    button.closest('.upnext-card')?.classList.add('is-completing');
+    showActionFeedback('Updating progress…');
+    await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
     try {
       let completed = null;
       if (getSourceType(item) === 'tv') completed = await advanceTV(item);
@@ -4191,12 +4202,19 @@ async function handleUpNextClick(event) {
       saveItems();
       saveHistory();
       renderAll();
+      showActionFeedback('Progress updated');
       if (shouldPromptBuddyWatch) await maybePromptBuddyWatchForTVOverlap(item);
     } catch (error) {
       alert(error.message);
       button.disabled = false;
     } finally {
       queueCompletionsInFlight.delete(item.id);
+      if (button.isConnected) {
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+        button.innerHTML = previousMarkup;
+        button.closest('.upnext-card')?.classList.remove('is-completing');
+      }
     }
   }
 }
@@ -4530,7 +4548,7 @@ function isTerminalSeriesStatus(status) {
 }
 
 async function reconcileSingleTVItem(item, prefetchedDetails = null) {
-  if (getSourceType(item) !== 'tv' || !item.providerId) return false;
+  if (getSourceType(item) !== 'tv' || !item.providerId || queueCompletionsInFlight.has(item.id)) return false;
 
   const before = JSON.stringify({
     queueStatus: getQueueStatus(item),
@@ -4541,6 +4559,7 @@ async function reconcileSingleTVItem(item, prefetchedDetails = null) {
 
   const details = prefetchedDetails || await getCached(`tv:${item.providerId}`, () => TrackerAPI.getTVDetails(item.providerId, state.settings));
   const next = await findNextUnwatchedTVEpisode(item, 0, 0);
+  if (queueCompletionsInFlight.has(item.id)) return false;
   const disposition = getTVWatchDisposition(item);
 
   item.watchDisposition = disposition;
@@ -4575,7 +4594,12 @@ async function reconcileSingleTVItem(item, prefetchedDetails = null) {
   return before !== after;
 }
 
-async function reconcileTVQueueStates() {
+let queueReconcilePromise;
+function reconcileTVQueueStates() {
+  if (!queueReconcilePromise) queueReconcilePromise = performTVQueueReconciliation().finally(() => { queueReconcilePromise = null; });
+  return queueReconcilePromise;
+}
+async function performTVQueueReconciliation() {
   // Up Next shows still get a full reconciliation. In addition, scan followed TV
   // that is currently resting in Library: if TMDB says an unlogged episode has
   // aired by today, reconcile that show so it can automatically re-enter Up Next.
@@ -10078,8 +10102,8 @@ async function ensureDiscoverGenreCatalog() {
   if (!els.discoverGenreFilter) return;
   if (!state.discoverGenreCatalog.tv.length || !state.discoverGenreCatalog.movie.length) {
     const [tv, movie] = await Promise.allSettled([
-      TrackerAPI.getTMDBGenres('tv', state.settings),
-      TrackerAPI.getTMDBGenres('movie', state.settings)
+      getCached('discover:genres:tv', () => TrackerAPI.getTMDBGenres('tv', state.settings)),
+      getCached('discover:genres:movie', () => TrackerAPI.getTMDBGenres('movie', state.settings))
     ]);
     if (tv.status === 'fulfilled') state.discoverGenreCatalog.tv = tv.value;
     if (movie.status === 'fulfilled') state.discoverGenreCatalog.movie = movie.value;
@@ -10316,7 +10340,8 @@ function updateDiscoverModeUI() {
 
 async function renderDiscover(force = false) {
   if (!els.discoverStatus) return;
-  await ensureDiscoverGenreCatalog();
+  if (selectedDiscoverGenre()) await ensureDiscoverGenreCatalog();
+  else ensureDiscoverGenreCatalog().catch(console.warn);
   if (!DISCOVER_MODES.has(state.discoverMode)) state.discoverMode = 'for-you';
   updateDiscoverModeUI();
   if (state.discoverSearchQuery) return runDiscoverSearch(state.discoverSearchQuery);
@@ -11788,6 +11813,8 @@ async function collectLiveDiscoverCandidates(batchNumber, mode = 'for-you') {
 async function collectForYouDiscoverCandidates(batchNumber) {
   const selectedProviders = (state.discoverPrefs.streamingProviderIds || []).map(String).filter(Boolean);
   const candidates = [];
+  const selectedTypes = new Set(normalizedDiscoverContentTypes());
+  const tasks = [];
   const add = (results, sourceType, source, boost = 0, exploration = false, relatedItem = null) => {
     const relation = relatedItem ? discoverRelationEvidence(relatedItem) : null;
     (results || []).forEach(result => candidates.push({
@@ -11804,7 +11831,8 @@ async function collectForYouDiscoverCandidates(batchNumber) {
   // Direct recommendation overlap is the strongest For You evidence. Pull from a
   // wider Library seed set, then preserve every independent seed that recommends
   // the same candidate instead of throwing those overlaps away during dedupe.
-  for (const sourceType of ['tv', 'movie']) {
+  for (const sourceType of ['tv', 'movie'].filter(type => selectedTypes.has(type))) {
+    tasks.push((async () => {
     const seeds = discoverForYouSeeds(sourceType, batchNumber, 10);
     const settled = await Promise.allSettled(seeds.map(seed => getCached(
       `discover:for-you:${sourceType}:${seed.providerId}:${recommendationPage}`,
@@ -11814,8 +11842,11 @@ async function collectForYouDiscoverCandidates(batchNumber) {
       if (response.status !== 'fulfilled') return;
       add(filterAlreadyKnown(response.value, sourceType), sourceType, 'personal', 11, false, seeds[index]);
     });
+    })());
   }
 
+  tasks.push((async () => {
+  if (!selectedTypes.has('book')) return;
   const readAuthors = getReadAuthors();
   if (readAuthors.length && state.discoverPrefs.prioritizeAuthors !== false) {
     const start = ((batchNumber - 1) * 2) % readAuthors.length;
@@ -11837,6 +11868,9 @@ async function collectForYouDiscoverCandidates(batchNumber) {
     add(filterAlreadyKnown(response.value, 'book'), 'book', 'personal', 11, false, bookSeeds[index]);
   });
 
+  })());
+
+  tasks.push((async () => {
   if (selectedProviders.length) {
     const providerPage = 1 + ((batchNumber - 1) % 8);
     const providerResults = await Promise.allSettled([
@@ -11847,19 +11881,25 @@ async function collectForYouDiscoverCandidates(batchNumber) {
     if (providerResults[1].status === 'fulfilled') add(filterAlreadyKnown(providerResults[1].value.results, 'movie'), 'movie', 'preferred-streaming', 8);
   }
 
+  })());
+
+  tasks.push((async () => {
   // Deliberate exploration: roughly a quarter of the final For You batch is
   // reserved for broader catalogue material, rather than hiding it in a separate
   // "Discover" tab. These candidates are marked so rankDiscoverFeedCandidates
   // can guarantee they actually survive the personalized ranking.
   const explorationPage = 1 + ((batchNumber + Math.floor(state.discoverFeedSession * 11)) % 12);
   const explore = await Promise.allSettled([
-    TrackerAPI.getTMDBDiscover('tv', explorationPage, state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 25 })),
-    TrackerAPI.getTMDBDiscover('movie', explorationPage, state.settings, discoverTMDBOptions('movie', { sortBy: 'popularity.desc', minVotes: 40 })),
-    TrackerAPI.getBookFeed((batchNumber - 1) * DISCOVER_BOOK_BATCH_SIZE, state.settings, discoverBookOptions({ query: chooseDiscoverBookPlan([], batchNumber).query, orderBy: 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE }))
+    selectedTypes.has('tv') ? TrackerAPI.getTMDBDiscover('tv', explorationPage, state.settings, discoverTMDBOptions('tv', { sortBy: 'popularity.desc', minVotes: 25 })) : Promise.resolve({ results: [] }),
+    selectedTypes.has('movie') ? TrackerAPI.getTMDBDiscover('movie', explorationPage, state.settings, discoverTMDBOptions('movie', { sortBy: 'popularity.desc', minVotes: 40 })) : Promise.resolve({ results: [] }),
+    selectedTypes.has('book') ? TrackerAPI.getBookFeed((batchNumber - 1) * DISCOVER_BOOK_BATCH_SIZE, state.settings, discoverBookOptions({ query: chooseDiscoverBookPlan([], batchNumber).query, orderBy: 'relevance', maxResults: DISCOVER_BOOK_BATCH_SIZE })) : Promise.resolve({ results: [] })
   ]);
   if (explore[0].status === 'fulfilled') add(filterAlreadyKnown(explore[0].value.results, 'tv'), 'tv', 'explore', 4, true);
   if (explore[1].status === 'fulfilled') add(filterAlreadyKnown(explore[1].value.results, 'movie'), 'movie', 'explore', 4, true);
   if (explore[2].status === 'fulfilled') add(filterAlreadyKnown(explore[2].value.results, 'book'), 'book', 'explore', 3, true);
+
+  })());
+  await Promise.all(tasks);
 
   if (normalizedDiscoverContentTypes().some(type => ['music','artist','song'].includes(type))) {
     try {
@@ -12208,7 +12248,7 @@ function discoverGenreAffinity(result, profiles) {
   return prevalence * 140 + quality * 5;
 }
 async function rankDiscoverFeedCandidates(results, batchSize) {
-  await loadFollowingSocialContext().catch(() => []);
+  loadFollowingSocialContext().catch(() => []);
   const readAuthors = getReadAuthors();
   const authorSet = new Set(readAuthors.map(author => author.toLowerCase()));
   const mode = DISCOVER_MODES.has(state.discoverMode) ? state.discoverMode : 'for-you';
@@ -12325,8 +12365,8 @@ async function rankDiscoverFeedCandidates(results, batchSize) {
   const tv = selected.filter(result => result.sourceType === 'tv');
   const movie = selected.filter(result => result.sourceType === 'movie');
   const [tvAnnotated, movieAnnotated] = await Promise.all([
-    tv.length ? prioritizeByStreaming(tv, 'tv') : [],
-    movie.length ? prioritizeByStreaming(movie, 'movie') : []
+    tv.length && state.discoverPrefs.streamingProviderIds?.length ? prioritizeByStreaming(tv, 'tv') : tv,
+    movie.length && state.discoverPrefs.streamingProviderIds?.length ? prioritizeByStreaming(movie, 'movie') : movie
   ]);
   const annotations = new Map([...tvAnnotated, ...movieAnnotated].map(result => [discoverResultIdentity(result), result]));
   selected = selected.map(result => annotations.get(discoverResultIdentity(result)) || result);
@@ -17489,17 +17529,28 @@ async function getPlaylistCached(id) {
   return getCached(`playlist:${id}`, () => TrackerAPI.getPlaylist(id, state.settings));
 }
 
+const cacheRequests = new Map();
+let cacheWriteTimer;
+function flushApiCache() {
+  clearTimeout(cacheWriteTimer);
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
+}
+window.addEventListener('pagehide', flushApiCache);
 async function getCached(key, loader) {
   const cached = state.cache[key];
   if (cached && Date.now() - cached.savedAt < CACHE_TTL) return cached.value;
-  const value = await loader();
-  cachePut(key, value);
-  return value;
+  if (cacheRequests.has(key)) return cacheRequests.get(key);
+  const request = Promise.resolve().then(loader).then(value => {
+    cachePut(key, value);
+    return value;
+  }).finally(() => cacheRequests.delete(key));
+  cacheRequests.set(key, request);
+  return request;
 }
-
 function cachePut(key, value) {
   state.cache[key] = { savedAt: Date.now(), value };
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify(state.cache)); } catch {}
+  clearTimeout(cacheWriteTimer);
+  cacheWriteTimer = setTimeout(flushApiCache, 500);
 }
 
 function saveItems() {
@@ -17634,8 +17685,22 @@ async function hydrateCloudProfile(userId) {
   lastCloudUpdatedAt = updatedAt;
 }
 
+let profileCacheWrite = Promise.resolve();
+document.addEventListener('click', event => {
+  const link = event.target.closest('.app-bottom-nav a[href]');
+  if (!link || !currentUser || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  if (!localStorage.getItem(`omni.pendingSync:${currentUser.id}`)) return;
+  event.preventDefault();
+  profileCacheWrite.then(() => location.assign(link.href)).catch(() => showActionFeedback('Could not save changes locally. Please retry.', true));
+});
 function scheduleCloudSync() {
   if (localOnlyMode || !currentUser || !supabase) return;
+  localStorage.setItem(`omni.pendingSync:${currentUser.id}`, '1');
+  const cacheUserId = currentUser.id;
+  const pendingSnapshot = structuredClone(buildCloudState());
+  profileCacheWrite = profileCacheWrite.catch(() => {}).then(() => saveLargeState(`profile:${cacheUserId}`, { state: pendingSnapshot, updatedAt: lastCloudUpdatedAt }));
+  profileCacheWrite.catch(error => console.warn('Could not cache pending profile:', error));
+  if (cloudSyncBusy) cloudSyncQueued = true;
   clearTimeout(cloudSyncTimer);
   setSyncStatus('Saving…');
   cloudSyncTimer = setTimeout(pushCloudState, 350);
@@ -17650,20 +17715,27 @@ async function pushCloudState() {
   }
 
   cloudSyncBusy = true;
+  cloudSyncQueued = false;
+  const syncUserId = currentUser.id;
+  const snapshot = structuredClone(buildCloudState());
   const updatedAt = new Date().toISOString();
 
   try {
     const { error } = await supabase
       .from('user_state')
       .upsert({
-        user_id: currentUser.id,
-        state: buildCloudState(),
+        user_id: syncUserId,
+        state: snapshot,
         updated_at: updatedAt
       });
 
     if (error) throw error;
     lastCloudUpdatedAt = updatedAt;
-    setSyncStatus('Synced');
+    if (!cloudSyncQueued) {
+      await saveLargeState(`profile:${syncUserId}`, { state: snapshot, updatedAt });
+      if (!cloudSyncQueued) localStorage.removeItem(`omni.pendingSync:${syncUserId}`);
+    }
+    setSyncStatus(cloudSyncQueued ? 'Saving…' : 'Synced');
   } catch (error) {
     setSyncStatus('Not synced', true);
     console.error('Cloud sync failed:', error);
@@ -17676,8 +17748,12 @@ async function pushCloudState() {
   }
 }
 
+let cloudRefreshBusy = false;
 async function refreshCloudProfile() {
-  if (localOnlyMode || !currentUser || !supabase || cloudSyncBusy) return;
+  if (localOnlyMode || !currentUser || !supabase || cloudSyncBusy || cloudRefreshBusy || queueCompletionsInFlight.size) return;
+  if (localStorage.getItem(`omni.pendingSync:${currentUser.id}`)) { scheduleCloudSync(); return; }
+  cloudRefreshBusy = true;
+  const refreshUserId = currentUser.id;
 
   try {
     const { data, error } = await supabase
@@ -17687,11 +17763,14 @@ async function refreshCloudProfile() {
       .maybeSingle();
 
     if (error) throw error;
-    if (!data?.state || !data.updated_at || data.updated_at === lastCloudUpdatedAt) return;
+    // A local edit or account change while the request was running wins.
+    if (currentUser?.id !== refreshUserId || queueCompletionsInFlight.size || localStorage.getItem(`omni.pendingSync:${refreshUserId}`)) return;
+    if (!data?.state || !data.updated_at || data.updated_at === lastCloudUpdatedAt) { setSyncStatus('Synced'); return; }
 
     if (!lastCloudUpdatedAt || new Date(data.updated_at) > new Date(lastCloudUpdatedAt)) {
       await persistCloudStateLocally(data.state);
       lastCloudUpdatedAt = data.updated_at;
+      await saveLargeState(`profile:${refreshUserId}`, { state: buildCloudState(), updatedAt: lastCloudUpdatedAt });
       if (appStarted) {
         document.dispatchEvent(new CustomEvent('omni:release-watchlist', {detail:state.items}));
         renderAll();
@@ -17701,7 +17780,7 @@ async function refreshCloudProfile() {
   } catch (error) {
     console.error('Cloud refresh failed:', error);
     setSyncStatus('Offline', true);
-  }
+  } finally { cloudRefreshBusy = false; }
 }
 
 function clearLocalSyncedState() {
