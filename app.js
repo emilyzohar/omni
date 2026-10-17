@@ -18468,6 +18468,18 @@ function initSocialPage() {
   $('#rewatchOnboardingButton')?.addEventListener('click', restartOnboardingTour);
   $('#socialShareSettings')?.addEventListener('change', handleSocialShareFormChange);
   $('#socialPeopleSearchForm')?.addEventListener('submit', handleSocialPeopleSearch);
+  $('#socialPeopleSearchInput')?.addEventListener('input', () => {
+    clearTimeout(socialPeopleSearchTimer);
+    socialPeopleSearchVersion += 1;
+    const query = normalizeSocialPeopleQuery($('#socialPeopleSearchInput').value);
+    if ($('#socialPeopleSearchClear')) $('#socialPeopleSearchClear').hidden = !query;
+    if (query.length < 2) { $('#socialPeopleResults').innerHTML = ''; $('#socialPeopleSearchStatus').textContent = 'Enter at least 2 characters to find someone.'; return; }
+    socialPeopleSearchTimer = setTimeout(() => handleSocialPeopleSearch(), 300);
+  });
+  $('#socialPeopleSearchClear')?.addEventListener('click', () => {
+    const input = $('#socialPeopleSearchInput'); input.value = ''; input.dispatchEvent(new Event('input')); input.focus();
+  });
+  mobileCalendarQuery.addEventListener('change', () => renderSocialCalendar());
   $('#socialPeopleResults')?.addEventListener('click', handleSocialActionClick);
   $('#socialFeed')?.addEventListener('click', handleSocialActionClick);
   $('#socialFeedType')?.addEventListener('change', event => { socialState.feedType = event.target.value; renderSocialFeed(); });
@@ -18508,7 +18520,8 @@ function initSocialPage() {
 }
 
 function setSocialTab(tabName) {
-  socialState.activeTab = ['feed','calendar','following','people','me','library'].includes(tabName) ? tabName : 'feed';
+  if (tabName === 'people') tabName = 'following';
+  socialState.activeTab = ['feed','calendar','following','me','library'].includes(tabName) ? tabName : 'feed';
   $$('.social-tab[data-social-tab]').forEach(tab => {
     const active = tab.dataset.socialTab === socialState.activeTab;
     tab.classList.toggle('is-active', active);
@@ -18928,20 +18941,50 @@ function socialCalendarDates(anchor, mode) {
   return Array.from({ length }, (_, index) => localDateString(addDays(start, index)));
 }
 
+function socialMobileWeekMarkup(profiles, dates) {
+  const byDate = new Map();
+  for (const profile of profiles) {
+    const payload = socialState.followingSnapshots.get(profile.user_id)?.payload;
+    const entries = Array.isArray(payload?.sections?.calendar) ? payload.sections.calendar : (payload?.sections?.activity || []);
+    for (const entry of entries) {
+      if (!entry.key || !dates.includes(entry.trackedDate)) continue;
+      if (!byDate.has(entry.trackedDate)) byDate.set(entry.trackedDate, new Map());
+      const day = byDate.get(entry.trackedDate);
+      if (!day.has(profile.user_id)) day.set(profile.user_id, { profile, items: new Map() });
+      day.get(profile.user_id).items.set(entry.key, entry);
+    }
+  }
+  return dates.map(date => {
+    const day = new Date(`${date}T12:00:00`);
+    const groups = [...(byDate.get(date)?.values() || [])];
+    return `<section class="week-day${date === todayString() ? ' is-today' : ''}"><div class="week-day-header"><span class="week-weekday">${escapeHtml(new Intl.DateTimeFormat('en-CA',{weekday:'long'}).format(day))}</span><span class="week-date">${escapeHtml(new Intl.DateTimeFormat('en-CA',{month:'short',day:'numeric'}).format(day))}</span></div><div class="social-week-person-piles">${groups.length ? groups.map(({profile,items}) => `<button class="social-week-person-pile" type="button" data-social-calendar-day="${escapeAttr(date)}" data-social-profile-id="${escapeAttr(profile.user_id)}" aria-label="${escapeAttr(`${profile.display_name || profile.username}: ${items.size} entries on ${date}`)}">${weekStickerPileMarkup([...items.values()], date, profile.user_id)}<span class="social-week-person-name">${escapeHtml(profile.display_name || profile.username)}</span></button>`).join('') : '<span class="week-empty">Nothing shared</span>'}</div></section>`;
+  }).join('');
+}
+
 function renderSocialCalendar() {
   const host = $('#socialCalendarGrid');
   if (!host) return;
   applyCalendarTheme();
+  const mobile = mobileCalendarQuery.matches;
+  if (mobile) socialState.calendarMode = 'week';
   const mode = socialState.calendarMode;
   const anchor = socialState.calendarDate;
   const dates = socialCalendarDates(anchor, mode);
   const month = `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2,'0')}`;
   if ($('#socialCalendarMonth')) $('#socialCalendarMonth').value = month;
-  if ($('#socialCalendarMode')) $('#socialCalendarMode').value = mode;
+  if ($('#socialCalendarMode')) { $('#socialCalendarMode').value = mode; $('#socialCalendarMode').hidden = mobile; }
+  if ($('#socialCalendarMonth')) $('#socialCalendarMonth').hidden = mobile;
   if ($('#socialCalendarLabel')) $('#socialCalendarLabel').textContent = mode === 'week' ? formatWeekRange(startOfWeek(anchor), addDays(startOfWeek(anchor), 6)) : new Intl.DateTimeFormat('en-CA', { month:'long', year:'numeric' }).format(anchor);
   host.className = 'tracker-grid tracker-month-grid social-following-calendar';
   host.style.setProperty('--days', String(dates.length));
   const profiles = [...(socialState.followingProfiles || [])].sort((a,b) => String(a.display_name || a.username).localeCompare(String(b.display_name || b.username)));
+  if (mobile) {
+    host.className = 'tracker-week-list social-following-week';
+    host.style.removeProperty('--days');
+    host.innerHTML = socialMobileWeekMarkup(profiles, dates);
+    if ($('#socialCalendarEmpty')) $('#socialCalendarEmpty').hidden = profiles.length > 0;
+    return;
+  }
   let markup = '<div class="tracker-cell tracker-corner"></div>';
   markup += dates.map(date => `<div class="tracker-cell tracker-day${date === todayString() ? ' is-today' : ''}"${date === todayString() ? ' aria-current="date"' : ''}>${Number(date.slice(8))}</div>`).join('');
   for (const profile of profiles) {
@@ -19015,28 +19058,55 @@ function renderSocialFeed() {
   if ($('#socialFeedEmpty')) $('#socialFeedEmpty').hidden = requests.length > 0 || invites.length > 0 || entries.length > 0;
 }
 
+let socialPeopleSearchTimer;
+let socialPeopleSearchVersion = 0;
+function normalizeSocialPeopleQuery(value) {
+  return String(value || '').trim().replace(/^@+/, '').trim();
+}
+function socialPeopleSearchPattern(query) {
+  return `%${query.replace(/[\\%_]/g, char => `\\${char}`)}%`;
+}
 async function handleSocialPeopleSearch(event) {
-  event.preventDefault();
-  const query = String($('#socialPeopleSearchInput')?.value || '').trim().toLowerCase();
+  event?.preventDefault();
+  clearTimeout(socialPeopleSearchTimer);
+  const version = ++socialPeopleSearchVersion;
+  const query = normalizeSocialPeopleQuery($('#socialPeopleSearchInput')?.value);
   const host = $('#socialPeopleResults');
-  if (!host || !socialState.schemaReady || !query) return;
-  host.innerHTML = '<p class="loading-detail">Searching…</p>';
-  const { data: profiles, error } = await supabase
-    .from('profiles')
-    .select('user_id, username, display_name, bio, avatar_url, is_private')
-    .ilike('username', `%${query.replace(/[%_]/g, '')}%`)
-    .neq('user_id', currentUser.id)
-    .limit(30);
-  if (error) { host.innerHTML = `<p class="api-error">${escapeHtml(error.message)}</p>`; return; }
-  const ids = (profiles || []).map(profile => profile.user_id);
-  let relations = [];
-  if (ids.length) {
-    const result = await supabase.from('follows').select('following_id, status').eq('follower_id', currentUser.id).in('following_id', ids);
-    if (!result.error) relations = result.data || [];
+  const status = $('#socialPeopleSearchStatus');
+  if (!host) return;
+  if ($('#socialPeopleSearchClear')) $('#socialPeopleSearchClear').hidden = !query;
+  if (query.length < 2) { host.innerHTML = ''; if (status) status.textContent = 'Enter at least 2 characters to find someone.'; return; }
+  if (!socialState.schemaReady || !currentUser || !supabase) { if (status) status.textContent = 'Sign in to find people.'; return; }
+  const userId = currentUser.id;
+  const isCurrent = () => version === socialPeopleSearchVersion && currentUser?.id === userId && normalizeSocialPeopleQuery($('#socialPeopleSearchInput')?.value) === query;
+  host.innerHTML = '';
+  if (status) status.textContent = 'Finding people…';
+  try {
+    const pattern = socialPeopleSearchPattern(query);
+    const results = await Promise.all(['username','display_name'].map(field => supabase.from('profiles').select('user_id, username, display_name, bio, avatar_url, is_private').ilike(field, pattern).neq('user_id', userId).limit(30)));
+    if (!isCurrent()) return;
+    if (results.some(result => result.error)) throw results.find(result => result.error).error;
+    const unique = new Map(results.flatMap(result => result.data || []).map(profile => [profile.user_id, profile]));
+    const search = query.toLowerCase();
+    const rank = profile => String(profile.username || '').toLowerCase() === search ? 0 : String(profile.display_name || '').toLowerCase() === search ? 1 : String(profile.username || '').toLowerCase().startsWith(search) || String(profile.display_name || '').toLowerCase().startsWith(search) ? 2 : 3;
+    const profiles = [...unique.values()].sort((a,b) => rank(a)-rank(b) || String(a.display_name || a.username).localeCompare(String(b.display_name || b.username))).slice(0,30);
+    let relations = [];
+    if (profiles.length) {
+      const result = await supabase.from('follows').select('following_id, status').eq('follower_id', userId).in('following_id', profiles.map(profile => profile.user_id));
+      if (result.error) throw result.error;
+      relations = result.data || [];
+    }
+    if (!isCurrent()) return;
+    const relationMap = new Map(relations.map(row => [row.following_id, row]));
+    socialState.peopleResults = profiles;
+    host.innerHTML = profiles.map(profile => socialProfileCardMarkup(profile, null, relationMap.get(profile.user_id))).join('');
+    if (status) status.textContent = profiles.length ? `${profiles.length} ${profiles.length === 1 ? 'person' : 'people'} found` : 'No matches yet. Try another part of their name or username.';
+  } catch (error) {
+    if (!isCurrent()) return;
+    host.innerHTML = '';
+    if (status) status.textContent = 'Could not search right now. Please try again.';
+    console.warn('[Social] people search failed:', error);
   }
-  const relationMap = new Map(relations.map(row => [row.following_id, row]));
-  socialState.peopleResults = profiles || [];
-  host.innerHTML = profiles?.length ? profiles.map(profile => socialProfileCardMarkup(profile, null, relationMap.get(profile.user_id))).join('') : '<p class="empty-state">No matching usernames.</p>';
 }
 
 function openSocialCalendarDay(ownerId, date) {

@@ -75,7 +75,6 @@
           <button class="social-tab is-active" type="button" role="tab" data-social-tab="feed" aria-selected="true">Recent</button>
           <button class="social-tab" type="button" role="tab" data-social-tab="calendar" aria-selected="false">Calendar</button>
           <button class="social-tab" type="button" role="tab" data-social-tab="following" aria-selected="false">Following</button>
-          <button class="social-tab" type="button" role="tab" data-social-tab="people" aria-selected="false">People</button>
           <button class="social-tab" type="button" role="tab" data-social-tab="me" aria-selected="false">Profile</button>
         
         </div>
@@ -87,7 +86,7 @@
             <div class="library-folder-tabs social-grouping-tabs" role="group" aria-label="Activity order"><button class="library-folder-tab" type="button" data-social-feed-grouping="type" aria-pressed="false">By type</button><button class="library-folder-tab is-active" type="button" data-social-feed-grouping="recent" aria-pressed="true">Recent</button></div>
           </div>
           <div id="socialFeed" class="social-feed"></div>
-          <p id="socialFeedEmpty" class="empty-state" hidden>Your circle is quiet. Follow someone in People to see their recent activity. Try another filter if nothing matches.</p>
+          <p id="socialFeedEmpty" class="empty-state" hidden>Your circle is quiet. Find someone in Following to see their recent activity. Try another filter if nothing matches.</p>
         </section>
 
         <section class="social-panel track-section social-calendar-panel" data-social-panel="calendar" hidden>
@@ -100,21 +99,23 @@
             </div>
           </div>
           <div class="tracker-scroll" tabindex="0" role="region" aria-label="Following activity calendar"><div id="socialCalendarGrid" class="tracker-grid tracker-month-grid social-following-calendar"></div></div>
-          <p id="socialCalendarEmpty" class="empty-state" hidden>Follow someone in People to see their shared calendar activity.</p>
+          <p id="socialCalendarEmpty" class="empty-state" hidden>Find someone in Following to see their shared calendar activity.</p>
         </section>
 
         <section class="social-panel" data-social-panel="following" hidden>
+          <section class="social-find-people" aria-labelledby="socialFindPeopleHeading">
+            <div><h2 id="socialFindPeopleHeading">Find your people</h2><p>Search by name or any part of a username.</p></div>
+            <form id="socialPeopleSearchForm" class="social-search-form social-people-search" role="search">
+              <div class="social-people-input-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><label class="sr-only" for="socialPeopleSearchInput">Name or username</label><input id="socialPeopleSearchInput" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Name or @username" aria-describedby="socialPeopleSearchStatus" /><button id="socialPeopleSearchClear" type="button" aria-label="Clear people search" hidden>×</button></div>
+              <button class="primary-button" type="submit">Find</button>
+            </form>
+            <p id="socialPeopleSearchStatus" class="social-people-search-status" role="status" aria-live="polite">Enter at least 2 characters to find someone.</p>
+            <div id="socialPeopleResults" class="social-profile-grid"></div>
+          </section>
           <div id="socialFollowRequests" class="social-request-list"></div>
+          <div class="social-network-heading"><h2>Following</h2></div>
           <div id="socialFollowingList" class="social-profile-grid"></div>
-          <p id="socialFollowingEmpty" class="empty-state" hidden>Not following anyone yet.</p>
-        </section>
-
-        <section class="social-panel" data-social-panel="people" hidden>
-          <form id="socialPeopleSearchForm" class="social-search-form" role="search">
-            <input id="socialPeopleSearchInput" type="search" autocomplete="off" placeholder="Find people" />
-            <button class="primary-button" type="submit">Search</button>
-          </form>
-          <div id="socialPeopleResults" class="social-profile-grid"></div>
+          <p id="socialFollowingEmpty" class="empty-state" hidden>No one here yet. Find someone above to start following.</p>
         </section>
 
         <section class="social-panel" data-social-panel="me" hidden>

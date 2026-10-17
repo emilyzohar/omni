@@ -21,7 +21,7 @@ if (native) {
 function restoreSocialTab() {
   if (document.body.dataset.appReady !== 'true' || document.body.dataset.appView !== 'social') return;
   const tab = new URLSearchParams(location.search).get('tab') || (native ? sessionStorage.getItem('omni.socialTab') : null);
-  if (tab) document.querySelector(`[data-social-tab="${CSS.escape(tab)}"]`)?.click();
+  if (tab) document.querySelector(`[data-social-tab="${CSS.escape(tab === 'people' ? 'following' : tab)}"]`)?.click();
 }
 document.querySelectorAll('[data-social-tab]').forEach(button=>button.addEventListener('click',()=>{if(native)sessionStorage.setItem('omni.socialTab',button.dataset.socialTab);}));
 restoreSocialTab();

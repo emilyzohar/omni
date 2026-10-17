@@ -211,3 +211,49 @@ body[data-app-view="upnext"] #track { display:block; margin-top:28px; }
 .social-shared-friend-episode { font-weight:700; color:var(--ink); }
 .social-shared-friend-info time { color:var(--muted); font-size:.75rem; }
 .social-shared-friend-comment { padding-top:8px; border-top:1px solid var(--line); white-space:pre-wrap; overflow-wrap:anywhere; }
+/* Social has one queue menu, rather than Discover's three action columns. */
+.social-discover-card .discover-card-actions { display:block; }
+.social-discover-card .social-card-add-menu { width:100%; min-width:0; }
+.social-discover-card .social-card-add-menu > summary.discover-add-button {
+  box-sizing:border-box; display:flex; align-items:center; justify-content:center;
+  gap:8px; width:100%; max-width:100%; height:auto; min-height:40px;
+  padding:9px 10px; border-radius:999px; font-size:.76rem; line-height:1.2;
+  white-space:nowrap; overflow:visible; text-overflow:clip;
+  background:rgba(255,255,255,.45); color:var(--ink);
+}
+.social-card-add-menu > summary::after { content:'▾'; font-size:.7rem; flex:none; }
+.social-card-add-menu[open] > summary::after { transform:rotate(180deg); }
+@media(max-width:760px) {
+  /* Avoid Safari painting the blurred tint outside the rounded card layer. */
+  .social-discover-card.discover-card {
+    content-visibility:visible; contain:none; border-radius:20px !important;
+    overflow:hidden !important; clip-path:inset(0 round 20px);
+  }
+  .social-discover-card::before { inset:0; border-radius:inherit; }
+  .social-discover-card .discover-poster-wrap { border-radius:20px 20px 10px 10px; }
+  .social-card-add-options button { min-height:40px; }
+}
+.social-find-people { padding:22px; border:1px solid var(--line); border-radius:20px; background:rgba(255,255,255,.6); margin-bottom:24px; }
+.social-find-people h2 { margin:0; font-size:1.2rem; }
+.social-find-people > div > p { margin:7px 0 18px; color:var(--muted); font-size:.8rem; }
+.social-people-search { display:flex; align-items:stretch; gap:10px; }
+.social-people-input-wrap { display:flex; align-items:center; gap:10px; min-width:0; flex:1; background:#ededf0; border:1px solid var(--line); border-radius:14px; padding:0 12px; }
+.social-people-input-wrap:focus-within { outline:2px solid #8b99ca; outline-offset:2px; }
+.social-people-input-wrap > svg { width:20px; height:20px; color:var(--muted); flex:none; }
+.social-people-search .social-people-input-wrap input { background:transparent; border:0; box-shadow:none; outline:none; min-width:0; width:100%; min-height:46px; padding:10px 0; }
+.social-people-input-wrap input::-webkit-search-cancel-button { display:none; }
+.social-people-input-wrap > button { border:0; background:transparent; color:var(--muted); font-size:1.4rem; padding:6px; cursor:pointer; }
+.social-people-search > button { padding-inline:20px; min-height:46px; }
+.social-people-search-status { min-height:1.4em; margin:12px 0; color:var(--muted); font-size:.76rem; }
+.social-find-people #socialPeopleResults:empty { display:none; }
+.social-network-heading h2 { font-size:1.2rem; margin:0 0 16px; }
+@media(max-width:760px) {
+ .social-find-people { padding:16px; }
+ .social-people-search { gap:8px; }
+ .social-people-search > button { padding-inline:14px; }
+ .social-following-week { width:100%; min-width:0; }
+ .social-week-person-piles { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:6px 0; min-width:0; }
+ .social-week-person-pile { position:relative; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; border:0; background:transparent; color:var(--track-fg); width:82px; min-height:80px; padding:0 2px 4px; cursor:pointer; }
+ .social-week-person-name { display:block; width:100%; margin-top:4px; text-align:center; font-size:.62rem; line-height:1.3; overflow-wrap:anywhere; }
+ .social-week-person-pile .week-entry-count { position:absolute; right:0; top:30px; }
+}
