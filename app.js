@@ -1,3 +1,4 @@
+import { mergeCloudState, recoverCloudState } from './cloud-merge.js';
 import { disableReleasePush } from './release-push.js';
 import { TrackerAPI } from './api.js?v=omni-clean-108';
 import { API_CONFIG } from './config.js?v=omni-clean-108';
@@ -177,6 +178,7 @@ let cloudSyncTimer = null;
 let cloudSyncBusy = false;
 let cloudSyncQueued = false;
 let lastCloudUpdatedAt = '';
+let lastCloudSnapshot = null;
 let discoverFeedObserver = null;
 const attachmentCoverObjectUrls = new Map();
 
@@ -614,6 +616,7 @@ function bindAuthEvents() {
     await hydrateLargeLocalState();
     unlockApp();
     startAppOnce();
+    loadLargeState(`sync-recovery:${user.id}`).then(backup => { if (backup && currentUser?.id === user.id) showSyncRecoveryBackup(backup); }).catch(console.warn);
   });
   els.signOutButton?.addEventListener('click', handleSignOut);
 }
@@ -732,6 +735,7 @@ async function startForUser(user) {
     return;
   }
   currentUser = user;
+  document.getElementById('syncRecoveryBackup')?.remove();
   if (els.userEmail) els.userEmail.textContent = user.email || '';
   setAuthMessage('Loading your profile…', false);
   try {
@@ -740,12 +744,14 @@ async function startForUser(user) {
     if (cachedProfile?.state) {
       await persistCloudStateLocally(cachedProfile.state);
       lastCloudUpdatedAt = cachedProfile.updatedAt || '';
+      lastCloudSnapshot = cachedProfile.baseState || (localStorage.getItem(`omni.pendingSync:${user.id}`) ? null : structuredClone(cachedProfile.state));
     } else {
       await hydrateCloudProfile(user.id);
       await saveLargeState(`profile:${user.id}`, { state: buildCloudState(), updatedAt: lastCloudUpdatedAt });
     }
     unlockApp();
     startAppOnce();
+    loadLargeState(`sync-recovery:${user.id}`).then(backup => { if (backup && currentUser?.id === user.id) showSyncRecoveryBackup(backup); }).catch(console.warn);
     scheduleLetterboxdAutoSync();
     initializeSocialForUser().catch(error => console.warn('[Social] background initialization failed:', error));
     maybeShowOnboarding(user);
@@ -757,6 +763,7 @@ async function startForUser(user) {
       else refreshCloudProfile();
     });
     window.addEventListener('focus', refreshCloudProfile);
+    setInterval(() => { if (document.visibilityState === 'visible') refreshCloudProfile(); }, 30000);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') refreshCloudProfile();
     });
@@ -17668,6 +17675,7 @@ async function hydrateCloudProfile(userId) {
   if (data?.state) {
     await persistCloudStateLocally(data.state);
     lastCloudUpdatedAt = data.updated_at || '';
+    lastCloudSnapshot = structuredClone(data.state);
     return;
   }
 
@@ -17683,6 +17691,27 @@ async function hydrateCloudProfile(userId) {
 
   if (insertError) throw insertError;
   lastCloudUpdatedAt = updatedAt;
+  lastCloudSnapshot = structuredClone(initialState);
+}
+
+function showSyncRecoveryBackup(backup) {
+  if (!els.syncStatus) return;
+  let button = document.getElementById('syncRecoveryBackup');
+  if (!button) {
+    button = document.createElement('button');
+    button.id = 'syncRecoveryBackup';
+    button.type = 'button';
+    button.className = 'quiet-button';
+    button.textContent = 'Download sync recovery backup';
+    button.title = 'Original local and cloud copies saved before recovery. Recovery may restore previously deleted entries.';
+    els.syncStatus.insertAdjacentElement('afterend', button);
+  }
+  button.onclick = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url; link.download = 'omni-sync-recovery.json'; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
 }
 
 let profileCacheWrite = Promise.resolve();
@@ -17698,7 +17727,7 @@ function scheduleCloudSync() {
   localStorage.setItem(`omni.pendingSync:${currentUser.id}`, '1');
   const cacheUserId = currentUser.id;
   const pendingSnapshot = structuredClone(buildCloudState());
-  profileCacheWrite = profileCacheWrite.catch(() => {}).then(() => saveLargeState(`profile:${cacheUserId}`, { state: pendingSnapshot, updatedAt: lastCloudUpdatedAt }));
+  profileCacheWrite = profileCacheWrite.catch(() => {}).then(() => saveLargeState(`profile:${cacheUserId}`, { state: pendingSnapshot, updatedAt: lastCloudUpdatedAt, baseState: lastCloudSnapshot }));
   profileCacheWrite.catch(error => console.warn('Could not cache pending profile:', error));
   if (cloudSyncBusy) cloudSyncQueued = true;
   clearTimeout(cloudSyncTimer);
@@ -17721,23 +17750,48 @@ async function pushCloudState() {
   const updatedAt = new Date().toISOString();
 
   try {
-    const { error } = await supabase
-      .from('user_state')
-      .upsert({
-        user_id: syncUserId,
-        state: snapshot,
-        updated_at: updatedAt
-      });
-
-    if (error) throw error;
-    lastCloudUpdatedAt = updatedAt;
-    if (!cloudSyncQueued) {
-      await saveLargeState(`profile:${syncUserId}`, { state: snapshot, updatedAt });
-      if (!cloudSyncQueued) localStorage.removeItem(`omni.pendingSync:${syncUserId}`);
+    let saved = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { data: remote, error: readError } = await supabase.from('user_state').select('state, updated_at').eq('user_id', syncUserId).maybeSingle();
+      if (readError) throw readError;
+      if (currentUser?.id !== syncUserId) return;
+      if (remote?.state && !lastCloudSnapshot) {
+        // Keep a durable copy of both inputs before attempting legacy recovery.
+        // If backup storage fails, abort the write and retain the pending flag.
+        const key = `sync-recovery:${syncUserId}`;
+        let backup = await loadLargeState(key);
+        if (!backup) {
+          backup = { createdAt: new Date().toISOString(), local: snapshot, cloud: remote.state };
+          await saveLargeState(key, backup);
+        }
+        showSyncRecoveryBackup(backup);
+      }
+      const merged = remote?.state
+        ? (lastCloudSnapshot ? mergeCloudState(lastCloudSnapshot, snapshot, remote.state) : recoverCloudState(snapshot, remote.state))
+        : snapshot;
+      const version = new Date(Math.max(Date.now(), Date.parse(remote?.updated_at || 0) + 1 || 0)).toISOString();
+      const row = { user_id: syncUserId, state: merged, updated_at: version };
+      const result = remote
+        ? await supabase.from('user_state').update(row).eq('user_id', syncUserId).eq('updated_at', remote.updated_at).select('updated_at')
+        : await supabase.from('user_state').insert(row).select('updated_at');
+      if (result.error) { if (result.error.code === '23505') continue; throw result.error; }
+      if (!result.data?.length) continue;
+      saved = row; break;
     }
+    if (!saved) throw Error('Another device is saving. Retry shortly.');
+    if (currentUser?.id !== syncUserId) return;
+    // Preserve edits made on this device while the network request was pending.
+    const live = mergeCloudState(snapshot, buildCloudState(), saved.state);
+    await persistCloudStateLocally(live);
+    lastCloudUpdatedAt = saved.updated_at;
+    lastCloudSnapshot = structuredClone(saved.state);
+    await saveLargeState(`profile:${syncUserId}`, { state: live, updatedAt: lastCloudUpdatedAt, baseState: lastCloudSnapshot });
+    if (!cloudSyncQueued) localStorage.removeItem(`omni.pendingSync:${syncUserId}`);
+    renderAll();
+    document.dispatchEvent(new CustomEvent('omni:release-watchlist', { detail: state.items }));
     setSyncStatus(cloudSyncQueued ? 'Saving…' : 'Synced');
   } catch (error) {
-    setSyncStatus('Not synced', true);
+    setSyncStatus(`Not synced: ${error.message}`, true);
     console.error('Cloud sync failed:', error);
   } finally {
     cloudSyncBusy = false;
@@ -17767,9 +17821,10 @@ async function refreshCloudProfile() {
     if (currentUser?.id !== refreshUserId || queueCompletionsInFlight.size || localStorage.getItem(`omni.pendingSync:${refreshUserId}`)) return;
     if (!data?.state || !data.updated_at || data.updated_at === lastCloudUpdatedAt) { setSyncStatus('Synced'); return; }
 
-    if (!lastCloudUpdatedAt || new Date(data.updated_at) > new Date(lastCloudUpdatedAt)) {
+    if (data.updated_at !== lastCloudUpdatedAt) {
       await persistCloudStateLocally(data.state);
       lastCloudUpdatedAt = data.updated_at;
+      lastCloudSnapshot = structuredClone(data.state);
       await saveLargeState(`profile:${refreshUserId}`, { state: buildCloudState(), updatedAt: lastCloudUpdatedAt });
       if (appStarted) {
         document.dispatchEvent(new CustomEvent('omni:release-watchlist', {detail:state.items}));

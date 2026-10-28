@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import { mergeCloudState as merge } from '../cloud-merge.js';
+const base={items:[{id:'a',title:'A',rating:1},{id:'gone',title:'Remove'}],history:[],prefs:{theme:'blue',sort:'recent'}};
+const local=structuredClone(base);local.items[0].rating=5;local.items.pop();local.items.push({id:'phone',title:'Mobile addition'});local.prefs.theme='green';
+const remote=structuredClone(base);remote.items[0].title='Corrected title';remote.items.push({id:'desktop',title:'Desktop addition'});remote.history.push({id:'log',date:'2026-10-28'});remote.prefs.sort='type';
+const result=merge(base,local,remote);
+assert.deepEqual(result.items,[{id:'a',title:'Corrected title',rating:5},{id:'phone',title:'Mobile addition'},{id:'desktop',title:'Desktop addition'}]);
+assert.equal(result.history.length,1);assert.deepEqual(result.prefs,{theme:'green',sort:'type'});
+assert.deepEqual(merge(base,base,remote),remote);
+const inFlight=structuredClone(local);inFlight.items.push({id:'later',title:'Edited during save'});
+assert.ok(merge(local,inFlight,result).items.some(i=>i.id==='later'));
+assert.ok(!merge(base,base,{...base,items:[]}).items.length);
+console.log('PASS: independent device additions, deletions, field edits, remote logs, preferences, and edits during save');
+
+const { recoverCloudState: recover } = await import('../cloud-merge.js');
+const legacyLocal={items:[{id:'a',title:'Local title',rating:5},{id:'mobile',title:'Mobile only'}],history:[{id:'h1'}],prefs:{theme:'green'},types:['tv']};
+const legacyRemote={items:[{id:'a',title:'Cloud title',note:'Cloud note'},{id:'web',title:'Web only'}],history:[{id:'h2'}],prefs:{theme:'blue',sort:'recent'},types:['movie','tv']};
+const recovered=recover(legacyLocal,legacyRemote);
+assert.deepEqual(recovered.items,[{id:'a',title:'Local title',rating:5,note:'Cloud note'},{id:'mobile',title:'Mobile only'},{id:'web',title:'Web only'}]);
+assert.deepEqual(recovered.history,[{id:'h1'},{id:'h2'}]);
+assert.deepEqual(recovered.prefs,{theme:'green',sort:'recent'});
+assert.deepEqual(recovered.types,['tv','movie']);
+assert.deepEqual(recover(recovered,legacyRemote),recovered);
+assert.equal(legacyLocal.items[0].note,undefined);
+assert.equal(legacyRemote.items[0].title,'Cloud title');
+console.log('PASS: legacy recovery preserves both devices, remote-only fields, logs, deduplication, idempotence and original backups');

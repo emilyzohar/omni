@@ -13,8 +13,23 @@ async function registration(){
  return ready;
 }
 async function session(){const {data,error}=await supabase.auth.getSession();if(error)throw error;if(!data.session)throw Error('Sign in to enable alerts.');return data.session;}
-async function render(){let on=false;try{on=!!await (await registration()).pushManager.getSubscription();}catch{}buttons.forEach(b=>{b.hidden=false;b.setAttribute('aria-pressed',String(on));b.textContent=on?'Release alerts on':'New-release alerts';});}
-async function sync(){if(!supported()||!supabase||document.body.dataset.appReady!=='true')return;const auth=await session();const sub=await (await registration()).pushManager.getSubscription();if(!sub)return;const {error}=await supabase.from('web_release_watchlists').upsert({user_id:auth.user.id,watches:releaseWatches(items),updated_at:new Date().toISOString()});if(error)throw error;}
+async function render(){
+ let on=false;
+ try {
+  const sub=await (await registration()).pushManager.getSubscription();
+  if(sub && supabase){const auth=await session();const {data,error}=await supabase.from('web_push_devices').select('endpoint').eq('user_id',auth.user.id).eq('endpoint',sub.endpoint).maybeSingle();if(error)throw error;on=!!data;}
+ }catch{}
+ buttons.forEach(b=>{b.hidden=false;b.setAttribute('aria-pressed',String(on));b.textContent=on?'Release alerts on':'New-release alerts';});
+}
+async function sync(){
+ if(!supported()||!supabase||document.body.dataset.appReady!=='true')return;
+ const auth=await session();const sub=await (await registration()).pushManager.getSubscription();if(!sub)return;
+ // Repair subscriptions after reinstalls, server cleanup, or account changes.
+ const {data:device,error:deviceReadError}=await supabase.from('web_push_devices').select('endpoint').eq('user_id',auth.user.id).eq('endpoint',sub.endpoint).maybeSingle();if(deviceReadError)throw deviceReadError;
+ if(!device){const {error}=await supabase.from('web_push_devices').upsert({endpoint:sub.endpoint,user_id:auth.user.id,subscription:sub.toJSON(),enabled_at:new Date().toISOString()},{onConflict:'endpoint'});if(error)throw error;}
+ const {error}=await supabase.from('web_release_watchlists').upsert({user_id:auth.user.id,watches:releaseWatches(items),updated_at:new Date().toISOString()});if(error)throw error;
+ await render();
+}
 export async function disableReleasePush(){
  if(!supported())return;
  const sub=await (await registration()).pushManager.getSubscription();if(!sub)return;
@@ -35,10 +50,10 @@ buttons.forEach(b=>b.addEventListener('click',async()=>{
   // Request permission directly from this tap, before any network operation.
   const permission=await Notification.requestPermission();if(permission!=='granted')throw Error('Allow notifications in your device settings.');
   const reg=await registration();const existing=await reg.pushManager.getSubscription();
-  if(existing){await disableReleasePush();return;}
   const auth=await session();const base=key.replace(/-/g,'+').replace(/_/g,'/');const bytes=Uint8Array.from(atob(base+'='.repeat((4-base.length%4)%4)),c=>c.charCodeAt(0));
-  created=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:bytes});
-  const {error}=await supabase.from('web_push_devices').upsert({endpoint:created.endpoint,user_id:auth.user.id,subscription:created.toJSON(),enabled_at:new Date().toISOString()},{onConflict:'endpoint'});if(error)throw error;
+  const subscription=existing||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:bytes});
+  if(!existing)created=subscription;
+  const {error}=await supabase.from('web_push_devices').upsert({endpoint:subscription.endpoint,user_id:auth.user.id,subscription:subscription.toJSON(),enabled_at:new Date().toISOString()},{onConflict:'endpoint'});if(error)throw error;
   await sync();status('New-release alerts are on, including while Omni is closed.');
  }catch(e){if(created){await supabase.from('web_push_devices').delete().eq('endpoint',created.endpoint);await created.unsubscribe();}status(e.message||'Could not connect release alerts.');}
  finally{b.disabled=false;await render();}
@@ -46,3 +61,6 @@ buttons.forEach(b=>b.addEventListener('click',async()=>{
 document.addEventListener('omni:release-watchlist',e=>{items=e.detail||[];clearTimeout(timer);timer=setTimeout(()=>sync().catch(e=>status(`Watchlist sync failed: ${e.message}`)),700);});
 supabase?.auth.onAuthStateChange(()=>{setTimeout(()=>sync().catch(()=>{}),0);});
 if(supported())render();else buttons.forEach(b=>{b.hidden=false;});
+
+window.addEventListener('online',()=>sync().catch(e=>status(`Alert sync failed: ${e.message}`)));
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')sync().catch(e=>status(`Alert sync failed: ${e.message}`));});

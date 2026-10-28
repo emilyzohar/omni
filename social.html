@@ -80,11 +80,13 @@
         </div>
 
         <section class="social-panel" data-social-panel="feed">
+          <details class="social-feed-settings"><summary aria-label="Feed settings"><span aria-hidden="true">⚙</span> Feed settings</summary>
           <div id="socialFeedControls" class="social-feed-controls">
             <div class="library-folder-tabs" role="group" aria-label="Shared activity filter"><button class="library-folder-tab is-active" type="button" data-social-feed-filter="all" aria-pressed="true">All</button><button class="library-folder-tab" type="button" data-social-feed-filter="recommended" aria-pressed="false">Recommended</button></div>
             <select id="socialFeedType" aria-label="Filter shared activity by type"><option value="all">All types</option></select>
             <div class="library-folder-tabs social-grouping-tabs" role="group" aria-label="Activity order"><button class="library-folder-tab" type="button" data-social-feed-grouping="type" aria-pressed="false">By type</button><button class="library-folder-tab is-active" type="button" data-social-feed-grouping="recent" aria-pressed="true">Recent</button></div>
           </div>
+          </details>
           <div id="socialFeed" class="social-feed"></div>
           <p id="socialFeedEmpty" class="empty-state" hidden>Your circle is quiet. Find someone in Following to see their recent activity. Try another filter if nothing matches.</p>
         </section>
